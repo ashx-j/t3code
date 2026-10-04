@@ -2960,6 +2960,11 @@ export interface ClaudeAdapterV2Options {
   };
 }
 
+/**
+ * Creates the Claude provider adapter using the supplied SDK runner and services.
+ * Sessions reuse live queries across turns and preserve the CLI's initial Manual
+ * fallback when Auto permission mode is unsupported.
+ */
 export function makeClaudeAdapterV2(
   adapterOptions: ClaudeAdapterV2Options,
 ): ProviderAdapter.ProviderAdapterV2Shape {
