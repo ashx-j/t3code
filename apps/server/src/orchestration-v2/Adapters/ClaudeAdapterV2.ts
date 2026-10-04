@@ -2959,6 +2959,11 @@ export interface ClaudeAdapterV2Options {
   };
 }
 
+/**
+ * Creates the Claude provider adapter with the supplied SDK runner and server
+ * dependencies. Each session translates SDK messages into orchestration events
+ * and terminal receipts, including usage-limit resets used for recovery.
+ */
 export function makeClaudeAdapterV2(
   adapterOptions: ClaudeAdapterV2Options,
 ): ProviderAdapter.ProviderAdapterV2Shape {
