@@ -1,15 +1,18 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  NodeId,
   ORCHESTRATION_PROTOCOL_HEADER,
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
   ProjectId,
   type AuthSessionState,
   type OrchestrationV2ShellSnapshot,
+  OrchestrationV2Subagent,
   OrchestrationV2ThreadDetailSnapshot,
   OrchestrationV2ThreadBoundedSnapshot,
   type OrchestrationV2ThreadHistoryPage,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -36,6 +39,7 @@ import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
 import {
   boundedThreadSnapshotLoaderLayer,
   fetchEnvironmentBoundedThreadSnapshot,
+  fetchEnvironmentThreadSubagent,
 } from "./boundedThreadSnapshotHttp.ts";
 import { fetchEnvironmentThreadHistoryPage } from "./threadHistoryHttp.ts";
 import { v2Projection } from "./orchestrationV2TestFixtures.ts";
@@ -93,6 +97,33 @@ const BOUNDED_THREAD = {
   hasMoreHistory: true,
   latestLocalTurnOrdinal: 3,
 } satisfies OrchestrationV2ThreadBoundedSnapshot;
+const WORKFLOW_SUBAGENT = Schema.decodeUnknownSync(OrchestrationV2Subagent)({
+  id: "workflow:coordinator",
+  threadId: THREAD.projection.thread.id,
+  runId: null,
+  parentNodeId: "parent-node",
+  origin: "provider_native",
+  createdBy: "agent",
+  driver: "claudeAgent",
+  providerInstanceId: "claude",
+  providerThreadId: null,
+  childThreadId: "workflow-child",
+  nativeTaskRef: null,
+  prompt: "await workflow.run();",
+  title: "Release review",
+  model: null,
+  status: "completed",
+  result: "Reviewed",
+  startedAt: DateTime.makeUnsafe("2026-06-20T00:00:00.000Z"),
+  completedAt: DateTime.makeUnsafe("2026-06-20T00:01:00.000Z"),
+  updatedAt: DateTime.makeUnsafe("2026-06-20T00:01:00.000Z"),
+  workflow: {
+    name: "Release review",
+    phases: [{ index: 0, title: "Inspect" }],
+    agents: [{ index: 0, label: "Reviewer", state: "completed", childThreadId: "reviewer-child" }],
+  },
+});
+const encodeSubagent = Schema.encodeSync(OrchestrationV2Subagent);
 const THREAD_HISTORY = {
   snapshotSequence: 2,
   items: [],
@@ -225,6 +256,19 @@ const LOADERS: ReadonlyArray<{
     expected: BOUNDED_THREAD,
     load: (input: HttpInput) =>
       fetchEnvironmentBoundedThreadSnapshot({ ...input, threadId: THREAD.projection.thread.id }),
+  },
+  {
+    name: "owning subagent metadata",
+    method: "GET",
+    path: `/api/orchestration/threads/${THREAD.projection.thread.id}/subagents/workflow%3Acoordinator`,
+    response: encodeSubagent(WORKFLOW_SUBAGENT),
+    expected: WORKFLOW_SUBAGENT,
+    load: (input: HttpInput) =>
+      fetchEnvironmentThreadSubagent({
+        ...input,
+        threadId: THREAD.projection.thread.id,
+        subagentId: NodeId.make("workflow:coordinator"),
+      }),
   },
   {
     name: "older thread history",
