@@ -37,9 +37,11 @@ import {
 import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
 import {
   ProviderAdapterTurnStartError,
+  ProviderAdapterProtocolError,
   type ProviderAdapterV2Error,
   type ProviderAdapterV2HistoricalContext,
   type ProviderAdapterV2SessionRuntime,
+  type ProviderAdapterV2SubagentThread,
 } from "./ProviderAdapter.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -62,6 +64,51 @@ export class ProviderTurnStartError extends Schema.TaggedError<ProviderTurnStart
 ) {}
 
 const isProviderTurnStartError = Schema.is(ProviderTurnStartError);
+
+/** Read child routing metadata without loading its conversation or tool outputs. */
+export const readNativeSubagentThread = Effect.fnUntraced(function* (
+  projections: ProjectionStore.ProjectionStoreV2Shape,
+  childThreadId: ThreadId,
+): Effect.fn.Return<
+  ProviderAdapterV2SubagentThread | null,
+  ProjectionStore.ProjectionStoreV2Error
+> {
+  const child = yield* projections
+    .getThreadRecords(childThreadId, ["providerThreads", "providerTurns"])
+    .pipe(Effect.catchTag("ProjectionStoreThreadNotFoundError", () => Effect.succeed(null)));
+  if (child === null || child.thread.lineage.relationshipToParent !== "subagent") return null;
+  const parentThreadId = child.thread.lineage.parentThreadId;
+  if (parentThreadId === null) return null;
+  const parent = yield* projections.getThreadRecords(parentThreadId, ["subagents", "turnItems"], {
+    turnItemTypes: ["subagent"],
+  });
+  const subagent = parent.subagents.find(
+    (task) => task.origin === "provider_native" && task.childThreadId === childThreadId,
+  );
+  if (subagent === undefined) return null;
+  const providerThread = child.providerThreads.find(
+    (thread) => thread.id === subagent.providerThreadId,
+  );
+  const turnItem = parent.turnItems.find(
+    (item): item is Extract<typeof item, { readonly type: "subagent" }> =>
+      item.type === "subagent" && item.subagentId === subagent.id,
+  );
+  if (providerThread === undefined || turnItem === undefined) return null;
+  const providerTurns = child.providerTurns.filter(
+    (turn) => turn.providerThreadId === providerThread.id,
+  );
+  const latestProviderTurn = providerTurns.reduce<
+    ProviderAdapterV2SubagentThread["latestProviderTurn"]
+  >((latest, turn) => (latest === null || turn.ordinal > latest.ordinal ? turn : latest), null);
+  return {
+    subagent,
+    childThread: child.thread,
+    providerThread,
+    turnItem,
+    latestProviderTurn,
+    providerTurns,
+  };
+});
 
 export interface ProviderTurnStartServiceV2Shape {
   /**
@@ -173,6 +220,32 @@ export const layer: Layer.Layer<
               }),
             )
             .pipe(Effect.catchCause(() => Effect.succeed(false))),
+      };
+    };
+
+    const makeRecoverySession = (session: ProviderAdapterV2SessionRuntime) => {
+      if (session.driver !== "codex") return session;
+      const readSubagentThread = (childThreadId: ThreadId) =>
+        readNativeSubagentThread(projectionStore, childThreadId).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderAdapterProtocolError({
+                driver: session.driver,
+                detail: "Failed to read the native subagent's saved routing metadata.",
+                cause,
+              }),
+          ),
+        );
+      return {
+        ...session,
+        startTurn: (turnInput: Parameters<typeof session.startTurn>[0]) =>
+          session.startTurn({ ...turnInput, readSubagentThread }),
+        ...(session.compactThread === undefined
+          ? {}
+          : {
+              compactThread: (turnInput: Parameters<typeof session.startTurn>[0]) =>
+                session.compactThread!({ ...turnInput, readSubagentThread }),
+            }),
       };
     };
 
@@ -1085,6 +1158,7 @@ export const layer: Layer.Layer<
                 !coveredItemIds.has(item.id) &&
                 historicalMessage(item) !== null,
             );
+      const recoverySession = makeRecoverySession(session);
       const startWithHandoffs = (
         turnInput: Parameters<typeof session.startTurn>[0],
         compact = false,
@@ -1163,7 +1237,7 @@ export const layer: Layer.Layer<
               }),
           });
           if (!(yield* isCurrentAttemptInStatus("running"))) return;
-          const start = compact ? session.compactThread! : session.startTurn;
+          const start = compact ? recoverySession.compactThread! : recoverySession.startTurn;
           const context = [delivery.context, restartNote]
             .filter((part) => part !== "")
             .join("\n\n");
@@ -1204,8 +1278,8 @@ export const layer: Layer.Layer<
         missedItems.length === 0 &&
         restartNote === "" &&
         !noteContinuation
-          ? session
-          : makeDeliverySession(session, startWithHandoffs);
+          ? recoverySession
+          : makeDeliverySession(recoverySession, startWithHandoffs);
       yield* runExecution.startRootRun({
         commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
         appThread: projection.thread,
