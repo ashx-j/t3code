@@ -512,7 +512,7 @@ Coverage includes:
 - spawn and result context transfers;
 - async status polling;
 - cancellation;
-- recurring-task creation, project-scoped listing, pausing, and deletion;
+- recurring-task creation, scheduled-task listing, pausing, and deletion;
 - batch ordinary-thread creation;
 - project-scoped thread listing and timeline reads;
 - ordinary-thread send, wait, steering, and interruption;
