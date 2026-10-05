@@ -61,7 +61,6 @@ import * as EventSink from "../EventSink.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as ProviderEventIngestor from "../ProviderEventIngestor.ts";
 import * as ProviderTurnStart from "../ProviderTurnStartService.ts";
-import { readNativeSubagentThread } from "../ProviderTurnStartService.ts";
 import * as ContextHandoffService from "../ContextHandoffService.ts";
 import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
@@ -76,6 +75,7 @@ import { makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderRe
 import {
   ProviderAdapterForkThreadError,
   ProviderAdapterOpenSessionError,
+  ProviderAdapterProtocolError,
   ProviderAdapterRollbackThreadError,
   ProviderAdapterV2RuntimePolicy,
   type ProviderAdapterV2Event,
@@ -6589,6 +6589,97 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ],
   });
 
+  it.effect(
+    "keeps accepted parent startup and new child tracking when a saved child lookup fails",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const childCompleted = yield* Deferred.make<void>();
+          const preamble = codexReplayPreamble({
+            nativeThreadId: RESUME_NATIVE_THREAD,
+            nativeTurnId: RESUME_NATIVE_TURN,
+            prompt: RESUME_PROMPT,
+          });
+          const harness = yield* makeCodexReplayHarness(
+            makeCodexReplayTranscript({
+              scenario: "codex-subagent-recovery-read-failure",
+              entries: [
+                ...preamble.slice(0, -2),
+                childTurnStarted(RESUME_CHILD_TURN_1),
+                ...preamble.slice(-2),
+                childTurnStarted(RESUME_CHILD_TURN_1),
+                resumeSubagentTranscript.entries.find(
+                  (entry) =>
+                    entry.type === "emit_inbound" &&
+                    entry.label === "item/completed/subAgentActivity-started",
+                )!,
+                childAgentMessage({
+                  id: "recovery-failure-child-answer",
+                  text: "CHILD_DONE_AFTER_READ_FAILURE",
+                  turnId: RESUME_CHILD_TURN_1,
+                  completedAtMs: 1782622442000,
+                }),
+                childTurnCompleted(RESUME_CHILD_TURN_1),
+              ],
+            }),
+            (event) =>
+              event.type === "subagent.updated" && event.subagent.status === "completed"
+                ? Deferred.succeed(childCompleted, undefined)
+                : Effect.void,
+          );
+          let failedLookups = 0;
+          yield* harness.runtime.startTurn({
+            ...makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("recovery-read-failure"),
+              text: RESUME_PROMPT,
+            }),
+            readSubagentThread: () =>
+              Effect.sync(() => {
+                failedLookups += 1;
+              }).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    new ProviderAdapterProtocolError({
+                      driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+                      detail: "Saved child metadata is unavailable.",
+                    }),
+                  ),
+                ),
+              ),
+          });
+          yield* Deferred.await(childCompleted);
+          assert.isAtLeast(failedLookups, 3);
+          assert.lengthOf(
+            harness.subagentUpdates().filter((event) => event.subagent.status === "completed"),
+            1,
+          );
+          assert.equal(
+            harness.subagentUpdates().at(-1)?.subagent.result,
+            "CHILD_DONE_AFTER_READ_FAILURE",
+          );
+          assert.lengthOf(
+            harness.events.filter(
+              (event) =>
+                event.type === "message.updated" &&
+                event.message.text === "CHILD_DONE_AFTER_READ_FAILURE",
+            ),
+            1,
+          );
+          assert.isTrue(
+            harness.events.some(
+              (event) =>
+                event.type === "provider_turn.updated" &&
+                event.providerTurn.nativeTurnRef?.nativeId === RESUME_NATIVE_TURN &&
+                event.providerTurn.status === "running",
+            ),
+          );
+        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      ),
+  );
+
   it.effect.each([
     { name: "Sol", model: "gpt-5.6-sol" },
     { name: "Fable", model: "gpt-5.6-fable" },
@@ -6917,6 +7008,20 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assert.equal(original.status, "completed");
           assert.equal(original.result, "CODEX_SECOND_DONE");
           const originalChild = yield* projections.getThreadProjection(original.childThreadId!);
+          assert.isNull(
+            yield* ProviderTurnStart.readNativeSubagentThread(
+              {
+                ...projections,
+                getThreadRecords: (threadId, fields, options) =>
+                  threadId === first.threadId
+                    ? Effect.fail(
+                        new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId }),
+                      )
+                    : projections.getThreadRecords(threadId, fields, options),
+              },
+              original.childThreadId!,
+            ),
+          );
           const resumed = yield* Deferred.make<void>();
           const newChildCompleted = yield* Deferred.make<void>();
           const nestedChildCompleted = yield* Deferred.make<void>();
@@ -7310,7 +7415,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           );
           assert.lengthOf(newChild.providerTurns, 1);
           assert.isNull(
-            yield* readNativeSubagentThread(
+            yield* ProviderTurnStart.readNativeSubagentThread(
               projections,
               idAllocator.derive.threadFromProviderThread({
                 driver: CodexAdapterV2.CODEX_DRIVER_KIND,

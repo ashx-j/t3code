@@ -1547,6 +1547,10 @@ export interface CodexAdapterV2Options {
   };
 }
 
+/**
+ * Creates an adapter for one Codex provider instance. Production client factories
+ * launch app-server processes; replay factories provide recorded protocol sessions.
+ */
 export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): ProviderAdapterV2Shape {
   const { clientFactory, fileSystem, idAllocator, serverConfig } = adapterOptions;
   const continuationRequests = adapterOptions.continuationRequests;
@@ -2472,7 +2476,14 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         ): Effect.fn.Return<CodexSubagentThreadContext | undefined, ProviderAdapterProtocolError> {
           if (restoring.has(childThreadId) || rootContext.input.readSubagentThread === undefined)
             return;
-          const saved = yield* rootContext.input.readSubagentThread(childThreadId);
+          const saved = yield* rootContext.input.readSubagentThread(childThreadId).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("orchestration-v2.codex-subagent-restore-read-failed", {
+                childThreadId,
+                cause,
+              }).pipe(Effect.as(null)),
+            ),
+          );
           if (
             saved === null ||
             saved.subagent.driver !== CODEX_PROVIDER ||

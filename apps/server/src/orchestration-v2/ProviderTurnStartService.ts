@@ -79,9 +79,12 @@ export const readNativeSubagentThread = Effect.fnUntraced(function* (
   if (child === null || child.thread.lineage.relationshipToParent !== "subagent") return null;
   const parentThreadId = child.thread.lineage.parentThreadId;
   if (parentThreadId === null) return null;
-  const parent = yield* projections.getThreadRecords(parentThreadId, ["subagents", "turnItems"], {
-    turnItemTypes: ["subagent"],
-  });
+  const parent = yield* projections
+    .getThreadRecords(parentThreadId, ["subagents", "turnItems"], {
+      turnItemTypes: ["subagent"],
+    })
+    .pipe(Effect.catchTag("ProjectionStoreThreadNotFoundError", () => Effect.succeed(null)));
+  if (parent === null) return null;
   const subagent = parent.subagents.find(
     (task) => task.origin === "provider_native" && task.childThreadId === childThreadId,
   );
