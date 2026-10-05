@@ -302,7 +302,7 @@ function PullRequestBadge({
           <presentation.Icon aria-hidden className="size-3 shrink-0" />
           {/* An element, not bare text: bare text takes its line box from the control, which
               inherits the row's size, so beside a text-sm title it sat below the other meta. */}
-          <span className="max-w-40 truncate">{presentation.text}</span>
+          <span className="inline-block max-w-40 truncate">{presentation.text}</span>
         </span>
       </TooltipTrigger>
       <TooltipPopup
