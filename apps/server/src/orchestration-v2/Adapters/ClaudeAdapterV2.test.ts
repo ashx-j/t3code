@@ -36,6 +36,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
@@ -6041,6 +6042,138 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             : [],
         );
         assert.deepEqual([...new Set(userRunItems)], ["assistant_message"]);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("retains workflow launch identity and deduplicates members across resumes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-workflow-resume"),
+            text: "Run a workflow",
+            attachments: [],
+          }),
+        );
+        let frame = 0;
+        const offer = (fields: Record<string, unknown>) =>
+          harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              task_id: "workflow-resume",
+              session_id: WAKE_NATIVE_SESSION,
+              uuid: `00000000-0000-4000-8000-${String(++frame).padStart(12, "0")}`,
+              ...fields,
+            }),
+          );
+        const awaitMessage = (text: string) =>
+          Stream.fromQueue(harness.messageReceipts).pipe(
+            Stream.filter((event) => event.message.text === text),
+            Stream.runHead,
+          );
+        const roster = [
+          {
+            type: "workflow_agent",
+            index: 0,
+            label: "Reviewer",
+            state: "running",
+            promptPreview: "Review the code",
+          },
+        ];
+        yield* offer({
+          subtype: "task_started",
+          task_type: "local_workflow",
+          tool_use_id: "launch",
+          description: "Review workflow",
+          prompt: "original workflow script",
+          workflow_progress: roster,
+        });
+        yield* awaitMessage("Review the code");
+        const coordinator = harness.events
+          .flatMap((event) =>
+            event.type === "subagent.updated" && event.subagent.workflow ? [event.subagent] : [],
+          )
+          .at(-1)!;
+        const launch = harness.events.flatMap((event) =>
+          event.type === "message.updated" && event.message.text === "original workflow script"
+            ? [event.message]
+            : [],
+        )[0]!;
+        assert.equal(coordinator.workflow?.launchMessageId, launch.id);
+        const members = () =>
+          harness.events.flatMap((event) =>
+            event.type === "subagent.updated" &&
+            event.subagent.threadId === coordinator.childThreadId
+              ? [event.subagent]
+              : [],
+          );
+        const firstMember = members()[0]!;
+        assert.isNotNull(firstMember.startedAt);
+        // Repeated progress must not recreate member threads or rewrite their messages.
+        yield* offer({
+          subtype: "task_progress",
+          workflow_progress: roster,
+          description: "Still reviewing",
+        });
+        yield* offer({
+          subtype: "task_notification",
+          status: "completed",
+          summary: "First run finished",
+        });
+        yield* awaitMessage("First run finished");
+        assert.deepEqual(
+          members().map((member) => member.status),
+          ["running", "completed"],
+        );
+        yield* offer({
+          subtype: "task_started",
+          task_type: "local_workflow",
+          tool_use_id: "resume",
+          description: "Review workflow",
+          prompt: "Check the follow-up change",
+        });
+        yield* offer({
+          subtype: "task_notification",
+          status: "completed",
+          summary: "Second run finished",
+        });
+        yield* awaitMessage("Second run finished");
+        const finalCoordinator = harness.events
+          .flatMap((event) =>
+            event.type === "subagent.updated" && event.subagent.id === coordinator.id
+              ? [event.subagent]
+              : [],
+          )
+          .at(-1)!;
+        assert.equal(finalCoordinator.prompt, "original workflow script");
+        assert.equal(finalCoordinator.workflow?.launchMessageId, launch.id);
+        const resume = harness.events.flatMap((event) =>
+          event.type === "message.updated" && event.message.text === "Check the follow-up change"
+            ? [event.message]
+            : [],
+        )[0]!;
+        assert.notEqual(resume.id, launch.id);
+        assert.equal(resume.threadId, launch.threadId);
+        assert.deepEqual(
+          members().map((member) => member.status),
+          ["running", "completed", "running", "completed"],
+        );
+        assert.isTrue(
+          members().every((member) => Equal.equals(member.startedAt, firstMember.startedAt)),
+        );
+        assert.equal(
+          harness.events.filter(
+            (event) =>
+              event.type === "app_thread.created" &&
+              event.appThread.id === firstMember.childThreadId,
+          ).length,
+          1,
+        );
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );

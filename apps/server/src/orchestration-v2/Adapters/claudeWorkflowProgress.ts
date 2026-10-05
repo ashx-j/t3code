@@ -151,6 +151,7 @@ export function mergeClaudeWorkflowProgress(input: {
       : { ...previous?.runHandles, ...input.runHandles };
   return {
     ...optional("name", name),
+    ...optional("launchMessageId", previous?.launchMessageId),
     ...(truncated ? { truncated: true } : {}),
     ...optional("runHandles", runHandles),
     phases: [...phases.values()].sort((a, b) => a.index - b.index),

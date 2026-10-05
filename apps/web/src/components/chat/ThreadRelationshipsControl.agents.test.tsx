@@ -848,3 +848,98 @@ it.each(["source", "target"])(
     }
   },
 );
+
+it.each(["parent", "coordinator"])(
+  "shows workflow follow-up status from the %s lineage",
+  async (currentThreadId) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const agent = {
+      id: "workflow-node",
+      driver: "claudeAgent",
+      providerInstanceId: "claude",
+      childThreadId: "coordinator",
+      title: "Review workflow",
+      prompt: "original script",
+      model: "claude-opus-4-6",
+      status: "completed",
+      result: "Old result",
+      startedAt: DateTime.makeUnsafe("2026-09-16T12:00:00Z"),
+      completedAt: DateTime.makeUnsafe("2026-09-16T12:03:00Z"),
+      updatedAt: DateTime.makeUnsafe("2026-09-16T12:03:00Z"),
+      workflow: { name: "Release review", phases: [], agents: [] },
+    };
+    const parent = {
+      id: "parent",
+      title: "Parent",
+      status: "completed",
+      activeProviderThreadId: null,
+      lineage: { parentThreadId: null, relationshipToParent: null },
+    };
+    const coordinator = {
+      id: "coordinator",
+      title: "Workflow thread",
+      status: "completed",
+      activeProviderThreadId: null,
+      lineage: { parentThreadId: "parent", relationshipToParent: "subagent" },
+      forkedFrom: { type: "node", nodeId: agent.id },
+    };
+    const project = (thread: typeof parent | typeof coordinator, subagents: (typeof agent)[]) => ({
+      thread,
+      subagents,
+      runs: [],
+      providerThreads: [],
+      providerSessions: [],
+      contextTransfers: [],
+    });
+    state.projection =
+      currentThreadId === "parent" ? project(parent, [agent]) : project(coordinator, []);
+    state.projections.set("parent", project(parent, [agent]));
+    state.owningAgents.set("parent:workflow-node", agent);
+    const panel = (
+      <ThreadRelationshipsPanel
+        environmentId={EnvironmentId.make("test")}
+        threadId={ThreadId.make(currentThreadId)}
+      />
+    );
+    let mounted = false;
+    for (const status of ["running", "waiting", null]) {
+      state.shells = [
+        parent,
+        {
+          ...coordinator,
+          activityRunStatus: status,
+          activityRunStartedAt: status ? DateTime.makeUnsafe("2026-09-16T12:05:00Z") : null,
+        },
+      ].map((source) => ({ environmentId: "test", source }));
+      await act(async () => {
+        if (mounted) renderer.update(cloneElement(panel));
+        else {
+          renderer = create(panel);
+          mounted = true;
+        }
+      });
+      if (currentThreadId === "parent" && status === null) {
+        const previousAgents = renderer.root
+          .findAllByType("button")
+          .find((button) =>
+            button
+              .findAll((node) => typeof node.type === "string")
+              .some((node) => node.children.includes("Previous agents")),
+          )!;
+        await act(async () => previousAgents.props.onClick());
+      }
+      const card = renderer.root.findByProps({ "aria-label": "Workflow: Release review" });
+      const text = card
+        .findAll((node) => typeof node.type === "string")
+        .flatMap((node) => node.children.filter((child) => typeof child === "string"))
+        .join(" ");
+      expect(text).toContain(
+        status === "running" ? "Running" : status === "waiting" ? "Waiting" : "Completed",
+      );
+      if (status) {
+        expect(text).not.toContain("Completed");
+        expect(text).not.toContain("3m 00s");
+      } else expect(text).toContain("3m 00s");
+    }
+  },
+);

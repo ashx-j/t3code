@@ -696,6 +696,8 @@ export type OrchestrationV2WorkflowRunHandles = typeof OrchestrationV2WorkflowRu
 
 /** Retained on the coordinator; members also have projected child threads for navigation. */
 export const OrchestrationV2SubagentWorkflow = Schema.Struct({
+  /** The immutable launch message, distinct from later resume prompts. */
+  launchMessageId: Schema.optional(MessageId),
   name: Schema.optional(WorkflowText),
   runHandles: Schema.optional(OrchestrationV2WorkflowRunHandles),
   phases: Schema.Array(OrchestrationV2WorkflowPhase).check(Schema.isMaxLength(WORKFLOW_MAX_PHASES)),

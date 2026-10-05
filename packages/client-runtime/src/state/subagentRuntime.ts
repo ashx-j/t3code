@@ -3,7 +3,11 @@
  * web agent rows render.
  */
 import * as DateTime from "effect/DateTime";
-import type { OrchestrationV2Subagent, OrchestrationV2SubagentWorkflow } from "@t3tools/contracts";
+import type {
+  OrchestrationV2Subagent,
+  OrchestrationV2SubagentWorkflow,
+  OrchestrationV2ThreadShell,
+} from "@t3tools/contracts";
 import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
 
 export type RuntimeSubagentStatus =
@@ -210,4 +214,28 @@ export function projectedSubagentsToRuntime(
       ? [coordinator]
       : [coordinator, ...workflowMemberRows(coordinator, workflow)];
   });
+}
+
+/**
+ * A delegated task settles with its first run, but the parent can keep sending
+ * the child follow-ups. While the child thread has a live run, the row's timer
+ * and hover card follow that run instead of the settled task.
+ */
+export function liveSubagent<Agent extends RuntimeSubagent>(
+  agent: Agent | undefined,
+  childThread: OrchestrationV2ThreadShell | null | undefined,
+): Agent | undefined {
+  const liveStatus = childThread?.activityRunStatus;
+  if (!agent || !liveStatus) return agent;
+  const startedAt = childThread.activityRunStartedAt;
+  return {
+    ...agent,
+    status: liveStatus === "running" || liveStatus === "waiting" ? liveStatus : "pending",
+    startedAt: startedAt ? DateTime.formatIso(startedAt) : null,
+    completedAt: null,
+    // The settled task's output belongs to its first run, not this one.
+    progress: null,
+    result: null,
+    error: null,
+  };
 }

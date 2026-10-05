@@ -7,7 +7,7 @@ import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   projectedSubagentsToRuntime,
-  type RuntimeSubagent,
+  liveSubagent,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import {
@@ -32,7 +32,6 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { groupBy } from "effect/Array";
-import * as DateTime from "effect/DateTime";
 import { useNavigate } from "@tanstack/react-router";
 import {
   ArrowRightIcon,
@@ -175,30 +174,6 @@ function relationshipThreadTitle(input: {
   return formatSubagentDisplayTitle(input.title);
 }
 
-/**
- * A delegated task settles with its first run, but the parent can keep sending
- * the child follow-ups. While the child thread has a live run, the row's timer
- * and hover card follow that run instead of the settled task.
- */
-function liveSubagent<Agent extends RuntimeSubagent>(
-  agent: Agent | undefined,
-  childThread: OrchestrationV2ThreadShell | null | undefined,
-): Agent | undefined {
-  const liveStatus = childThread?.activityRunStatus;
-  if (!agent || !liveStatus) return agent;
-  const startedAt = childThread.activityRunStartedAt;
-  return {
-    ...agent,
-    status: liveStatus === "running" || liveStatus === "waiting" ? liveStatus : "pending",
-    startedAt: startedAt ? DateTime.formatIso(startedAt) : null,
-    completedAt: null,
-    // The settled task's output belongs to its first run, not this one.
-    progress: null,
-    result: null,
-    error: null,
-  };
-}
-
 /** Only visible lineage rows resolve historical metadata outside the live projection window. */
 function ThreadLineageAgent(props: {
   readonly ownerRef: ScopedThreadRef | null;
@@ -220,6 +195,7 @@ function ThreadLineageAgent(props: {
     <li>
       <WorkflowCard
         agent={agent}
+        childThread={props.childThread}
         onOpenThread={props.onOpenThread}
         variant="panel"
         isThreadUnavailable={props.isThreadUnavailable}
@@ -422,6 +398,7 @@ export function ThreadRelationshipsPanel(props: {
               <li>
                 <WorkflowCard
                   agent={workflow}
+                  childThread={graph.nodes.get(props.threadId)?.thread}
                   onOpenThread={openThread}
                   variant="panel"
                   isThreadUnavailable={isThreadUnavailable}

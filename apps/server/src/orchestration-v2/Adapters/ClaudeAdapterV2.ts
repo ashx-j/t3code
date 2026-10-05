@@ -64,6 +64,7 @@ import {
   type OrchestrationV2Subagent,
   type OrchestrationV2SubagentWorkflow,
   type OrchestrationV2WorkflowRunHandles,
+  type OrchestrationV2WorkflowAgent,
   type OrchestrationV2AppThread,
   type OrchestrationV2TurnItem,
   type OrchestrationV2WebSearchResult,
@@ -4026,17 +4027,17 @@ export function makeClaudeAdapterV2(
           );
         });
 
-        const workflowMemberTasks = new Map<
-          string,
-          { readonly task: OrchestrationV2Subagent; readonly attempt: number }
-        >();
         const withWorkflowMemberThreads = (
           workflow: OrchestrationV2SubagentWorkflow,
           coordinatorThreadId: ThreadId,
+          startedAt: DateTime.Utc | null,
         ): OrchestrationV2SubagentWorkflow => ({
           ...workflow,
           agents: workflow.agents.map((member) => ({
             ...member,
+            ...(member.state === "running" && member.startedAt === undefined && startedAt !== null
+              ? { startedAt: DateTime.toEpochMillis(startedAt) }
+              : {}),
             childThreadId: idAllocator.derive.threadFromProviderThread({
               driver: CLAUDE_PROVIDER,
               nativeThreadId: `${coordinatorThreadId}:agent:${member.index}`,
@@ -4044,61 +4045,79 @@ export function makeClaudeAdapterV2(
           })),
         });
 
+        // Derive member projection state from the retained roster, rather than
+        // retaining a second session-wide cache of every workflow's tasks.
+        const workflowMemberState = (
+          member: OrchestrationV2WorkflowAgent,
+          coordinator: OrchestrationV2Subagent,
+        ) => {
+          const status: OrchestrationV2Subagent["status"] =
+            member.state === "completed" || member.state === "failed"
+              ? member.state
+              : coordinator.status !== "running"
+                ? coordinator.status
+                : member.state === "queued"
+                  ? "pending"
+                  : "running";
+          const startedAt =
+            member.startedAt !== undefined && member.startedAt <= 8.64e15
+              ? DateTime.makeUnsafe(member.startedAt)
+              : null;
+          const settled = status !== "pending" && status !== "running";
+          const completedAt = !settled
+            ? null
+            : startedAt !== null &&
+                member.durationMs !== undefined &&
+                DateTime.toEpochMillis(startedAt) + member.durationMs <= 8.64e15
+              ? DateTime.makeUnsafe(DateTime.toEpochMillis(startedAt) + member.durationMs)
+              : member.state === "queued" || member.state === "running"
+                ? coordinator.completedAt
+                : null;
+          return {
+            status,
+            prompt: member.prompt ?? "",
+            model: member.model ?? null,
+            result: member.result ?? null,
+            startedAt,
+            completedAt,
+          };
+        };
+
         // Members have no SDK task of their own. Project the provider's excerpts
         // into child conversations, without reading arbitrary transcript paths.
         const projectWorkflowMembers = Effect.fnUntraced(function* (
           coordinator: ActiveClaudeSubagent,
+          previousCoordinator: ActiveClaudeSubagent | undefined,
+          lifecycleChanged: boolean,
         ) {
           const parentThread = coordinator.childThread;
           if (parentThread === null || coordinator.task.workflow === undefined) return;
           const now = yield* DateTime.now;
+          const previousMembers = new Map(
+            previousCoordinator?.task.workflow?.agents.map((member) => [member.index, member]),
+          );
           for (const member of coordinator.task.workflow.agents) {
             const childThreadId = member.childThreadId;
             if (childThreadId === undefined) continue;
             // Scope every artifact to the coordinator's provider-thread-scoped id.
             const key = `${coordinator.childThreadId}:agent:${member.index}`;
-            const cached = workflowMemberTasks.get(key);
-            const previous = cached?.task;
-            const attempt = member.attempt ?? 1;
-            const restarted = cached !== undefined && attempt > cached.attempt;
-            const status =
-              member.state === "completed" || member.state === "failed"
-                ? member.state
-                : coordinator.task.status !== "running"
-                  ? coordinator.task.status
-                  : member.state === "queued"
-                    ? "pending"
-                    : "running";
-            const prompt = member.prompt ?? "";
-            const model = member.model ?? null;
-            const result = member.result ?? null;
-            const settled = status !== "pending" && status !== "running";
-            const memberStartedAt =
-              member.startedAt !== undefined && member.startedAt <= 8.64e15
-                ? DateTime.makeUnsafe(member.startedAt)
-                : null;
-            const startedAt =
-              memberStartedAt ??
-              (restarted ? null : previous?.startedAt) ??
-              (status === "running" ? now : null);
-            const memberCompletedAt =
-              memberStartedAt !== null &&
-              member.durationMs !== undefined &&
-              DateTime.toEpochMillis(memberStartedAt) + member.durationMs <= 8.64e15
-                ? DateTime.makeUnsafe(DateTime.toEpochMillis(memberStartedAt) + member.durationMs)
-                : null;
-            const completedAt = settled
-              ? (memberCompletedAt ??
-                (restarted ? null : previous?.completedAt) ??
-                (member.state === "queued" || member.state === "running"
-                  ? coordinator.task.completedAt
-                  : null))
-              : null;
+            const priorMember = previousMembers.get(member.index);
+            const previous =
+              priorMember && previousCoordinator
+                ? workflowMemberState(priorMember, previousCoordinator.task)
+                : undefined;
+            const restarted =
+              priorMember !== undefined && (member.attempt ?? 1) > (priorMember.attempt ?? 1);
+            const { status, prompt, model, result, startedAt, completedAt } = workflowMemberState(
+              member,
+              coordinator.task,
+            );
             if (
+              !lifecycleChanged &&
               !restarted &&
               previous?.status === status &&
               previous.prompt === prompt &&
-              previous.title === member.label &&
+              priorMember?.label === member.label &&
               previous.model === model &&
               previous.result === result &&
               Equal.equals(previous.startedAt, startedAt) &&
@@ -4243,7 +4262,6 @@ export function makeClaudeAdapterV2(
                 turnItem: artifacts.turnItem,
               });
             }
-            workflowMemberTasks.set(key, { task, attempt });
           }
         });
 
@@ -4380,13 +4398,29 @@ export function makeClaudeAdapterV2(
             existingSubagent !== undefined
               ? { runId: input.context.input.runId }
               : {}),
-            ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
+            ...(input.prompt === undefined || priorTask?.workflow !== undefined
+              ? {}
+              : { prompt: input.prompt }),
             ...(input.title === undefined ? {} : { title: input.title }),
             ...(input.model === undefined ? {} : { model: input.model }),
             ...(input.progress === undefined ? {} : { progress: input.progress }),
             ...(workflow === undefined
               ? {}
-              : { workflow: withWorkflowMemberThreads(workflow, childThreadId) }),
+              : {
+                  workflow: {
+                    ...withWorkflowMemberThreads(
+                      workflow,
+                      childThreadId,
+                      input.status === "running" ? now : null,
+                    ),
+                    launchMessageId:
+                      workflow.launchMessageId ??
+                      idAllocator.derive.messageFromProviderItem({
+                        driver: CLAUDE_PROVIDER,
+                        nativeItemId: `${nativeItemId}:prompt`,
+                      }),
+                  },
+                }),
             ...(input.result === undefined ? {} : { result: input.result }),
             ...(isReopen ? { startedAt: now } : {}),
             completedAt: input.status === "running" ? null : (priorTask?.completedAt ?? now),
@@ -4580,7 +4614,7 @@ export function makeClaudeAdapterV2(
                 strength: "strong",
               },
               role: "user",
-              text: task.prompt,
+              text: input.prompt ?? task.prompt,
               ordinal: existingSubagent === undefined ? 100 : ++subagent.nextChildItemOrdinal,
               now,
             });
@@ -4600,7 +4634,7 @@ export function makeClaudeAdapterV2(
             driver: CLAUDE_PROVIDER,
             subagent: task,
           });
-          yield* projectWorkflowMembers(subagent);
+          yield* projectWorkflowMembers(subagent, existingSubagent, lifecycleChanged);
           yield* emitProviderEvent({
             type: "turn_item.updated",
             driver: CLAUDE_PROVIDER,

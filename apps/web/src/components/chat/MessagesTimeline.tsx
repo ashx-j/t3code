@@ -1975,8 +1975,13 @@ function ProviderUserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "m
   const agent = liveAgent ?? retainedAgent;
   return agent?.workflow &&
     agent.childThreadId === ctx.threadRef?.threadId &&
-    agent.prompt === row.message.text ? (
-    <WorkflowCard agent={agent} onOpenThread={ctx.onOpenThread} inWorkflowThread />
+    agent.workflow.launchMessageId === row.message.id ? (
+    <WorkflowCard
+      agent={agent}
+      childThread={shell?.source}
+      onOpenThread={ctx.onOpenThread}
+      inWorkflowThread
+    />
   ) : (
     <UserMessageTimelineRow row={row} />
   );

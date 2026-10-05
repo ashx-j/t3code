@@ -1,6 +1,11 @@
-import { ThreadId, type OrchestrationV2Subagent } from "@t3tools/contracts";
+import {
+  ThreadId,
+  type OrchestrationV2Subagent,
+  type OrchestrationV2ThreadShell,
+} from "@t3tools/contracts";
 import {
   projectedSubagentsToRuntime,
+  liveSubagent,
   isActiveSubagentStatus,
   type RuntimeSubagent,
 } from "@t3tools/client-runtime/state/subagentRuntime";
@@ -74,12 +79,14 @@ function StatusMark({ status }: { status: WorkflowStatus }) {
 /** The same ordered phase tree in the conversation and workspace lineage. */
 export function WorkflowCard({
   agent,
+  childThread,
   onOpenThread,
   inWorkflowThread = false,
   variant = "conversation",
   isThreadUnavailable,
 }: {
   agent: OrchestrationV2Subagent;
+  childThread?: OrchestrationV2ThreadShell | null | undefined;
   onOpenThread: (threadId: ThreadId) => void;
   inWorkflowThread?: boolean;
   variant?: "conversation" | "panel";
@@ -92,7 +99,7 @@ export function WorkflowCard({
   const { childThreadId } = agent;
   const coordinatorUnavailable = childThreadId !== null && isThreadUnavailable?.(childThreadId);
   const runtime = projectedSubagentsToRuntime([agent]);
-  const coordinator = runtime[0]!;
+  const coordinator = liveSubagent(runtime[0], childThread)!;
   const members = runtime.slice(1);
   const phaseMap = new Map(coordinator.phases.map((phase) => [phase.index, phase.title]));
   for (const member of members) {
