@@ -530,7 +530,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "skill-trigger-character",
-    title: "Skill trigger character",
+    title: "Composer: Skill trigger character",
     to: "/settings/keybindings",
     searchTerms: ["composer picker symbol dollar plus keyboard layout"],
   },

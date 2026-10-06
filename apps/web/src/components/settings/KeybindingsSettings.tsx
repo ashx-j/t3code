@@ -1268,6 +1268,7 @@ function NewKeybindingSettingsRow(props: NewKeybindingProps) {
 
 interface KeybindingsListProps extends KeybindingRowActions {
   rows: ReadonlyArray<KeybindingRow>;
+  query: string;
   commandOptions: ReadonlyArray<KeybindingCommandOption>;
   savingCommand: KeybindingCommand | null;
   isAddingBinding: boolean;
@@ -1276,8 +1277,15 @@ interface KeybindingsListProps extends KeybindingRowActions {
 
 /** The add-binding row, one settings row per binding, and the empty state. */
 function KeybindingsList(props: KeybindingsListProps) {
-  const { rows, commandOptions, savingCommand, isAddingBinding, onCancelAdd, ...rowActions } =
-    props;
+  const {
+    rows,
+    query,
+    commandOptions,
+    savingCommand,
+    isAddingBinding,
+    onCancelAdd,
+    ...rowActions
+  } = props;
   const newProps: NewKeybindingProps = {
     commandOptions,
     allRows: rows,
@@ -1297,19 +1305,31 @@ function KeybindingsList(props: KeybindingsListProps) {
     }
     return ids;
   }, [rows]);
+  const renderedRows = rows.map((row) => (
+    <KeybindingSettingsRow
+      key={row.id}
+      row={row}
+      anchorId={anchorIds.get(row.id)}
+      isSaving={savingCommand === row.command}
+      {...rowActions}
+    />
+  ));
+  const skillTriggerTitle = searchableSetting("skill-trigger-character").title;
+  if (skillTriggerTitle.toLowerCase().includes(query.trim().toLowerCase())) {
+    const insertAt = rows.findIndex(
+      (row) => commandLabel(row.command).localeCompare(skillTriggerTitle) > 0,
+    );
+    renderedRows.splice(
+      insertAt === -1 ? renderedRows.length : insertAt,
+      0,
+      <SkillTriggerSetting key="skill-trigger-character" />,
+    );
+  }
   return (
     <div>
       {isAddingBinding ? <NewKeybindingSettingsRow {...newProps} /> : null}
-      {rows.map((row) => (
-        <KeybindingSettingsRow
-          key={row.id}
-          row={row}
-          anchorId={anchorIds.get(row.id)}
-          isSaving={savingCommand === row.command}
-          {...rowActions}
-        />
-      ))}
-      {rows.length === 0 && !isAddingBinding ? (
+      {renderedRows}
+      {renderedRows.length === 0 && !isAddingBinding ? (
         <div className="px-4 py-12 text-center text-sm text-muted-foreground">
           No keybindings match your search.
         </div>
@@ -1421,7 +1441,8 @@ export function KeybindingsSettingsPanel() {
   // A settings-search jump must not be hidden by the page's own filter.
   if (searchTargetId !== handledSearchTargetId) {
     setHandledSearchTargetId(searchTargetId);
-    if (searchTargetId.startsWith("keybinding-")) setQuery("");
+    if (searchTargetId.startsWith("keybinding-") || searchTargetId === "skill-trigger-character")
+      setQuery("");
   }
   const commandOptions = useMemo(() => buildKeybindingCommandOptions(keybindings), [keybindings]);
   const whenVariables = useMemo(() => buildWhenVariableOptions(), []);
@@ -1559,6 +1580,7 @@ export function KeybindingsSettingsPanel() {
 
   const listProps: KeybindingsListProps = {
     rows,
+    query,
     allRows: rows,
     commandOptions,
     variables: whenVariables,
@@ -1572,9 +1594,6 @@ export function KeybindingsSettingsPanel() {
 
   return (
     <SettingsPageContainer>
-      <SettingsSection title="Composer">
-        <SkillTriggerSetting />
-      </SettingsSection>
       <SettingsSection
         {...searchableSetting("keybindings")}
         headerAction={

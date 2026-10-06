@@ -61,6 +61,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useEffectEvent,
   useId,
   useImperativeHandle,
   useLayoutEffect,
@@ -80,6 +81,7 @@ import {
   detectComposerTrigger as detectComposerTriggerWithCharacter,
   expandCollapsedComposerCursor,
   formatAssistantCitationForComposer,
+  isCollapsedCursorAdjacentToInlineToken,
   replaceTextRange,
 } from "../../composer-logic";
 import { DISCONNECTED_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
@@ -3487,7 +3489,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Reset compositor state on thread/draft change
   // ------------------------------------------------------------------
-  useEffect(() => {
+  const resetComposerForThread = useEffectEvent(() => {
     setComposerHighlightedItemId(null);
     setComposerHighlightedSearchKey(null);
     setComposerSubmissionError(null);
@@ -3496,14 +3498,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     resetComposerTrigger(detectComposerTrigger(promptRef.current, promptRef.current.length));
     setIsDragOverComposer(false);
     setIsComposerScrollCollapsed(false);
-  }, [
-    draftId,
-    activeThreadId,
-    promptRef,
-    resetComposerTrigger,
-    setIsComposerScrollCollapsed,
-    detectComposerTrigger,
-  ]);
+  });
+  useEffect(() => {
+    resetComposerForThread();
+  }, [draftId, activeThreadId]);
 
   // ------------------------------------------------------------------
   // Footer compact layout observation
@@ -3908,6 +3906,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       contextIds: collectInlineContextIds(promptRef.current),
     };
   }, [composerCursor, promptRef]);
+
+  // A preference update refreshes suggestions without moving the caret or resetting the draft UI.
+  const refreshComposerTrigger = useEffectEvent(() => {
+    const snapshot = readComposerSnapshot();
+    const selection = composerEditorRef.current?.readSelectionRange();
+    const cursorAdjacentToMention =
+      isCollapsedCursorAdjacentToInlineToken(snapshot.value, snapshot.cursor, "left") ||
+      isCollapsedCursorAdjacentToInlineToken(snapshot.value, snapshot.cursor, "right");
+    resetComposerTrigger(
+      (selection && selection.start !== selection.end) || cursorAdjacentToMention
+        ? null
+        : detectComposerTrigger(snapshot.value, snapshot.expandedCursor),
+    );
+  });
+  useEffect(() => {
+    refreshComposerTrigger();
+  }, [settings.skillTriggerCharacter]);
 
   const resolveActiveComposerTrigger = useCallback((): {
     snapshot: { value: string; cursor: number; expandedCursor: number };
