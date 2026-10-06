@@ -6981,27 +6981,61 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               task_type: taskType,
             }),
             ...(taskType === "local_workflow"
-              ? [
+              ? Array.from({ length: 100 }, (_, index) =>
                   claudeSdkFrame({
                     type: "system",
                     subtype: "task_progress",
                     task_id: TASK_ID,
-                    description: "",
-                    workflow_progress: [
-                      { type: "workflow_phase", index: 1, title: "Audit" },
-                      {
-                        type: "workflow_agent",
-                        index: 0,
-                        label: "Idle member",
-                        state: "done",
-                        promptPreview: "Review the source",
-                        resultPreview: "Source reviewed",
-                      },
-                    ],
-                    uuid: "00000000-0000-4000-8000-000000001008",
+                    description: `Audit progress ${index}`,
+                    usage: { total_tokens: index + 1, tool_uses: index, duration_ms: index * 10 },
+                    workflow_progress:
+                      index === 0
+                        ? [
+                            { type: "workflow_phase", index: 1, title: "Audit" },
+                            {
+                              type: "workflow_agent",
+                              index: 0,
+                              label: "Idle member",
+                              state: "done",
+                              attempt: 1,
+                              promptPreview: "Review the source",
+                              resultPreview: "Stale review",
+                            },
+                            {
+                              type: "workflow_agent",
+                              index: 1,
+                              label: "Other member",
+                              state: "done",
+                              resultPreview: "Other review",
+                            },
+                          ]
+                        : index < 50
+                          ? [
+                              {
+                                type: "workflow_agent",
+                                index: 0,
+                                label: "Idle member",
+                                state: "start",
+                                attempt: 2,
+                              },
+                            ]
+                          : index === 50
+                            ? [
+                                { type: "workflow_phase", index: 2, title: "Verify" },
+                                {
+                                  type: "workflow_agent",
+                                  index: 0,
+                                  label: "Idle member",
+                                  state: "done",
+                                  attempt: 2,
+                                  resultPreview: "Source reviewed",
+                                },
+                              ]
+                            : [],
+                    uuid: `00000000-0000-4000-8000-${String(1008 + index).padStart(12, "0")}`,
                     session_id: WAKE_NATIVE_SESSION,
                   }),
-                ]
+                )
               : []),
             ...makeSubagentAssistantFrames({
               parentToolUseId: TOOL_USE_ID,
@@ -7019,11 +7053,28 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               uuid: "00000000-0000-4000-8000-000000000335",
               text: FINAL_REPORT,
             }),
-            makeSubagentNotificationFrame({
-              taskId: TASK_ID,
-              toolUseId: TOOL_USE_ID,
-              summary: FINAL_REPORT,
-              uuid: "00000000-0000-4000-8000-000000000336",
+            claudeSdkFrame({
+              ...makeSubagentNotificationFrame({
+                taskId: TASK_ID,
+                toolUseId: TOOL_USE_ID,
+                summary: FINAL_REPORT,
+                uuid: "00000000-0000-4000-8000-000000000336",
+              }),
+              ...(taskType === "local_workflow"
+                ? {
+                    workflow_progress: [
+                      { type: "workflow_phase", index: 3, title: "Follow-up" },
+                      {
+                        type: "workflow_agent",
+                        index: 2,
+                        label: "Late member",
+                        state: "done",
+                        resultPreview: "Late review",
+                      },
+                    ],
+                    usage: { total_tokens: 150, tool_uses: 120, duration_ms: 1500 },
+                  }
+                : {}),
             }),
           ];
           for (const frame of idleFrames) {
@@ -7033,6 +7084,51 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             }
           }
           assert.lengthOf(harness.continuationRequests, 1);
+          if (taskType === "local_workflow") {
+            // A terminal can discover more members before an idle resume. Its
+            // roster and usage must survive the next compacted progress frame.
+            yield* harness.offerAndWait(
+              claudeSdkFrame({
+                ...makeSubagentTaskStartedFrame({
+                  taskId: TASK_ID,
+                  toolUseId: TOOL_USE_ID,
+                  uuid: "00000000-0000-4000-8000-000000002002",
+                }),
+                task_type: "local_workflow",
+              }),
+            );
+            for (const [index, state] of ["start", "done"].entries()) {
+              yield* harness.offerAndWait(
+                claudeSdkFrame({
+                  type: "system",
+                  subtype: "task_progress",
+                  task_id: TASK_ID,
+                  description: index === 0 ? "Audit resumed" : "",
+                  workflow_progress: [
+                    {
+                      type: "workflow_agent",
+                      index: 0,
+                      label: "Idle member",
+                      state,
+                      attempt: 3,
+                      ...(state === "done" ? { resultPreview: "Source reviewed again" } : {}),
+                    },
+                  ],
+                  uuid: `00000000-0000-4000-8000-00000000200${3 + index}`,
+                  session_id: WAKE_NATIVE_SESSION,
+                }),
+              );
+              assert.lengthOf(harness.continuationRequests, 1);
+            }
+            yield* harness.offerAndWait(
+              makeSubagentNotificationFrame({
+                taskId: TASK_ID,
+                toolUseId: TOOL_USE_ID,
+                summary: FINAL_REPORT,
+                uuid: "00000000-0000-4000-8000-000000002005",
+              }),
+            );
+          }
           yield* harness.offerAndWait(
             makeResultFrame({
               uuid: "00000000-0000-4000-8000-000000000337",
@@ -7063,6 +7159,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.deepEqual(routing.assistantTexts(routing.childThreadId), [
             "Idle auditor working.",
             FINAL_REPORT,
+            ...(taskType === "local_workflow" ? [FINAL_REPORT] : []),
           ]);
           assert.deepEqual(routing.assistantTexts(harness.threadId), [
             "Waiting in the background.",
@@ -7077,17 +7174,37 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             finalSubagent?.type === "subagent.updated" ? finalSubagent.subagent : undefined;
           assert.equal(coordinator?.status, "completed");
           if (taskType === "local_workflow") {
-            assert.deepEqual(coordinator?.workflow?.phases, [{ index: 1, title: "Audit" }]);
-            assert.lengthOf(coordinator?.workflow?.agents ?? [], 1);
+            assert.deepEqual(coordinator?.workflow?.phases, [
+              { index: 1, title: "Audit" },
+              { index: 2, title: "Verify" },
+              { index: 3, title: "Follow-up" },
+            ]);
+            assert.lengthOf(coordinator?.workflow?.agents ?? [], 3);
+            assert.equal(coordinator?.workflow?.totalTokens, 150);
+            assert.equal(coordinator?.workflow?.toolCalls, 120);
+            assert.equal(coordinator?.workflow?.durationMs, 1500);
+            assert.equal(coordinator?.progress, "Audit resumed");
+            assert.equal(coordinator?.workflow?.agents[1]?.result, "Other review");
+            assert.equal(coordinator?.workflow?.agents[2]?.result, "Late review");
+            const rosterUpdates = harness.events.filter(
+              (event) =>
+                event.type === "subagent.updated" &&
+                event.subagent.nativeTaskRef?.nativeId === TASK_ID &&
+                (event.subagent.workflow?.agents.length ?? 0) > 0,
+            );
+            // Progress replay stays bounded across the initial task and its resume.
+            assert.isAtMost(rosterUpdates.length, 6);
             const member = coordinator?.workflow?.agents[0];
             assert.equal(member?.state, "completed");
-            assert.equal(member?.result, "Source reviewed");
+            assert.equal(member?.result, "Source reviewed again");
+            assert.equal(member?.attempt, 3);
+            assert.isUndefined(member?.prompt);
             assert.isTrue(
               harness.events.some(
                 (event) =>
                   event.type === "message.updated" &&
                   event.message.threadId === member?.childThreadId &&
-                  event.message.text === "Source reviewed",
+                  event.message.text === "Source reviewed again",
               ),
             );
           } else {

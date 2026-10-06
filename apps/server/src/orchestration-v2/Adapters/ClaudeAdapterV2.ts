@@ -3157,6 +3157,9 @@ export function makeClaudeAdapterV2(
         const pendingSubagentFramesByToolUseId = yield* Ref.make(
           new Map<string, ReadonlyArray<SDKMessage>>(),
         );
+        // Keep one bounded, merged roster per buffered progress frame. Weak keys
+        // release snapshots when their native thread buffer is drained or discarded.
+        const bufferedWorkflowProgress = new WeakMap<SDKMessage, OrchestrationV2SubagentWorkflow>();
         const wakeBuffers = yield* Ref.make(
           new Map<
             string,
@@ -4459,8 +4462,15 @@ export function makeClaudeAdapterV2(
                     existingSubagent.task,
                   )
                 : existingSubagent.task;
+          const bufferedWorkflow =
+            input.workflowFrame === undefined
+              ? undefined
+              : bufferedWorkflowProgress.get(input.workflowFrame);
           const workflow = mergeClaudeWorkflowProgress({
-            previous: priorTask?.workflow,
+            previous:
+              bufferedWorkflow === undefined
+                ? priorTask?.workflow
+                : { ...priorTask?.workflow, ...bufferedWorkflow },
             message: input.workflowFrame,
             runHandles: input.workflowRunHandles,
           });
@@ -4601,7 +4611,8 @@ export function makeClaudeAdapterV2(
             input.workflowFrame.subtype === "task_progress"
           ) {
             const roster: unknown = Reflect.get(input.workflowFrame, "workflow_progress");
-            if (!Array.isArray(roster) || roster.length === 0) return;
+            if (bufferedWorkflow === undefined && (!Array.isArray(roster) || roster.length === 0))
+              return;
           }
 
           if (subagent.childThread === null) {
@@ -5651,8 +5662,8 @@ export function makeClaudeAdapterV2(
                 entry.task_type === "local_workflow" &&
                 entry.task_id === message.task_id,
             );
-          // Retain the first idle roster for replay after its buffered start.
-          // Progress alone must not request a continuation.
+          // Merge idle progress for replay after its buffered start. Progress
+          // alone must not request a continuation.
           if (!isWakeEvidence && !isBufferedWorkflowProgress) {
             return;
           }
@@ -5685,11 +5696,71 @@ export function makeClaudeAdapterV2(
               childThreadId: registered?.childThreadId,
             });
           }
+          const registeredWorkflow =
+            isBufferedWorkflowProgress &&
+            message.type === "system" &&
+            message.subtype === "task_progress"
+              ? (yield* Ref.get(sessionSubagentsByTaskId)).get(message.task_id)?.task.workflow
+              : undefined;
           yield* Ref.update(wakeBuffers, (current) => {
             const existing = current.get(wakeInput.nativeThreadId);
+            const messages = [...(existing?.messages ?? [])];
+            if (
+              isBufferedWorkflowProgress &&
+              message.type === "system" &&
+              message.subtype === "task_progress"
+            ) {
+              // A start or terminal for the same task is a replay boundary. Do
+              // not move progress across it when a task resumes while idle.
+              const previousIndex = messages.findLastIndex(
+                (entry) =>
+                  entry.type === "system" &&
+                  (entry.subtype === "task_started" ||
+                    entry.subtype === "task_progress" ||
+                    entry.subtype === "task_notification") &&
+                  entry.task_id === message.task_id,
+              );
+              const previous = messages[previousIndex];
+              let workflow = registeredWorkflow;
+              for (const entry of messages) {
+                if (
+                  entry.type === "system" &&
+                  (entry.subtype === "task_started" ||
+                    entry.subtype === "task_progress" ||
+                    entry.subtype === "task_notification") &&
+                  entry.task_id === message.task_id
+                ) {
+                  workflow =
+                    bufferedWorkflowProgress.get(entry) ??
+                    mergeClaudeWorkflowProgress({ previous: workflow, message: entry });
+                }
+              }
+              workflow = mergeClaudeWorkflowProgress({ previous: workflow, message });
+              if (workflow !== undefined) {
+                // Raw rosters can contain every member on every tick. Retain
+                // only the merged, contract-bounded snapshot and latest usage.
+                const compacted = {
+                  ...message,
+                  description:
+                    message.description.trim().length === 0 &&
+                    previous?.type === "system" &&
+                    previous.subtype === "task_progress"
+                      ? previous.description
+                      : message.description,
+                  workflow_progress: [],
+                };
+                bufferedWorkflowProgress.set(compacted, workflow);
+                if (previous?.type === "system" && previous.subtype === "task_progress") {
+                  messages.splice(previousIndex, 1);
+                }
+                messages.push(compacted);
+              }
+            } else {
+              messages.push(message);
+            }
             const updated = new Map(current);
             updated.set(wakeInput.nativeThreadId, {
-              messages: [...(existing?.messages ?? []), message],
+              messages,
               detail: notificationSummary ?? existing?.detail ?? null,
             });
             return updated;
