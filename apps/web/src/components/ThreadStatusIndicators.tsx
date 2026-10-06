@@ -249,6 +249,7 @@ export function ThreadPullRequestBadgeControl({
   );
 }
 
+/** Renders a single-PR link or PR-list button, with individual PR details in the tooltip. */
 function PullRequestBadge({
   render,
   presentation,
