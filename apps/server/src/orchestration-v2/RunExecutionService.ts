@@ -506,6 +506,7 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly attempt: OrchestrationV2RunAttempt;
   readonly attemptId: RunAttemptId;
   readonly providerTurnOrdinal: number;
+  readonly nativeThreadHasTurns?: boolean;
   readonly loadInheritedBackgroundTurnItems?: () => Effect.Effect<
     ReadonlyArray<InheritedBackgroundTurnItemRoute>,
     unknown
@@ -781,6 +782,7 @@ export const layer: Layer.Layer<
             activeAttemptId: input.writeIfRunCurrent.activeAttemptId,
             expectedStatus: input.writeIfRunCurrent.expectedStatus,
             events: finalization.events,
+            effects: finalization.effects,
           });
           if (!result.committed) {
             return;
@@ -969,7 +971,15 @@ export const layer: Layer.Layer<
                 attempt: input.attempt,
                 ...(input.shouldFinalizeRun === undefined
                   ? {}
-                  : { shouldFinalizeRun: input.shouldFinalizeRun }),
+                  : {
+                      shouldFinalizeRun: input.shouldFinalizeRun,
+                      // Stop may commit between the ownership read and this
+                      // terminal write. Gate the events and checkpoint together.
+                      writeIfRunCurrent: {
+                        activeAttemptId: input.attempt.id,
+                        expectedStatus: "running" as const,
+                      },
+                    }),
                 ...(input.hasUnpairedRunInterruptRequest === undefined
                   ? {}
                   : {
@@ -1347,6 +1357,9 @@ export const layer: Layer.Layer<
             runId: input.run.id,
             runOrdinal: input.run.ordinal,
             providerTurnOrdinal: input.providerTurnOrdinal,
+            ...(input.nativeThreadHasTurns === undefined
+              ? {}
+              : { nativeThreadHasTurns: input.nativeThreadHasTurns }),
             ...(input.run.restartContinuationOfRunId === undefined
               ? {}
               : {
@@ -1432,7 +1445,7 @@ export const layer: Layer.Layer<
   }),
 );
 
-function makeInterruptResultTurnItem(input: {
+export function makeInterruptResultTurnItem(input: {
   readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
   readonly run: OrchestrationV2Run;
   readonly rootNode: OrchestrationV2ExecutionNode;

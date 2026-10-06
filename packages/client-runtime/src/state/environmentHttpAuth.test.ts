@@ -12,6 +12,7 @@ import {
   OrchestrationV2ThreadBoundedSnapshot,
   type OrchestrationV2ThreadHistoryPage,
 } from "@t3tools/contracts";
+import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -19,8 +20,9 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Tracer from "effect/Tracer";
 import { TestClock } from "effect/testing";
-import type { HttpClient } from "effect/unstable/http";
+import type { HttpClient } from "effect/http";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import {
@@ -30,17 +32,18 @@ import {
   type PreparedHttpAuthorization,
 } from "../connection/model.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
-import { remoteHttpClientLayer, type RemoteEnvironmentRequestError } from "../rpc/http.ts";
+import { type RemoteEnvironmentRequestError } from "../rpc/http.ts";
+import * as RpcHttp from "../rpc/http.ts";
 import * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
 import { withOrchestrationProtocolHeader } from "./environmentHttpAuth.ts";
 import { fetchEnvironmentSessionState } from "./session.ts";
 import { fetchEnvironmentShellSnapshot } from "./shellSnapshotHttp.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
 import {
-  boundedThreadSnapshotLoaderLayer,
   fetchEnvironmentBoundedThreadSnapshot,
   fetchEnvironmentThreadSubagent,
 } from "./boundedThreadSnapshotHttp.ts";
+import * as BoundedThreadSnapshotHttp from "./boundedThreadSnapshotHttp.ts";
 import { fetchEnvironmentThreadHistoryPage } from "./threadHistoryHttp.ts";
 import { v2Projection } from "./orchestrationV2TestFixtures.ts";
 
@@ -192,7 +195,7 @@ function makeHarness(reply: (requestNumber: number) => Response | Promise<Respon
       signer: Option.some(signer),
       remoteAuthorization: Option.some(remoteAuthorization),
     },
-    httpLayer: remoteHttpClientLayer(fetchFn),
+    httpLayer: RpcHttp.layerRemoteHttpClient(fetchFn),
   };
 }
 
@@ -404,7 +407,7 @@ describe("authenticated environment HTTP requests", () => {
           ? credentialRejectedResponse()
           : Response.json(encodeBoundedSnapshot(BOUNDED_THREAD)),
       );
-      const loaderLayer = boundedThreadSnapshotLoaderLayer.pipe(
+      const layerLoader = BoundedThreadSnapshotHttp.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
             harness.httpLayer,
@@ -420,7 +423,7 @@ describe("authenticated environment HTTP requests", () => {
         ),
       );
       const loader = yield* ThreadSnapshotLoader.ThreadSnapshotLoader.pipe(
-        Effect.provide(loaderLayer),
+        Effect.provide(layerLoader),
       );
       const result = yield* loader.load(PREPARED, THREAD.projection.thread.id);
       expect(result).toEqual({
@@ -442,7 +445,7 @@ describe("authenticated environment HTTP requests", () => {
   it.effect("uses the authorization service captured by the diff loader layer", () =>
     Effect.gen(function* () {
       const harness = makeHarness(() => Response.json(DIFF_RESULT));
-      const loaderLayer = PullRequestDiffLoader.layer.pipe(
+      const layerLoader = PullRequestDiffLoader.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
             harness.httpLayer,
@@ -458,7 +461,7 @@ describe("authenticated environment HTTP requests", () => {
         ),
       );
       const loader = yield* PullRequestDiffLoader.PullRequestDiffLoader.pipe(
-        Effect.provide(loaderLayer),
+        Effect.provide(layerLoader),
       );
       const result = yield* loader.load(PREPARED, DIFF);
 
@@ -694,6 +697,36 @@ describe("authenticated environment HTTP requests", () => {
         message: "No relay authorization service is available for the environment request.",
       });
       expect(harness.calls).toEqual([]);
+    }),
+  );
+});
+
+describe("relay request tracing", () => {
+  it.effect("starts an exported trace for a T3 Connect request", () =>
+    Effect.gen(function* () {
+      const productSpans: Array<{ readonly name: string; readonly root: boolean }> = [];
+      const productTracer = Tracer.make({
+        span: (options) => {
+          productSpans.push({ name: options.name, root: Option.isNone(options.parent) });
+          return new Tracer.NativeSpan(options);
+        },
+      });
+      const harness = makeHarness(() => Response.json(DIFF_RESULT));
+
+      yield* PullRequestDiffLoader.fetchEnvironmentPullRequestDiff({
+        ...harness.input,
+        diff: DIFF,
+      }).pipe(
+        Effect.withSpan("mobile.screen.local"),
+        Effect.provide(harness.httpLayer),
+        Effect.provideService(RelayClientTracer, Option.some(productTracer)),
+      );
+
+      expect(productSpans[0]).toEqual({
+        name: "clientRuntime.state.executeAuthenticatedEnvironmentHttpRequest",
+        root: true,
+      });
+      expect(productSpans.map((span) => span.name)).not.toContain("mobile.screen.local");
     }),
   );
 });
