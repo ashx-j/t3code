@@ -2986,6 +2986,113 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
+  it.effect.each([
+    {
+      name: "newer reset",
+      wakeStatus: "rejected",
+      update: { status: "rejected", rateLimitType: "five_hour", resetsAt: limitResetsAt + 3600 },
+      expected: "2026-10-04T15:00:00.000Z",
+    },
+    {
+      name: "newer recovery",
+      wakeStatus: "rejected",
+      update: { status: "allowed", rateLimitType: "five_hour" },
+      expected: null,
+    },
+    {
+      name: "newer invalid reset",
+      wakeStatus: "rejected",
+      update: { status: "rejected", rateLimitType: "five_hour", resetsAt: NaN },
+      expected: null,
+    },
+    {
+      name: "newer rejection after an old recovery",
+      wakeStatus: "allowed",
+      update: { status: "rejected", rateLimitType: "five_hour", resetsAt: limitResetsAt + 3600 },
+      expected: "2026-10-04T15:00:00.000Z",
+    },
+  ] satisfies ReadonlyArray<{
+    name: string;
+    wakeStatus: "rejected" | "allowed";
+    update: SDKRateLimitInfo;
+    expected: string | null;
+  }>)(
+    "wake replay preserves $name for the continuation and later failures",
+    ({ wakeStatus, update, expected }) =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(
+          DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-04T12:00:00.000Z")),
+        );
+        const harness = yield* makeWakeHarness;
+        let serial = 800;
+        const uuid = () => `00000000-0000-4000-8000-${String(serial++).padStart(12, "0")}`;
+        const start = Effect.fnUntraced(function* (turn: number, continuation = false) {
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(`attempt-limit-replay-${turn}`),
+              text: "Continue",
+              attachments: [],
+              providerTurnOrdinal: turn,
+              ...(continuation
+                ? { messageCreatedBy: "agent" as const, messageCreationSource: "provider" as const }
+                : {}),
+            }),
+          );
+        });
+        const limit = (info: SDKRateLimitInfo) =>
+          harness.offerAndWait(
+            claudeSdkFrame({
+              type: "rate_limit_event",
+              rate_limit_info: info,
+              uuid: uuid(),
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+        const failure = Effect.fnUntraced(function* () {
+          yield* harness.offerAndWait(
+            makeAssistantErrorFrame({ uuid: uuid(), error: "rate_limit" }),
+          );
+          yield* harness.offerAndWait(
+            makeResultFrame({
+              uuid: uuid(),
+              result: "limited",
+              isError: true,
+              apiErrorStatus: 429,
+              terminalReason: "api_error",
+            }),
+          );
+        });
+        yield* start(1);
+        yield* harness.offerAndWait(wakeTaskStarted);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        yield* harness.offerAndWait(wakeNotification);
+        yield* limit({ status: wakeStatus, rateLimitType: "five_hour", resetsAt: limitResetsAt });
+        yield* failure();
+        assert.lengthOf(harness.continuationRequests, 1);
+        yield* start(2);
+        yield* limit(update);
+        yield* harness.offerAndWait(makeResultFrame({ uuid: uuid(), result: "user turn done" }));
+        yield* Queue.take(harness.terminalReceipts);
+        yield* start(3, true);
+        const replayed = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(replayed.status, "failed");
+        if (replayed.status !== "failed") return;
+        assert.equal(replayed.failure.class, "usage_limit");
+        assert.equal(replayed.failure.resetAt, expected);
+        yield* start(4);
+        yield* failure();
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "failed");
+        if (terminal.status !== "failed") return;
+        assert.equal(terminal.failure.class, "usage_limit");
+        assert.equal(terminal.failure.resetAt, expected);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
   const crossTurnResetCases: ReadonlyArray<{
     readonly name: string;
     readonly updates: ReadonlyArray<SDKRateLimitInfo>;

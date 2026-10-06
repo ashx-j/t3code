@@ -5545,6 +5545,7 @@ export function makeClaudeAdapterV2(
         const handleSdkMessageFrame = Effect.fnUntraced(function* (input: {
           readonly query: ClaudeAgentSdkQuerySession;
           readonly message: SDKMessage;
+          readonly replayedWake?: boolean;
           // A held subagent frame replayed after its owner registered. Its
           // turn-level assistant bookkeeping already ran when it arrived.
           readonly replayed?: boolean;
@@ -5584,47 +5585,54 @@ export function makeClaudeAdapterV2(
               });
             }
             const context = yield* Ref.get(activeTurn);
-            const resetTimes = yield* Ref.modify(rateLimitResetTimesByNativeThread, (current) => {
-              const existing = current.get(liveQuery.nativeThreadId);
-              if (existing !== undefined) return [existing, current];
-              const windows = new Map<string, string | null>();
-              return [windows, new Map(current).set(liveQuery.nativeThreadId, windows)];
-            });
             const overageAllowed =
               rateLimitInfo.overageStatus === "allowed" ||
               rateLimitInfo.overageStatus === "allowed_warning" ||
               rateLimitInfo.isUsingOverage === true ||
               rateLimitInfo.overageInUse === true;
             const blocked = rateLimitInfo.status === "rejected" && !overageAllowed;
+            const recovered =
+              rateLimitInfo.status === "allowed" ||
+              rateLimitInfo.status === "allowed_warning" ||
+              overageAllowed;
             const limitType = rateLimitInfo.rateLimitType ?? "unknown";
             if (blocked) {
               context?.rejectedRateLimitTypes.add(limitType);
-              const resetMs = (rateLimitInfo.resetsAt ?? NaN) * 1000;
-              const previousResetAt = resetTimes.get(limitType);
-              let resetAt =
-                Number.isFinite(resetMs) && resetMs > 0 && resetMs < 8.64e15
-                  ? DateTime.formatIso(DateTime.makeUnsafe(resetMs))
-                  : null;
-              // Sparse events can repeat a window without its reset. Keep only
-              // that named window's future timestamp until an allowed event clears it.
-              if (
-                rateLimitInfo.rateLimitType !== undefined &&
-                rateLimitInfo.resetsAt === undefined &&
-                previousResetAt !== undefined &&
-                previousResetAt !== null &&
-                DateTime.toEpochMillis(DateTime.makeUnsafe(previousResetAt)) >
-                  DateTime.toEpochMillis(now)
-              ) {
-                resetAt = previousResetAt;
-              }
-              resetTimes.set(limitType, resetAt);
-            } else if (
-              rateLimitInfo.status === "allowed" ||
-              rateLimitInfo.status === "allowed_warning" ||
-              overageAllowed
-            ) {
+            } else if (recovered) {
               context?.rejectedRateLimitTypes.delete(limitType);
-              resetTimes.delete(limitType);
+            }
+            // A user turn may report newer limits before the queued wake drains.
+            // Replay its classification and notice without rolling back the cache.
+            if (input.replayedWake !== true) {
+              const resetTimes = yield* Ref.modify(rateLimitResetTimesByNativeThread, (current) => {
+                const existing = current.get(liveQuery.nativeThreadId);
+                if (existing !== undefined) return [existing, current];
+                const windows = new Map<string, string | null>();
+                return [windows, new Map(current).set(liveQuery.nativeThreadId, windows)];
+              });
+              if (blocked) {
+                const resetMs = (rateLimitInfo.resetsAt ?? NaN) * 1000;
+                const previousResetAt = resetTimes.get(limitType);
+                let resetAt =
+                  Number.isFinite(resetMs) && resetMs > 0 && resetMs < 8.64e15
+                    ? DateTime.formatIso(DateTime.makeUnsafe(resetMs))
+                    : null;
+                // Sparse events can repeat a window without its reset. Keep only
+                // that named window's future timestamp until an allowed event clears it.
+                if (
+                  rateLimitInfo.rateLimitType !== undefined &&
+                  rateLimitInfo.resetsAt === undefined &&
+                  previousResetAt !== undefined &&
+                  previousResetAt !== null &&
+                  DateTime.toEpochMillis(DateTime.makeUnsafe(previousResetAt)) >
+                    DateTime.toEpochMillis(now)
+                ) {
+                  resetAt = previousResetAt;
+                }
+                resetTimes.set(limitType, resetAt);
+              } else if (recovered) {
+                resetTimes.delete(limitType);
+              }
             }
             if (context === null) {
               // Replay the frame when the wake turn attaches so it also
@@ -6563,6 +6571,7 @@ export function makeClaudeAdapterV2(
         const handleRoutedSdkMessage = Effect.fnUntraced(function* (input: {
           readonly query: ClaudeAgentSdkQuerySession;
           readonly message: SDKMessage;
+          readonly replayedWake?: boolean;
         }) {
           // Progress or a notification can be the first frame naming a known
           // subagent's tool_use_id; its held frames must precede the result.
@@ -6619,6 +6628,7 @@ export function makeClaudeAdapterV2(
         const handleSdkMessage = Effect.fnUntraced(function* (input: {
           readonly query: ClaudeAgentSdkQuerySession;
           readonly message: SDKMessage;
+          readonly replayedWake?: boolean;
         }) {
           const message = input.message;
           const context = yield* Ref.get(activeTurn);
@@ -7414,7 +7424,11 @@ export function makeClaudeAdapterV2(
             );
             for (const entry of drained) {
               if (entry.type !== "result") {
-                yield* handleSdkMessage({ query: querySession.query, message: entry });
+                yield* handleSdkMessage({
+                  query: querySession.query,
+                  message: entry,
+                  replayedWake: true,
+                });
               }
             }
             const lastResult = resultMessages.at(-1);
