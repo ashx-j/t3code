@@ -35,8 +35,7 @@ const agentStates: Readonly<Record<string, OrchestrationV2WorkflowAgent["state"]
   error: "failed",
 };
 
-function parseAgent(value: unknown): OrchestrationV2WorkflowAgent | undefined {
-  const entry = record(value);
+function parseAgent(entry: ReturnType<typeof record>): OrchestrationV2WorkflowAgent | undefined {
   const index = count(entry.index);
   const label = text(entry.label);
   if (index === undefined || label === undefined) return undefined;
@@ -101,7 +100,7 @@ export function mergeClaudeWorkflowProgress(input: {
           else truncated = true;
         }
       } else if (entry.type === "workflow_agent") {
-        const agent = parseAgent(value);
+        const agent = parseAgent(entry);
         if (agent === undefined) continue;
         const prior = agents.get(agent.index);
         if (prior === undefined && agents.size >= WORKFLOW_MAX_AGENTS) {
