@@ -23,6 +23,7 @@ import {
   type EnvironmentId,
   type MessageId,
   type OrchestrationV2TurnItem,
+  type OrchestrationV2Subagent,
   type RunAttemptId,
   type ScopedThreadRef,
   type ServerProvider,
@@ -3090,7 +3091,7 @@ function V2SubagentTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "eve
   return (
     <>
       {workflows.map((agent) => (
-        <WorkflowCard key={agent.id} agent={agent} onOpenThread={ctx.onOpenThread} />
+        <V2WorkflowTimelineCard key={agent.id} agent={agent} />
       ))}
       {ordinary.length > 1 ? (
         <V2SubagentGroup row={{ ...row, projectedItem: ordinary[0]!, subagents: ordinary }} />
@@ -3107,6 +3108,18 @@ function V2SubagentTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "eve
         />
       ) : null}
     </>
+  );
+}
+
+function V2WorkflowTimelineCard({ agent }: { agent: OrchestrationV2Subagent }) {
+  const ctx = use(TimelineRowCtx);
+  const childThread = useThreadShell(
+    agent.childThreadId === null
+      ? null
+      : scopeThreadRef(ctx.activeThreadEnvironmentId, agent.childThreadId),
+  );
+  return (
+    <WorkflowCard agent={agent} childThread={childThread?.source} onOpenThread={ctx.onOpenThread} />
   );
 }
 
