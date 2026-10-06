@@ -77,7 +77,7 @@ import {
   collapseExpandedComposerCursor,
   composerSubmissionIntentForKey,
   composerStateAtPromptEnd,
-  detectComposerTrigger,
+  detectComposerTrigger as detectComposerTriggerWithCharacter,
   expandCollapsedComposerCursor,
   formatAssistantCitationForComposer,
   replaceTextRange,
@@ -2357,6 +2357,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Composer-local state
   // ------------------------------------------------------------------
+  const detectComposerTrigger = useCallback(
+    (text: string, cursor: number) =>
+      detectComposerTriggerWithCharacter(text, cursor, settings.skillTriggerCharacter),
+    [settings.skillTriggerCharacter],
+  );
   const [composerCursor, setComposerCursor] = useState(() =>
     collapseExpandedComposerCursor(prompt, prompt.length),
   );
@@ -2906,6 +2911,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       scheduleComposerFocus,
       setComposerDraftPrompt,
       setComposerTrigger,
+      detectComposerTrigger,
     ],
   );
 
@@ -3433,7 +3439,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       // the caret at the end so the next keystroke appends.
       if (lastSyncedPendingInputRef.current !== null) {
         promptRef.current = prompt;
-        const { cursor, trigger } = composerStateAtPromptEnd(prompt);
+        const { cursor, trigger } = composerStateAtPromptEnd(
+          prompt,
+          settings.skillTriggerCharacter,
+        );
         setComposerCursor(cursor);
         resetComposerTrigger(trigger);
       }
@@ -3458,11 +3467,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
 
     promptRef.current = nextCustomAnswer;
-    const { cursor, trigger } = composerStateAtPromptEnd(nextCustomAnswer);
+    const { cursor, trigger } = composerStateAtPromptEnd(
+      nextCustomAnswer,
+      settings.skillTriggerCharacter,
+    );
     setComposerCursor(cursor);
     resetComposerTrigger(trigger);
     setComposerHighlightedItemId(null);
   }, [
+    settings.skillTriggerCharacter,
     activePendingProgress?.customAnswer,
     activePendingProgress?.activeQuestion?.id,
     activePendingUserInput?.requestId,
@@ -3483,7 +3496,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     resetComposerTrigger(detectComposerTrigger(promptRef.current, promptRef.current.length));
     setIsDragOverComposer(false);
     setIsComposerScrollCollapsed(false);
-  }, [draftId, activeThreadId, promptRef, resetComposerTrigger, setIsComposerScrollCollapsed]);
+  }, [
+    draftId,
+    activeThreadId,
+    promptRef,
+    resetComposerTrigger,
+    setIsComposerScrollCollapsed,
+    detectComposerTrigger,
+  ]);
 
   // ------------------------------------------------------------------
   // Footer compact layout observation
@@ -3768,6 +3788,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       promptRef,
       setPrompt,
       setComposerTrigger,
+      detectComposerTrigger,
       composerDraftTarget,
       composerTerminalContexts,
       setComposerDraftTerminalContexts,
@@ -3866,6 +3887,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       promptRef,
       setPrompt,
       setComposerTrigger,
+      detectComposerTrigger,
     ],
   );
 
@@ -3898,7 +3920,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         detectComposerTrigger(snapshot.value, snapshot.expandedCursor),
       ),
     };
-  }, [readComposerSnapshot, resolveComposerTrigger]);
+  }, [readComposerSnapshot, resolveComposerTrigger, detectComposerTrigger]);
 
   const { onUsageLimitsCommand } = props;
   const onSelectComposerItem = useCallback(
@@ -6496,6 +6518,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       readComposerSnapshot,
       resetComposerTrigger,
       setComposerTrigger,
+      detectComposerTrigger,
       selectedModel,
       selectedModelOptionsForDispatch,
       selectedModelSelection,
@@ -7381,7 +7404,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                 ? "Enable a provider in Settings to send a message"
                                 : phase === "disconnected"
                                   ? DISCONNECTED_COMPOSER_PLACEHOLDER
-                                  : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                                  : `Ask anything, @tag files/folders, ${settings.skillTriggerCharacter}use skills, or / for commands`
                     }
                     disabled={
                       isConnecting ||

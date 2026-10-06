@@ -28,6 +28,7 @@ import {
   type ServerUpsertKeybindingInput,
 } from "@t3tools/contracts";
 import { mergeWithDefaultKeybindings } from "@t3tools/shared/keybindings";
+import { DEFAULT_CLIENT_SETTINGS, skillTriggerCharacterError } from "@t3tools/contracts/settings";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -66,7 +67,13 @@ import {
   whenAstToExpression,
   whenNodeRemoveLabel,
 } from "./KeybindingsSettings.logic";
-import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+import {
+  SettingResetButton,
+  SettingsPageContainer,
+  SettingsRow,
+  SettingsSection,
+} from "./settingsLayout";
+import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { keybindingSearchAnchorId, searchableSetting } from "./settingsSearch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -1324,6 +1331,60 @@ function BrowserKeybindingNotice() {
   );
 }
 
+function SkillTriggerSetting() {
+  const savedCharacter = useScopedSettings((settings) => settings.skillTriggerCharacter);
+  const updateSettings = useUpdateScopedSettings();
+  const [draft, setDraft] = useState(savedCharacter);
+  const [previousCharacter, setPreviousCharacter] = useState(savedCharacter);
+  if (previousCharacter !== savedCharacter) {
+    setPreviousCharacter(savedCharacter);
+    setDraft(savedCharacter);
+  }
+  const error = skillTriggerCharacterError(draft);
+
+  return (
+    <SettingsRow
+      {...searchableSetting("skill-trigger-character")}
+      description="Type this symbol in the composer to open the skill picker. Default: $."
+      resetAction={
+        savedCharacter !== DEFAULT_CLIENT_SETTINGS.skillTriggerCharacter ? (
+          <SettingResetButton
+            label="skill trigger character"
+            onClick={() =>
+              updateSettings({
+                skillTriggerCharacter: DEFAULT_CLIENT_SETTINGS.skillTriggerCharacter,
+              })
+            }
+          />
+        ) : undefined
+      }
+      control={
+        <div className="w-56 space-y-1.5">
+          <Input
+            aria-label="Skill trigger character"
+            aria-invalid={error !== null}
+            aria-describedby={error ? "skill-trigger-character-error" : undefined}
+            value={draft}
+            size="sm"
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+              setDraft(value);
+              if (skillTriggerCharacterError(value) === null) {
+                updateSettings({ skillTriggerCharacter: value });
+              }
+            }}
+          />
+          {error ? (
+            <p id="skill-trigger-character-error" role="alert" className="text-xs text-destructive">
+              {error}
+            </p>
+          ) : null}
+        </div>
+      }
+    />
+  );
+}
+
 export function KeybindingsSettingsPanel() {
   // The representative environment supplies the displayed bindings; edits
   // fan out to every connected environment in the selection, so one
@@ -1511,6 +1572,9 @@ export function KeybindingsSettingsPanel() {
 
   return (
     <SettingsPageContainer>
+      <SettingsSection title="Composer">
+        <SkillTriggerSetting />
+      </SettingsSection>
       <SettingsSection
         {...searchableSetting("keybindings")}
         headerAction={
