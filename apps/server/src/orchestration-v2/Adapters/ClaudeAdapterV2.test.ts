@@ -6460,6 +6460,65 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect.each(["local_workflow", "local_bash"] as const)(
+    "pins an idle %s notification only while its continuation is outstanding",
+    (taskType) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          const now = yield* DateTime.now;
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-idle-notification-pin"),
+              text: "Start background work",
+              attachments: [],
+            }),
+          );
+          yield* harness.offerAndWait(claudeSdkFrame({ ...wakeTaskStarted, task_type: taskType }));
+          if (taskType === "local_workflow") {
+            assert.equal((yield* Queue.take(harness.subagentReceipts)).subagent.status, "running");
+          }
+          yield* harness.offerAndWait(turnOneResult);
+          yield* Queue.take(harness.terminalReceipts);
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+          // offerAndWait waits for the complete notification handler, including
+          // the workflow registry's terminal update after the continuation offer.
+          yield* harness.offerAndWait(wakeNotification);
+          if (taskType === "local_bash") {
+            assert.lengthOf(harness.continuationRequests, 0);
+            assert.isFalse(yield* harness.hasPendingBackgroundWork);
+            return;
+          }
+          assert.equal((yield* Queue.take(harness.subagentReceipts)).subagent.status, "completed");
+          assert.lengthOf(harness.continuationRequests, 1);
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-idle-notification-drain"),
+              text: "Background work completed",
+              attachments: [],
+              providerTurnOrdinal: 2,
+              messageCreatedBy: "agent",
+              messageCreationSource: "provider",
+            }),
+          );
+          // Starting the continuation drains the notification and clears its pin.
+          assert.isFalse(yield* harness.hasPendingBackgroundWork);
+          yield* harness.offerAndWait(wakeResult);
+          yield* Queue.take(harness.terminalReceipts);
+          assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      ),
+  );
+
   it.effect.each(["completed", "failed", "stopped"] as const)(
     "projects workflow progress, retries, and %s after root completion",
     (outcome) =>

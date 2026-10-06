@@ -8072,13 +8072,19 @@ export function makeClaudeAdapterV2(
               }
             }
             const buffers = yield* Ref.get(wakeBuffers);
-            for (const entry of buffers.values()) {
+            const continuations = yield* Ref.get(requestedContinuations);
+            for (const [nativeThreadId, entry] of buffers) {
               if (
                 entry.messages.some(
                   (message) =>
                     message.type === "user" ||
                     message.type === "assistant" ||
-                    message.type === "result",
+                    message.type === "result" ||
+                    // A workflow may settle its registry before its wake drains.
+                    // Opaque notifications without a continuation do not pin idle.
+                    (continuations.has(nativeThreadId) &&
+                      message.type === "system" &&
+                      message.subtype === "task_notification"),
                 )
               ) {
                 return true;
