@@ -281,6 +281,14 @@ export const layer = ThreadToolkit.toLayer({
       const common = { commandId: yield* newCommandId(), threadId: projection.thread.id };
       let command: OrchestrationV2Command;
       switch (input.action) {
+        case "snooze_until_github_reply":
+          if (input.conversationUrl === undefined)
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: "snooze_until_github_reply requires conversationUrl.",
+            });
+          command = { ...common, type: "thread.github-reply.snooze", url: input.conversationUrl };
+          break;
         case "snooze":
           if (input.snoozedUntil === undefined) {
             return yield* new OrchestratorMcpFailure({

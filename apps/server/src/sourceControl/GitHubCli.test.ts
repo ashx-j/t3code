@@ -995,3 +995,36 @@ it.effect("accepts conditional 304 responses and preserves HTTP errors and retry
     });
   }).pipe(Effect.provide(layer)),
 );
+
+it.effect("background GraphQL queries observe the shared budget and pause until reset", () =>
+  Effect.gen(function* () {
+    let reads = 0;
+    const resetMs = (yield* Clock.currentTimeMillis) + 60_000;
+    const resetAt = DateTime.formatIso(DateTime.makeUnsafe(resetMs));
+    const gh = yield* GitHubCli.make.pipe(
+      Effect.provideService(VcsProcess.VcsProcess, {
+        run: (input) =>
+          Effect.sync(() => {
+            if (isBudgetReading(input)) return quotaOutput(501, resetAt);
+            reads++;
+            assert.include(input.stdin!, "rateLimit { cost limit remaining resetAt }");
+            return quotaOutput(500, resetAt);
+          }),
+      }),
+    );
+    const read = gh.query({
+      cwd: "/repo",
+      host: "github.com",
+      document: "query { viewer { login } }",
+      variables: {},
+    });
+    yield* read;
+    const paused = yield* read.pipe(Effect.flip);
+    assert.equal(paused._tag, "GitHubCliRateLimitError");
+    if (paused._tag === "GitHubCliRateLimitError") assert.equal(paused.retryAt, resetMs);
+    assert.equal(reads, 1);
+    yield* TestClock.adjust("1 minute");
+    yield* read;
+    assert.equal(reads, 2);
+  }).pipe(Effect.provide(Layer.merge(GitHubGraphQlBudget.layer, SourceControlRateLimit.layer))),
+);

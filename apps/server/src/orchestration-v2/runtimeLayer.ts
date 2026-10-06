@@ -1,3 +1,5 @@
+import * as GitHubReplySnoozeWorker from "./GitHubReplySnoozeWorker.ts";
+import * as GitHubReplyReader from "../sourceControl/GitHubReplyReader.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as Layer from "effect/Layer";
@@ -333,6 +335,20 @@ export const layerProduction = Layer.mergeAll(
   layerThreadLifecycleProvided,
   layerScheduledTaskProvided,
   layerSecretRequestsProvided,
+  GitHubReplySnoozeWorker.layerScheduled.pipe(
+    Layer.provide(
+      GitHubReplySnoozeWorker.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            ProjectionStore.layer,
+            ProjectStore.layer,
+            layerThreadManagementProvided,
+            GitHubReplyReader.layer,
+          ),
+        ),
+      ),
+    ),
+  ),
   UsageLimitRecoveryWorker.layer.pipe(
     Layer.provide(Layer.mergeAll(ProjectionStore.layer, layerThreadManagementProvided)),
   ),

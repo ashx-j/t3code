@@ -1,3 +1,5 @@
+import * as GitHubReplySnoozeWorker from "./GitHubReplySnoozeWorker.ts";
+import * as GitHubReplyReader from "../sourceControl/GitHubReplyReader.ts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -5335,5 +5337,208 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         assert.isFalse(resumed.runs[1]?.queueHeld);
       }
     }),
+  );
+});
+
+it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
+  it.effect.each([
+    "wake",
+    "cancel",
+    "replace",
+    "undo",
+    "timed",
+    "settle",
+    "archive",
+    "failure",
+    "retry",
+    "rate-limit",
+  ] as const)("persists and handles %s without starting a provider turn", (scenario) =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectService.ProjectService;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const workerEffects = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const projectId = ProjectId.make(`github-reply-${scenario}-project`);
+      const threadId = ThreadId.make(`github-reply-${scenario}-thread`);
+      yield* projects.create({
+        commandId: CommandId.make(`${projectId}:create`),
+        projectId,
+        title: "Reply snooze",
+        workspaceRoot: `/tmp/${projectId}`,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId,
+        createdBy: "user",
+        creationSource: "web",
+        title: "Reply snooze",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      yield* workerEffects.drain();
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make(`${threadId}:settle-before`),
+        threadId,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.github-reply.snooze",
+        commandId: CommandId.make(`${threadId}:snooze`),
+        threadId,
+        url: "https://github.com/team/repo/pull/1",
+      });
+      const saved = yield* projections.getThread(threadId);
+      assert.isNotNull(saved.githubReplySnooze);
+      assert.isNull(saved.snoozedUntil);
+      assert.equal(saved.settledOverride, "active");
+      const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
+        (thread) => thread.id === threadId,
+      )!;
+      assert.deepEqual(shell.githubReplySnooze, saved.githubReplySnooze);
+      // A fresh store and worker recover the subscription solely from committed SQLite state.
+      const restarted = yield* ProjectionStore.ProjectionStoreV2.pipe(
+        Effect.provide(ProjectionStore.layer),
+      );
+      assert.deepEqual(
+        (yield* restarted.getThread(threadId)).githubReplySnooze,
+        saved.githubReplySnooze,
+      );
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const read = Effect.gen(function* () {
+        yield* Deferred.succeed(entered, undefined);
+        yield* Deferred.await(release);
+        if (scenario === "failure")
+          return yield* new GitHubReplyReader.GitHubReplyReadError({
+            reason: "comment-not-found",
+          });
+        if (scenario === "retry")
+          return yield* new GitHubReplyReader.GitHubReplyReadError({ reason: "unavailable" });
+        if (scenario === "rate-limit")
+          return yield* new GitHubReplyReader.GitHubReplyReadError({
+            reason: "rate-limited",
+            retryAt: 9_999_999_999_999,
+          });
+        return {
+          viewer: "me",
+          reply: {
+            url: "https://github.com/team/repo/pull/1#issuecomment-2",
+            text: "Useful feedback",
+            author: "reviewer",
+          },
+        };
+      });
+      const runSweep = Effect.gen(function* () {
+        const worker = yield* GitHubReplySnoozeWorker.GitHubReplySnoozeWorker;
+        yield* worker.sweep;
+      }).pipe(
+        Effect.provide(GitHubReplySnoozeWorker.layer),
+        Effect.provideService(GitHubReplyReader.GitHubReplyReader, { read: () => read }),
+      );
+      const fiber = yield* runSweep.pipe(Effect.forkChild);
+      yield* Deferred.await(entered);
+      if (scenario === "cancel")
+        yield* orchestrator.dispatch({
+          type: "thread.unsnooze",
+          commandId: CommandId.make(`${threadId}:cancel`),
+          threadId,
+          reason: "user",
+        });
+      if (scenario === "replace")
+        yield* orchestrator.dispatch({
+          type: "thread.github-reply.snooze",
+          commandId: CommandId.make(`${threadId}:replace`),
+          threadId,
+          url: "https://github.com/team/repo/discussions/2",
+        });
+      if (scenario === "timed")
+        yield* orchestrator.dispatch({
+          type: "thread.snooze",
+          commandId: CommandId.make(`${threadId}:timed`),
+          threadId,
+          snoozedUntil: "2099-10-01T00:00:00.000Z",
+        });
+      if (scenario === "settle")
+        yield* orchestrator.dispatch({
+          type: "thread.settle",
+          commandId: CommandId.make(`${threadId}:settle`),
+          threadId,
+        });
+      if (scenario === "archive")
+        yield* orchestrator.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make(`${threadId}:archive`),
+          threadId,
+        });
+      if (scenario === "undo") {
+        yield* orchestrator.dispatch({
+          type: "thread.settle",
+          commandId: CommandId.make(`${threadId}:settle`),
+          threadId,
+        });
+        yield* TestClock.adjust("30 seconds");
+        yield* orchestrator.dispatch({
+          type: "thread.github-reply.snooze",
+          commandId: CommandId.make(`${threadId}:restore`),
+          threadId,
+          url: saved.githubReplySnooze!.url,
+          resumeFrom: saved.githubReplySnooze!,
+        });
+      }
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(fiber);
+      yield* workerEffects.drain();
+      const final = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(final.runs, []);
+      assert.deepEqual(final.messages, []);
+      assert.deepEqual(final.providerTurns, []);
+      if (scenario === "wake" || scenario === "failure") {
+        assert.isNull(final.thread.githubReplySnooze);
+        assert.equal(final.thread.githubReplyNotice?.type, scenario === "wake" ? "reply" : "error");
+        assert.equal(final.thread.settledOverride, "active");
+        yield* runSweep;
+        assert.deepEqual(
+          (yield* projections.getThread(threadId)).githubReplyNotice,
+          final.thread.githubReplyNotice,
+        );
+      } else if (scenario === "replace") {
+        assert.equal(
+          final.thread.githubReplySnooze?.url,
+          "https://github.com/team/repo/discussions/2",
+        );
+        assert.isNull(final.thread.githubReplyNotice);
+      } else if (scenario === "undo") {
+        assert.equal(final.thread.githubReplySnooze?.startedAt, saved.githubReplySnooze?.startedAt);
+        assert.notEqual(
+          final.thread.githubReplySnooze?.requestId,
+          saved.githubReplySnooze?.requestId,
+        );
+        assert.isNull(final.thread.githubReplyNotice);
+        yield* runSweep;
+        assert.equal((yield* projections.getThread(threadId)).githubReplyNotice?.type, "reply");
+      } else if (scenario === "retry") {
+        assert.equal(final.thread.githubReplySnooze?.status, "retrying");
+        assert.equal(final.thread.githubReplySnooze?.failures, 1);
+        yield* runSweep;
+        assert.equal((yield* projections.getThread(threadId)).githubReplySnooze?.failures, 1);
+        yield* TestClock.adjust("2 minutes");
+        yield* runSweep;
+        assert.equal((yield* projections.getThread(threadId)).githubReplySnooze?.failures, 2);
+        yield* TestClock.adjust("4 minutes");
+        yield* runSweep;
+        assert.equal((yield* projections.getThread(threadId)).githubReplyNotice?.type, "error");
+      } else if (scenario === "rate-limit") {
+        assert.equal(final.thread.githubReplySnooze?.status, "rate-limited");
+        assert.equal(final.thread.githubReplySnooze?.failures, 0);
+      } else {
+        assert.isNull(final.thread.githubReplySnooze);
+        assert.isNull(final.thread.githubReplyNotice);
+      }
+    }).pipe(Effect.provide(Layer.mergeAll(ProjectionStore.layer, ProjectStore.layer))),
   );
 });

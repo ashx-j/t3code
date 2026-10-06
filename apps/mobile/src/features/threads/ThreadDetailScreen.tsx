@@ -1,3 +1,4 @@
+import { GitHubReplySnoozeCard } from "./GitHubReplySnooze";
 import { useAtomValue } from "@effect/atom-react";
 import { useThreadReportedModelSelection } from "../../state/entities";
 import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
@@ -1232,6 +1233,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                     />
                   </Animated.View>
                 ) : null}
+                <GitHubReplySnoozeCard thread={props.selectedThread} />
                 <UsageLimitRecoveryCard
                   key={props.selectedThread.latestRun?.runId}
                   thread={props.selectedThread}

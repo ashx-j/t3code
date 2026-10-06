@@ -163,7 +163,10 @@ export function useThreadActionMenu(input: {
               ? await requestCustomSnooze()
               : snoozePresets.find((candidate) => `snooze:${candidate.id}` === action);
           if (!preset) return;
-          const result = await snoozeThread(threadRef, preset.snoozedUntil);
+          const result = await snoozeThread(
+            threadRef,
+            "url" in preset ? preset : preset.snoozedUntil,
+          );
           if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
             failureToast("Failed to snooze thread", squashAtomCommandFailure(result));
           }

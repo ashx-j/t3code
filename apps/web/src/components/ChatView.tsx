@@ -7390,9 +7390,29 @@ export default function ChatView(props: ChatViewProps) {
   // pill. Dismissing marks the wake as seen (same acknowledgment as the
   // pill); sending a message clears it as a side effect of the send path.
   const wokeThreadBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
-    if (!activeThreadWokeVisible) {
-      return null;
-    }
+    const notice = activeThreadShell?.githubReplyNotice;
+    if (!activeThreadWokeVisible && !notice) return null;
+    if (notice)
+      return {
+        id: `github-reply:${notice.receivedAt}`,
+        variant: "info",
+        icon: <AlarmClockIcon />,
+        title:
+          notice.type === "reply"
+            ? `GitHub reply from ${notice.author}`
+            : "GitHub reply snooze stopped",
+        description: (
+          <div className="max-h-40 overflow-y-auto whitespace-pre-wrap">
+            {notice.text}
+            <br />
+            <a href={notice.url} target="_blank" rel="noreferrer" className="underline">
+              Open on GitHub
+            </a>
+          </div>
+        ),
+        dismissLabel: "Dismiss GitHub reply",
+        onDismiss: () => void handleUnsnoozeActiveThread(),
+      };
     return {
       id: `thread-woke:${activeThread?.id ?? "unknown"}`,
       variant: "info",
@@ -7402,7 +7422,13 @@ export default function ChatView(props: ChatViewProps) {
       dismissLabel: "Dismiss Woke notification",
       onDismiss: acknowledgeActiveThreadWoke,
     };
-  }, [acknowledgeActiveThreadWoke, activeThread?.id, activeThreadWokeVisible]);
+  }, [
+    acknowledgeActiveThreadWoke,
+    activeThread?.id,
+    activeThreadWokeVisible,
+    activeThreadShell?.githubReplyNotice,
+    handleUnsnoozeActiveThread,
+  ]);
   const parkedThreadBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (!activeThreadSnoozed && !activeThreadSettled) {
       return null;
@@ -7412,8 +7438,30 @@ export default function ChatView(props: ChatViewProps) {
       id: `thread-${isSnoozed ? "snoozed" : "settled"}:${activeThread?.id ?? "unknown"}`,
       variant: "info",
       icon: isSnoozed ? <AlarmClockIcon /> : <CheckCircle2Icon />,
-      title: `This thread is ${isSnoozed ? "snoozed" : "settled"}`,
-      description: `Send a message to ${isSnoozed ? "wake" : "unsettle"}`,
+      title: activeThreadShell?.githubReplySnooze
+        ? "Waiting for a GitHub reply"
+        : `This thread is ${isSnoozed ? "snoozed" : "settled"}`,
+      description: activeThreadShell?.githubReplySnooze ? (
+        <>
+          {activeThreadShell.githubReplySnooze.status === "pending"
+            ? "Checking GitHub access... "
+            : activeThreadShell.githubReplySnooze.status === "rate-limited"
+              ? "GitHub rate limit reached. Checks are paused until it resets. "
+              : activeThreadShell.githubReplySnooze.status === "retrying"
+                ? "GitHub check failed. Retrying... "
+                : "Checked every two minutes. "}
+          <a
+            href={activeThreadShell.githubReplySnooze.url}
+            target="_blank"
+            rel="noreferrer"
+            className="underline"
+          >
+            View conversation
+          </a>
+        </>
+      ) : (
+        `Send a message to ${isSnoozed ? "wake" : "unsettle"}`
+      ),
       actions: (
         <Button
           size="xs"
@@ -7435,6 +7483,7 @@ export default function ChatView(props: ChatViewProps) {
     };
   }, [
     activeThread?.id,
+    activeThreadShell,
     activeThreadSettled,
     activeThreadSnoozed,
     handleUnsnoozeActiveThread,

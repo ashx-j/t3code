@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { CommandId, EnvironmentId, ThreadId, type GitHubReplySnooze } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { useThreadActions } from "./useThreadActions";
@@ -38,6 +38,7 @@ const threadShell = vi.hoisted(() => ({
   pinOrderKey: "a0",
   pinnedAt: null as string | null,
   snoozedUntil: null as string | null,
+  githubReplySnooze: null as GitHubReplySnooze | null,
   projectId: "project",
   environmentId: "undo-env",
   session: null,
@@ -94,6 +95,7 @@ beforeEach(() => {
   router.state.matches[0]!.params = {};
   threadShell.pinnedAt = null;
   threadShell.snoozedUntil = null;
+  threadShell.githubReplySnooze = null;
 });
 afterEach(() => {
   vi.runAllTimers();
@@ -191,6 +193,27 @@ describe("settle and snooze Undo", () => {
     expect(commands.snooze).toHaveBeenCalledExactlyOnceWith({
       environmentId: target.environmentId,
       input: { threadId: target.threadId, snoozedUntil },
+    });
+  });
+
+  it("restores the GitHub reply baseline when undoing settle", async () => {
+    const saved: GitHubReplySnooze = {
+      requestId: CommandId.make("saved-watch"),
+      url: "https://github.com/team/repo/pull/1",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      nextCheckAt: "2026-01-01T00:02:00.000Z",
+      status: "watching",
+      failures: 0,
+      viewer: "me",
+    };
+    threadShell.githubReplySnooze = saved;
+    const actions = useThreadActions();
+    await actions.settleThread(target);
+    threadShell.githubReplySnooze = null;
+    await currentUndo()();
+    expect(commands.snooze).toHaveBeenCalledExactlyOnceWith({
+      environmentId: target.environmentId,
+      input: { threadId: target.threadId, url: saved.url, resumeFrom: saved },
     });
   });
 

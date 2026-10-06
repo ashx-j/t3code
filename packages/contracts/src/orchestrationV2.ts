@@ -1,3 +1,4 @@
+import { GitHubConversationUrl, GitHubReplySnooze, GitHubReplyNotice } from "./githubReply.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -404,6 +405,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  githubReplySnooze: Schema.optional(Schema.NullOr(GitHubReplySnooze)),
+  githubReplyNotice: Schema.optional(Schema.NullOr(GitHubReplyNotice)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -1899,6 +1902,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  githubReplySnooze: Schema.optional(Schema.NullOr(GitHubReplySnooze)),
+  githubReplyNotice: Schema.optional(Schema.NullOr(GitHubReplyNotice)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
   /** Omitted by servers that predate thread pinning. */
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -1996,6 +2001,8 @@ export const OrchestrationV2AppThreadJson = OrchestrationV2AppThread.mapFields((
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  githubReplySnooze: Schema.optional(Schema.NullOr(GitHubReplySnooze)),
+  githubReplyNotice: Schema.optional(Schema.NullOr(GitHubReplyNotice)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   lastVisitedAt: Schema.NullOr(Schema.DateTimeUtcFromString).pipe(
@@ -2421,6 +2428,8 @@ export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFiel
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  githubReplySnooze: Schema.optional(Schema.NullOr(GitHubReplySnooze)),
+  githubReplyNotice: Schema.optional(Schema.NullOr(GitHubReplyNotice)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   lastVisitedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
@@ -2668,6 +2677,14 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     reason: Schema.Literal("user"),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.github-reply.snooze"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    url: GitHubConversationUrl,
+    /** Undo restores the original observation baseline under a new subscription identity. */
+    resumeFrom: Schema.optional(GitHubReplySnooze),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.snooze"),
@@ -3057,6 +3074,14 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
  * send them.
  */
 const OrchestrationV2InternalCommand = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("thread.github-reply.sync"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    requestId: CommandId,
+    watch: Schema.NullOr(GitHubReplySnooze),
+    notice: Schema.optional(GitHubReplyNotice),
+  }),
   /**
    * Records what a pull request watch saw, and wakes the agent in the same transaction when
    * `wake` is set. Rejected once the watch started at `startedAt` has ended, and a wake is

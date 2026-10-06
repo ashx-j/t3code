@@ -744,6 +744,7 @@ export function useThreadActions() {
       const pinOrderKey = resolved?.thread.pinnedAt != null ? resolved.thread.pinOrderKey : null;
       const wasPinned = resolved?.thread.pinnedAt != null;
       const snoozedUntil = resolved?.thread.snoozedUntil ?? null;
+      const githubReplySnooze = resolved?.thread.githubReplySnooze ?? null;
       // An older unpin/snooze Undo would re-pin or re-snooze, and the server
       // treats either as a promotion that un-settles; settling supersedes them.
       ThreadUndo.invalidate("pin", scopedThreadKey(target));
@@ -773,10 +774,23 @@ export function useThreadActions() {
             );
             if (pinned._tag !== "Success") return pinned;
           }
+          if (githubReplySnooze !== null) {
+            return snoozeThreadMutation({
+              environmentId: target.environmentId,
+              input: {
+                threadId: target.threadId,
+                url: githubReplySnooze.url,
+                resumeFrom: githubReplySnooze,
+              },
+            });
+          }
           if (snoozedUntil !== null) {
             return snoozeThreadMutation({
               environmentId: target.environmentId,
-              input: { threadId: target.threadId, snoozedUntil },
+              input: {
+                threadId: target.threadId,
+                snoozedUntil,
+              },
             });
           }
           return unsettled;
@@ -881,9 +895,14 @@ export function useThreadActions() {
   );
 
   const snoozeThread = useCallback(
-    async (target: ScopedThreadRef, snoozedUntil: string) => {
+    async (target: ScopedThreadRef, snoozedUntil: string | { readonly url: string }) => {
       // Version skew: never send the command to a server that predates it.
-      if (!readEnvironmentSupportsSnooze(target.environmentId)) {
+      if (
+        !readEnvironmentSupportsSnooze(target.environmentId) ||
+        (typeof snoozedUntil !== "string" &&
+          appAtomRegistry.get(environmentServerConfigsAtom).get(target.environmentId)?.environment
+            .capabilities.threadGitHubReplySnooze !== true)
+      ) {
         return AsyncResult.failure(
           Cause.fail(
             new ThreadSnoozeUnsupportedError({
@@ -910,7 +929,10 @@ export function useThreadActions() {
       const action = ThreadUndo.begin("snooze", scopedThreadKey(target));
       const result = await snoozeThreadMutation({
         environmentId: target.environmentId,
-        input: { threadId: target.threadId, snoozedUntil },
+        input: {
+          threadId: target.threadId,
+          ...(typeof snoozedUntil === "string" ? { snoozedUntil } : snoozedUntil),
+        },
       });
       if (result._tag !== "Success") {
         action.finish();

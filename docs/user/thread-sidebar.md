@@ -224,3 +224,24 @@ Choose **Snooze → Custom…** from a thread's menu to pick a date and time in 
 local time zone, or a duration in minutes, hours, or days. Durations start when
 you confirm; one day means 24 hours. On web and desktop, you can also snooze
 several selected threads together. Choose **Wake thread** to bring a thread back early.
+
+To wait for feedback on GitHub, choose **Snooze → Custom… → Until a GitHub reply**
+on web or desktop, or **Snooze → Until a GitHub reply…** on mobile. Paste a
+github.com pull request or repository discussion URL. Open, merged and closed
+PRs all work. You can also ask your agent to snooze the thread for that conversation.
+
+T3 checks from the thread's environment using its signed-in GitHub CLI account,
+usually every two minutes. New comments, submitted reviews and inline review
+replies from other accounts bring the thread back with the response and a link.
+Your own comments, existing comments, edits, reactions, CI changes and merge state
+do not wake it. PR links watch the whole PR conversation. A discussion link watches
+its comments and replies; a discussion comment link limits the watch to that
+comment's reply thread. No agent starts or replies when feedback arrives. A running
+agent can finish its current turn while the thread waits.
+
+The watch survives a server restart. **Wake thread**, a different snooze, settle,
+archive or delete cancels it. Sending a message also wakes the thread. The open
+thread shows whether checks are pending, active or retrying. If access fails
+repeatedly, T3 returns the thread to the inbox with an error. Rate limits pause
+checks until GitHub permits them again. Other GitHub hosts and non-GitHub services
+are not supported.

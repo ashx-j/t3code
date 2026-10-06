@@ -12,6 +12,7 @@ import {
   RuntimeRequestId,
   ProviderUserInputAnswers,
   IsoDateTime,
+  GitHubConversationUrl,
   OrchestratorMcpFailure,
   OrchestrationV2DispatchCommandResult,
   ThreadId,
@@ -30,13 +31,14 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   description:
-    "Pin, snooze, settle, archive, or mark a thread unread. Omit threadId for this thread. snooze requires snoozedUntil. Existing thread lifecycle rules apply; this does not schedule a future action.",
+    "Pin, snooze, settle, archive, or mark a thread unread. Omit threadId for this thread. snooze requires snoozedUntil. snooze_until_github_reply requires conversationUrl, a github.com PR or discussion URL. Use it only when asked to wait for feedback. New comments by other accounts return the thread to the inbox without running an agent. PR issue comments are flat; a discussion comment anchor watches its replies. Open, merged and closed PRs are supported. Existing thread lifecycle rules apply; this does not schedule a future action.",
   parameters: Schema.Struct({
     threadId: Schema.optional(ThreadId),
     action: Schema.Literals([
       "pin",
       "unpin",
       "snooze",
+      "snooze_until_github_reply",
       "unsnooze",
       "settle",
       "unsettle",
@@ -45,6 +47,7 @@ const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
       "mark_unread",
     ]),
     snoozedUntil: Schema.optional(IsoDateTime),
+    conversationUrl: Schema.optional(GitHubConversationUrl),
   }),
   success: OrchestrationV2DispatchCommandResult,
   failure: OrchestratorMcpFailure,

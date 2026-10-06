@@ -287,6 +287,14 @@ export interface GitHubRepositoryCloneUrls {
 export class GitHubCli extends Context.Service<
   GitHubCli,
   {
+    /** Background GraphQL reads share the host pause, credential budget and reserved quota. */
+    readonly query: (input: {
+      readonly cwd: string;
+      readonly host: string;
+      readonly document: string;
+      readonly variables: Readonly<Record<string, string | number | ReadonlyArray<string> | null>>;
+    }) => Effect.Effect<VcsProcess.VcsProcessOutput, GitHubCliError>;
+
     readonly execute: (input: {
       readonly cwd: string;
       readonly args: ReadonlyArray<string>;
@@ -458,7 +466,7 @@ class PullRequestsByHeadRead extends Request.Class<
 
 const GraphQlVariables = Schema.Record(
   Schema.String,
-  Schema.Union([Schema.String, Schema.Array(Schema.String)]),
+  Schema.Union([Schema.String, Schema.Number, Schema.Null, Schema.Array(Schema.String)]),
 );
 /** A GraphQL request body for `gh api graphql --input -`. */
 const encodeGraphQlRequest = Schema.encodeSync(
@@ -943,6 +951,17 @@ export const make = Effect.gen(function* () {
   });
 
   return GitHubCli.of({
+    query: (input) =>
+      guardedRead({
+        ...input,
+        allowReserve: false,
+        run: (document) =>
+          executeRaw({
+            cwd: input.cwd,
+            args: ["api", "graphql", "--hostname", input.host, "--input", "-"],
+            stdin: encodeGraphQlRequest({ query: document, variables: input.variables }),
+          }).pipe(Effect.tap((result) => budget.observe(input.host, result.stdout))),
+      }),
     execute,
     listPullRequestsByHead,
     listOpenPullRequests: (input) =>

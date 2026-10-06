@@ -1,3 +1,5 @@
+import { GitHubReplySnoozeSheet } from "./GitHubReplySnooze";
+import { environmentServerConfigsAtom } from "../../state/server";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import {
   THREAD_LIST_V2_MONO_FONT as MONO_FONT,
@@ -606,6 +608,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   );
   const handleSettle = useCallback(() => onSettleThread(thread), [onSettleThread, thread]);
   const [customSnoozeOpen, setCustomSnoozeOpen] = useState(false);
+  const [githubSnoozeOpen, setGithubSnoozeOpen] = useState(false);
+  const githubSnoozeSupported =
+    appAtomRegistry.get(environmentServerConfigsAtom).get(thread.environmentId)?.environment
+      .capabilities.threadGitHubReplySnooze === true;
   // A recycled cell reassigns this mounted row to a different thread without
   // remounting it, and the render closure stops running while list equality
   // says the item is unchanged — so any row-local UI state must be dismissed
@@ -618,6 +624,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   if (boundIdentity !== rowIdentity) {
     setBoundIdentity(rowIdentity);
     setCustomSnoozeOpen(false);
+    setGithubSnoozeOpen(false);
   }
   const handleSnooze = useCallback(
     (snoozedUntil: string) => onSnoozeThread(thread, snoozedUntil),
@@ -667,8 +674,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         subtitle: preset.whenLabel,
       })),
       { id: "snooze:custom", title: "Custom…" },
+      ...(githubSnoozeSupported ? [{ id: "snooze:github", title: "Until a GitHub reply…" }] : []),
     ],
-    [snoozePresets],
+    [snoozePresets, githubSnoozeSupported],
   );
   // Pinned cards keep the full lifecycle menu; only the pin item flips to
   // Unpin. (Settling a pinned thread clears the pin server-side; snoozing
@@ -824,6 +832,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         copyTextWithHaptic(thread.id, { target: "thread-id" });
       }
       if (nativeEvent.event === "delete") handleDelete();
+      if (nativeEvent.event === "snooze:github") {
+        setGithubSnoozeOpen(true);
+        return;
+      }
       if (nativeEvent.event === "snooze:custom") {
         setCustomSnoozeOpen(true);
         return;
@@ -1226,6 +1238,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
 
   return (
     <View collapsable={false}>
+      {githubSnoozeOpen && (
+        <GitHubReplySnoozeSheet thread={thread} onClose={() => setGithubSnoozeOpen(false)} />
+      )}
       {customSnoozeOpen && (
         <CustomSnoozeSheet onClose={() => setCustomSnoozeOpen(false)} onSnooze={handleSnooze} />
       )}

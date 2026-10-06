@@ -1,3 +1,4 @@
+import type { GitHubReplySnooze, GitHubReplyNotice } from "@t3tools/contracts";
 // @effect-diagnostics globalDate:off -- UI snooze presets use local calendar boundaries and Intl labels.
 import * as DateTime from "effect/DateTime";
 
@@ -87,6 +88,8 @@ export function hasQueuedTurnStart(
  */
 export interface ThreadSnoozeShell extends QueuedThreadShell {
   readonly snoozedUntil?: string | null;
+  readonly githubReplySnooze?: GitHubReplySnooze | null;
+  readonly githubReplyNotice?: GitHubReplyNotice | null;
   readonly snoozedAt?: string | null;
   readonly hasPendingApprovals: boolean;
   readonly hasPendingUserInput: boolean;
@@ -95,8 +98,8 @@ export interface ThreadSnoozeShell extends QueuedThreadShell {
 /**
  * A snoozed thread "raises its hand" when something happens that outranks
  * the user's snooze: the agent is blocked on them (approval / user input),
- * the session failed, or a run completed after the snooze was set — the
- * v1 taste of event-based snooze ("something happened" wakes early).
+ * the session failed, or a run completed after a timed snooze was set.
+ * A GitHub reply snooze survives normal completion of the registering turn.
  * Raising a hand never clears the server-side snooze fields; it only stops
  * the thread from classifying as snoozed.
  */
@@ -116,6 +119,7 @@ export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean 
     return true;
   }
   if (
+    shell.githubReplySnooze == null &&
     shell.snoozedAt != null &&
     (latestRun?.state === "completed" || latestRun?.status === "completed") &&
     latestRun.completedAt != null &&
@@ -154,7 +158,8 @@ export function canSnooze(
 
 /**
  * Snoozed resolution: hidden from the inbox while the wake time is in the
- * future and the thread has not raised its hand. Timer wakes are derived —
+ * future, or a GitHub reply watch remains, and the thread has not raised
+ * its hand. Timer wakes are derived:
  * no server event fires when snoozedUntil passes; the stale fields simply
  * stop classifying as snoozed (and feed the woke indicator until the user
  * visits or re-engages).
@@ -163,6 +168,7 @@ export function effectiveSnoozed(
   shell: ThreadSnoozeShell,
   options: { readonly now: string },
 ): boolean {
+  if (shell.githubReplySnooze != null) return !threadRaisedHandWhileSnoozed(shell);
   if (shell.snoozedUntil == null) return false;
   const wakeAtMs = Date.parse(shell.snoozedUntil);
   // Malformed data never hides a thread.
@@ -186,6 +192,8 @@ export function threadWokeAt(
   shell: ThreadSnoozeShell,
   options: { readonly now: string },
 ): string | null {
+  if (shell.githubReplyNotice != null && shell.githubReplySnooze == null)
+    return shell.githubReplyNotice.receivedAt;
   if (shell.snoozedUntil == null) return null;
   const wakeAtMs = Date.parse(shell.snoozedUntil);
   if (Number.isNaN(wakeAtMs)) return null;

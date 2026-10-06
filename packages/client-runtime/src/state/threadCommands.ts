@@ -422,6 +422,7 @@ export function createThreadEnvironmentAtoms<R, E>(
             pinOrderKey: null,
             snoozedAt: null,
             snoozedUntil: null,
+            githubReplySnooze: null,
           },
     ),
     unsettle: optimistic.wrap(commands.unsettle, (thread, input, now) => ({
@@ -431,25 +432,30 @@ export function createThreadEnvironmentAtoms<R, E>(
       unsettledAt: thread.settledOverride === "active" ? (thread.unsettledAt ?? null) : now,
     })),
     snooze: optimistic.wrap(commands.snooze, (thread, input, now, accepted) =>
-      (!accepted &&
-        (thread.pendingRuntimeRequest !== null ||
-          ["preparing", "queued", "starting"].includes(thread.status))) ||
-      !(Date.parse(input.snoozedUntil) > DateTime.toEpochMillis(now))
+      "url" in input
         ? thread
-        : {
-            ...thread,
-            pendingRuntimeRequest: null,
-            snoozedUntil: DateTime.makeUnsafe(input.snoozedUntil),
-            snoozedAt:
-              thread.snoozedUntil != null &&
-              DateTime.formatIso(thread.snoozedUntil) === input.snoozedUntil
-                ? (thread.snoozedAt ?? now)
-                : now,
-          },
+        : (!accepted &&
+              (thread.pendingRuntimeRequest !== null ||
+                ["preparing", "queued", "starting"].includes(thread.status))) ||
+            !(Date.parse(input.snoozedUntil) > DateTime.toEpochMillis(now))
+          ? thread
+          : {
+              ...thread,
+              pendingRuntimeRequest: null,
+              snoozedUntil: DateTime.makeUnsafe(input.snoozedUntil),
+              githubReplySnooze: null,
+              githubReplyNotice: null,
+              snoozedAt:
+                thread.snoozedUntil != null &&
+                DateTime.formatIso(thread.snoozedUntil) === input.snoozedUntil
+                  ? (thread.snoozedAt ?? now)
+                  : now,
+            },
     ),
     unsnooze: optimistic.wrap(commands.unsnooze, (thread) => ({
       ...thread,
       snoozedUntil: null,
+      githubReplySnooze: null,
       snoozedAt: null,
     })),
     setAutoSettle: optimistic.wrap(commands.setAutoSettle, (thread, input, now) => ({
@@ -468,6 +474,7 @@ export function createThreadEnvironmentAtoms<R, E>(
           }
         : {}),
       snoozedUntil: null,
+      githubReplySnooze: null,
       snoozedAt: null,
     })),
     unpin: optimistic.wrap(commands.unpin, (thread) => ({

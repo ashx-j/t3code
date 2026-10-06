@@ -518,6 +518,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
 
   return {
     service: {
+      query: () => Effect.die("unused GraphQL query"),
       execute,
       // The fake answers the CLI shape, so batched lookups read it the way the fallback does.
       listPullRequestsByHead: (input) =>

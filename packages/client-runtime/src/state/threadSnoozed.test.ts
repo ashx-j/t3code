@@ -1,5 +1,5 @@
 // @effect-diagnostics globalDate:off -- Tests exercise local calendar snooze boundaries.
-import { ThreadId } from "@t3tools/contracts";
+import { CommandId, ThreadId } from "@t3tools/contracts";
 import { TurnId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -366,4 +366,31 @@ describe("resolveSnoozePresets", () => {
     const tomorrow = new Date(presets.find((preset) => preset.id === "tomorrow")!.snoozedUntil);
     expect(tomorrow.getDay()).toBe(1);
   });
+});
+
+it("keeps a GitHub reply snooze through the registering agent's completion", () => {
+  const shell = {
+    ...makeShell({ turnCompletedAt: "2026-04-10T10:30:00.000Z" }),
+    snoozedAt: "2026-04-10T09:00:00.000Z",
+    githubReplySnooze: {
+      requestId: CommandId.make("github-watch"),
+      url: "https://github.com/team/repo/pull/1",
+      startedAt: "2026-04-10T09:00:00.000Z",
+      nextCheckAt: "2026-04-10T09:02:00.000Z",
+      status: "watching" as const,
+      failures: 0,
+    },
+  };
+  expect(effectiveSnoozed(shell, { now: NOW })).toBe(true);
+  expect(effectiveSnoozed({ ...shell, hasPendingApprovals: true }, { now: NOW })).toBe(false);
+  const notice = {
+    type: "reply" as const,
+    url: shell.githubReplySnooze.url,
+    receivedAt: NOW,
+    text: "Feedback",
+    author: "reviewer",
+  };
+  expect(
+    threadWokeAt({ ...shell, githubReplySnooze: null, githubReplyNotice: notice }, { now: NOW }),
+  ).toBe(NOW);
 });

@@ -1,6 +1,7 @@
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import {
   type ThreadLinkedPullRequest,
+  type GitHubReplySnooze,
   CommandId,
   CheckpointId,
   CheckpointScopeId,
@@ -106,9 +107,11 @@ export interface ReorderActiveThreadInput extends ThreadCommandInput {
   readonly orderKey: string;
 }
 
-export interface SnoozeThreadInput extends ThreadCommandInput {
-  readonly snoozedUntil: string;
-}
+export type SnoozeThreadInput = ThreadCommandInput &
+  (
+    | { readonly snoozedUntil: string }
+    | { readonly url: string; readonly resumeFrom?: GitHubReplySnooze }
+  );
 
 export interface UnsnoozeThreadInput extends ThreadCommandInput {
   readonly reason: "user";
@@ -518,10 +521,15 @@ export const snoozeThread = Effect.fn("EnvironmentCommands.snoozeThread")(functi
   input: SnoozeThreadInput,
 ) {
   return yield* dispatch({
-    type: "thread.snooze",
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
-    snoozedUntil: input.snoozedUntil,
+    ...("url" in input
+      ? {
+          type: "thread.github-reply.snooze" as const,
+          url: input.url,
+          ...(input.resumeFrom === undefined ? {} : { resumeFrom: input.resumeFrom }),
+        }
+      : { type: "thread.snooze" as const, snoozedUntil: input.snoozedUntil }),
   });
 });
 
