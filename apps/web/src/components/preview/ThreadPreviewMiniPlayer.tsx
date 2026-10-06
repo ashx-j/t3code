@@ -166,9 +166,10 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
 
   const retry = () => {
     if (serverTab) {
-      serverSurfaceRef.current?.reload();
-    } else if (previewBridge) {
-      void previewBridge.refresh(runtimeTabId).catch((error) => {
+      if (loadFailure) serverSurfaceRef.current?.navigate(loadFailure.url);
+      else serverSurfaceRef.current?.reload();
+    } else if (previewBridge && loadFailure) {
+      void previewBridge.navigate(runtimeTabId, loadFailure.url).catch((error) => {
         toastManager.add({
           type: "error",
           title: "Unable to retry preview",

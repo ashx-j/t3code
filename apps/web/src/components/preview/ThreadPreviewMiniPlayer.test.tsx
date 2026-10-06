@@ -3,6 +3,7 @@
 import {
   EnvironmentId,
   ThreadId,
+  type DesktopPreviewBridge,
   type DesktopPreviewTabState,
   type PreviewSessionSnapshot,
 } from "@t3tools/contracts";
@@ -33,6 +34,7 @@ import { ThreadPreviewMiniPlayer } from "./ThreadPreviewMiniPlayer";
 import { projectDesktopState } from "./usePreviewBridge";
 
 const mocks = vi.hoisted(() => ({
+  navigate: vi.fn<DesktopPreviewBridge["navigate"]>(),
   refresh: vi.fn<(tabId: string) => Promise<void>>(),
   closePictureInPicture: vi.fn<(tabId: string) => Promise<void>>(),
   toast: vi.fn(),
@@ -40,6 +42,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("./previewBridge", () => ({
   previewBridge: {
+    navigate: mocks.navigate,
     refresh: mocks.refresh,
     pictureInPicture: { close: mocks.closePictureInPicture },
   },
@@ -93,6 +96,7 @@ const threadRef = {
 };
 const tabId = "mini-player-tab";
 const url = "http://localhost:5733/";
+const previousUrl = "https://previous.example/";
 const runtimeTabId = previewRuntimeTabId(threadRef, null, tabId);
 const failure = {
   kind: "LoadFailed",
@@ -104,7 +108,7 @@ const failure = {
 const snapshot: PreviewSessionSnapshot = {
   threadId: threadRef.threadId,
   tabId,
-  navStatus: { _tag: "Success", url, title: "App" },
+  navStatus: { _tag: "Success", url: previousUrl, title: "Previous page" },
   viewport: { _tag: "freeform", width: 1280, height: 800 },
   canGoBack: false,
   canGoForward: false,
@@ -176,6 +180,7 @@ function button(label: string) {
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  mocks.navigate.mockReset().mockResolvedValue(undefined);
   mocks.refresh.mockReset().mockResolvedValue(undefined);
   mocks.closePictureInPicture.mockReset().mockResolvedValue(undefined);
   resetPreviewStateForTests();
@@ -198,7 +203,7 @@ beforeEach(async () => {
   vi.stubGlobal("WebSocket", FakeSocket);
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
   applyPreviewServerSnapshot(threadRef, snapshot);
-  desktopState({ kind: "Success", url, title: "App" });
+  desktopState({ kind: "Success", url: previousUrl, title: "Previous page" });
   usePreviewMiniPlayerStore.getState().open(threadRef, browserMiniPlayerSource(tabId));
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -231,18 +236,23 @@ describe("floating browser navigation", () => {
     const serverSnapshot = {
       ...snapshot,
       runtime: "server" as const,
-      navStatus: {
-        _tag: "LoadFailed" as const,
-        url,
-        title: "",
-        code: failure.code,
-        description: failure.description,
-      },
     };
     await act(() => updatePreviewServerSnapshot(threadRef, serverSnapshot));
     await act(() => vi.advanceTimersByTimeAsync(0));
     const socket = FakeSocket.current;
     const canvas = container.querySelector("canvas");
+    await act(() =>
+      updatePreviewServerSnapshot(threadRef, {
+        ...serverSnapshot,
+        navStatus: {
+          _tag: "LoadFailed",
+          url,
+          title: "",
+          code: failure.code,
+          description: failure.description,
+        },
+      }),
+    );
     expect(container.querySelector('[role="alert"]')?.textContent).toContain(
       "Preview couldn't load",
     );
@@ -255,12 +265,15 @@ describe("floating browser navigation", () => {
       dialog: null,
     };
     await act(() => socket.control(control));
+    await act(() => button("Retry").click());
+    expect(socket.sent).toEqual([]);
     await act(() => button("Take control").click());
     expect(socket.sent.map((value) => JSON.parse(value))).toEqual([{ type: "takeControl" }]);
     await act(() => socket.control({ ...control, controller: "you", generation: 2 }));
     expect(button("Retry").disabled).toBe(false);
     await act(() => button("Retry").click());
-    expect(socket.sent.map((value) => JSON.parse(value))).toContainEqual({ type: "reload" });
+    expect(socket.sent.map((value) => JSON.parse(value))).toContainEqual({ type: "navigate", url });
+    expect(mocks.navigate).not.toHaveBeenCalled();
     expect(mocks.refresh).not.toHaveBeenCalled();
 
     await act(() =>
@@ -272,7 +285,10 @@ describe("floating browser navigation", () => {
     expect(container.textContent).toContain("Loading preview…");
     expect(socket.readyState).toBe(FakeSocket.OPEN);
     await act(() =>
-      updatePreviewServerSnapshot(threadRef, { ...serverSnapshot, navStatus: snapshot.navStatus }),
+      updatePreviewServerSnapshot(threadRef, {
+        ...serverSnapshot,
+        navStatus: { _tag: "Success", url, title: "App" },
+      }),
     );
     expect(container.querySelector('[role="alert"]')).toBeNull();
     expect(container.querySelector("canvas")).toBe(canvas);
@@ -291,6 +307,9 @@ describe("floating browser navigation", () => {
     expect(container.textContent).toContain(url);
     expect(useBrowserSurfaceStore.getState().byTabId[runtimeTabId]?.visible).toBe(false);
     expect(button("Retry").disabled).toBe(false);
+    expect(readThreadPreviewState(threadRef).sessions[tabId]?.navStatus).toMatchObject({
+      url: previousUrl,
+    });
 
     await act(() => {
       updatePreviewServerSnapshot(threadRef, {
@@ -306,7 +325,8 @@ describe("floating browser navigation", () => {
       button("Retry").click();
       desktopState({ kind: "Loading", url, title: "" });
     });
-    expect(mocks.refresh).toHaveBeenCalledExactlyOnceWith(runtimeTabId);
+    expect(mocks.navigate).toHaveBeenCalledExactlyOnceWith(runtimeTabId, url);
+    expect(mocks.refresh).not.toHaveBeenCalled();
     expect(container.querySelector('[role="alert"]')).toBeNull();
     expect(container.querySelector('[role="status"]')?.textContent).toBe("Loading preview…");
     expect(useBrowserSurfaceStore.getState().byTabId[runtimeTabId]?.visible).toBe(false);
@@ -330,7 +350,7 @@ describe("floating browser navigation", () => {
 
   it("keeps close available while reconnecting and reports a rejected retry", async () => {
     await act(() => desktopState(failure));
-    mocks.refresh.mockRejectedValueOnce(new Error("Guest disconnected"));
+    mocks.navigate.mockRejectedValueOnce(new Error("Guest disconnected"));
     await act(() => button("Retry").click());
     expect(mocks.toast).toHaveBeenCalledWith(
       expect.objectContaining({
