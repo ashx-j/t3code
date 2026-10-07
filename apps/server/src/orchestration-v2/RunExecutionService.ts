@@ -49,6 +49,7 @@ import type {
 import { ProviderAdapterTurnStartError } from "./ProviderAdapter.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import type { ProjectionStoreV2Error } from "./ProjectionStore.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import { makeProviderFailure, makeProviderFailureTurnItem } from "./ProviderFailure.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 
@@ -543,6 +544,7 @@ export const layer: Layer.Layer<
   | EventSink.EventSinkV2
   | IdAllocator.IdAllocatorV2
   | ProviderEventIngestor.ProviderEventIngestorV2
+  | ProjectionStore.ProjectionStoreV2
   | ServerSettings.ServerSettingsService
 > = Layer.effect(
   RunExecutionServiceV2,
@@ -551,6 +553,7 @@ export const layer: Layer.Layer<
     const eventSink = yield* EventSink.EventSinkV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+    const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
     const finalizationObserver = yield* RunFinalizationService.RunFinalizationObserver;
 
@@ -560,6 +563,7 @@ export const layer: Layer.Layer<
       readonly checkpointScope: OrchestrationV2CheckpointScope;
       readonly providerThread: OrchestrationV2ProviderThread;
       readonly attempt: OrchestrationV2RunAttempt;
+      readonly readRootProviderTurnId?: Effect.Effect<ProviderTurnId | null>;
       readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
       readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
       readonly openRunOwnedSubagents?: OpenRunOwnedSubagentProjection;
@@ -616,6 +620,29 @@ export const layer: Layer.Layer<
           }
           return;
         }
+        const providerTurnId = yield* (
+          input.readRootProviderTurnId ?? Effect.succeed(input.attempt.providerTurnId)
+        );
+        // ingestion can fail after committing a turn update. read the saved row
+        // so finalization neither misses that turn nor replaces a terminal result.
+        const providerTurn =
+          providerTurnId == null
+            ? undefined
+            : yield* projectionStore
+                .getProviderControlContext(input.run.threadId, {
+                  providerThreadId: input.providerThread.id,
+                  providerTurnId,
+                })
+                .pipe(
+                  Effect.map((context) => context.providerTurn),
+                  Effect.catch((cause) =>
+                    Effect.logWarning("failed to read provider turn during run finalization", {
+                      runId: input.run.id,
+                      providerTurnId,
+                      cause,
+                    }).pipe(Effect.as(undefined)),
+                  ),
+                );
         const allocateEventId = () => idAllocator.allocate.event({ threadId: input.run.threadId });
         const open = input.openRunOwnedSubagents ?? emptyOpenRunOwnedSubagentProjection();
         const hasOpenSubagentProjection =
@@ -687,6 +714,27 @@ export const layer: Layer.Layer<
             // Terminalize open run-owned subagent rows before the root run
             // settles so projections never keep a forever-running subagent card.
             ...cascadedSubagentEvents,
+            ...(providerTurn !== undefined &&
+            providerTurn.runAttemptId === input.attempt.id &&
+            providerTurn.nodeId === input.rootNode.id &&
+            !isTerminalProviderTurnStatus(providerTurn.status)
+              ? [
+                  {
+                    id: yield* allocateEventId(),
+                    type: "provider-turn.updated" as const,
+                    threadId: input.run.threadId,
+                    runId: input.run.id,
+                    nodeId: providerTurn.nodeId,
+                    providerInstanceId: input.run.providerInstanceId,
+                    occurredAt: completedAt,
+                    payload: {
+                      ...providerTurn,
+                      status: input.terminal.status,
+                      completedAt,
+                    },
+                  },
+                ]
+              : []),
             ...(finalizedAttempt === null
               ? []
               : [
@@ -738,7 +786,7 @@ export const layer: Layer.Layer<
                       runId: input.run.id,
                       nodeId: input.rootNode.id,
                       providerThreadId: input.terminal.providerThreadId,
-                      providerTurnId: input.terminal.providerTurnId,
+                      providerTurnId: providerTurn?.id ?? input.terminal.providerTurnId,
                       itemOrdinal: input.terminal.failureItemOrdinal,
                       failure: input.terminal.failure,
                       occurredAt: completedAt,
@@ -909,6 +957,7 @@ export const layer: Layer.Layer<
           const terminalEvent = yield* Ref.make<ProviderTerminalEvent | null>(null);
           const latestTurnItemOrdinal = yield* Ref.make(input.providerTurnOrdinal * 100);
           const latestProviderThread = yield* Ref.make(input.providerThread);
+          const latestRootProviderTurnId = yield* Ref.make(input.attempt.providerTurnId);
           const routeIdentity: ProviderEventRouteIdentity = {
             threadId: input.run.threadId,
             runId: input.run.id,
@@ -970,6 +1019,7 @@ export const layer: Layer.Layer<
                 checkpointScope: input.checkpointScope,
                 providerThread,
                 attempt: input.attempt,
+                readRootProviderTurnId: Ref.get(latestRootProviderTurnId),
                 ...(input.shouldFinalizeRun === undefined
                   ? {}
                   : {
@@ -1185,6 +1235,14 @@ export const layer: Layer.Layer<
             ),
             Stream.tap((event) =>
               Effect.gen(function* () {
+                // remember the allocated id even if ingestion fails before returning.
+                if (
+                  event.type === "provider_turn.updated" &&
+                  event.providerTurn.runAttemptId === input.attempt.id &&
+                  event.providerTurn.nodeId === input.rootNode.id
+                ) {
+                  yield* Ref.set(latestRootProviderTurnId, event.providerTurn.id);
+                }
                 let storedEventCount = 0;
                 const deliveredEvent = filterAssistantEvent(
                   event,
@@ -1298,6 +1356,7 @@ export const layer: Layer.Layer<
                                         checkpointScope: input.checkpointScope,
                                         providerThread,
                                         attempt: input.attempt,
+                                        readRootProviderTurnId: Ref.get(latestRootProviderTurnId),
                                         // The failure may be the ownership
                                         // read itself, so check in the write.
                                         writeIfRunCurrent: {
@@ -1407,6 +1466,7 @@ export const layer: Layer.Layer<
                             checkpointScope: input.checkpointScope,
                             providerThread,
                             attempt: input.attempt,
+                            readRootProviderTurnId: Ref.get(latestRootProviderTurnId),
                             // Checked in the write transaction, not by another
                             // read that can fail like the one before the start.
                             writeIfRunCurrent: {
