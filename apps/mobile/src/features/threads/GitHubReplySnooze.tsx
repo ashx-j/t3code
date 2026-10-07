@@ -1,11 +1,13 @@
 import {
   eligibleThreadGitHubConversations,
   githubReplyConversationLabel,
+  githubReplySnoozeFailureMessage,
   type GitHubReplyConversation,
 } from "@t3tools/client-runtime/github-reply-conversations";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import type { MenuAction } from "@react-native-menu/menu";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Alert, Linking, Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
@@ -36,16 +38,20 @@ export function githubReplySnoozeMenuAction(
 export function useGitHubReplySnooze(thread: EnvironmentThreadShell) {
   const snooze = useAtomCommand(threadEnvironment.snooze);
   const [pending, setPending] = useState(false);
+  const pendingRef = useRef(false);
   const snoozeUrl = useCallback(
     (url: string) => {
+      if (pendingRef.current) return;
+      pendingRef.current = true;
       setPending(true);
       void snooze({
         environmentId: thread.environmentId,
         input: { threadId: thread.id, url },
       }).then((result) => {
+        pendingRef.current = false;
         setPending(false);
-        if (result._tag !== "Success") {
-          Alert.alert("Could not snooze thread", "Respond to pending requests and try again.");
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          Alert.alert("Could not snooze thread", githubReplySnoozeFailureMessage);
         }
       });
     },
@@ -64,14 +70,6 @@ export function GitHubReplySnoozeCard({ thread }: { readonly thread: Environment
   const url = watch?.url ?? notice!.url;
   const directUrl =
     notice?.conversationUrl ?? (conversations.length === 1 ? conversations[0]?.url : undefined);
-  const status =
-    watch?.status === "pending"
-      ? "Checking GitHub access..."
-      : watch?.status === "rate-limited"
-        ? "GitHub rate limit reached. Checks are paused until it resets."
-        : watch?.status === "retrying"
-          ? "GitHub check failed. Retrying..."
-          : null;
   const snoozeButton = (
     <Text className="font-t3-semibold">{pending ? "Snoozing..." : "Snooze"}</Text>
   );
@@ -84,11 +82,7 @@ export function GitHubReplySnoozeCard({ thread }: { readonly thread: Environment
             ? `GitHub reply from ${notice.author}`
             : "GitHub reply snooze stopped"}
       </Text>
-      {status ? (
-        <Text>{status}</Text>
-      ) : notice?.type === "error" ? (
-        <Text>{notice.text}</Text>
-      ) : null}
+      {!watch && notice?.type === "error" ? <Text>{notice.text}</Text> : null}
       <View className="flex-row items-center gap-6">
         <Pressable accessibilityRole="link" onPress={() => void Linking.openURL(url)}>
           <Text className="text-primary-text">View</Text>
@@ -129,7 +123,6 @@ export function GitHubReplySnoozeCard({ thread }: { readonly thread: Environment
         ) : null}
         <Pressable
           accessibilityRole="button"
-          disabled={pending}
           onPress={() =>
             void unsnooze({
               environmentId: thread.environmentId,

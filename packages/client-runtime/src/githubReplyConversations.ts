@@ -5,6 +5,9 @@ import {
 } from "@t3tools/contracts";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
+export const githubReplySnoozeFailureMessage =
+  "GitHub reply snooze could not be set up. Try again.";
+
 export interface GitHubReplyConversation {
   readonly url: string;
   readonly kind: "pull-request" | "discussion";

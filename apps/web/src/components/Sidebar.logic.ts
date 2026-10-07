@@ -1,6 +1,9 @@
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
-import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
+import {
+  threadPullRequestSearchTerms,
+  visibleThreadPullRequests,
+} from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
 import {
   isAtomCommandInterrupted,
@@ -45,6 +48,23 @@ export function shouldNavigateAfterThreadPark(input: {
 
 const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
+
+export function resolveSidebarDiscussionBadge(
+  thread: Pick<
+    SidebarThreadSummary,
+    "discussions" | "pullRequests" | "linkedPullRequest" | "branchPullRequest"
+  >,
+) {
+  if (
+    thread.discussions?.length !== 1 ||
+    visibleThreadPullRequests(thread.pullRequests).length > 0 ||
+    thread.linkedPullRequest != null ||
+    thread.branchPullRequest != null
+  ) {
+    return null;
+  }
+  return thread.discussions[0] ?? null;
+}
 
 export function resolveSidebarRowAccessibility(input: {
   readonly title: string;

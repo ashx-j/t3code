@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
+  MessageId,
   RuntimeRequestId,
   EnvironmentId,
   ORCHESTRATION_V2_WS_METHODS,
@@ -24,6 +25,7 @@ import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { createThreadEnvironmentAtoms } from "./threadCommands.ts";
+import { isAtomCommandInterrupted } from "./runtime.ts";
 
 const ENVIRONMENT_ID = EnvironmentId.make("remote");
 const THREAD_ID = ThreadId.make("thread");
@@ -125,6 +127,165 @@ const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* () {
 });
 
 describe("remote thread lifecycle commands", () => {
+  const githubUrl = "https://github.com/t3tools/t3code/pull/1";
+
+  it.effect(
+    "snoozes immediately while GitHub setup runs and restores the previous state on failure",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        const result = h.commands.snooze.run(h.registry, {
+          environmentId: ENVIRONMENT_ID,
+          input: { threadId: THREAD_ID, url: githubUrl },
+        });
+        expect(h.registry.get(h.visibleAtom)?.threads[0]).toMatchObject({
+          githubReplySnooze: { url: githubUrl, status: "pending" },
+          snoozedAt: expect.any(Object),
+          snoozedUntil: null,
+        });
+        const request = yield* Queue.take(h.requests);
+        expect(request.command.type).toBe("thread.github-reply.snooze");
+        expect(h.registry.get(h.snapshotAtom(ENVIRONMENT_ID))).toBe(SNAPSHOT);
+        yield* Deferred.fail(request.reply, new Error("GitHub unavailable"));
+        const failure = yield* Effect.promise(() => result);
+        expect(failure._tag).toBe("Failure");
+        expect(isAtomCommandInterrupted(failure)).toBe(false);
+        expect(h.registry.get(h.visibleAtom)).toBe(SNAPSHOT);
+      }),
+  );
+
+  it.effect("keeps GitHub snoozed through acknowledgement and adopts the server watch", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const result = h.commands.snooze.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: { threadId: THREAD_ID, url: githubUrl },
+      });
+      const request = yield* Queue.take(h.requests);
+      yield* Deferred.succeed(request.reply, { sequence: 2 });
+      expect((yield* Effect.promise(() => result))._tag).toBe("Success");
+      expect(h.registry.get(h.visibleAtom)?.threads[0]?.githubReplySnooze?.url).toBe(githubUrl);
+      const confirmed = {
+        ...SNAPSHOT,
+        snapshotSequence: 2,
+        threads: [
+          {
+            ...SNAPSHOT.threads[0]!,
+            snoozedAt: NOW,
+            githubReplySnooze: {
+              requestId: request.command.commandId,
+              url: githubUrl,
+              startedAt: DateTime.formatIso(NOW),
+              nextCheckAt: DateTime.formatIso(NOW),
+              status: "watching" as const,
+              failures: 0,
+              viewer: "ash",
+              baseline: { latestAt: null, ids: [] },
+            },
+          },
+        ],
+      };
+      h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), confirmed);
+      expect(h.registry.get(h.visibleAtom)).toBe(confirmed);
+    }),
+  );
+
+  it.effect.each(["success", "failure"] as const)(
+    "keeps a newer Wake visible and suppresses stale GitHub setup %s",
+    (outcome) =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        const result = h.commands.snooze.run(h.registry, {
+          environmentId: ENVIRONMENT_ID,
+          input: { threadId: THREAD_ID, url: githubUrl },
+        });
+        const first = yield* Queue.take(h.requests);
+        const wake = h.commands.unsnooze.run(h.registry, {
+          environmentId: ENVIRONMENT_ID,
+          input: { threadId: THREAD_ID, reason: "user" },
+        });
+        expect(h.registry.get(h.visibleAtom)?.threads[0]?.githubReplySnooze).toBeNull();
+        if (outcome === "success") yield* Deferred.succeed(first.reply, { sequence: 2 });
+        else yield* Deferred.fail(first.reply, new Error("GitHub unavailable"));
+        expect(isAtomCommandInterrupted(yield* Effect.promise(() => result))).toBe(true);
+        expect(h.registry.get(h.visibleAtom)?.threads[0]?.githubReplySnooze).toBeNull();
+        const second = yield* Queue.take(h.requests);
+        expect(second.command.type).toBe("thread.unsnooze");
+        yield* Deferred.succeed(second.reply, { sequence: 3 });
+        expect((yield* Effect.promise(() => wake))._tag).toBe("Success");
+        const confirmed = { ...SNAPSHOT, snapshotSequence: 3 };
+        h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), confirmed);
+        expect(h.registry.get(h.visibleAtom)).toBe(confirmed);
+      }),
+  );
+
+  it.effect("preserves a newer timed snooze when GitHub setup fails", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const result = h.commands.snooze.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: { threadId: THREAD_ID, url: githubUrl },
+      });
+      const first = yield* Queue.take(h.requests);
+      const changed = h.commands.snooze.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: { threadId: THREAD_ID, snoozedUntil: DateTime.formatIso(FUTURE) },
+      });
+      yield* Deferred.fail(first.reply, new Error("GitHub unavailable"));
+      expect(isAtomCommandInterrupted(yield* Effect.promise(() => result))).toBe(true);
+      expect(h.registry.get(h.visibleAtom)?.threads[0]).toMatchObject({
+        githubReplySnooze: null,
+        snoozedUntil: FUTURE,
+      });
+      const second = yield* Queue.take(h.requests);
+      yield* Deferred.succeed(second.reply, { sequence: 2 });
+      expect((yield* Effect.promise(() => changed))._tag).toBe("Success");
+    }),
+  );
+
+  it.effect.each(["archive", "send"] as const)(
+    "silences a superseded GitHub failure after a newer %s without dropping that command",
+    (action) =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        const result = h.commands.snooze.run(h.registry, {
+          environmentId: ENVIRONMENT_ID,
+          input: { threadId: THREAD_ID, url: githubUrl },
+        });
+        const first = yield* Queue.take(h.requests);
+        const next =
+          action === "archive"
+            ? h.commands.archive.run(h.registry, {
+                environmentId: ENVIRONMENT_ID,
+                input: { threadId: THREAD_ID },
+              })
+            : h.commands.startTurn.run(h.registry, {
+                environmentId: ENVIRONMENT_ID,
+                input: {
+                  threadId: THREAD_ID,
+                  message: {
+                    messageId: MessageId.make("new-message"),
+                    role: "user",
+                    text: "Continue",
+                    attachments: [],
+                  },
+                  runtimeMode: "full-access",
+                  interactionMode: "default",
+                  dispatchMode: "start",
+                },
+              });
+        yield* Deferred.fail(first.reply, new Error("GitHub unavailable"));
+        expect(isAtomCommandInterrupted(yield* Effect.promise(() => result))).toBe(true);
+        expect(h.registry.get(h.visibleAtom)).toBe(SNAPSHOT);
+        const second = yield* Queue.take(h.requests);
+        expect(second.command.type).toBe(
+          action === "archive" ? "thread.archive" : "message.dispatch",
+        );
+        yield* Deferred.succeed(second.reply, { sequence: 2 });
+        expect((yield* Effect.promise(() => next))._tag).toBe("Success");
+      }),
+  );
+
   const actions = [
     ["settle", {}, { settledOverride: "settled", pinnedAt: null, snoozedUntil: null }],
     ["unsettle", { reason: "user" }, { settledOverride: "active", settledAt: null }],

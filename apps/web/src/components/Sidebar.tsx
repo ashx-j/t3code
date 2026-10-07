@@ -200,6 +200,7 @@ import {
   resolveSidebarDropTarget,
   resolveSidebarDropVerb,
   resolveSidebarThreadSection,
+  resolveSidebarDiscussionBadge,
   resolveSidebarRowAccessibility,
   type SidebarDropVerb,
   resolveSidebarThreadStatus,
@@ -273,6 +274,7 @@ import {
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
+import { SidebarThreadDiscussionBadge } from "./sidebar/SidebarThreadDiscussionBadge";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { MiddleTruncate } from "./ui/middle-truncate";
@@ -1676,7 +1678,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     useRightPanelStore.getState().open(threadRef, "pull-requests");
     if (!props.isActive) onThreadActivate(threadRef);
   }, [onThreadActivate, props.isActive, threadRef]);
-  const prBadge =
+  const discussion = resolveSidebarDiscussionBadge(thread);
+  const linkedItemBadge =
     prBadgeShape?.kind === "stack" || pr || currentLinkedPr ? (
       <ThreadPullRequestBadgeControl
         render={<InlineButton />}
@@ -1688,6 +1691,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         onOpenList={handlePrListClick}
         onOpenPullRequest={handlePrClick}
       />
+    ) : discussion ? (
+      <SidebarThreadDiscussionBadge discussion={discussion} onOpen={handlePrClick} />
     ) : null;
   const terminalStatusIcon = terminalStatus ? (
     <span
@@ -1810,10 +1815,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 Regenerating title
               </span>
             ) : null}
-            {/* The PR badge stays outside the hover-fading slot: it must
+            {/* The linked item badge stays outside the hover-fading slot: it must
               remain visible AND clickable while the row is hovered. Only
               the time/jump label yields to the settle affordance. */}
-            {prBadge}
+            {linkedItemBadge}
             {sortable?.isDragging ? (
               dragDestination
             ) : (
@@ -2145,7 +2150,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 <span className="flex-1" />
               )}
               {terminalStatusIcon}
-              {prBadge}
+              {linkedItemBadge}
               {diff ? (
                 <span className="shrink-0 font-mono">
                   <span className="text-diff-addition-foreground">+{diff.insertions}</span>{" "}
@@ -4128,12 +4133,22 @@ export default function Sidebar() {
         // Snoozing the open thread moves you forward, same as settle —
         // both park the thread you're done with for now.
         const navigateAfterSnooze = planForwardNavigation(threadKey, opts.coSnoozingKeys);
-        const result = await snoozeThread(
-          threadRef,
-          "url" in preset ? preset : preset.snoozedUntil,
-        );
+        const request = snoozeThread(threadRef, "url" in preset ? preset : preset.snoozedUntil);
+        if (
+          "url" in preset &&
+          shouldNavigateAfterThreadPark({
+            threadKey,
+            currentThreadKey: routeThreadKeyRef.current,
+            action: "snooze",
+            now: new Date().toISOString(),
+            thread: readThreadShell(threadRef),
+          })
+        ) {
+          navigateAfterSnooze?.();
+        }
+        const result = await request;
         if (result._tag === "Failure") {
-          // Never navigate away from a thread that did not snooze.
+          // Rollback restores the row without forcing navigation back to it.
           return isAtomCommandInterrupted(result)
             ? ({ status: "interrupted" } as const)
             : ({ status: "failure", error: squashAtomCommandFailure(result) } as const);
@@ -4141,6 +4156,7 @@ export default function Sidebar() {
         // Only move forward if the user is still on the snoozed thread —
         // a navigation made during the await wins over ours.
         if (
+          !("url" in preset) &&
           shouldNavigateAfterThreadPark({
             threadKey,
             currentThreadKey: routeThreadKeyRef.current,

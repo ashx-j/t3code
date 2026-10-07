@@ -32,6 +32,7 @@ import {
   PullRequestCheckStatusIcon,
   pullRequestCheckStatusLabel,
   PullRequestLabelChip,
+  PullRequestMetaRow,
   PullRequestReviewOutcomeBadge,
   pullRequestReviewOutcomeLabel,
   pullRequestReviewOutcomeRingClassName,
@@ -258,26 +259,6 @@ function CollapsedComment({
         </CollapsiblePanel>
       </article>
     </Collapsible>
-  );
-}
-
-function MetaRow({
-  icon,
-  label,
-  children,
-}: {
-  icon: ReactNode;
-  label: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="grid min-h-7 min-w-0 grid-cols-[6rem_minmax(0,1fr)] items-center gap-2 text-xs sm:min-h-6">
-      <span className="flex items-center gap-1.5 text-muted-foreground">
-        {icon}
-        {label}
-      </span>
-      <span className="min-w-0 text-foreground">{children}</span>
-    </div>
   );
 }
 
@@ -711,7 +692,7 @@ export function PullRequestSummaryTab({
     <div className="h-full overflow-y-auto" data-pull-request-summary-scroll>
       <section className="px-4 pt-2.5 pb-1">
         <div className="space-y-2">
-          <MetaRow icon={<UsersIcon className="size-3.5" />} label="Reviewers">
+          <PullRequestMetaRow icon={<UsersIcon className="size-3.5" />} label="Reviewers">
             <span className="flex min-w-0 flex-wrap items-center gap-1.5">
               {reviewerEntries.length === 0 ? (
                 <span className="text-muted-foreground">None</span>
@@ -792,11 +773,11 @@ export function PullRequestSummaryTab({
                 />
               ) : null}
             </span>
-          </MetaRow>
+          </PullRequestMetaRow>
           {/* The row is shown empty only where a label could be put on it from here; on a host
               with none to offer, an empty row is a row about nothing. */}
           {detail.labels.length > 0 || detail.capabilities.labels === true ? (
-            <MetaRow icon={<TagIcon className="size-3.5" />} label="Labels">
+            <PullRequestMetaRow icon={<TagIcon className="size-3.5" />} label="Labels">
               <span className="flex min-w-0 flex-wrap items-center gap-1">
                 {detail.labels.length === 0 ? (
                   <span className="text-muted-foreground">None</span>
@@ -818,7 +799,7 @@ export function PullRequestSummaryTab({
                   />
                 ) : null}
               </span>
-            </MetaRow>
+            </PullRequestMetaRow>
           ) : null}
         </div>
       </section>

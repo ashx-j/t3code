@@ -2766,8 +2766,23 @@ const layerWsRpc = (
             ),
             { "rpc.aggregate": "pull-requests" },
           ),
+        [WS_METHODS.discussionsMetadataOptions]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.discussionsMetadataOptions,
+            discussions.metadataOptions(input),
+          ),
+        [WS_METHODS.discussionsSetLabel]: (input) =>
+          observeRpcEffect(WS_METHODS.discussionsSetLabel, discussions.setLabel(input)),
+        [WS_METHODS.discussionsSetCategory]: (input) =>
+          observeRpcEffect(WS_METHODS.discussionsSetCategory, discussions.setCategory(input)),
         [WS_METHODS.discussionsDetail]: (input) =>
           observeRpcEffect(WS_METHODS.discussionsDetail, discussions.detail(input)),
+        [WS_METHODS.discussionsComment]: (input) =>
+          observeRpcEffect(WS_METHODS.discussionsComment, discussions.comment(input)),
+        [WS_METHODS.discussionsSetReaction]: (input) =>
+          observeRpcEffect(WS_METHODS.discussionsSetReaction, discussions.setReaction(input)),
+        [WS_METHODS.discussionsSetUpvote]: (input) =>
+          observeRpcEffect(WS_METHODS.discussionsSetUpvote, discussions.setUpvote(input)),
         [WS_METHODS.pullRequestsDetail]: (input) =>
           observeRpcEffect(
             WS_METHODS.pullRequestsDetail,

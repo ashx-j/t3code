@@ -5,6 +5,7 @@ import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 import {
   WS_METHODS,
+  CommandId,
   type EnvironmentId,
   type OrchestrationV2ShellSnapshot,
 } from "@t3tools/contracts";
@@ -403,7 +404,7 @@ export function createThreadEnvironmentAtoms<R, E>(
     }),
   };
   const optimistic = createOptimisticThreadLifecycle(snapshotAtom);
-  return {
+  const lifecycle = {
     ...commands,
     snapshotAtom: optimistic.snapshotAtom,
     settle: optimistic.wrap(commands.settle, (thread, _input, now, accepted) =>
@@ -431,26 +432,46 @@ export function createThreadEnvironmentAtoms<R, E>(
       settledAt: null,
       unsettledAt: thread.settledOverride === "active" ? (thread.unsettledAt ?? null) : now,
     })),
-    snooze: optimistic.wrap(commands.snooze, (thread, input, now, accepted) =>
-      "url" in input
-        ? thread
-        : (!accepted &&
-              (thread.pendingRuntimeRequest !== null ||
-                ["preparing", "queued", "starting"].includes(thread.status))) ||
-            !(Date.parse(input.snoozedUntil) > DateTime.toEpochMillis(now))
+    snooze: optimistic.wrap(
+      commands.snooze,
+      (thread, input, now, accepted) =>
+        (!accepted &&
+          (thread.pendingRuntimeRequest !== null ||
+            ["preparing", "queued", "starting"].includes(thread.status))) ||
+        (!("url" in input) && !(Date.parse(input.snoozedUntil) > DateTime.toEpochMillis(now)))
           ? thread
-          : {
-              ...thread,
-              pendingRuntimeRequest: null,
-              snoozedUntil: DateTime.makeUnsafe(input.snoozedUntil),
-              githubReplySnooze: null,
-              githubReplyNotice: null,
-              snoozedAt:
-                thread.snoozedUntil != null &&
-                DateTime.formatIso(thread.snoozedUntil) === input.snoozedUntil
-                  ? (thread.snoozedAt ?? now)
-                  : now,
-            },
+          : "url" in input
+            ? {
+                ...thread,
+                pendingRuntimeRequest: null,
+                snoozedUntil: null,
+                snoozedAt: now,
+                settledOverride: "active",
+                settledAt: null,
+                githubReplyNotice: null,
+                githubReplySnooze: {
+                  requestId:
+                    input.commandId ?? CommandId.make(`optimistic:${DateTime.toEpochMillis(now)}`),
+                  url: input.url,
+                  startedAt: DateTime.formatIso(now),
+                  nextCheckAt: DateTime.formatIso(now),
+                  status: "pending",
+                  failures: 0,
+                },
+              }
+            : {
+                ...thread,
+                pendingRuntimeRequest: null,
+                snoozedUntil: DateTime.makeUnsafe(input.snoozedUntil),
+                githubReplySnooze: null,
+                githubReplyNotice: null,
+                snoozedAt:
+                  thread.snoozedUntil != null &&
+                  DateTime.formatIso(thread.snoozedUntil) === input.snoozedUntil
+                    ? (thread.snoozedAt ?? now)
+                    : now,
+              },
+      (input) => "url" in input,
     ),
     unsnooze: optimistic.wrap(commands.unsnooze, (thread) => ({
       ...thread,
@@ -490,5 +511,17 @@ export function createThreadEnvironmentAtoms<R, E>(
       ...thread,
       activeOrderKey: input.orderKey,
     })),
+  };
+  return {
+    ...lifecycle,
+    archive: optimistic.supersede(lifecycle.archive),
+    unarchive: optimistic.supersede(lifecycle.unarchive),
+    delete: optimistic.supersede(lifecycle.delete),
+    startTurn: optimistic.supersede(lifecycle.startTurn),
+    snooze: optimistic.supersede(lifecycle.snooze),
+    unsnooze: optimistic.supersede(lifecycle.unsnooze),
+    settle: optimistic.supersede(lifecycle.settle),
+    unsettle: optimistic.supersede(lifecycle.unsettle),
+    pin: optimistic.supersede(lifecycle.pin),
   };
 }

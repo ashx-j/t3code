@@ -91,7 +91,6 @@ import { useAcknowledgeThreadWoke, useThreadActions } from "../hooks/useThreadAc
 import { useOpenChangeRequestLink } from "../lib/openPullRequestLink";
 import { eligibleThreadGitHubConversations } from "@t3tools/client-runtime/github-reply-conversations";
 import { GitHubReplySnoozeButton } from "./GitHubReplySnoozeMenu";
-import { parseGitHubConversationUrl } from "@t3tools/contracts";
 import { DiscussionDetailPanel } from "./discussion/DiscussionDetailPanel";
 import {
   deriveProviderSubagentStatus,
@@ -7097,14 +7096,6 @@ export default function ChatView(props: ChatViewProps) {
       event.preventDefault();
       event.stopPropagation();
       if (openChangeRequestLink(event, url) || !activeThreadRef) return;
-      const conversation = parseGitHubConversationUrl(url);
-      if (
-        conversation?.kind === "discussion" &&
-        serverConfig?.environment.capabilities.threadDiscussions === true
-      ) {
-        useRightPanelStore.getState().openDiscussion(activeThreadRef, url, conversation.number);
-        return;
-      }
       void openUrlInPreview({ threadRef: activeThreadRef, url, openPreview }).then((result) => {
         if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
         const error = squashAtomCommandFailure(result);
@@ -7117,12 +7108,7 @@ export default function ChatView(props: ChatViewProps) {
         );
       });
     },
-    [
-      activeThreadRef,
-      openChangeRequestLink,
-      openPreview,
-      serverConfig?.environment.capabilities.threadDiscussions,
-    ],
+    [activeThreadRef, openChangeRequestLink, openPreview],
   );
   const [isRestoringThreadBranch, setIsRestoringThreadBranch] = useState(false);
   const [branchRestoreConfirmOpen, setBranchRestoreConfirmOpen] = useState(false);
@@ -7518,33 +7504,22 @@ export default function ChatView(props: ChatViewProps) {
     const isSnoozed = activeThreadSnoozed;
     return {
       id: `thread-${isSnoozed ? "snoozed" : "settled"}:${activeThread?.id ?? "unknown"}`,
-      ...(activeThreadShell?.githubReplySnooze?.status === "watching"
-        ? { layout: "inline" as const }
-        : {}),
+      ...(activeThreadShell?.githubReplySnooze ? { layout: "inline" as const } : {}),
       variant: "info",
       icon: isSnoozed ? <AlarmClockIcon /> : <CheckCircle2Icon />,
       title: activeThreadShell?.githubReplySnooze
         ? "Waiting for a GitHub reply"
         : `This thread is ${isSnoozed ? "snoozed" : "settled"}`,
       description: activeThreadShell?.githubReplySnooze ? (
-        <>
-          {activeThreadShell.githubReplySnooze.status === "pending"
-            ? "Checking GitHub access... "
-            : activeThreadShell.githubReplySnooze.status === "rate-limited"
-              ? "GitHub rate limit reached. Checks are paused until it resets. "
-              : activeThreadShell.githubReplySnooze.status === "retrying"
-                ? "GitHub check failed. Retrying... "
-                : null}
-          <a
-            href={activeThreadShell.githubReplySnooze.url}
-            className="chat-link"
-            onClick={(event) =>
-              openGitHubConversation(event, activeThreadShell.githubReplySnooze!.url)
-            }
-          >
-            View
-          </a>
-        </>
+        <a
+          href={activeThreadShell.githubReplySnooze.url}
+          className="chat-link"
+          onClick={(event) =>
+            openGitHubConversation(event, activeThreadShell.githubReplySnooze!.url)
+          }
+        >
+          View
+        </a>
       ) : (
         `Send a message to ${isSnoozed ? "wake" : "unsettle"}`
       ),

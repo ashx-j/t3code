@@ -1,5 +1,5 @@
 import * as ThreadDiscussionService from "./ThreadDiscussionService.ts";
-import * as GitHubDiscussionReader from "../sourceControl/GitHubDiscussionReader.ts";
+import * as GitHubDiscussions from "../sourceControl/GitHubDiscussions.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as GitHubReplySnoozeWorker from "./GitHubReplySnoozeWorker.ts";
 import * as GitHubReplyReader from "../sourceControl/GitHubReplyReader.ts";
@@ -2270,7 +2270,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         Effect.provide(
           ThreadDiscussionService.layer.pipe(
             Layer.provide(
-              Layer.mock(GitHubDiscussionReader.GitHubDiscussionReader)({
+              Layer.mock(GitHubDiscussions.GitHubDiscussions)({
                 summary: (input) =>
                   Effect.sync(() => {
                     reads.push(input);

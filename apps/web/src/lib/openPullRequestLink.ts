@@ -3,7 +3,11 @@ import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
 import { type MouseEvent, useCallback, useMemo } from "react";
 
-import { pullRequestHostOf, type SourceControlProviderKind } from "@t3tools/contracts";
+import {
+  parseGitHubConversationUrl,
+  pullRequestHostOf,
+  type SourceControlProviderKind,
+} from "@t3tools/contracts";
 import { parseChangeRequestUrl, type ChangeRequestLink } from "@t3tools/shared/changeRequestUrl";
 import {
   canonicalRepositoryKey,
@@ -225,6 +229,21 @@ export function useOpenChangeRequestLink(
       if (shouldOpenPullRequestExternally(event)) return false;
       const resolvedThreadRef = targetThreadRef ?? threadRef;
       const resolvedPanelRef = panelRef ?? resolvedThreadRef;
+      const conversation = parseGitHubConversationUrl(targetUrl);
+      if (conversation?.kind === "discussion") {
+        if (
+          !resolvedThreadRef ||
+          serverConfigs.get(resolvedThreadRef.environmentId)?.environment.capabilities
+            .threadDiscussions !== true
+        )
+          return false;
+        event.preventDefault();
+        event.stopPropagation();
+        useRightPanelStore
+          .getState()
+          .openDiscussion(resolvedThreadRef, targetUrl, conversation.number);
+        return true;
+      }
       const parsed = parseChangeRequestUrl(targetUrl);
       if (parsed === null) return false;
       const reads = (environmentId: string) =>

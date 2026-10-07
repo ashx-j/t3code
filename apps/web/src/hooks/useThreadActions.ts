@@ -4,7 +4,12 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  isAtomCommandInterrupted,
+  settlePromise,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import { githubReplySnoozeFailureMessage } from "@t3tools/client-runtime/github-reply-conversations";
 import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import { EnvironmentId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
@@ -949,6 +954,9 @@ export function useThreadActions() {
       });
       if (result._tag !== "Success") {
         action.finish();
+        if (typeof snoozedUntil !== "string" && !isAtomCommandInterrupted(result)) {
+          return AsyncResult.failure(Cause.fail(new Error(githubReplySnoozeFailureMessage)));
+        }
         return result;
       }
       // Snooze hides the row, so keep its confirmation in the sidebar.
