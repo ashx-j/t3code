@@ -953,17 +953,20 @@ it.layer(layerTest)("delegated background work", (it) => {
           updatedAt: now,
           input: "test --watch",
         };
+        const lastCommand = {
+          ...command,
+          id: TurnItemId.make(`last-command-${status}`),
+          ordinal: 2,
+        };
         yield* eventSink.write({
           commandId: CommandId.make(`command:background-start-${status}`),
-          events: [
-            {
-              id: EventId.make(`event:background-start-${status}`),
-              type: "turn-item.updated",
-              threadId: child.childThreadId,
-              occurredAt: now,
-              payload: command,
-            },
-          ],
+          events: [command, lastCommand].map((payload) => ({
+            id: EventId.make(`event:start-${payload.id}`),
+            type: "turn-item.updated" as const,
+            threadId: child.childThreadId,
+            occurredAt: now,
+            payload,
+          })),
         });
         // Use the same finalization path synchronously so the negative assertion
         // cannot pass merely because the terminal-run listener has not run yet.
@@ -980,6 +983,22 @@ it.layer(layerTest)("delegated background work", (it) => {
           ),
         );
 
+        // Repeated completion signals may coalesce, but the other command still holds the result.
+        yield* eventSink.write({
+          commandId: CommandId.make(`command:background-repeat-${status}`),
+          events: Array.from({ length: 20 }, (_, index) => ({
+            id: EventId.make(`event:background-repeat-${status}-${index}`),
+            type: "turn-item.updated" as const,
+            threadId: child.childThreadId,
+            occurredAt: now,
+            payload: { ...command, status: "completed" as const, completedAt: now },
+          })),
+        });
+        yield* orchestrator.recoverDelegatedTask(child.childThreadId, child.childRunId);
+        assert.isTrue(yield* orchestrator.delegatedTaskResultPending(child.childThreadId));
+        const stillPending = yield* orchestrator.getThreadProjection(threadId);
+        assert.isNull(stillPending.subagents.find((row) => row.id === child.taskId)?.result);
+
         const afterSequence = yield* eventSink.latestSequence();
         // No new run event follows this update. The item ending must trigger delivery.
         yield* eventSink.write({
@@ -990,7 +1009,7 @@ it.layer(layerTest)("delegated background work", (it) => {
               type: "turn-item.updated",
               threadId: child.childThreadId,
               occurredAt: now,
-              payload: { ...command, status, completedAt: now },
+              payload: { ...lastCommand, status, completedAt: now },
             },
           ],
         });

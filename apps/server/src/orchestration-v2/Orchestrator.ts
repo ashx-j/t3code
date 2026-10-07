@@ -10679,7 +10679,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
 
   // Background commands can end after the last run update. Keep draining item
-  // output while a parent's lock is busy, retaining only settlement identifiers.
+  // output while a parent's lock is busy, with at most one queued recheck per
+  // thread. Finalization reads current state, so repeated signals can coalesce.
+  const pendingBackgroundSettlements = new Set<ThreadId>();
   yield* eventSink
     .stream({ afterSequence: terminalEventsAfterSequence, eventType: "turn-item.updated" })
     .pipe(
@@ -10690,9 +10692,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           turnItemUpdateCanEndBackgroundWork(stored.event.payload),
       ),
       Stream.map((stored) => ({ threadId: stored.event.threadId, sequence: stored.sequence })),
+      Stream.filter(({ threadId }) => {
+        if (pendingBackgroundSettlements.has(threadId)) return false;
+        pendingBackgroundSettlements.add(threadId);
+        return true;
+      }),
       Stream.buffer({ capacity: "unbounded" }),
       Stream.runForEach(({ threadId, sequence }) =>
         Effect.gen(function* () {
+          // A signal arriving during this recheck must queue another one.
+          pendingBackgroundSettlements.delete(threadId);
           const parentThreadId = yield* appOwnedSubagentParentThreadId(threadId);
           if (parentThreadId === undefined) return;
           yield* threadDispatch.withLock(parentThreadId, finalizeAppOwnedSubagent(threadId));
