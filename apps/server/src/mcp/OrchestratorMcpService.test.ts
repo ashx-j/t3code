@@ -118,7 +118,8 @@ describe("OrchestratorMcpService", () => {
                             ? [{ ...parentProjection.subagents[0]!, status: "running" as const }]
                             : [],
                         turnItems:
-                          backgroundWork === "background command" && records.includes("turnItems")
+                          backgroundWork === "background command" &&
+                          records.some((record) => record === "turnItems")
                             ? [
                                 {
                                   id: TurnItemId.make("background-command"),
