@@ -2471,6 +2471,150 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect.each(["idle", "running"] as const)(
+    "GitHub reply snooze ends PR watches and rejects stale wakes: %s",
+    (scenario) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make(`reply-snooze-pr-watch:${scenario}`);
+        const projectId = ProjectId.make(`${threadId}:project`);
+        yield* seedProject({
+          projectId,
+          title: "Reply snooze",
+          workspaceRoot: "/tmp/reply-snooze-pr-watch",
+          defaultModelSelection: null,
+          createdAt: DateTime.formatIso(yield* DateTime.now),
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}:create`),
+          threadId,
+          projectId,
+          title: "Reply snooze",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        const now = yield* DateTime.now;
+        if (scenario === "running") {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`${threadId}:user-message`),
+            messageId: MessageId.make(`${threadId}:user-message`),
+            threadId,
+            text: "Original work",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make(`${threadId}:running`),
+                type: "run.updated",
+                threadId,
+                runId: run.id,
+                occurredAt: now,
+                payload: { ...run, status: "running", startedAt: now },
+              },
+            ],
+          });
+        }
+        const key = { host: "github.com", repository: "team/repo", number: 1 };
+        const url = "https://github.com/team/repo/pull/1";
+        const watchCommand = {
+          type: "thread.pull-request.watch" as const,
+          commandId: CommandId.make(`${threadId}:watch`),
+          threadId,
+          ...key,
+          watching: true,
+          link: { url, source: "agent" as const },
+        };
+        yield* orchestrator.dispatch(watchCommand);
+        const watch = (yield* orchestrator.getThreadShell(threadId))!.pullRequests![0]!.watch!;
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const requestId = CommandId.make(`${threadId}:snooze`);
+        yield* orchestrator.dispatch({
+          type: "thread.github-reply.snooze",
+          commandId: requestId,
+          threadId,
+          url,
+        });
+        const snoozed = yield* orchestrator.getThreadProjection(threadId);
+        assert.isUndefined(snoozed.thread.pullRequests?.[0]?.watch);
+        assert.deepEqual(snoozed.runs, before.runs);
+        const register = yield* orchestrator
+          .dispatch({
+            ...watchCommand,
+            commandId: CommandId.make(`${threadId}:watch-after-snooze`),
+          })
+          .pipe(Effect.result);
+        assert.equal(register._tag, "Failure");
+        if (scenario === "running") {
+          const run = snoozed.runs[0]!;
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make(`${threadId}:completed`),
+                type: "run.updated",
+                threadId,
+                runId: run.id,
+                occurredAt: now,
+                payload: { ...run, status: "completed", completedAt: now },
+              },
+            ],
+          });
+          assert.equal(
+            (yield* orchestrator.getThreadProjection(threadId)).runs[0]?.status,
+            "completed",
+          );
+        }
+        for (const stage of ["snoozed", "reply-received"] as const) {
+          if (stage === "reply-received") {
+            yield* orchestrator.dispatch({
+              type: "thread.github-reply.sync",
+              commandId: CommandId.make(`${threadId}:reply`),
+              threadId,
+              requestId,
+              watch: null,
+              notice: { type: "reply", receivedAt: DateTime.formatIso(now), url, text: "Feedback" },
+            });
+          }
+          const wake = yield* orchestrator
+            .dispatch({
+              type: "thread.pull-request-watch.sync",
+              commandId: CommandId.make(`${threadId}:stale-watch:${stage}`),
+              threadId,
+              ...key,
+              startedAt: watch.startedAt,
+              watch: { ...watch, failedChecks: ["lint"], wakes: 1 },
+              wake: {
+                messageId: MessageId.make(`${threadId}:stale-wake:${stage}`),
+                text: "CI failed",
+                notification: { source: { kind: "monitor" }, outcome: "updated", summary: "#1" },
+              },
+            })
+            .pipe(Effect.result);
+          assert.equal(wake._tag, "Failure");
+          const after = yield* orchestrator.getThreadProjection(threadId);
+          assert.lengthOf(after.runs, before.runs.length);
+          assert.deepEqual(after.messages, before.messages);
+          assert.isUndefined(after.thread.pullRequests?.[0]?.watch);
+          assert.equal(
+            after.thread.githubReplySnooze?.requestId ?? null,
+            stage === "snoozed" ? requestId : null,
+          );
+        }
+      }),
+  );
+
   it.effect.each(["manual", "automatic"])("settling ends every pull request watch: %s", (mode) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -3395,6 +3539,116 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         const raced = yield* orchestrator.getThreadProjection(threadId);
         assert.lengthOf(raced.runs, 2);
         assert.isFalse(raced.messages.some((message) => message.id === "restart-stale-race"));
+      }),
+  );
+
+  it.effect.each(["snoozed", "reply-received"] as const)(
+    "atomically declines restart continuation after GitHub reply snooze: %s",
+    (scenario) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make(`reply-snooze-restart:${scenario}`);
+        const projectId = ProjectId.make(`${threadId}:project`);
+        yield* seedProject({
+          projectId,
+          title: "Reply snooze",
+          workspaceRoot: "/tmp/reply-snooze-restart",
+          defaultModelSelection: null,
+          createdAt: DateTime.formatIso(yield* DateTime.now),
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}:create`),
+          threadId,
+          projectId,
+          title: "Reply snooze",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`${threadId}:user-message`),
+          messageId: MessageId.make(`${threadId}:user-message`),
+          threadId,
+          text: "Original work",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const original = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        const url = "https://github.com/team/repo/pull/1";
+        const requestId = CommandId.make(`${threadId}:snooze`);
+        yield* orchestrator.dispatch({
+          type: "thread.github-reply.snooze",
+          commandId: requestId,
+          threadId,
+          url,
+        });
+        const now = yield* DateTime.now;
+        yield* sink.commitCommand({
+          commandId: CommandId.make(`${threadId}:cancel`),
+          threadId,
+          commandType: "provider-runtime.reconcile",
+          acceptedAt: now,
+          events: [
+            {
+              id: EventId.make(`${threadId}:cancelled`),
+              type: "run.updated",
+              threadId,
+              runId: original.id,
+              occurredAt: now,
+              payload: { ...original, status: "cancelled", completedAt: now },
+            },
+          ],
+          effects: [],
+        });
+        if (scenario === "reply-received") {
+          yield* orchestrator.dispatch({
+            type: "thread.github-reply.sync",
+            commandId: CommandId.make(`${threadId}:reply`),
+            threadId,
+            requestId,
+            watch: null,
+            notice: { type: "reply", receivedAt: DateTime.formatIso(now), url, text: "Feedback" },
+          });
+        }
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const automatic = {
+          type: "message.dispatch" as const,
+          commandId: CommandId.make(`${threadId}:automatic`),
+          messageId: MessageId.make(`${threadId}:automatic`),
+          threadId,
+          text: "Continue where you left off.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" as const },
+          restartContinuationOfRunId: original.id,
+          createdBy: "agent" as const,
+          creationSource: "server" as const,
+        };
+        yield* orchestrator.dispatch(automatic);
+        yield* orchestrator.dispatch(automatic);
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(after.thread, before.thread);
+        assert.deepEqual(after.runs, before.runs);
+        assert.deepEqual(after.messages, before.messages);
+        yield* orchestrator.dispatch({
+          ...automatic,
+          commandId: CommandId.make(`${threadId}:explicit`),
+          messageId: MessageId.make(`${threadId}:explicit`),
+          restartContinuationOfRunId: undefined,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const resumed = yield* orchestrator.getThreadProjection(threadId);
+        assert.lengthOf(resumed.runs, 2);
+        assert.isNull(resumed.thread.githubReplySnooze);
       }),
   );
 
@@ -5636,8 +5890,21 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
 });
 
 it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
-  it.effect.each(["success", "failure", "discussion", "discussion-comment"] as const)(
-    "captures the baseline before accepting snooze: %s",
+  it.effect.each([
+    "success",
+    "failure",
+    "discussion",
+    "discussion-comment",
+    "timed",
+    "settle",
+    "wake",
+    "replace",
+    "message",
+    "archive",
+    "delete",
+    "provider-completion",
+  ] as const)(
+    "captures the baseline before committing reply snooze and gives later user actions precedence: %s",
     (scenario) =>
       Effect.gen(function* () {
         const projects = yield* ProjectService.ProjectService;
@@ -5664,6 +5931,34 @@ it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
           createdBy: "user",
           creationSource: "web",
         });
+        if (scenario === "provider-completion") {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`${threadId}:original-work`),
+            messageId: MessageId.make(`${threadId}:original-work`),
+            threadId,
+            text: "Original work",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          const sink = yield* EventSink.EventSinkV2;
+          const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+          const now = yield* DateTime.now;
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make(`${threadId}:running`),
+                type: "run.updated",
+                threadId,
+                runId: run.id,
+                occurredAt: now,
+                payload: { ...run, status: "running", startedAt: now },
+              },
+            ],
+          });
+        }
         const entered = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
         let reads = 0;
@@ -5714,17 +6009,104 @@ it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
         assert.isNull(
           (yield* orchestrator.getThreadProjection(threadId)).thread.githubReplySnooze ?? null,
         );
+        switch (scenario) {
+          case "timed":
+            yield* orchestrator.dispatch({
+              type: "thread.snooze",
+              commandId: CommandId.make(`${threadId}:later-snooze`),
+              threadId,
+              snoozedUntil: "2099-01-01T00:00:00Z",
+            });
+            break;
+          case "settle":
+          case "archive":
+          case "delete":
+            yield* orchestrator.dispatch({
+              type:
+                scenario === "settle"
+                  ? "thread.settle"
+                  : scenario === "archive"
+                    ? "thread.archive"
+                    : "thread.delete",
+              commandId: CommandId.make(`${threadId}:later-action`),
+              threadId,
+            });
+            break;
+          case "wake": {
+            const before = (yield* orchestrator.getThreadProjection(threadId)).thread;
+            yield* orchestrator.dispatch({
+              type: "thread.unsnooze",
+              commandId: CommandId.make(`${threadId}:later-wake`),
+              threadId,
+              reason: "user",
+            });
+            assert.equal(
+              DateTime.toEpochMillis(
+                (yield* orchestrator.getThreadProjection(threadId)).thread.updatedAt,
+              ),
+              DateTime.toEpochMillis(before.updatedAt),
+            );
+            break;
+          }
+          case "replace":
+            yield* orchestrator.dispatch({
+              type: "thread.github-reply.snooze",
+              commandId: CommandId.make(`${threadId}:later-reply-snooze`),
+              threadId,
+              url: "https://github.com/team/repo/discussions/2",
+            });
+            break;
+          case "message":
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`${threadId}:later-message`),
+              messageId: MessageId.make(`${threadId}:later-message`),
+              threadId,
+              text: "New work",
+              attachments: [],
+              dispatchMode: { type: "start_immediately" },
+              createdBy: "user",
+              creationSource: "web",
+            });
+            break;
+          case "provider-completion": {
+            const sink = yield* EventSink.EventSinkV2;
+            const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+            const now = yield* DateTime.now;
+            yield* sink.write({
+              events: [
+                {
+                  id: EventId.make(`${threadId}:completed`),
+                  type: "run.updated",
+                  threadId,
+                  runId: run.id,
+                  occurredAt: now,
+                  payload: { ...run, status: "completed", completedAt: now },
+                },
+              ],
+            });
+            break;
+          }
+        }
+        const latest = yield* orchestrator.getThreadProjection(threadId);
         yield* Deferred.succeed(release, undefined);
         const result = yield* Fiber.join(fiber);
-        if (scenario === "failure") {
+        if (
+          scenario !== "success" &&
+          scenario !== "discussion" &&
+          scenario !== "discussion-comment" &&
+          scenario !== "provider-completion"
+        ) {
           assert.equal(result._tag, "Failure");
-          assert.isNull(
-            (yield* orchestrator.getThreadProjection(threadId)).thread.githubReplySnooze ?? null,
-          );
+          const final = yield* orchestrator.getThreadProjection(threadId);
+          assert.deepEqual(final.thread, latest.thread);
+          assert.deepEqual(final.runs, latest.runs);
           return;
         }
         assert.equal(result._tag, "Success");
-        const watch = (yield* orchestrator.getThreadProjection(threadId)).thread.githubReplySnooze!;
+        const accepted = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(accepted.runs, latest.runs);
+        const watch = accepted.thread.githubReplySnooze!;
         assert.deepEqual(watch.baseline, baseline);
         const restarted = yield* ProjectionStore.ProjectionStoreV2.pipe(
           Effect.provide(ProjectionStore.layer),

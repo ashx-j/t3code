@@ -83,6 +83,7 @@ import { notificationTurnItem } from "./Notification.ts";
 import { isRestartNoteSource } from "./RestartBackgroundNote.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
 import { EventSinkV2 } from "./EventSink.ts";
+import * as EventStore from "./EventStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
@@ -260,6 +261,8 @@ export interface OrchestratorV2Shape {
   ) => Effect.Effect<boolean, OrchestratorProjectionError>;
   readonly dispatch: (
     command: OrchestrationV2ServerCommand,
+    /** Baseline setup uses a server-owned cursor; clients cannot supply this precondition. */
+    preconditions?: { readonly githubReplySnoozeAfterSequence: number },
   ) => Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error>;
   readonly getTimelinePage: (
     threadId: ThreadId,
@@ -761,6 +764,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const commandPolicy = yield* CommandPolicyV2;
   const contextHandoffService = yield* ContextHandoffServiceV2;
   const eventSink = yield* EventSinkV2;
+  const eventStore = yield* EventStore.EventStoreV2;
   const commandReceipts = yield* CommandReceiptStoreV2;
   const idAllocator = yield* IdAllocatorV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
@@ -2297,6 +2301,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         thread.archivedAt !== null ||
         thread.settledOverride === "settled" ||
         thread.settledAt !== null ||
+        thread.githubReplySnooze != null ||
         isProviderNativeSubagentThread(thread);
       if (link?.watch?.startedAt !== command.startedAt || (command.wake && inactive)) {
         return yield* new OrchestratorDispatchError({
@@ -2395,12 +2400,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.watching &&
       (thread.settledOverride === "settled" ||
         thread.settledAt !== null ||
-        thread.archivedAt !== null)
+        thread.archivedAt !== null ||
+        thread.githubReplySnooze != null)
     ) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: `Thread ${command.threadId} is settled or archived and cannot watch pull requests.`,
+        cause: `Thread ${command.threadId} is settled, archived, or snoozed for a GitHub reply and cannot watch pull requests.`,
       });
     }
     // A subagent or delegated task reports to its parent thread, which owns the pull request.
@@ -2843,6 +2849,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             settledAt: null,
             limitRecovery: null,
             githubReplyAutoResumeBlockedRunId,
+            pullRequests: thread.pullRequests?.map((link) => withPullRequestWatch(link, undefined)),
             updatedAt: now,
           };
         case "thread.github-reply.sync":
@@ -4606,6 +4613,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           isRestartNoteSource(source, projection.providerTurns) ||
           projection.thread.archivedAt !== null ||
           projection.thread.deletedAt !== null ||
+          projection.thread.githubReplySnooze != null ||
+          projection.thread.githubReplyAutoResumeBlockedRunId === source.id ||
           projection.thread.providerInstanceId !== source.providerInstanceId ||
           // Held queued runs never started; they wait behind the continuation.
           projection.runs.some(
@@ -10192,6 +10201,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const dispatchOnce = Effect.fn("orchestrationV2.dispatch.once")(function* (
     command: OrchestrationV2ServerCommand,
+    preconditions?: Parameters<OrchestratorV2Shape["dispatch"]>[1],
   ): Effect.fn.Return<
     {
       readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
@@ -10208,6 +10218,48 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "orchestration_v2.command_type": command.type,
       "orchestration_v2.thread_id": commandThreadId(command),
     });
+
+    if (command.type === "thread.github-reply.snooze" && preconditions !== undefined) {
+      // Lifecycle events catch even a no-op Wake or changes within the same clock tick.
+      // Provider progress and completion can still finish during the baseline fetch.
+      const superseded = yield* eventStore
+        .read({
+          threadId: command.threadId,
+          afterSequence: preconditions.githubReplySnoozeAfterSequence,
+          throughSequence: yield* eventSink
+            .latestSequence({ threadId: command.threadId })
+            .pipe(mapDispatchError(command)),
+        })
+        .pipe(
+          Stream.filter(({ event }) => {
+            switch (event.type) {
+              case "thread.snoozed":
+              case "thread.unsnoozed":
+              case "thread.settled":
+              case "thread.unsettled":
+              case "thread.archived":
+              case "thread.unarchived":
+              case "thread.deleted":
+              case "thread.pinned":
+              case "run.created":
+                return true;
+              case "message.updated":
+                return event.payload.role === "user";
+              default:
+                return false;
+            }
+          }),
+          Stream.runHead,
+          mapDispatchError(command),
+        );
+      if (Option.isSome(superseded)) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The thread changed while the GitHub reply snooze was being prepared.",
+        });
+      }
+    }
 
     const events = yield* Ref.make<Array<OrchestrationV2DomainEvent>>([]);
     const effects = yield* Ref.make<Array<PendingOrchestrationEffectV2>>([]);
@@ -10494,6 +10546,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const dispatchWithReceiptEffect = Effect.fn("orchestrationV2.dispatch.withReceipt")(function* (
     command: OrchestrationV2ServerCommand,
+    preconditions?: Parameters<OrchestratorV2Shape["dispatch"]>[1],
   ): Effect.fn.Return<OrchestratorV2DispatchResult, OrchestratorV2Error> {
     yield* Effect.annotateCurrentSpan({
       "orchestration_v2.command_id": command.commandId,
@@ -10554,7 +10607,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       } satisfies OrchestratorV2DispatchResult;
     }
 
-    const plan = yield* dispatchOnce(command).pipe(
+    const plan = yield* dispatchOnce(command, preconditions).pipe(
       Effect.flatMap((planned) =>
         // A settle that finds the provider already ended everything, or a
         // stop that finds nothing running, has nothing to record. That is
@@ -10682,8 +10735,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     } satisfies OrchestratorV2DispatchResult;
   });
 
-  const dispatchWithReceipt = (command: OrchestrationV2ServerCommand) =>
-    threadDispatch.withLock(commandThreadId(command), dispatchWithReceiptEffect(command));
+  const dispatchWithReceipt: OrchestratorV2Shape["dispatch"] = (command, preconditions) =>
+    threadDispatch.withLock(
+      commandThreadId(command),
+      dispatchWithReceiptEffect(command, preconditions),
+    );
 
   const handleTerminalRun = (stored: OrchestrationV2StoredEvent) =>
     Effect.gen(function* () {
@@ -10983,6 +11039,7 @@ export const layer: Layer.Layer<
   | ContextHandoffServiceV2
   | EffectOutbox.EffectOutboxV2
   | EventSinkV2
+  | EventStore.EventStoreV2
   | IdAllocatorV2
   | ProjectStore.ProjectStoreV2
   | ProviderAdapterRegistryV2

@@ -489,6 +489,7 @@ const make = Effect.gen(function* () {
       );
       // Let the orchestrator validate and replay the receipt even after the watch has woken.
       if (Option.isSome(receipt)) return yield* orchestrator.dispatch(command);
+      const snapshotSequence = yield* orchestrator.getThreadEventSequence(command.threadId);
       const thread = yield* orchestrator.getThreadShell(command.threadId);
       const project =
         thread === null
@@ -535,17 +536,20 @@ const make = Effect.gen(function* () {
               }),
           ),
         );
-      command = {
-        ...command,
-        resumeFrom: {
-          ...watch,
-          baseline: observed.baseline,
-          viewer: observed.viewer,
-          ...(observed.discussionCommentId === undefined
-            ? {}
-            : { discussionCommentId: observed.discussionCommentId }),
+      return yield* orchestrator.dispatch(
+        {
+          ...command,
+          resumeFrom: {
+            ...watch,
+            baseline: observed.baseline,
+            viewer: observed.viewer,
+            ...(observed.discussionCommentId === undefined
+              ? {}
+              : { discussionCommentId: observed.discussionCommentId }),
+          },
         },
-      };
+        { githubReplySnoozeAfterSequence: snapshotSequence },
+      );
     }
     return yield* orchestrator.dispatch(command);
   });

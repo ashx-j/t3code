@@ -31,7 +31,12 @@ export function restartContinuationRun(
     "thread" | "runs" | "providerThreads" | "providerSessions" | "providerTurns"
   >,
 ): OrchestrationV2Run | undefined {
-  if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) return;
+  if (
+    projection.thread.archivedAt !== null ||
+    projection.thread.deletedAt !== null ||
+    projection.thread.githubReplySnooze != null
+  )
+    return;
   // Queued runs never started; recovery holds them behind the cut run.
   const run = projection.runs.reduce<OrchestrationV2Run | undefined>(
     (latest, candidate) =>
@@ -41,6 +46,12 @@ export function restartContinuationRun(
     undefined,
   );
   if (!run) return;
+  if (
+    projection.thread.githubReplyAutoResumeBlockedRunId === run.id ||
+    (run.restartContinuationOfRunId !== undefined &&
+      projection.thread.githubReplyAutoResumeBlockedRunId === run.restartContinuationOfRunId)
+  )
+    return;
   const preparedContinuation =
     run.status === "starting" && run.restartContinuationOfRunId !== undefined;
   if (run.status !== "running" && !preparedContinuation) return;
@@ -104,7 +115,13 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         .continueThreadsAfterServerUpdate
     )
       return;
-    if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) return;
+    if (
+      projection.thread.archivedAt !== null ||
+      projection.thread.deletedAt !== null ||
+      projection.thread.githubReplySnooze != null ||
+      projection.thread.githubReplyAutoResumeBlockedRunId === input.sourceRunId
+    )
+      return;
 
     if (projection.messages.some((message) => message.id === messageId)) return;
     const source = projection.runs.find((run) => run.id === input.sourceRunId);
