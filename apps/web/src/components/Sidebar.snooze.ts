@@ -7,7 +7,7 @@ import {
 
 import { formatShortTimestamp, parseTimestampDate } from "../timestampFormat";
 
-export { snoozeWakeLabel, type SnoozePreset };
+export { snoozeWakeLabel };
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 

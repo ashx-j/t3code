@@ -225,21 +225,24 @@ local time zone, or a duration in minutes, hours, or days. Durations start when
 you confirm; one day means 24 hours. On web and desktop, you can also snooze
 several selected threads together. Choose **Wake thread** to bring a thread back early.
 
-To wait for feedback on GitHub, choose **Snooze → Custom… → Until a GitHub reply**
-on web or desktop, or **Snooze → Until a GitHub reply…** on mobile. Paste a
-github.com pull request or repository discussion URL. Open, merged and closed
-PRs all work. You can also ask your agent to snooze the thread for that conversation.
+To wait for feedback on GitHub, choose **Snooze → Until a GitHub reply**. T3 uses the
+thread's linked github.com PRs and discussions. With one linked conversation,
+snooze starts immediately; with several, choose one from the menu. Ask your agent
+to link a discussion or PR first if none is linked. Open, merged and closed PRs
+all work. You can also ask your agent to snooze the thread for a conversation URL.
 T3 reads existing replies before hiding the thread. Replies observed during setup
 count as existing. If the check fails, T3 does not apply the snooze.
 
 T3 checks from the thread's environment using its signed-in GitHub CLI account,
 usually every two minutes. New comments, submitted reviews and inline review
-replies from other accounts bring the thread back with the response and a link.
+replies from other accounts bring the thread back with a link to the response.
 Your own comments, existing comments, edits, reactions, CI changes and merge state
 do not wake it. PR links watch the whole PR conversation. A discussion link watches
 its comments and replies; a discussion comment link limits the watch to that
 comment's reply thread. No agent starts or replies when feedback arrives. A running
 agent can finish its current turn while the thread waits.
+
+Choose **Snooze** on the reply notice to wait for another reply to the same conversation.
 
 The watch survives a server restart. **Wake thread**, a different snooze, settle,
 archive or delete cancels it. Sending a message also wakes the thread. The open

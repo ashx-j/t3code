@@ -1,3 +1,5 @@
+import type { GitHubReplyConversation } from "@t3tools/client-runtime/github-reply-conversations";
+import { githubReplySnoozeMenuItem } from "./githubReplySnoozeMenu.logic";
 import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 
@@ -94,10 +96,12 @@ export interface ThreadActionMenuState {
     /** Server understands thread.auto-settle.set. */
     readonly autoSettleOptOut: boolean;
     readonly snooze: boolean;
+    readonly githubReplySnooze: boolean;
     readonly pinning: boolean;
     readonly titleRegeneration: boolean;
   };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
+  readonly githubConversations: ReadonlyArray<GitHubReplyConversation>;
 }
 
 /**
@@ -149,6 +153,9 @@ export function buildThreadActionMenuItems(
                     id: `snooze:${preset.id}` as const,
                     label: `${preset.label} (${preset.whenLabel})`,
                   })),
+                  ...(state.supports.githubReplySnooze
+                    ? [githubReplySnoozeMenuItem(state.githubConversations)]
+                    : []),
                   { id: "snooze:custom" as const, label: "Custom…", separatorBefore: true },
                 ],
               },

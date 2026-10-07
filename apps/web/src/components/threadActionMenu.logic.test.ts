@@ -20,9 +20,11 @@ const baseState: ThreadActionMenuState = {
     settlement: true,
     autoSettleOptOut: true,
     snooze: true,
+    githubReplySnooze: true,
     pinning: true,
     titleRegeneration: true,
   },
+  githubConversations: [],
   snoozePresets: [
     { id: "hour", label: "In 1 hour", whenLabel: "3:00 PM", snoozedUntil: "2026-08-07T15:00:00Z" },
   ],
@@ -47,6 +49,7 @@ describe("buildThreadActionMenuItems", () => {
           settlement: false,
           autoSettleOptOut: false,
           snooze: false,
+          githubReplySnooze: false,
           pinning: false,
           titleRegeneration: false,
         },
@@ -125,7 +128,22 @@ describe("buildThreadActionMenuItems", () => {
       (item) => item.id === "snooze",
     );
     expect(snooze?.disabled).toBe(true);
-    expect(snooze?.children?.map((child) => child.id)).toEqual(["snooze:hour", "snooze:custom"]);
+    expect(snooze?.children?.map((child) => child.id)).toEqual([
+      "snooze:hour",
+      "snooze:github",
+      "snooze:custom",
+    ]);
+  });
+
+  it("keeps GitHub replies with presets and hides the option on older servers", () => {
+    const snooze = buildThreadActionMenuItems(baseState).find((item) => item.id === "snooze");
+    expect(
+      snooze?.children?.find((item) => item.id === "snooze:github")?.separatorBefore,
+    ).toBeUndefined();
+    expect(snooze?.children?.at(-1)).toMatchObject({ id: "snooze:custom", separatorBefore: true });
+    expect(
+      allIds({ ...baseState, supports: { ...baseState.supports, githubReplySnooze: false } }),
+    ).not.toContain("snooze:github");
   });
 
   it("disables title regeneration while one is in flight", () => {
@@ -157,6 +175,7 @@ describe("buildThreadActionMenuItems", () => {
           settlement: false,
           autoSettleOptOut: false,
           snooze: false,
+          githubReplySnooze: false,
           pinning: false,
           titleRegeneration: false,
         },

@@ -14,6 +14,7 @@ import type {
 } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import {
+  MessageSquareIcon,
   Smartphone,
   ChevronDown,
   ChevronLeft,
@@ -592,6 +593,8 @@ function surfaceTitle(
         terminalLabelsById.get(surface.activeTerminalId) ??
         getTerminalLabel(surface.activeTerminalId)
       );
+    case "discussion":
+      return `Discussion #${surface.number}`;
     case "pull-request":
       return `#${surface.number}`;
     case "pull-requests":
@@ -669,6 +672,8 @@ function SurfaceIcon({
       );
     case "terminal":
       return <TerminalSquare className="size-3 shrink-0" />;
+    case "discussion":
+      return <MessageSquareIcon className="size-3 shrink-0" />;
     case "pull-request":
       return (
         <PullRequestSurfaceIcon

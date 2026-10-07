@@ -1,3 +1,6 @@
+import * as DiscussionsHandlers from "./toolkits/discussions/handlers.ts";
+import { DiscussionsToolkit } from "./toolkits/discussions/tools.ts";
+import * as ThreadDiscussionMcpService from "./ThreadDiscussionMcpService.ts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -738,6 +741,11 @@ const layerAttachmentRegistration = McpServer.toolkit(AttachmentToolkit).pipe(
   Layer.provide(AttachmentHandlers.layer),
 );
 
+const layerDiscussionsToolkit = McpServer.toolkit(DiscussionsToolkit).pipe(
+  Layer.provide(DiscussionsHandlers.layer),
+  Layer.provide(ThreadDiscussionMcpService.layer),
+);
+
 export const layerPullRequestsToolkit = McpServer.toolkit(PullRequestsToolkit).pipe(
   Layer.provide(PullRequestsHandlers.layer),
 );
@@ -772,6 +780,7 @@ export const layer = Layer.mergeAll(
   layerPreviewControlsRegistration,
   layerWorktreeToolkitRegistration,
   layerPullRequestsToolkit,
+  layerDiscussionsToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
 ).pipe(Layer.provideMerge(layerMcpTransport));

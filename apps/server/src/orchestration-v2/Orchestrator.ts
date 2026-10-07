@@ -1,3 +1,4 @@
+import { parseGitHubConversationUrl } from "@t3tools/contracts";
 import {
   latestExecutedRun,
   latestRootProviderFailure,
@@ -402,6 +403,8 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.visit":
     case "thread.mark-unread":
     case "thread.metadata.update":
+    case "thread.discussion.link":
+    case "thread.discussion.unlink":
     case "thread.pull-request.link":
     case "thread.pull-request.unlink":
     case "thread.pull-request-link.sync":
@@ -2343,6 +2346,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.active.reorder"
           | "thread.mark-unread"
           | "thread.metadata.update"
+          | "thread.discussion.link"
+          | "thread.discussion.unlink"
           | "thread.pull-request.link"
           | "thread.pull-request.unlink"
           | "thread.pull-request-link.sync"
@@ -2757,6 +2762,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       markUnreadVisitedAt = DateTime.subtract(latestRunCompletedAt, { milliseconds: 1 });
     }
+    if (command.type === "thread.discussion.link") {
+      const target = command.discussion;
+      const parsed = parseGitHubConversationUrl(target.url);
+      if (
+        parsed?.kind !== "discussion" ||
+        parsed.number !== target.number ||
+        `${parsed.owner}/${parsed.repository}`.toLowerCase() !== target.repository.toLowerCase()
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "Discussion URL does not match its repository and number.",
+        });
+      }
+    }
+
     const updatedThread: OrchestrationV2AppThread = (() => {
       switch (command.type) {
         case "thread.archive":
@@ -2831,7 +2852,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...(command.notice === undefined
               ? {}
               : {
-                  githubReplyNotice: command.notice,
+                  githubReplyNotice: {
+                    ...command.notice,
+                    conversationUrl:
+                      thread.githubReplySnooze?.url ?? command.notice.conversationUrl,
+                  },
                   snoozedAt: null,
                   settledOverride: "active" as const,
                   settledAt: null,
@@ -3008,6 +3033,37 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : command.regenerateTitle === false || command.title !== undefined
                 ? { titleRegeneration: null }
                 : {}),
+            updatedAt: now,
+          };
+        }
+        case "thread.discussion.link":
+        case "thread.discussion.unlink": {
+          const target = command.discussion;
+          const links = thread.discussions ?? [];
+          const matches = (link: typeof target) =>
+            link.host === target.host &&
+            link.repository.toLowerCase() === target.repository.toLowerCase() &&
+            link.number === target.number;
+          const exists = links.some(matches);
+          if (command.type === "thread.discussion.unlink") {
+            return exists
+              ? { ...thread, discussions: links.filter((link) => !matches(link)), updatedAt: now }
+              : thread;
+          }
+          if (exists) return thread;
+          return {
+            ...thread,
+            discussions: [
+              ...links,
+              {
+                ...target,
+                repository: target.repository.toLowerCase(),
+                url: `https://github.com/${target.repository.toLowerCase()}/discussions/${target.number}`,
+                title: command.title ?? null,
+                source: command.source,
+                linkedAt: DateTime.formatIso(now),
+              },
+            ],
             updatedAt: now,
           };
         }
@@ -3248,6 +3304,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         case "thread.mark-unread":
           return "thread.marked-unread" as const;
         case "thread.metadata.update":
+        case "thread.discussion.link":
+        case "thread.discussion.unlink":
         case "thread.title.regeneration.complete":
           return "thread.metadata-updated" as const;
         case "thread.pull-request.link":
@@ -10242,6 +10300,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.active.reorder":
       case "thread.mark-unread":
       case "thread.metadata.update":
+      case "thread.discussion.link":
+      case "thread.discussion.unlink":
       case "thread.pull-request.link":
       case "thread.pull-request.unlink":
       case "thread.pull-request-link.sync":

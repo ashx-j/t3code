@@ -1,3 +1,8 @@
+import {
+  GitHubDiscussionDetailInput,
+  GitHubDiscussionDetail,
+  DiscussionOperationError,
+} from "./threadDiscussion.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import {
   ChatGptReconnectProfileInput,
@@ -494,6 +499,7 @@ export const WS_METHODS = {
   pullRequestsStack: "pullRequests.stack",
   pullRequestsLinkedThreads: "pullRequests.linkedThreads",
   pullRequestsDetail: "pullRequests.detail",
+  discussionsDetail: "discussions.detail",
   pullRequestsPreview: "pullRequests.preview",
   pullRequestsChecks: "pullRequests.checks",
   pullRequestsActivity: "pullRequests.activity",
@@ -938,6 +944,12 @@ const WsPullRequestsLinkedThreadsRpc = Rpc.make(WS_METHODS.pullRequestsLinkedThr
   payload: PullRequestRef,
   success: PullRequestLinkedThreadsResult,
   error: PullRequestRpcError,
+});
+
+const WsDiscussionsDetailRpc = Rpc.make(WS_METHODS.discussionsDetail, {
+  payload: GitHubDiscussionDetailInput,
+  success: GitHubDiscussionDetail,
+  error: DiscussionOperationError,
 });
 
 const WsPullRequestsDetailRpc = Rpc.make(WS_METHODS.pullRequestsDetail, {
@@ -1802,6 +1814,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPullRequestsStackRpc,
   WsPullRequestsLinkedThreadsRpc,
   WsPullRequestsDetailRpc,
+  WsDiscussionsDetailRpc,
   WsPullRequestsPreviewRpc,
   WsPullRequestsChecksRpc,
   WsPullRequestsActivityRpc,

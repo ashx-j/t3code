@@ -88,6 +88,11 @@ import { readPastedComposerContext } from "./composerInlineTokenPaste";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import { useAcknowledgeThreadWoke, useThreadActions } from "../hooks/useThreadActions";
+import { useOpenChangeRequestLink } from "../lib/openPullRequestLink";
+import { eligibleThreadGitHubConversations } from "@t3tools/client-runtime/github-reply-conversations";
+import { GitHubReplySnoozeButton } from "./GitHubReplySnoozeMenu";
+import { parseGitHubConversationUrl } from "@t3tools/contracts";
+import { DiscussionDetailPanel } from "./discussion/DiscussionDetailPanel";
 import {
   deriveProviderSubagentStatus,
   deriveReportedModelSelection,
@@ -146,6 +151,7 @@ import {
   lazy,
   memo,
   type SetStateAction,
+  type MouseEvent,
   Suspense,
   useCallback,
   useEffect,
@@ -1536,12 +1542,13 @@ export default function ChatView(props: ChatViewProps) {
   } = props;
   const draftId = routeKind === "draft" ? props.draftId : null;
   const handleNewThread = useNewThreadHandler();
-  const { settleThread, pinThread, confirmAndUnpinThread } = useThreadActions();
+  const { settleThread, snoozeThread, pinThread, confirmAndUnpinThread } = useThreadActions();
   const routeThreadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
     [environmentId, threadId],
   );
   const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
+  const openChangeRequestLink = useOpenChangeRequestLink(routeThreadRef);
   const currentRouteThreadKeyRef = useRef<string | null>(routeThreadKey);
   useLayoutEffect(() => {
     currentRouteThreadKeyRef.current = routeThreadKey;
@@ -7059,6 +7066,64 @@ export default function ChatView(props: ChatViewProps) {
       setUnsnoozingThreadKey((current) => (current === threadKey ? null : current));
     }
   }, [activeThreadRef, activeThreadShell, unsnoozeThreadMutation, updateThreadMetadata]);
+  const [resnoozingThreadKey, setResnoozingThreadKey] = useState<string | null>(null);
+  const isResnoozing = resnoozingThreadKey !== null && resnoozingThreadKey === activeThreadKey;
+  const handleSnoozeGitHubReply = useCallback(
+    async (url: string) => {
+      if (!activeThreadRef) return;
+      const threadKey = scopedThreadKey(activeThreadRef);
+      setResnoozingThreadKey(threadKey);
+      try {
+        const result = await snoozeThread(activeThreadRef, { url });
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to snooze thread",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        }
+      } finally {
+        setResnoozingThreadKey((current) => (current === threadKey ? null : current));
+      }
+    },
+    [activeThreadRef, snoozeThread],
+  );
+  const openGitHubConversation = useCallback(
+    (event: MouseEvent<HTMLElement>, url: string) => {
+      if (event.metaKey || event.ctrlKey) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (openChangeRequestLink(event, url) || !activeThreadRef) return;
+      const conversation = parseGitHubConversationUrl(url);
+      if (
+        conversation?.kind === "discussion" &&
+        serverConfig?.environment.capabilities.threadDiscussions === true
+      ) {
+        useRightPanelStore.getState().openDiscussion(activeThreadRef, url, conversation.number);
+        return;
+      }
+      void openUrlInPreview({ threadRef: activeThreadRef, url, openPreview }).then((result) => {
+        if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Unable to open GitHub conversation",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      });
+    },
+    [
+      activeThreadRef,
+      openChangeRequestLink,
+      openPreview,
+      serverConfig?.environment.capabilities.threadDiscussions,
+    ],
+  );
   const [isRestoringThreadBranch, setIsRestoringThreadBranch] = useState(false);
   const [branchRestoreConfirmOpen, setBranchRestoreConfirmOpen] = useState(false);
   // Once revealed for a given mismatch, the banner stays mounted until the
@@ -7395,6 +7460,7 @@ export default function ChatView(props: ChatViewProps) {
     if (notice)
       return {
         id: `github-reply:${notice.receivedAt}`,
+        ...(notice.type === "reply" ? { layout: "inline" as const } : {}),
         variant: "info",
         icon: <AlarmClockIcon />,
         title:
@@ -7402,14 +7468,26 @@ export default function ChatView(props: ChatViewProps) {
             ? `GitHub reply from ${notice.author}`
             : "GitHub reply snooze stopped",
         description: (
-          <div className="max-h-40 overflow-y-auto whitespace-pre-wrap">
-            {notice.text}
-            <br />
-            <a href={notice.url} target="_blank" rel="noreferrer" className="underline">
-              Open on GitHub
+          <>
+            {notice.type === "error" ? <>{notice.text} </> : null}
+            <a
+              href={notice.url}
+              className="chat-link"
+              onClick={(event) => openGitHubConversation(event, notice.url)}
+            >
+              View
             </a>
-          </div>
+          </>
         ),
+        actions:
+          serverConfig?.environment.capabilities.threadGitHubReplySnooze === true ? (
+            <GitHubReplySnoozeButton
+              conversationUrl={notice.conversationUrl ?? null}
+              conversations={eligibleThreadGitHubConversations(activeThreadShell)}
+              pending={isResnoozing}
+              onSnooze={(url) => void handleSnoozeGitHubReply(url)}
+            />
+          ) : undefined,
         dismissLabel: "Dismiss GitHub reply",
         onDismiss: () => void handleUnsnoozeActiveThread(),
       };
@@ -7426,8 +7504,12 @@ export default function ChatView(props: ChatViewProps) {
     acknowledgeActiveThreadWoke,
     activeThread?.id,
     activeThreadWokeVisible,
-    activeThreadShell?.githubReplyNotice,
+    activeThreadShell,
     handleUnsnoozeActiveThread,
+    handleSnoozeGitHubReply,
+    isResnoozing,
+    openGitHubConversation,
+    serverConfig?.environment.capabilities.threadGitHubReplySnooze,
   ]);
   const parkedThreadBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (!activeThreadSnoozed && !activeThreadSettled) {
@@ -7436,6 +7518,9 @@ export default function ChatView(props: ChatViewProps) {
     const isSnoozed = activeThreadSnoozed;
     return {
       id: `thread-${isSnoozed ? "snoozed" : "settled"}:${activeThread?.id ?? "unknown"}`,
+      ...(activeThreadShell?.githubReplySnooze?.status === "watching"
+        ? { layout: "inline" as const }
+        : {}),
       variant: "info",
       icon: isSnoozed ? <AlarmClockIcon /> : <CheckCircle2Icon />,
       title: activeThreadShell?.githubReplySnooze
@@ -7449,14 +7534,15 @@ export default function ChatView(props: ChatViewProps) {
               ? "GitHub rate limit reached. Checks are paused until it resets. "
               : activeThreadShell.githubReplySnooze.status === "retrying"
                 ? "GitHub check failed. Retrying... "
-                : "Checked every two minutes. "}
+                : null}
           <a
             href={activeThreadShell.githubReplySnooze.url}
-            target="_blank"
-            rel="noreferrer"
-            className="underline"
+            className="chat-link"
+            onClick={(event) =>
+              openGitHubConversation(event, activeThreadShell.githubReplySnooze!.url)
+            }
           >
-            View conversation
+            View
           </a>
         </>
       ) : (
@@ -7490,6 +7576,7 @@ export default function ChatView(props: ChatViewProps) {
     handleUnsettleActiveThread,
     isUnsnoozing,
     isUnsettling,
+    openGitHubConversation,
   ]);
   // Session-scoped dismissals, one key per (thread, snapshot). A set rather
   // than a single slot so dismissing the banner on one thread does not
@@ -10789,6 +10876,14 @@ export default function ChatView(props: ChatViewProps) {
             ? addPullRequestsSurface
             : undefined
         }
+      />
+    ) : renderedRightPanelSurface?.kind === "discussion" && activeThreadRef ? (
+      <DiscussionDetailPanel
+        key={renderedRightPanelSurface.id}
+        threadRef={activeThreadRef}
+        url={renderedRightPanelSurface.url}
+        cwd={activeThread.worktreePath ?? activeProject?.workspaceRoot ?? ""}
+        supported={serverConfig?.environment.capabilities.threadDiscussions === true}
       />
     ) : renderedRightPanelSurface?.kind === "pull-requests" && activeThreadRef ? (
       <ThreadPullRequestsPanel threadRef={activeThreadRef} />

@@ -53,6 +53,8 @@ export type GitHubReplySnooze = typeof GitHubReplySnooze.Type;
 
 export const GitHubReplyNotice = Schema.Struct({
   type: Schema.Literals(["reply", "error"]),
+  /** Original watched scope, distinct from the individual reply URL. */
+  conversationUrl: Schema.optional(GitHubConversationUrl),
   url: Schema.String,
   receivedAt: IsoDateTime,
   author: Schema.optional(Schema.String),

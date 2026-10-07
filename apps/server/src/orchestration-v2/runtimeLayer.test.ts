@@ -1,3 +1,5 @@
+import * as ThreadDiscussionService from "./ThreadDiscussionService.ts";
+import * as GitHubDiscussionReader from "../sourceControl/GitHubDiscussionReader.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as GitHubReplySnoozeWorker from "./GitHubReplySnoozeWorker.ts";
 import * as GitHubReplyReader from "../sourceControl/GitHubReplyReader.ts";
@@ -2115,6 +2117,172 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         [2, 3, 4],
       );
     }),
+  );
+
+  it.effect(
+    "persists discussion links independently of pull requests and keeps comment anchors idempotent",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+        const threadId = ThreadId.make("runtime-discussion-links");
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("discussion-thread"),
+          threadId,
+          projectId: ProjectId.make("discussion-project"),
+          title: "Discussion links",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        const discussion = {
+          host: "github.com" as const,
+          repository: "Team/Repo",
+          number: 1,
+          url: "https://github.com/Team/Repo/discussions/1#discussioncomment-10",
+        };
+        for (const [index, url] of [
+          discussion.url,
+          "https://github.com/team/repo/discussions/1#discussioncomment-20",
+        ].entries()) {
+          yield* orchestrator.dispatch({
+            type: "thread.discussion.link",
+            commandId: CommandId.make(`discussion-link-${index}`),
+            threadId,
+            discussion: { ...discussion, url },
+            title: "A discussion",
+            source: "agent",
+          });
+        }
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.link",
+          commandId: CommandId.make("discussion-pr-link"),
+          threadId,
+          host: "github.com",
+          repository: "team/repo",
+          number: 1,
+          url: "https://github.com/team/repo/pull/1",
+          source: "manual",
+        });
+        assert.isTrue((yield* maintenance.rebuild).valid);
+        const linked = yield* orchestrator.getThreadShell(threadId);
+        assert.equal(linked?.discussions?.length, 1);
+        assert.equal(linked?.discussions?.[0]?.url, "https://github.com/team/repo/discussions/1");
+        assert.equal(linked?.discussions?.[0]?.title, "A discussion");
+        assert.equal(linked?.pullRequests?.length, 1);
+        assert.isNull(linked?.activeRunId);
+        assert.isNull(linked?.settledAt);
+        for (let index = 0; index < 2; index++) {
+          yield* orchestrator.dispatch({
+            type: "thread.discussion.unlink",
+            commandId: CommandId.make(`discussion-unlink-${index}`),
+            threadId,
+            discussion,
+          });
+        }
+        assert.isTrue((yield* maintenance.rebuild).valid);
+        const unlinked = yield* orchestrator.getThreadShell(threadId);
+        assert.deepEqual(unlinked?.discussions, []);
+        assert.equal(unlinked?.pullRequests?.length, 1);
+        const mismatch = yield* orchestrator
+          .dispatch({
+            type: "thread.discussion.link",
+            commandId: CommandId.make("discussion-mismatch"),
+            threadId,
+            discussion: { ...discussion, repository: "other/repo" },
+            source: "agent",
+          })
+          .pipe(Effect.flip);
+        assert.equal(mismatch._tag, "OrchestratorDispatchError");
+      }),
+  );
+
+  it.effect(
+    "links, lists and unlinks discussions through the service with one lightweight GitHub read",
+    () => {
+      const reads: Array<{ readonly cwd: string; readonly url: string }> = [];
+      return Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+        const threadId = ThreadId.make("discussion-service-thread");
+        const projectId = ProjectId.make("discussion-service-project");
+        yield* seedProject({
+          projectId,
+          title: "Discussion project",
+          workspaceRoot: "/workspace/discussions",
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("discussion-service-create"),
+          threadId,
+          projectId,
+          title: "Discussion",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: "/missing-discussion-worktree",
+        });
+        const service = yield* ThreadDiscussionService.ThreadDiscussionService;
+        const first = yield* service.link({
+          threadId,
+          url: "https://github.com/Team/Repo/discussions/1#discussioncomment-10",
+        });
+        assert.equal(first.alreadyLinked, false);
+        assert.equal(
+          (yield* service.link({ threadId, repository: "team/repo", number: 1 })).alreadyLinked,
+          true,
+        );
+        assert.deepEqual(reads, [
+          { cwd: "/workspace/discussions", url: "https://github.com/team/repo/discussions/1" },
+        ]);
+        assert.isTrue((yield* maintenance.rebuild).valid);
+        const listed = yield* service.list(threadId);
+        assert.equal(listed.discussions.length, 1);
+        assert.equal(listed.discussions[0]?.title, "A discussion");
+        assert.equal(
+          (yield* service.unlink({ threadId, repository: "Team/Repo", number: 1 })).wasLinked,
+          true,
+        );
+        assert.equal((yield* service.unlink({ threadId, url: first.url })).wasLinked, false);
+        assert.deepEqual((yield* service.list(threadId)).discussions, []);
+        for (const input of [
+          { repository: "team/repo", number: 1, host: "other.example" },
+          { repository: "team/repo/extra", number: 1 },
+          { repository: "team/repo" },
+        ]) {
+          assert.equal(
+            (yield* service.link({ threadId, ...input }).pipe(Effect.flip))._tag,
+            "DiscussionOperationError",
+          );
+        }
+        assert.equal(reads.length, 1);
+      }).pipe(
+        Effect.provide(
+          ThreadDiscussionService.layer.pipe(
+            Layer.provide(
+              Layer.mock(GitHubDiscussionReader.GitHubDiscussionReader)({
+                summary: (input) =>
+                  Effect.sync(() => {
+                    reads.push(input);
+                    return { title: "A discussion" };
+                  }),
+              }),
+            ),
+            Layer.provide(layerPlatformTest),
+          ),
+        ),
+      );
+    },
   );
 
   it.effect("retains multiple pull requests and dismissed stack members through rebuilds", () =>
@@ -5468,7 +5636,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
 });
 
 it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
-  it.effect.each(["success", "failure"] as const)(
+  it.effect.each(["success", "failure", "discussion", "discussion-comment"] as const)(
     "captures the baseline before accepting snooze: %s",
     (scenario) =>
       Effect.gen(function* () {
@@ -5500,6 +5668,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
         const release = yield* Deferred.make<void>();
         let reads = 0;
         const baseline = { latestAt: "2026-10-01T12:00:00Z", ids: ["existing"] };
+        const freshBaseline = { latestAt: "2026-10-01T13:00:00Z", ids: ["new-reply"] };
         const service = yield* ThreadManagementService.ThreadManagementService.pipe(
           Effect.provide(
             ThreadManagementService.layer.pipe(
@@ -5516,7 +5685,11 @@ it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
                         return yield* new GitHubReplyReader.GitHubReplyReadError({
                           reason: "unavailable",
                         });
-                      return { viewer: "me", baseline, reply: null };
+                      return {
+                        viewer: "me",
+                        baseline: reads === 1 ? baseline : freshBaseline,
+                        reply: null,
+                      };
                     }),
                 }),
               ),
@@ -5529,7 +5702,12 @@ it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
           type: "thread.github-reply.snooze" as const,
           commandId: CommandId.make(`${threadId}:snooze`),
           threadId,
-          url: "https://github.com/team/repo/pull/1",
+          url:
+            scenario === "discussion"
+              ? "https://github.com/team/repo/discussions/1"
+              : scenario === "discussion-comment"
+                ? "https://github.com/team/repo/discussions/1#discussioncomment-10"
+                : "https://github.com/team/repo/pull/1",
         };
         const fiber = yield* service.dispatch(command).pipe(Effect.result, Effect.forkChild);
         yield* Deferred.await(entered);
@@ -5564,7 +5742,9 @@ it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
           notice: {
             type: "reply",
             receivedAt: DateTime.formatIso(yield* DateTime.now),
-            url: command.url,
+            url: scenario.startsWith("discussion")
+              ? "https://github.com/team/repo/discussions/1#discussioncomment-20"
+              : "https://github.com/team/repo/pull/1#issuecomment-20",
             text: "Feedback",
           },
         });
@@ -5572,6 +5752,20 @@ it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
         yield* service.dispatch(command);
         assert.equal(reads, 1);
         assert.isNull((yield* restarted.getThread(threadId)).githubReplySnooze);
+        const notice = (yield* restarted.getThread(threadId)).githubReplyNotice!;
+        assert.equal(notice.conversationUrl, command.url);
+        assert.notEqual(notice.url, notice.conversationUrl);
+        yield* service.dispatch({
+          type: "thread.github-reply.snooze",
+          commandId: CommandId.make(`${threadId}:snooze-again`),
+          threadId,
+          url: notice.conversationUrl!,
+        });
+        assert.equal(reads, 2);
+        const resnoozed = yield* restarted.getThread(threadId);
+        assert.equal(resnoozed.githubReplySnooze?.url, command.url);
+        assert.deepEqual(resnoozed.githubReplySnooze?.baseline, freshBaseline);
+        assert.isNull(resnoozed.githubReplyNotice);
       }),
   );
   it.effect.each([

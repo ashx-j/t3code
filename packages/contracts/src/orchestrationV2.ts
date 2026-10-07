@@ -1,3 +1,8 @@
+import {
+  ThreadDiscussionKey,
+  ThreadDiscussionLink,
+  GitHubDiscussionUrl,
+} from "./threadDiscussion.ts";
 import { GitHubConversationUrl, GitHubReplySnooze, GitHubReplyNotice } from "./githubReply.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import * as Effect from "effect/Effect";
@@ -377,6 +382,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
       pre-linking servers still decode. */
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
+  discussions: Schema.optional(Schema.Array(ThreadDiscussionLink)),
   /** Pull request discovered from the thread's current branch. */
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   activeProviderThreadId: Schema.NullOr(ProviderThreadId),
@@ -1848,6 +1854,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   /** Pull request the user linked to this thread (#8160). */
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
+  discussions: Schema.optional(Schema.Array(ThreadDiscussionLink)),
   /** Pull request discovered from the thread's current branch. */
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   lineage: OrchestrationV2AppThreadLineage,
@@ -2767,6 +2774,20 @@ export const OrchestrationV2Command = Schema.Union([
     limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecoveryUpdate)),
     /** Link (object) or unlink (null) a pull request (#8160); absent leaves it unchanged. */
     linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.discussion.link"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    discussion: Schema.Struct({ ...ThreadDiscussionKey.fields, url: GitHubDiscussionUrl }),
+    title: Schema.optional(TrimmedNonEmptyString),
+    source: ThreadDiscussionLink.fields.source,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.discussion.unlink"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    discussion: ThreadDiscussionKey,
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request.link"),

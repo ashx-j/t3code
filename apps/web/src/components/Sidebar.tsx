@@ -8,7 +8,14 @@ import {
   moveThreadContextDrag as moveThreadContextDragGhost,
 } from "./chat/threadContextDrag";
 import { discardComposerDraft } from "../lib/discardComposerDraft";
-import { requestCustomSnooze, type SnoozeChoice } from "./CustomSnoozeDialog";
+import { requestCustomSnooze } from "./CustomSnoozeDialog";
+import {
+  commonGitHubReplyConversations,
+  eligibleThreadGitHubConversations,
+  type GitHubReplyConversation,
+} from "@t3tools/client-runtime/github-reply-conversations";
+import { GitHubReplySnoozeMenuItem } from "./GitHubReplySnoozeMenu";
+import { githubReplySnoozeMenuItem, githubReplySnoozeChoice } from "./githubReplySnoozeMenu.logic";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { useAtomValue } from "@effect/atom-react";
@@ -239,7 +246,7 @@ import {
   type TerminalStatusIndicator,
   useLinkedThreadPullRequest,
 } from "./ThreadStatusIndicators";
-import { resolveSnoozePresets, snoozeWakeLabel, type SnoozePreset } from "./Sidebar.snooze";
+import { resolveSnoozePresets, snoozeWakeLabel } from "./Sidebar.snooze";
 import { ProjectFavicon, type ProjectFaviconProject } from "./ProjectFavicon";
 import { ThreadSearchMatchExcerpt } from "./ThreadSearchMatch";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
@@ -537,12 +544,16 @@ function SidebarThreadTooltip({
   );
 }
 
+type SnoozeChoice = { readonly snoozedUntil: string } | { readonly url: string };
+
 /**
  * Hover entry point for snooze: a clock button opening the preset menu.
  * Controlled by the row (which also uses the open state to pin its hover
  * actions while the menu is up).
  */
 function SnoozeMenuButton(props: {
+  githubReplySnoozeSupported: boolean;
+  githubConversations: ReadonlyArray<GitHubReplyConversation>;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSnooze: (preset: SnoozeChoice) => void;
@@ -590,6 +601,12 @@ function SnoozeMenuButton(props: {
             <MenuShortcut>{preset.whenLabel}</MenuShortcut>
           </MenuItem>
         ))}
+        {props.githubReplySnoozeSupported ? (
+          <GitHubReplySnoozeMenuItem
+            conversations={props.githubConversations}
+            onSnooze={onSnooze}
+          />
+        ) : null}
         <MenuSeparator />
         <MenuItem
           onClick={async (event) => {
@@ -1081,6 +1098,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   settlementSupported: boolean;
   // Same contract for thread.snooze/unsnooze.
   snoozeSupported: boolean;
+  githubReplySnoozeSupported: boolean;
   // Renders the pin glyph. Pinned cards keep the full settle/snooze quick
   // actions: settling clears the pin server-side, and snoozing hides the
   // card until wake with the pin intact underneath. The glyph is also the
@@ -2066,6 +2084,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                       ) : null}
                       {showSnoozeButton ? (
                         <SnoozeMenuButton
+                          githubReplySnoozeSupported={props.githubReplySnoozeSupported}
+                          githubConversations={
+                            snoozeMenuOpen ? eligibleThreadGitHubConversations(thread) : []
+                          }
                           open={snoozeMenuOpen}
                           onOpenChange={setSnoozeMenuOpen}
                           onSnooze={handleSnoozePreset}
@@ -4211,6 +4233,9 @@ export default function Sidebar() {
         pinnedCount: pinnedSelectedThreads.length,
       });
       const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
+      const githubConversations = commonGitHubReplyConversations(
+        selectedThreads.map(eligibleThreadGitHubConversations),
+      );
       const clicked = await settlePromise(() =>
         api.contextMenu.show(
           [
@@ -4226,6 +4251,18 @@ export default function Sidebar() {
                         id: `snooze:${preset.id}`,
                         label: `${preset.label} (${preset.whenLabel})`,
                       })),
+                      ...(selectedThreads.every(
+                        (thread) =>
+                          serverConfigs.get(thread.environmentId)?.environment.capabilities
+                            .threadGitHubReplySnooze === true,
+                      )
+                        ? [
+                            githubReplySnoozeMenuItem(
+                              githubConversations,
+                              "No shared linked conversation",
+                            ),
+                          ]
+                        : []),
                       { id: "snooze:custom", label: "Custom…", separatorBefore: true },
                     ],
                   },
@@ -4243,7 +4280,9 @@ export default function Sidebar() {
         const preset =
           clicked.value === "snooze:custom"
             ? await requestCustomSnooze()
-            : snoozePresets.find((candidate) => `snooze:${candidate.id}` === clicked.value);
+            : clicked.value.startsWith("snooze:github:")
+              ? githubReplySnoozeChoice(clicked.value, githubConversations)
+              : snoozePresets.find((candidate) => `snooze:${candidate.id}` === clicked.value);
         if (preset) {
           // Post-snooze navigation must skip threads snoozing in this same
           // batch — they are all leaving the card block together.
@@ -4466,6 +4505,7 @@ export default function Sidebar() {
         const isPinned = thread.pinnedAt != null;
         // Presets resolve at menu-open time (same as the popover).
         const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
+        const githubConversations = eligibleThreadGitHubConversations(thread);
         const threadProjectGroup =
           projectGroupsRef.current.find((project) =>
             project.memberProjectRefs.some(
@@ -4495,10 +4535,14 @@ export default function Sidebar() {
                 settlement: supportsSettlement,
                 autoSettleOptOut: supportsAutoSettleOptOut,
                 snooze: supportsSnooze,
+                githubReplySnooze:
+                  serverConfigs.get(thread.environmentId)?.environment.capabilities
+                    .threadGitHubReplySnooze === true,
                 pinning: supportsPinning,
                 titleRegeneration: supportsTitleRegeneration,
               },
               snoozePresets,
+              githubConversations,
             }),
             position,
           ),
@@ -4508,7 +4552,9 @@ export default function Sidebar() {
           const preset =
             clicked.value === "snooze:custom"
               ? await requestCustomSnooze()
-              : snoozePresets.find((candidate) => `snooze:${candidate.id}` === clicked.value);
+              : clicked.value.startsWith("snooze:github:")
+                ? githubReplySnoozeChoice(clicked.value, githubConversations)
+                : snoozePresets.find((candidate) => `snooze:${candidate.id}` === clicked.value);
           if (preset) attemptSnooze(threadRef, preset);
           return;
         }
@@ -5144,6 +5190,10 @@ export default function Sidebar() {
                             snoozeSupported={
                               serverConfigs.get(thread.environmentId)?.environment.capabilities
                                 .threadSnooze === true
+                            }
+                            githubReplySnoozeSupported={
+                              serverConfigs.get(thread.environmentId)?.environment.capabilities
+                                .threadGitHubReplySnooze === true
                             }
                             pinningSupported={
                               serverConfigs.get(thread.environmentId)?.environment.capabilities

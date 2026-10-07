@@ -1233,7 +1233,10 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                     />
                   </Animated.View>
                 ) : null}
-                <GitHubReplySnoozeCard thread={props.selectedThread} />
+                <GitHubReplySnoozeCard
+                  key={`${props.environmentId}:${props.selectedThread.id}`}
+                  thread={props.selectedThread}
+                />
                 <UsageLimitRecoveryCard
                   key={props.selectedThread.latestRun?.runId}
                   thread={props.selectedThread}

@@ -14,6 +14,7 @@ export interface ComposerBannerStackItem {
   readonly variant: ComposerBannerVariant;
   readonly priority?: "urgent" | "activity" | "notice";
   readonly compact?: boolean;
+  readonly layout?: "inline";
   readonly icon: ReactNode;
   readonly title: ReactNode;
   readonly description?: ReactNode;
@@ -354,20 +355,31 @@ function ComposerBannerStackAlert({
       variant={item.variant}
       density="comfortable"
     >
-      <ComposerBanner.Row layout={item.compact ? "wrap-actions-narrow" : "wrap-actions"}>
-        <ComposerBanner.Icon className="h-(--composer-banner-icon-column) self-start">
+      <ComposerBanner.Row
+        layout={item.layout ?? (item.compact ? "wrap-actions-narrow" : "wrap-actions")}
+      >
+        <ComposerBanner.Icon
+          className={cn(
+            "h-(--composer-banner-icon-column)",
+            item.layout !== "inline" && "self-start",
+          )}
+        >
           {item.icon}
         </ComposerBanner.Icon>
         <ComposerBanner.Content className="whitespace-nowrap">
           <span className="min-w-0 truncate font-medium leading-7 sm:leading-6">{item.title}</span>
           {item.description ? (
-            <NoticeDescription compact={item.compact ?? false}>
-              {item.description}
-            </NoticeDescription>
+            item.layout === "inline" ? (
+              <span className="shrink-0 text-muted-foreground">{item.description}</span>
+            ) : (
+              <NoticeDescription compact={item.compact ?? false}>
+                {item.description}
+              </NoticeDescription>
+            )
           ) : null}
         </ComposerBanner.Content>
         {item.actions || item.onDismiss ? (
-          <ComposerBanner.Actions>
+          <ComposerBanner.Actions className={item.layout === "inline" ? "flex-nowrap" : undefined}>
             {item.actions}
             {item.onDismiss ? (
               <ComposerBanner.Dismiss

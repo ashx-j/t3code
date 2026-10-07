@@ -1,4 +1,3 @@
-import { parseGitHubConversationUrl } from "@t3tools/contracts";
 import { useEffect, useId, useState } from "react";
 import { create } from "zustand";
 import {
@@ -33,7 +32,7 @@ import {
   DialogFooter,
 } from "./ui/dialog";
 
-export type SnoozeChoice = { readonly snoozedUntil: string } | { readonly url: string };
+type SnoozeChoice = { readonly snoozedUntil: string };
 type Request = { readonly resolve: (choice: SnoozeChoice | null) => void };
 const useRequest = create<{ request: Request | null }>(() => ({ request: null }));
 
@@ -63,8 +62,6 @@ function CustomSnoozeDialog() {
   const [time, setTime] = useState(localSnoozeTime(initial));
   const [amount, setAmount] = useState("2");
   const [unit, setUnit] = useState<"minutes" | "hours" | "days">("hours");
-  const [github, setGithub] = useState(false);
-  const [url, setUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
   const input: CustomSnoozeInput =
     mode === "date" ? { mode, date: localSnoozeDate(date), time } : { mode, amount, unit };
@@ -80,15 +77,6 @@ function CustomSnoozeDialog() {
           className="flex min-h-0 flex-col"
           onSubmit={(event) => {
             event.preventDefault();
-            if (github) {
-              const conversation = parseGitHubConversationUrl(url.trim());
-              if (!conversation) {
-                setError("Use a github.com pull request or repository discussion URL.");
-                return;
-              }
-              finish({ url: conversation.url });
-              return;
-            }
             const snoozedUntil = resolveCustomSnooze(input, new Date());
             if (!snoozedUntil) {
               setError(
@@ -107,153 +95,117 @@ function CustomSnoozeDialog() {
           </DialogHeader>
           <DialogPanel>
             <div className="flex flex-col gap-4">
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={github}
-                  onChange={(event) => {
-                    setGithub(event.target.checked);
-                    setError(null);
-                  }}
-                />
-                Until a GitHub reply
-              </label>
-              {github ? (
-                <div className="flex flex-col gap-2">
-                  <Label htmlFor={`${id}-github`}>Conversation URL</Label>
-                  <Input
-                    id={`${id}-github`}
-                    value={url}
-                    onChange={(event) => setUrl(event.target.value)}
-                    placeholder="https://github.com/owner/repo/pull/123"
-                  />
-                  <p className="text-sm text-muted-foreground">
-                    Open, merged or closed PRs and repository discussions. New comments by other
-                    accounts wake this thread without running an agent. A discussion comment link
-                    watches that comment's replies. PR links watch all conversation comments.
-                  </p>
-                </div>
-              ) : (
-                <>
-                  <ToggleGroup
-                    aria-label="Schedule type"
-                    className="w-full *:flex-1"
-                    value={[mode]}
-                    onValueChange={(next) => {
-                      const value = next[0];
-                      if (value === "date" || value === "duration") setMode(value);
-                      setError(null);
-                    }}
-                  >
-                    <Toggle value="date">Date and time</Toggle>
-                    <Toggle value="duration">Duration</Toggle>
-                  </ToggleGroup>
-                  <div className="flex flex-col gap-4">
-                    {mode === "date" ? (
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                        <div className="flex min-w-0 flex-col gap-1.5">
-                          <Label htmlFor={`${id}-date`}>Date</Label>
-                          <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
-                            <PopoverTrigger
-                              render={
-                                <Button
-                                  id={`${id}-date`}
-                                  variant="outline"
-                                  className="w-full justify-between"
-                                />
-                              }
-                            >
-                              {date.toLocaleDateString(undefined, {
-                                month: "short",
-                                day: "numeric",
-                                year: "numeric",
-                              })}
-                              <CalendarIcon className="size-4 text-muted-foreground" />
-                            </PopoverTrigger>
-                            <PopoverPopup align="start" aria-label="Choose snooze date">
-                              <Calendar
-                                mode="single"
-                                required
-                                selected={date}
-                                defaultMonth={date}
-                                {...(weekStartsOn === undefined ? {} : { weekStartsOn })}
-                                disabled={{ before: new Date(new Date().setHours(0, 0, 0, 0)) }}
-                                onSelect={(selected) => {
-                                  setDate(selected);
-                                  setCalendarOpen(false);
-                                  setError(null);
-                                }}
-                              />
-                            </PopoverPopup>
-                          </Popover>
-                        </div>
-                        <Label
-                          className="flex min-w-0 flex-col items-stretch"
-                          htmlFor={`${id}-time`}
+              <ToggleGroup
+                aria-label="Schedule type"
+                className="w-full *:flex-1"
+                value={[mode]}
+                onValueChange={(next) => {
+                  const value = next[0];
+                  if (value === "date" || value === "duration") setMode(value);
+                  setError(null);
+                }}
+              >
+                <Toggle value="date">Date and time</Toggle>
+                <Toggle value="duration">Duration</Toggle>
+              </ToggleGroup>
+              <div className="flex flex-col gap-4">
+                {mode === "date" ? (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div className="flex min-w-0 flex-col gap-1.5">
+                      <Label htmlFor={`${id}-date`}>Date</Label>
+                      <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
+                        <PopoverTrigger
+                          render={
+                            <Button
+                              id={`${id}-date`}
+                              variant="outline"
+                              className="w-full justify-between"
+                            />
+                          }
                         >
-                          Time
-                          <Input
-                            nativeInput
-                            id={`${id}-time`}
-                            className="h-9 sm:h-8"
-                            type="time"
+                          {date.toLocaleDateString(undefined, {
+                            month: "short",
+                            day: "numeric",
+                            year: "numeric",
+                          })}
+                          <CalendarIcon className="size-4 text-muted-foreground" />
+                        </PopoverTrigger>
+                        <PopoverPopup align="start" aria-label="Choose snooze date">
+                          <Calendar
+                            mode="single"
                             required
-                            value={time}
-                            onChange={(event) => {
-                              setTime(event.target.value);
+                            selected={date}
+                            defaultMonth={date}
+                            {...(weekStartsOn === undefined ? {} : { weekStartsOn })}
+                            disabled={{ before: new Date(new Date().setHours(0, 0, 0, 0)) }}
+                            onSelect={(selected) => {
+                              setDate(selected);
+                              setCalendarOpen(false);
                               setError(null);
                             }}
                           />
-                        </Label>
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                        <NumberField
-                          id={`${id}-amount`}
-                          min={0}
-                          step="any"
-                          value={amount === "" ? null : Number(amount)}
-                          onValueChange={(value) => {
-                            setAmount(value === null ? "" : String(value));
-                            setError(null);
-                          }}
-                        >
-                          <Label htmlFor={`${id}-amount`}>Snooze for</Label>
-                          <NumberFieldGroup>
-                            <NumberFieldDecrement aria-label="Decrease duration" />
-                            <NumberFieldInput required />
-                            <NumberFieldIncrement aria-label="Increase duration" />
-                          </NumberFieldGroup>
-                        </NumberField>
-                        <Label
-                          className="flex min-w-0 flex-col items-stretch"
-                          htmlFor={`${id}-unit`}
-                        >
-                          Unit
-                          <Select
-                            value={unit}
-                            items={{ minutes: "Minutes", hours: "Hours", days: "Days" }}
-                            onValueChange={(value) => {
-                              if (value === "minutes" || value === "hours" || value === "days")
-                                setUnit(value);
-                              setError(null);
-                            }}
-                          >
-                            <SelectTrigger id={`${id}-unit`} className="min-w-0">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectPopup>
-                              <SelectItem value="minutes">Minutes</SelectItem>
-                              <SelectItem value="hours">Hours</SelectItem>
-                              <SelectItem value="days">Days</SelectItem>
-                            </SelectPopup>
-                          </Select>
-                        </Label>
-                      </div>
-                    )}
+                        </PopoverPopup>
+                      </Popover>
+                    </div>
+                    <Label className="flex min-w-0 flex-col items-stretch" htmlFor={`${id}-time`}>
+                      Time
+                      <Input
+                        nativeInput
+                        id={`${id}-time`}
+                        className="h-9 sm:h-8"
+                        type="time"
+                        required
+                        value={time}
+                        onChange={(event) => {
+                          setTime(event.target.value);
+                          setError(null);
+                        }}
+                      />
+                    </Label>
                   </div>
-                </>
-              )}
+                ) : (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <NumberField
+                      id={`${id}-amount`}
+                      min={0}
+                      step="any"
+                      value={amount === "" ? null : Number(amount)}
+                      onValueChange={(value) => {
+                        setAmount(value === null ? "" : String(value));
+                        setError(null);
+                      }}
+                    >
+                      <Label htmlFor={`${id}-amount`}>Snooze for</Label>
+                      <NumberFieldGroup>
+                        <NumberFieldDecrement aria-label="Decrease duration" />
+                        <NumberFieldInput required />
+                        <NumberFieldIncrement aria-label="Increase duration" />
+                      </NumberFieldGroup>
+                    </NumberField>
+                    <Label className="flex min-w-0 flex-col items-stretch" htmlFor={`${id}-unit`}>
+                      Unit
+                      <Select
+                        value={unit}
+                        items={{ minutes: "Minutes", hours: "Hours", days: "Days" }}
+                        onValueChange={(value) => {
+                          if (value === "minutes" || value === "hours" || value === "days")
+                            setUnit(value);
+                          setError(null);
+                        }}
+                      >
+                        <SelectTrigger id={`${id}-unit`} className="min-w-0">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectPopup>
+                          <SelectItem value="minutes">Minutes</SelectItem>
+                          <SelectItem value="hours">Hours</SelectItem>
+                          <SelectItem value="days">Days</SelectItem>
+                        </SelectPopup>
+                      </Select>
+                    </Label>
+                  </div>
+                )}
+              </div>
             </div>
             {error && (
               <p role="alert" className="text-destructive">

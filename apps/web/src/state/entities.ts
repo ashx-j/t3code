@@ -278,6 +278,13 @@ export function readEnvironmentSupportsSnooze(environmentId: EnvironmentId): boo
   );
 }
 
+export function readEnvironmentSupportsGitHubReplySnooze(environmentId: EnvironmentId): boolean {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .threadGitHubReplySnooze === true
+  );
+}
+
 /** Whether the environment's server understands thread.visit/mark-unread and
     projects lastVisitedAt on thread shells. Same version-skew contract as
     settlement: against older servers, clients keep the browser-local visited

@@ -1,4 +1,5 @@
-import { GitHubReplySnoozeSheet } from "./GitHubReplySnooze";
+import { githubReplySnoozeMenuAction, useGitHubReplySnooze } from "./GitHubReplySnooze";
+import { eligibleThreadGitHubConversations } from "@t3tools/client-runtime/github-reply-conversations";
 import { environmentServerConfigsAtom } from "../../state/server";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import {
@@ -608,7 +609,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   );
   const handleSettle = useCallback(() => onSettleThread(thread), [onSettleThread, thread]);
   const [customSnoozeOpen, setCustomSnoozeOpen] = useState(false);
-  const [githubSnoozeOpen, setGithubSnoozeOpen] = useState(false);
+  const { snoozeUrl } = useGitHubReplySnooze(thread);
+  const githubConversations = useMemo(() => eligibleThreadGitHubConversations(thread), [thread]);
   const githubSnoozeSupported =
     appAtomRegistry.get(environmentServerConfigsAtom).get(thread.environmentId)?.environment
       .capabilities.threadGitHubReplySnooze === true;
@@ -624,7 +626,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   if (boundIdentity !== rowIdentity) {
     setBoundIdentity(rowIdentity);
     setCustomSnoozeOpen(false);
-    setGithubSnoozeOpen(false);
   }
   const handleSnooze = useCallback(
     (snoozedUntil: string) => onSnoozeThread(thread, snoozedUntil),
@@ -673,10 +674,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         title: preset.label,
         subtitle: preset.whenLabel,
       })),
+      ...(githubSnoozeSupported ? [githubReplySnoozeMenuAction(githubConversations)] : []),
       { id: "snooze:custom", title: "Custom…" },
-      ...(githubSnoozeSupported ? [{ id: "snooze:github", title: "Until a GitHub reply…" }] : []),
     ],
-    [snoozePresets, githubSnoozeSupported],
+    [snoozePresets, githubSnoozeSupported, githubConversations],
   );
   // Pinned cards keep the full lifecycle menu; only the pin item flips to
   // Unpin. (Settling a pinned thread clears the pin server-side; snoozing
@@ -832,8 +833,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         copyTextWithHaptic(thread.id, { target: "thread-id" });
       }
       if (nativeEvent.event === "delete") handleDelete();
-      if (nativeEvent.event === "snooze:github") {
-        setGithubSnoozeOpen(true);
+      if (nativeEvent.event.startsWith("snooze:github:")) {
+        const conversation = githubConversations.find(
+          (candidate) => `snooze:github:${candidate.url}` === nativeEvent.event,
+        );
+        if (conversation) snoozeUrl(conversation.url);
         return;
       }
       if (nativeEvent.event === "snooze:custom") {
@@ -863,6 +867,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       handlePin,
       handleSettle,
       handleSnooze,
+      githubConversations,
+      snoozeUrl,
       handleSetAutoSettle,
       handleUnpin,
       handleUnsettle,
@@ -1238,9 +1244,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
 
   return (
     <View collapsable={false}>
-      {githubSnoozeOpen && (
-        <GitHubReplySnoozeSheet thread={thread} onClose={() => setGithubSnoozeOpen(false)} />
-      )}
       {customSnoozeOpen && (
         <CustomSnoozeSheet onClose={() => setCustomSnoozeOpen(false)} onSnooze={handleSnooze} />
       )}

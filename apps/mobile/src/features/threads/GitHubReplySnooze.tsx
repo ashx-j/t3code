@@ -1,100 +1,80 @@
-import { parseGitHubConversationUrl } from "@t3tools/contracts";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { useState } from "react";
 import {
-  KeyboardAvoidingView,
-  Platform,
-  Linking,
-  Modal,
-  Pressable,
-  ScrollView,
-  TextInput,
-  View,
-} from "react-native";
+  eligibleThreadGitHubConversations,
+  githubReplyConversationLabel,
+  type GitHubReplyConversation,
+} from "@t3tools/client-runtime/github-reply-conversations";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { MenuAction } from "@react-native-menu/menu";
+import { useCallback, useState } from "react";
+import { Alert, Linking, Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/AppText";
+import { ControlPillMenu } from "../../components/ControlPill";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 
-export function GitHubReplySnoozeSheet({
-  thread,
-  onClose,
-}: {
-  readonly thread: EnvironmentThreadShell;
-  readonly onClose: () => void;
-}) {
+export function githubReplySnoozeMenuAction(
+  conversations: ReadonlyArray<GitHubReplyConversation>,
+): MenuAction {
+  const only = conversations.length === 1 ? conversations[0] : undefined;
+  return {
+    id: only ? `snooze:github:${only.url}` : "snooze:github",
+    title: "Until a GitHub reply",
+    ...(conversations.length === 0
+      ? { subtitle: "Link a GitHub PR or discussion first", attributes: { disabled: true } }
+      : {}),
+    ...(conversations.length > 1
+      ? {
+          subactions: conversations.map((conversation) => ({
+            id: `snooze:github:${conversation.url}`,
+            title: githubReplyConversationLabel(conversation),
+          })),
+        }
+      : {}),
+  };
+}
+
+export function useGitHubReplySnooze(thread: EnvironmentThreadShell) {
   const snooze = useAtomCommand(threadEnvironment.snooze);
-  const [url, setUrl] = useState("");
-  const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  return (
-    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        className="flex-1 items-center justify-center bg-backdrop px-6"
-      >
-        <View className="w-full max-w-md gap-4 rounded-3xl bg-screen p-6">
-          <Text accessibilityRole="header" className="text-xl font-t3-semibold">
-            Until a GitHub reply
-          </Text>
-          <Text>
-            Paste a github.com PR or repository discussion URL. Open, merged and closed PRs are
-            supported. New comments by other accounts wake this thread without running an agent.
-          </Text>
-          <Text>
-            A discussion comment link watches its replies. PR links watch all conversation comments.
-          </Text>
-          <TextInput
-            accessibilityLabel="GitHub conversation URL"
-            autoCapitalize="none"
-            autoCorrect={false}
-            value={url}
-            onChangeText={setUrl}
-            placeholder="https://github.com/owner/repo/pull/123"
-            className="min-h-12 rounded-xl bg-subtle p-3 text-foreground"
-          />
-          {error ? <Text accessibilityRole="alert">{error}</Text> : null}
-          <View className="flex-row justify-end gap-6">
-            <Pressable accessibilityRole="button" onPress={onClose} disabled={pending}>
-              <Text>Cancel</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              disabled={pending}
-              onPress={() => {
-                const target = parseGitHubConversationUrl(url.trim());
-                if (!target) {
-                  setError("Use a github.com pull request or repository discussion URL.");
-                  return;
-                }
-                setPending(true);
-                void snooze({
-                  environmentId: thread.environmentId,
-                  input: { threadId: thread.id, url: target.url },
-                }).then((result) => {
-                  setPending(false);
-                  if (result._tag === "Success") onClose();
-                  else
-                    setError(
-                      "Could not snooze this thread. Respond to pending requests and try again.",
-                    );
-                });
-              }}
-            >
-              <Text>{pending ? "Saving..." : "Snooze"}</Text>
-            </Pressable>
-          </View>
-        </View>
-      </KeyboardAvoidingView>
-    </Modal>
+  const snoozeUrl = useCallback(
+    (url: string) => {
+      setPending(true);
+      void snooze({
+        environmentId: thread.environmentId,
+        input: { threadId: thread.id, url },
+      }).then((result) => {
+        setPending(false);
+        if (result._tag !== "Success") {
+          Alert.alert("Could not snooze thread", "Respond to pending requests and try again.");
+        }
+      });
+    },
+    [snooze, thread.environmentId, thread.id],
   );
+  return { pending, snoozeUrl };
 }
 
 export function GitHubReplySnoozeCard({ thread }: { readonly thread: EnvironmentThreadShell }) {
   const unsnooze = useAtomCommand(threadEnvironment.unsnooze);
+  const { pending, snoozeUrl } = useGitHubReplySnooze(thread);
+  const conversations = eligibleThreadGitHubConversations(thread);
   const watch = thread.githubReplySnooze;
   const notice = thread.githubReplyNotice;
   if (!watch && !notice) return null;
   const url = watch?.url ?? notice!.url;
+  const directUrl =
+    notice?.conversationUrl ?? (conversations.length === 1 ? conversations[0]?.url : undefined);
+  const status =
+    watch?.status === "pending"
+      ? "Checking GitHub access..."
+      : watch?.status === "rate-limited"
+        ? "GitHub rate limit reached. Checks are paused until it resets."
+        : watch?.status === "retrying"
+          ? "GitHub check failed. Retrying..."
+          : null;
+  const snoozeButton = (
+    <Text className="font-t3-semibold">{pending ? "Snoozing..." : "Snooze"}</Text>
+  );
   return (
     <View className="mx-3 mb-2 gap-2 rounded-xl border border-border bg-background p-3">
       <Text className="font-t3-semibold">
@@ -104,27 +84,52 @@ export function GitHubReplySnoozeCard({ thread }: { readonly thread: Environment
             ? `GitHub reply from ${notice.author}`
             : "GitHub reply snooze stopped"}
       </Text>
-      {watch ? (
-        <Text>
-          {watch.status === "pending"
-            ? "Checking GitHub access..."
-            : watch.status === "rate-limited"
-              ? "GitHub rate limit reached. Checks are paused until it resets."
-              : watch.status === "retrying"
-                ? "GitHub check failed. Retrying..."
-                : "Checked every two minutes."}
-        </Text>
-      ) : (
-        <ScrollView style={{ maxHeight: 140 }}>
-          <Text selectable>{notice?.text}</Text>
-        </ScrollView>
-      )}
-      <View className="flex-row gap-6">
+      {status ? (
+        <Text>{status}</Text>
+      ) : notice?.type === "error" ? (
+        <Text>{notice.text}</Text>
+      ) : null}
+      <View className="flex-row items-center gap-6">
         <Pressable accessibilityRole="link" onPress={() => void Linking.openURL(url)}>
-          <Text>Open on GitHub</Text>
+          <Text className="text-primary-text">View</Text>
         </Pressable>
+        <View className="flex-1" />
+        {!watch && notice ? (
+          directUrl ? (
+            <Pressable
+              accessibilityRole="button"
+              disabled={pending}
+              onPress={() => snoozeUrl(directUrl)}
+            >
+              {snoozeButton}
+            </Pressable>
+          ) : (
+            <ControlPillMenu
+              actions={
+                conversations.length === 0
+                  ? [githubReplySnoozeMenuAction(conversations)]
+                  : conversations.map((conversation) => ({
+                      id: conversation.url,
+                      title: githubReplyConversationLabel(conversation),
+                    }))
+              }
+              onPressAction={({ nativeEvent }) => {
+                if (
+                  !pending &&
+                  conversations.some((conversation) => conversation.url === nativeEvent.event)
+                )
+                  snoozeUrl(nativeEvent.event);
+              }}
+            >
+              <Pressable accessibilityRole="button" disabled={pending}>
+                {snoozeButton}
+              </Pressable>
+            </ControlPillMenu>
+          )
+        ) : null}
         <Pressable
           accessibilityRole="button"
+          disabled={pending}
           onPress={() =>
             void unsnooze({
               environmentId: thread.environmentId,

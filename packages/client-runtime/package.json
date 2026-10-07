@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./github-reply-conversations": {
+      "types": "./src/githubReplyConversations.ts",
+      "default": "./src/githubReplyConversations.ts"
+    },
     "./composerThreadItems": {
       "types": "./src/composerThreadItems.ts",
       "default": "./src/composerThreadItems.ts"
@@ -206,6 +210,10 @@
     "./state/provider-instance-display": {
       "types": "./src/state/providerInstanceDisplay.ts",
       "default": "./src/state/providerInstanceDisplay.ts"
+    },
+    "./state/discussions": {
+      "types": "./src/state/discussions.ts",
+      "default": "./src/state/discussions.ts"
     },
     "./state/pull-requests": {
       "types": "./src/state/pullRequests.ts",
