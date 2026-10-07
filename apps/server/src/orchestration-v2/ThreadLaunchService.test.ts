@@ -1,3 +1,4 @@
+import * as GitHubReplyReader from "../sourceControl/GitHubReplyReader.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
@@ -117,7 +118,16 @@ function makeHarness(options: HarnessOptions = {}) {
     layerRegistry,
     { databaseLayer: layerDatabase, runEffectWorker: false },
   );
-  const layerThreadManagement = ThreadManagement.layer.pipe(Layer.provide(layerOrchestrator));
+  const layerThreadManagement = ThreadManagement.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(GitHubReplyReader.GitHubReplyReader)({}),
+        Layer.mock(CommandReceiptStore.CommandReceiptStoreV2)({}),
+        Layer.mock(ProjectStore.ProjectStoreV2)({}),
+      ),
+    ),
+    Layer.provide(layerOrchestrator),
+  );
   const layerReceipts = CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase));
   const layerOutbox = EffectOutbox.layer.pipe(Layer.provide(layerDatabase));
   const createWorktree = vi.fn(

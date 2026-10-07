@@ -153,6 +153,7 @@ export type ProjectionLimitRecoveryCandidate = Pick<
   | "limitRecovery"
   | "snoozedUntil"
   | "githubReplySnooze"
+  | "githubReplyAutoResumeBlockedRunId"
 >;
 
 /** The thread fields pull request sync reads, for a thread with at least one link. */
@@ -1481,6 +1482,7 @@ export function threadShellFromProjection(
     lastVisitedAt: projection.thread.lastVisitedAt,
     titleRegeneration: projection.thread.titleRegeneration ?? null,
     limitRecovery: projection.thread.limitRecovery ?? null,
+    githubReplyAutoResumeBlockedRunId: projection.thread.githubReplyAutoResumeBlockedRunId ?? null,
     deletedAt: projection.thread.deletedAt,
   };
 }
@@ -1738,6 +1740,7 @@ function shellFromState(input: {
     lastVisitedAt: input.state.thread.lastVisitedAt,
     titleRegeneration: input.state.thread.titleRegeneration ?? null,
     limitRecovery: input.state.thread.limitRecovery ?? null,
+    githubReplyAutoResumeBlockedRunId: input.state.thread.githubReplyAutoResumeBlockedRunId ?? null,
     deletedAt: input.state.thread.deletedAt,
   };
 }
@@ -3485,6 +3488,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             settledOverride: thread.settledOverride,
             pendingRuntimeRequest: null,
             limitRecovery: thread.limitRecovery ?? null,
+            githubReplyAutoResumeBlockedRunId: thread.githubReplyAutoResumeBlockedRunId ?? null,
             snoozedUntil: thread.snoozedUntil ?? null,
             githubReplySnooze: thread.githubReplySnooze ?? null,
           });

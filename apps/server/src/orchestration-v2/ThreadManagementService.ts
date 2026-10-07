@@ -5,6 +5,7 @@ import type {
 } from "./ProjectionStore.ts";
 import {
   type ChatAttachment,
+  type GitHubReplySnooze,
   CommandId,
   MessageId,
   type ModelSelection,
@@ -35,6 +36,9 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as Orchestrator from "./Orchestrator.ts";
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
+import * as ProjectStore from "./ProjectStore.ts";
+import * as GitHubReplyReader from "../sourceControl/GitHubReplyReader.ts";
 import { projectTurnItemForDetail } from "./WireProjection.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 
@@ -398,6 +402,9 @@ function latestSteerableRun(
 
 const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const githubReplies = yield* GitHubReplyReader.GitHubReplyReader;
+  const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+  const projects = yield* ProjectStore.ProjectStoreV2;
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
 
   const ensureLegacyTranscript = Effect.fn(
@@ -465,8 +472,83 @@ const make = Effect.gen(function* () {
       Effect.andThen(orchestrator.getThreadSnapshotWindow(threadId, options)),
     );
 
-  const dispatch: ThreadManagementServiceShape["dispatch"] = (command) =>
-    ensureCommandTranscripts(command).pipe(Effect.andThen(orchestrator.dispatch(command)));
+  const dispatch: ThreadManagementServiceShape["dispatch"] = Effect.fn(
+    "orchestrationV2.threadManagement.dispatch",
+  )(function* (command) {
+    yield* ensureCommandTranscripts(command);
+    if (command.type === "thread.github-reply.snooze" && command.resumeFrom === undefined) {
+      const receipt = yield* receipts.getByCommandId(command.commandId).pipe(
+        Effect.mapError(
+          (cause) =>
+            new Orchestrator.OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause,
+            }),
+        ),
+      );
+      // Let the orchestrator validate and replay the receipt even after the watch has woken.
+      if (Option.isSome(receipt)) return yield* orchestrator.dispatch(command);
+      const thread = yield* orchestrator.getThreadShell(command.threadId);
+      const project =
+        thread === null
+          ? Option.none()
+          : yield* projects.get(thread.projectId).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new Orchestrator.OrchestratorDispatchError({
+                    commandId: command.commandId,
+                    commandType: command.type,
+                    cause,
+                  }),
+              ),
+            );
+      if (!thread || Option.isNone(project)) {
+        return yield* new Orchestrator.OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The thread's project is unavailable.",
+        });
+      }
+      const now = DateTime.formatIso(yield* DateTime.now);
+      const watch: GitHubReplySnooze = {
+        requestId: command.commandId,
+        url: command.url,
+        startedAt: now,
+        nextCheckAt: now,
+        status: "pending",
+        failures: 0,
+      };
+      const observed = yield* githubReplies
+        .read({
+          cwd: thread.worktreePath ?? project.value.workspaceRoot,
+          watch,
+          captureBaseline: true,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new Orchestrator.OrchestratorDispatchError({
+                commandId: command.commandId,
+                commandType: command.type,
+                cause,
+              }),
+          ),
+        );
+      command = {
+        ...command,
+        resumeFrom: {
+          ...watch,
+          baseline: observed.baseline,
+          viewer: observed.viewer,
+          ...(observed.discussionCommentId === undefined
+            ? {}
+            : { discussionCommentId: observed.discussionCommentId }),
+        },
+      };
+    }
+    return yield* orchestrator.dispatch(command);
+  });
 
   const getProjectThread: ThreadManagementServiceShape["getProjectThread"] = (input) =>
     getThreadProjection(input.threadId).pipe(
@@ -843,11 +925,8 @@ const layerLegacyV1ThreadImporterNoop = Layer.succeed(
   }),
 );
 
-export const layer: Layer.Layer<ThreadManagementService, never, Orchestrator.OrchestratorV2> =
-  Layer.effect(ThreadManagementService, make).pipe(Layer.provide(layerLegacyV1ThreadImporterNoop));
+export const layer = Layer.effect(ThreadManagementService, make).pipe(
+  Layer.provide(layerLegacyV1ThreadImporterNoop),
+);
 
-export const layerWithLegacyImporter: Layer.Layer<
-  ThreadManagementService,
-  never,
-  LegacyV1ThreadImporter.LegacyV1ThreadImporter | Orchestrator.OrchestratorV2
-> = Layer.effect(ThreadManagementService, make);
+export const layerWithLegacyImporter = Layer.effect(ThreadManagementService, make);

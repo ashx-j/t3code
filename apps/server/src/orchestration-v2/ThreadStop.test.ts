@@ -1,3 +1,6 @@
+import * as GitHubReplyReader from "../sourceControl/GitHubReplyReader.ts";
+import * as ProjectStore from "./ProjectStore.ts";
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
@@ -41,6 +44,13 @@ const adapter = {
 const layerDatabase = SqlitePersistence.layerMemory;
 // No effect worker: runs stay unstarted, so Stop ends them without a provider.
 const layerTest = ThreadManagementService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      Layer.mock(GitHubReplyReader.GitHubReplyReader)({}),
+      Layer.mock(CommandReceiptStore.CommandReceiptStoreV2)({}),
+      Layer.mock(ProjectStore.ProjectStoreV2)({}),
+    ),
+  ),
   Layer.provideMerge(
     Layer.mergeAll(
       layerDatabase,

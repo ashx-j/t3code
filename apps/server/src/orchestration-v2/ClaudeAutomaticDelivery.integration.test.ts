@@ -1,3 +1,6 @@
+import * as GitHubReplyReader from "../sourceControl/GitHubReplyReader.ts";
+import * as ProjectStore from "./ProjectStore.ts";
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import type { SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -308,7 +311,17 @@ it.effect.each(["child completion", "scheduled message", "user steering"] as con
             }).pipe(
               Effect.provide(
                 ScheduledTaskService.layer.pipe(
-                  Layer.provide(ThreadManagementService.layer),
+                  Layer.provide(
+                    ThreadManagementService.layer.pipe(
+                      Layer.provide(
+                        Layer.mergeAll(
+                          Layer.mock(GitHubReplyReader.GitHubReplyReader)({}),
+                          Layer.mock(CommandReceiptStore.CommandReceiptStoreV2)({}),
+                          Layer.mock(ProjectStore.ProjectStoreV2)({}),
+                        ),
+                      ),
+                    ),
+                  ),
                   Layer.provide(
                     Layer.mock(LegacyV1ThreadImporter.LegacyV1ThreadImporter)({
                       ensureTranscript: () =>

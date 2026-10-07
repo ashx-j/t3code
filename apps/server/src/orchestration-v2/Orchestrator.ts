@@ -2690,16 +2690,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (
       command.type === "thread.github-reply.snooze" &&
       command.resumeFrom &&
-      (command.resumeFrom.url !== command.url ||
-        Date.parse(command.resumeFrom.startedAt) > DateTime.toEpochMillis(now))
+      command.resumeFrom.url !== command.url
     ) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: "The restored GitHub snooze must use the same conversation and a past baseline.",
+        cause: "The restored GitHub snooze must use the same conversation.",
       });
     }
     let snoozedUntil: DateTime.Utc | null = null;
+    let githubReplyAutoResumeBlockedRunId = thread.githubReplyAutoResumeBlockedRunId ?? null;
     if (
       command.type === "thread.github-reply.sync" &&
       (thread.githubReplySnooze?.requestId !== command.requestId ||
@@ -2739,6 +2739,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       snoozedUntil = Option.getOrNull(parsedSnoozedUntil);
+      if (command.type === "thread.github-reply.snooze") {
+        // Keep this run suppressed after the watch wakes; only an explicit send can continue it.
+        githubReplyAutoResumeBlockedRunId = latestExecutedRun(projection.runs)?.id ?? null;
+      }
     }
     let markUnreadVisitedAt: DateTime.Utc | null = null;
     if (command.type === "thread.mark-unread") {
@@ -2817,6 +2821,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             settledOverride: "active",
             settledAt: null,
             limitRecovery: null,
+            githubReplyAutoResumeBlockedRunId,
             updatedAt: now,
           };
         case "thread.github-reply.sync":
@@ -4507,6 +4512,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           projection.thread.deletedAt !== null ||
           projection.thread.settledOverride === "settled" ||
           projection.thread.githubReplySnooze != null ||
+          projection.thread.githubReplyAutoResumeBlockedRunId === run?.id ||
           projection.thread.providerInstanceId !== run.providerInstanceId ||
           projection.runtimeRequests.some((request) => request.status === "pending") ||
           (projection.thread.snoozedUntil != null &&

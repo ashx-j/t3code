@@ -16,6 +16,7 @@ export function limitRecoveryCommand(
 ): OrchestrationV2Command | null {
   if (
     thread.githubReplySnooze != null ||
+    thread.githubReplyAutoResumeBlockedRunId === thread.latestRunId ||
     thread.status !== "failed" ||
     thread.lastErrorClass !== "usage_limit" ||
     !thread.latestRunId ||

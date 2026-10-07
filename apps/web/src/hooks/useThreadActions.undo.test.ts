@@ -149,6 +149,28 @@ describe("archive Undo", () => {
     );
   });
 
+  it("restores the original GitHub reply baseline after archive Undo", async () => {
+    const saved: GitHubReplySnooze = {
+      requestId: CommandId.make("archive-watch"),
+      url: "https://github.com/team/repo/discussions/1",
+      startedAt: "2026-01-01T00:00:00.100Z",
+      nextCheckAt: "2026-01-01T00:02:00.000Z",
+      status: "watching",
+      failures: 0,
+      viewer: "me",
+      baseline: { latestAt: "2026-01-01T00:00:00Z", ids: ["existing"] },
+    };
+    threadShell.githubReplySnooze = saved;
+    await useThreadActions().archiveThread(target);
+    threadShell.githubReplySnooze = null;
+    await currentUndo()();
+    expect(commands.unarchive).toHaveBeenCalledOnce();
+    expect(commands.snooze).toHaveBeenCalledExactlyOnceWith({
+      environmentId: target.environmentId,
+      input: { threadId: target.threadId, url: saved.url, resumeFrom: saved },
+    });
+  });
+
   it("stays put when the archived thread was not open", async () => {
     const actions = useThreadActions();
     await actions.archiveThread(target);

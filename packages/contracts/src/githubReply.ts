@@ -41,6 +41,13 @@ export const GitHubReplySnooze = Schema.Struct({
   failures: Schema.Number,
   viewer: Schema.optional(Schema.String),
   discussionCommentId: Schema.optional(Schema.String),
+  /** GitHub's newest observed timestamp and all response IDs in that second. */
+  baseline: Schema.optional(
+    Schema.Struct({
+      latestAt: Schema.NullOr(IsoDateTime),
+      ids: Schema.Array(Schema.String),
+    }),
+  ),
 });
 export type GitHubReplySnooze = typeof GitHubReplySnooze.Type;
 

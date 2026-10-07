@@ -408,6 +408,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   githubReplySnooze: Schema.optional(Schema.NullOr(GitHubReplySnooze)),
   githubReplyNotice: Schema.optional(Schema.NullOr(GitHubReplyNotice)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
+  githubReplyAutoResumeBlockedRunId: Schema.optional(Schema.NullOr(RunId)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   // Fractional-index slot in the user-arranged pinned order. Optional so
@@ -1905,6 +1906,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   githubReplySnooze: Schema.optional(Schema.NullOr(GitHubReplySnooze)),
   githubReplyNotice: Schema.optional(Schema.NullOr(GitHubReplyNotice)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
+  githubReplyAutoResumeBlockedRunId: Schema.optional(Schema.NullOr(RunId)),
   /** Omitted by servers that predate thread pinning. */
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),

@@ -229,6 +229,8 @@ To wait for feedback on GitHub, choose **Snooze → Custom… → Until a GitHub
 on web or desktop, or **Snooze → Until a GitHub reply…** on mobile. Paste a
 github.com pull request or repository discussion URL. Open, merged and closed
 PRs all work. You can also ask your agent to snooze the thread for that conversation.
+T3 reads existing replies before hiding the thread. Replies observed during setup
+count as existing. If the check fails, T3 does not apply the snooze.
 
 T3 checks from the thread's environment using its signed-in GitHub CLI account,
 usually every two minutes. New comments, submitted reviews and inline review

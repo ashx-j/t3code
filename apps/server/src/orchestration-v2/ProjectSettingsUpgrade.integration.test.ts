@@ -1,3 +1,4 @@
+import * as GitHubReplyReader from "../sourceControl/GitHubReplyReader.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { ProjectId } from "@t3tools/contracts";
@@ -136,7 +137,10 @@ const layerRuntime = (dbPath: string) => {
     ),
   );
   return Layer.mergeAll(
-    RuntimeLayer.layer.pipe(Layer.provide(RuntimeLayer.layerProjectService)),
+    RuntimeLayer.layer.pipe(
+      Layer.provide(Layer.mock(GitHubReplyReader.GitHubReplyReader)({})),
+      Layer.provide(RuntimeLayer.layerProjectService),
+    ),
     RuntimeLayer.layerProjectService,
   ).pipe(
     Layer.provide(

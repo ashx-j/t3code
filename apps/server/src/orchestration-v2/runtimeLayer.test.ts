@@ -1,3 +1,4 @@
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as GitHubReplySnoozeWorker from "./GitHubReplySnoozeWorker.ts";
 import * as GitHubReplyReader from "../sourceControl/GitHubReplyReader.ts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
@@ -77,7 +78,8 @@ import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 
-const layerPlatformTest = Layer.merge(
+const layerPlatformTest = Layer.mergeAll(
+  Layer.mock(GitHubReplyReader.GitHubReplyReader)({}),
   NodeServices.layer,
   Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
     resolveLink: () => Effect.die("unused title link"),
@@ -4842,6 +4844,8 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
   it.effect.each([
     "resume",
     "queued-resume",
+    "github-running",
+    "github-limited",
     "cancel",
     "rearm",
     "snooze-race",
@@ -4912,6 +4916,13 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       }
       const projection = yield* orchestrator.getThreadProjection(threadId);
       const run = projection.runs[0]!;
+      const snoozeForReply = {
+        type: "thread.github-reply.snooze" as const,
+        commandId: CommandId.make(`recovery:github-snooze:${scenario}`),
+        threadId,
+        url: "https://github.com/team/repo/pull/1",
+      };
+      if (scenario === "github-running") yield* orchestrator.dispatch(snoozeForReply);
       const now = yield* DateTime.now;
       const resetAt =
         scenario === "invalid-snooze"
@@ -4990,6 +5001,122 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         (thread) => thread.id === threadId,
       )!;
       assert.isNull(limitRecoveryCommand(shell, false, DateTime.toEpochMillis(now)));
+      if (scenario === "github-running" || scenario === "github-limited") {
+        if (scenario === "github-limited") {
+          yield* orchestrator.dispatch(
+            limitRecoveryCommand(shell, true, DateTime.toEpochMillis(now))!,
+          );
+          yield* orchestrator.dispatch(snoozeForReply);
+        }
+        yield* orchestrator.dispatch({
+          type: "thread.github-reply.sync",
+          commandId: CommandId.make(`recovery:github-wake:${scenario}`),
+          threadId,
+          requestId: snoozeForReply.commandId,
+          watch: null,
+          notice: {
+            type: "reply",
+            url: snoozeForReply.url,
+            text: "Feedback",
+            receivedAt: DateTime.formatIso(now),
+          },
+        });
+        yield* TestClock.adjust("1 minute");
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const getShell = orchestrator.getThreadShell(threadId);
+        const woke = (yield* getShell)!;
+        assert.isNull(woke.githubReplySnooze);
+        assert.equal(
+          (yield* projections.getThread(threadId)).githubReplyAutoResumeBlockedRunId,
+          run.id,
+        );
+        assert.isNull(limitRecoveryCommand(woke, true, Date.parse(resetAt)));
+        // A stale worker can have prepared an arm command before the snooze. Even if it
+        // commits after the reply, dispatch must still refuse to start this run again.
+        yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make(`recovery:github-stale-arm:${scenario}`),
+          threadId,
+          limitRecovery: { runId: run.id, resetAt, autoResume: true },
+        });
+        const rearmed = (yield* getShell)!;
+        assert.isNull(limitRecoveryCommand(rearmed, true, Date.parse(resetAt)));
+        const staleResume = limitRecoveryCommand(
+          { ...rearmed, githubReplyAutoResumeBlockedRunId: null },
+          true,
+          Date.parse(resetAt),
+        );
+        assert.isNotNull(staleResume);
+        yield* orchestrator.dispatch(staleResume!);
+        assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
+        const candidates = yield* projections.getLimitRecoveryCandidates({
+          now: yield* DateTime.now,
+          autoResume: true,
+          snooze: false,
+        });
+        const candidate = candidates.find((candidate) => candidate.id === threadId);
+        if (candidate) assert.isNull(limitRecoveryCommand(candidate, true, Date.parse(resetAt)));
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`recovery:github-manual:${scenario}`),
+          messageId: MessageId.make(`recovery:github-manual:${scenario}`),
+          threadId,
+          manualContinuationOfRunId: run.id,
+          text: "Continue where you left off.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const continued = yield* orchestrator.getThreadProjection(threadId);
+        assert.lengthOf(continued.runs, 2);
+        const nextRun = continued.runs[1]!;
+        const nextNow = yield* DateTime.now;
+        const nextReset = DateTime.formatIso(DateTime.add(nextNow, { minutes: 1 }));
+        const error = continued.turnItems.find((item) => item.type === "error")!;
+        if (error.type !== "error") throw new Error("Expected usage limit error");
+        yield* events.write({
+          events: [
+            {
+              id: EventId.make(`recovery:github-next-run:${scenario}`),
+              type: "run.updated",
+              threadId,
+              occurredAt: nextNow,
+              payload: { ...nextRun, status: "failed", completedAt: nextNow },
+            },
+            {
+              id: EventId.make(`recovery:github-next-error:${scenario}`),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: nextNow,
+              payload: {
+                ...error,
+                id: TurnItemId.make(`recovery:github-next-error:${scenario}`),
+                runId: nextRun.id,
+                nodeId: nextRun.rootNodeId,
+                ordinal: 4,
+                startedAt: nextNow,
+                completedAt: nextNow,
+                updatedAt: nextNow,
+                failure: { ...error.failure, resetAt: nextReset },
+              },
+            },
+          ],
+        });
+        const nextArm = limitRecoveryCommand(
+          (yield* getShell)!,
+          true,
+          DateTime.toEpochMillis(nextNow),
+        );
+        assert.isNotNull(nextArm);
+        yield* orchestrator.dispatch(nextArm!);
+        yield* TestClock.adjust("1 minute");
+        const nextResume = limitRecoveryCommand((yield* getShell)!, true, Date.parse(nextReset));
+        assert.isNotNull(nextResume);
+        yield* orchestrator.dispatch(nextResume!);
+        assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 3);
+        return;
+      }
       if (scenario === "invalid-snooze") {
         const result = yield* orchestrator
           .dispatch({
@@ -5341,11 +5468,118 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
 });
 
 it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
+  it.effect.each(["success", "failure"] as const)(
+    "captures the baseline before accepting snooze: %s",
+    (scenario) =>
+      Effect.gen(function* () {
+        const projects = yield* ProjectService.ProjectService;
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const projectId = ProjectId.make(`github-setup:${scenario}:project`);
+        const threadId = ThreadId.make(`github-setup:${scenario}:thread`);
+        yield* projects.create({
+          commandId: CommandId.make(`${projectId}:create`),
+          projectId,
+          title: "Setup",
+          workspaceRoot: `/tmp/${projectId}`,
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`${threadId}:create`),
+          threadId,
+          projectId,
+          title: "Setup",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        let reads = 0;
+        const baseline = { latestAt: "2026-10-01T12:00:00Z", ids: ["existing"] };
+        const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+          Effect.provide(
+            ThreadManagementService.layer.pipe(
+              Layer.provide(
+                Layer.succeed(GitHubReplyReader.GitHubReplyReader, {
+                  read: (input) =>
+                    Effect.gen(function* () {
+                      reads++;
+                      assert.isTrue(input.captureBaseline);
+                      assert.equal(input.cwd, `/tmp/${projectId}`);
+                      yield* Deferred.succeed(entered, undefined);
+                      yield* Deferred.await(release);
+                      if (scenario === "failure")
+                        return yield* new GitHubReplyReader.GitHubReplyReadError({
+                          reason: "unavailable",
+                        });
+                      return { viewer: "me", baseline, reply: null };
+                    }),
+                }),
+              ),
+              Layer.provide(CommandReceiptStore.layerFromApplicationReceipts),
+              Layer.provide(ProjectStore.layer),
+            ),
+          ),
+        );
+        const command = {
+          type: "thread.github-reply.snooze" as const,
+          commandId: CommandId.make(`${threadId}:snooze`),
+          threadId,
+          url: "https://github.com/team/repo/pull/1",
+        };
+        const fiber = yield* service.dispatch(command).pipe(Effect.result, Effect.forkChild);
+        yield* Deferred.await(entered);
+        assert.isNull(
+          (yield* orchestrator.getThreadProjection(threadId)).thread.githubReplySnooze ?? null,
+        );
+        yield* Deferred.succeed(release, undefined);
+        const result = yield* Fiber.join(fiber);
+        if (scenario === "failure") {
+          assert.equal(result._tag, "Failure");
+          assert.isNull(
+            (yield* orchestrator.getThreadProjection(threadId)).thread.githubReplySnooze ?? null,
+          );
+          return;
+        }
+        assert.equal(result._tag, "Success");
+        const watch = (yield* orchestrator.getThreadProjection(threadId)).thread.githubReplySnooze!;
+        assert.deepEqual(watch.baseline, baseline);
+        const restarted = yield* ProjectionStore.ProjectionStoreV2.pipe(
+          Effect.provide(ProjectionStore.layer),
+        );
+        assert.deepEqual(
+          (yield* restarted.getThread(threadId)).githubReplySnooze?.baseline,
+          baseline,
+        );
+        yield* orchestrator.dispatch({
+          type: "thread.github-reply.sync",
+          commandId: CommandId.make(`${threadId}:reply`),
+          threadId,
+          requestId: command.commandId,
+          watch: null,
+          notice: {
+            type: "reply",
+            receivedAt: DateTime.formatIso(yield* DateTime.now),
+            url: command.url,
+            text: "Feedback",
+          },
+        });
+        // Retrying an acknowledged command after wake must replay its receipt without a new API read.
+        yield* service.dispatch(command);
+        assert.equal(reads, 1);
+        assert.isNull((yield* restarted.getThread(threadId)).githubReplySnooze);
+      }),
+  );
   it.effect.each([
     "wake",
     "cancel",
     "replace",
     "undo",
+    "archive-undo",
     "timed",
     "settle",
     "archive",
@@ -5391,6 +5625,16 @@ it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
         commandId: CommandId.make(`${threadId}:snooze`),
         threadId,
         url: "https://github.com/team/repo/pull/1",
+        resumeFrom: {
+          requestId: CommandId.make(`${threadId}:snooze`),
+          url: "https://github.com/team/repo/pull/1",
+          startedAt: DateTime.formatIso(yield* DateTime.now),
+          nextCheckAt: DateTime.formatIso(yield* DateTime.now),
+          status: "pending",
+          failures: 0,
+          viewer: "me",
+          baseline: { latestAt: "2026-10-01T12:00:00Z", ids: ["existing"] },
+        },
       });
       const saved = yield* projections.getThread(threadId);
       assert.isNotNull(saved.githubReplySnooze);
@@ -5426,6 +5670,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
           });
         return {
           viewer: "me",
+          baseline: { latestAt: null, ids: [] },
           reply: {
             url: "https://github.com/team/repo/pull/1#issuecomment-2",
             text: "Useful feedback",
@@ -5475,13 +5720,19 @@ it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
           commandId: CommandId.make(`${threadId}:archive`),
           threadId,
         });
-      if (scenario === "undo") {
+      if (scenario === "undo" || scenario === "archive-undo") {
         yield* orchestrator.dispatch({
-          type: "thread.settle",
+          type: scenario === "undo" ? "thread.settle" : "thread.archive",
           commandId: CommandId.make(`${threadId}:settle`),
           threadId,
         });
         yield* TestClock.adjust("30 seconds");
+        if (scenario === "archive-undo")
+          yield* orchestrator.dispatch({
+            type: "thread.unarchive",
+            commandId: CommandId.make(`${threadId}:unarchive`),
+            threadId,
+          });
         yield* orchestrator.dispatch({
           type: "thread.github-reply.snooze",
           commandId: CommandId.make(`${threadId}:restore`),
@@ -5512,7 +5763,11 @@ it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
           "https://github.com/team/repo/discussions/2",
         );
         assert.isNull(final.thread.githubReplyNotice);
-      } else if (scenario === "undo") {
+      } else if (scenario === "undo" || scenario === "archive-undo") {
+        assert.deepEqual(
+          final.thread.githubReplySnooze?.baseline,
+          saved.githubReplySnooze?.baseline,
+        );
         assert.equal(final.thread.githubReplySnooze?.startedAt, saved.githubReplySnooze?.startedAt);
         assert.notEqual(
           final.thread.githubReplySnooze?.requestId,

@@ -14,6 +14,7 @@ const watch: GitHubReplySnooze = {
   nextCheckAt: "2026-10-01T12:00:00.000Z",
   status: "pending",
   failures: 0,
+  baseline: { latestAt: "2026-10-01T11:00:00Z", ids: ["existing", "root-1", "root-2", "root"] },
 };
 const old = "2026-10-01T11:00:00Z";
 const recent = "2026-10-01T12:01:00Z";
@@ -228,4 +229,202 @@ it.effect("shares cached reads for threads watching the same conversation", () =
     yield* reader.read({ cwd: "/repo", watch });
     yield* reader.read({ cwd: "/repo", watch: { ...watch, requestId: CommandId.make("other") } });
   }).pipe(Effect.provide(layer([pr([]), emptyReviews, emptyThreads]))),
+);
+
+it.effect.each(["2026-10-01T12:00:00.100Z", "2026-10-01T14:00:00.100Z"])(
+  "tracks same-second reply IDs independently of local start time %s after restart",
+  (startedAt) =>
+    Effect.gen(function* () {
+      const boundary = "2026-10-01T12:00:00Z";
+      const setup = yield* Effect.gen(function* () {
+        const reader = yield* GitHubReplyReader.GitHubReplyReader;
+        return yield* reader.read({
+          cwd: "/repo",
+          watch: { ...watch, startedAt },
+          captureBaseline: true,
+        });
+      }).pipe(
+        Effect.provide(
+          layer([
+            pr([comment("existing-2", "someone", boundary)], "older"),
+            pr([comment("existing-1", "someone", boundary), comment("ancient", "someone", old)]),
+            emptyReviews,
+            emptyThreads,
+          ]),
+        ),
+      );
+      assert.deepEqual(setup.baseline, { latestAt: boundary, ids: ["existing-2", "existing-1"] });
+      assert.isNull(setup.reply);
+      // Recreate the reader from only the persisted watch. A known ID in the newest page
+      // must not stop pagination before another response in the same second.
+      const restored = { ...watch, startedAt, viewer: setup.viewer, baseline: setup.baseline };
+      const reply = yield* Effect.gen(function* () {
+        const reader = yield* GitHubReplyReader.GitHubReplyReader;
+        return yield* reader.read({ cwd: "/repo", watch: restored });
+      }).pipe(
+        Effect.provide(
+          layer([
+            pr(
+              [comment("existing-2", "someone", boundary), comment("own", "me", boundary)],
+              "older",
+            ),
+            pr([comment("existing-1", "someone", boundary), comment("new", "someone", boundary)]),
+            body,
+          ]),
+        ),
+      );
+      assert.isNotNull(reply.reply);
+    }),
+);
+
+it.effect("ignores existing boundary IDs and new own comments", () =>
+  Effect.gen(function* () {
+    const reader = yield* GitHubReplyReader.GitHubReplyReader;
+    const result = yield* reader.read({
+      cwd: "/repo",
+      watch: {
+        ...watch,
+        baseline: { latestAt: recent, ids: ["existing"] },
+      },
+    });
+    assert.isNull(result.reply);
+  }).pipe(
+    Effect.provide(
+      layer([pr([comment("existing"), comment("own", "me")]), emptyReviews, emptyThreads]),
+    ),
+  ),
+);
+
+it.effect("captures fresh setup data even when a polling result is cached", () =>
+  Effect.gen(function* () {
+    const reader = yield* GitHubReplyReader.GitHubReplyReader;
+    yield* reader.read({ cwd: "/repo", watch });
+    const setup = yield* reader.read({ cwd: "/repo", watch, captureBaseline: true });
+    assert.deepEqual(setup.baseline, { latestAt: recent, ids: ["arrived-before-setup"] });
+  }).pipe(
+    Effect.provide(
+      layer([
+        pr([]),
+        emptyReviews,
+        emptyThreads,
+        pr([comment("arrived-before-setup")]),
+        emptyReviews,
+        emptyThreads,
+      ]),
+    ),
+  ),
+);
+
+it.effect("uses review submission time and leaves pending drafts outside the baseline", () =>
+  Effect.gen(function* () {
+    const setup = yield* Effect.gen(function* () {
+      const reader = yield* GitHubReplyReader.GitHubReplyReader;
+      return yield* reader.read({ cwd: "/repo", watch, captureBaseline: true });
+    }).pipe(
+      Effect.provide(
+        layer([
+          pr([]),
+          response({
+            repository: {
+              pullRequest: {
+                reviews: page([
+                  {
+                    ...comment("submitted", "someone", old),
+                    submittedAt: recent,
+                    state: "COMMENTED",
+                  },
+                  { ...comment("draft", "someone", old), submittedAt: null, state: "PENDING" },
+                ]),
+              },
+            },
+          }),
+          emptyThreads,
+        ]),
+      ),
+    );
+    assert.deepEqual(setup.baseline, { latestAt: recent, ids: ["submitted"] });
+    const result = yield* Effect.gen(function* () {
+      const reader = yield* GitHubReplyReader.GitHubReplyReader;
+      return yield* reader.read({ cwd: "/repo", watch: { ...watch, baseline: setup.baseline } });
+    }).pipe(
+      Effect.provide(
+        layer([
+          pr([]),
+          response({
+            repository: {
+              pullRequest: {
+                reviews: page(
+                  [
+                    {
+                      ...comment("submitted", "someone", old),
+                      submittedAt: recent,
+                      state: "COMMENTED",
+                    },
+                  ],
+                  "older-draft",
+                ),
+              },
+            },
+          }),
+          response({
+            repository: {
+              pullRequest: {
+                reviews: page([
+                  {
+                    ...comment("draft", "someone", old),
+                    submittedAt: recent,
+                    state: "CHANGES_REQUESTED",
+                  },
+                ]),
+              },
+            },
+          }),
+          body,
+        ]),
+      ),
+    );
+    assert.isNotNull(result.reply);
+  }),
+);
+
+it.effect("fails visibly for a persisted watch without an observation baseline", () =>
+  Effect.gen(function* () {
+    const reader = yield* GitHubReplyReader.GitHubReplyReader;
+    const { baseline: _baseline, ...legacyWatch } = watch;
+    const error = yield* reader.read({ cwd: "/repo", watch: legacyWatch }).pipe(Effect.flip);
+    assert.equal(error.reason, "baseline-missing");
+  }).pipe(Effect.provide(layer([]))),
+);
+
+it.effect("keeps the selected discussion parent and boundary reply IDs through setup", () =>
+  Effect.gen(function* () {
+    const reader = yield* GitHubReplyReader.GitHubReplyReader;
+    const setup = yield* reader.read({
+      cwd: "/repo",
+      captureBaseline: true,
+      watch: {
+        ...watch,
+        url: "https://github.com/team/repo/discussions/1#discussioncomment-5",
+      },
+    });
+    assert.equal(setup.discussionCommentId, "root");
+    assert.deepEqual(setup.baseline, { latestAt: recent, ids: ["reply-2", "reply-1"] });
+    assert.isNull(setup.reply);
+  }).pipe(
+    Effect.provide(
+      layer([
+        response({
+          repository: {
+            discussion: {
+              comments: page([
+                { ...comment("root", "me", old, 5), replies: page([comment("reply-2")]) },
+              ]),
+            },
+          },
+        }),
+        response({ node: { replies: page([comment("reply-2")], "older") } }),
+        response({ node: { replies: page([comment("old", "someone", old), comment("reply-1")]) } }),
+      ]),
+    ),
+  ),
 );

@@ -14,6 +14,7 @@ export class GitHubReplyReadError extends Schema.TaggedError<GitHubReplyReadErro
       "account-changed",
       "comment-not-found",
       "rate-limited",
+      "baseline-missing",
     ]),
     retryAt: Schema.optional(Schema.Number),
     cause: Schema.optional(Schema.Defect()),
@@ -27,6 +28,8 @@ export class GitHubReplyReadError extends Schema.TaggedError<GitHubReplyReadErro
         return "The GitHub account changed. Snooze again using the intended account.";
       case "comment-not-found":
         return "The selected discussion comment is no longer available.";
+      case "baseline-missing":
+        return "This saved GitHub snooze needs to be renewed. Snooze again to continue checking replies.";
       case "unavailable":
         return "GitHub replies could not be checked. Check GitHub CLI sign-in and repository access, then snooze again.";
     }
@@ -108,11 +111,13 @@ export class GitHubReplyReader extends Context.Service<
     readonly read: (input: {
       readonly cwd: string;
       readonly watch: GitHubReplySnooze;
+      readonly captureBaseline?: boolean;
     }) => Effect.Effect<
       {
         readonly viewer: string;
         readonly discussionCommentId?: string;
         readonly reply: Reply | null;
+        readonly baseline: NonNullable<GitHubReplySnooze["baseline"]>;
       },
       GitHubReplyReadError
     >;
@@ -170,12 +175,28 @@ const make = Effect.gen(function* () {
   const read = Effect.fn("GitHubReplyReader.read")(function* ({
     cwd,
     watch,
+    captureBaseline = false,
   }: {
     readonly cwd: string;
     readonly watch: GitHubReplySnooze;
+    readonly captureBaseline?: boolean;
   }) {
     const target = parseGitHubConversationUrl(watch.url);
     if (!target) return yield* new GitHubReplyReadError({ reason: "unavailable" });
+    if (!captureBaseline && !watch.baseline)
+      return yield* new GitHubReplyReadError({ reason: "baseline-missing" });
+    // Setup must see fresh data. Only acknowledge snooze after this observation completes.
+    // GitHub has no snapshot across connections; responses observed during setup are existing.
+    const readQuery = captureBaseline ? queryRaw : query;
+    let baseline = (captureBaseline ? undefined : watch.baseline) ?? { latestAt: null, ids: [] };
+    const existingIds = new Set(baseline.ids);
+    const observe = (comment: typeof Comment.Type) => {
+      if (!captureBaseline) return;
+      const timestamp = Date.parse(comment.createdAt);
+      const latest = baseline.latestAt === null ? -Infinity : Date.parse(baseline.latestAt);
+      if (timestamp > latest) baseline = { latestAt: comment.createdAt, ids: [comment.id] };
+      else if (timestamp === latest) baseline = { ...baseline, ids: [...baseline.ids, comment.id] };
+    };
     let viewer = watch.viewer;
     const checkViewer = (login: string) => {
       if (viewer !== undefined && viewer !== login)
@@ -183,10 +204,25 @@ const make = Effect.gen(function* () {
       viewer = login;
       return Effect.void;
     };
-    const isNew = (comment: typeof Comment.Type) =>
-      Date.parse(comment.createdAt) > Date.parse(watch.startedAt);
-    const isResponse = (comment: typeof Comment.Type) =>
-      isNew(comment) && comment.author !== null && comment.author.login !== viewer;
+    const isNew = (comment: typeof Comment.Type) => {
+      if (captureBaseline || baseline.latestAt === null) return true;
+      const timestamp = Date.parse(comment.createdAt);
+      const latest = Date.parse(baseline.latestAt);
+      return timestamp > latest || (timestamp === latest && !existingIds.has(comment.id));
+    };
+    const isBeforeBaseline = (comment: typeof Comment.Type) =>
+      baseline.latestAt !== null && Date.parse(comment.createdAt) < Date.parse(baseline.latestAt);
+    const mayContainResponse = (comment: typeof Comment.Type) =>
+      captureBaseline ? !isBeforeBaseline(comment) : isNew(comment);
+    const isResponse = (comment: typeof Comment.Type) => {
+      observe(comment);
+      return (
+        !captureBaseline &&
+        isNew(comment) &&
+        comment.author !== null &&
+        comment.author.login !== viewer
+      );
+    };
     let responseId: string | undefined;
     let discussionCommentId = watch.discussionCommentId;
 
@@ -198,7 +234,7 @@ const make = Effect.gen(function* () {
     ) {
       let before: string | null = null;
       while (true) {
-        const result: typeof Response.Type = yield* query(
+        const result: typeof Response.Type = yield* readQuery(
           cwd,
           `query($id: ID!, $before: String) { viewer { login } node(id: $id) { ... on ${reviewThread ? "PullRequestReviewThread" : "DiscussionComment"} { ${reviewThread ? "comments" : "replies"}(last: 100, before: $before) { nodes { ${commentFields} } ${pageFields} } } } }`,
           { id, before },
@@ -212,7 +248,7 @@ const make = Effect.gen(function* () {
           if (page.nodes.some((comment) => comment.databaseId === findAnchor)) return true;
         } else {
           responseId = page.nodes.find(isResponse)?.id;
-          if (responseId || page.nodes.some((comment) => !isNew(comment))) return false;
+          if (responseId || page.nodes.some(isBeforeBaseline)) return false;
         }
         if (!page.pageInfo.hasPreviousPage) return false;
         if (!page.pageInfo.startCursor || page.pageInfo.startCursor === before)
@@ -231,7 +267,7 @@ const make = Effect.gen(function* () {
           target.kind === "pull"
             ? ""
             : `replies(last: 1) { nodes { ${commentFields} } ${pageFields} }`;
-        const result: typeof Response.Type = yield* query(
+        const result: typeof Response.Type = yield* readQuery(
           cwd,
           `query($owner: String!, $name: String!, $number: Int!, $before: String) { viewer { login } repository(owner: $owner, name: $name) { ${field}(number: $number) { comments(last: 100, before: $before) { nodes { ${commentFields} ${replies} } ${pageFields} } } } }`,
           { owner: target.owner, name: target.repository, number: target.number, before },
@@ -242,11 +278,7 @@ const make = Effect.gen(function* () {
             result.data.repository?.pullRequest?.comments;
           if (!page) return yield* new GitHubReplyReadError({ reason: "unavailable" });
           responseId = page.nodes.find(isResponse)?.id;
-          if (
-            responseId ||
-            page.nodes.some((comment) => !isNew(comment)) ||
-            !page.pageInfo.hasPreviousPage
-          )
+          if (responseId || page.nodes.some(isBeforeBaseline) || !page.pageInfo.hasPreviousPage)
             break;
           if (!page.pageInfo.startCursor || page.pageInfo.startCursor === before)
             return yield* new GitHubReplyReadError({ reason: "unavailable" });
@@ -267,7 +299,8 @@ const make = Effect.gen(function* () {
               }
             } else {
               if (isResponse(comment)) responseId = comment.id;
-              if (!responseId && comment.replies.nodes.some(isNew)) yield* readReplies(comment.id);
+              if (!responseId && comment.replies.nodes.some(mayContainResponse))
+                yield* readReplies(comment.id);
               if (responseId) break;
             }
           }
@@ -282,7 +315,7 @@ const make = Effect.gen(function* () {
     if (target.kind === "pull" && !responseId) {
       let before: string | null = null;
       while (true) {
-        const result: typeof Response.Type = yield* query(
+        const result: typeof Response.Type = yield* readQuery(
           cwd,
           `query($owner: String!, $name: String!, $number: Int!, $before: String) { viewer { login } repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviews(last: 100, before: $before) { nodes { ${commentFields} submittedAt state } ${pageFields} } } } }`,
           { owner: target.owner, name: target.repository, number: target.number, before },
@@ -305,7 +338,7 @@ const make = Effect.gen(function* () {
       let after: string | null = null;
       while (true) {
         if (responseId) break;
-        const result: typeof Response.Type = yield* query(
+        const result: typeof Response.Type = yield* readQuery(
           cwd,
           `query($owner: String!, $name: String!, $number: Int!, $after: String) { viewer { login } repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first: 100, after: $after) { nodes { id comments(last: 1) { nodes { ${commentFields} } ${pageFields} } } pageInfo { hasNextPage endCursor } } } } }`,
           { owner: target.owner, name: target.repository, number: target.number, after },
@@ -315,7 +348,8 @@ const make = Effect.gen(function* () {
           result.data.repository?.pullRequest?.reviewThreads;
         if (!page) return yield* new GitHubReplyReadError({ reason: "unavailable" });
         for (const thread of page.nodes) {
-          if (thread.comments.nodes.some(isNew)) yield* readReplies(thread.id, undefined, true);
+          if (thread.comments.nodes.some(mayContainResponse))
+            yield* readReplies(thread.id, undefined, true);
           if (responseId) break;
         }
         if (responseId || !page.pageInfo.hasNextPage) break;
@@ -328,7 +362,7 @@ const make = Effect.gen(function* () {
       return yield* new GitHubReplyReadError({ reason: "comment-not-found" });
     let reply: Reply | null = null;
     if (responseId) {
-      const result: typeof Response.Type = yield* query(
+      const result: typeof Response.Type = yield* readQuery(
         cwd,
         "query($id: ID!) { viewer { login } node(id: $id) { ... on IssueComment { bodyText url author { login } } ... on DiscussionComment { bodyText url author { login } } ... on PullRequestReview { bodyText url author { login } } ... on PullRequestReviewComment { bodyText url author { login } } } }",
         { id: responseId },
@@ -344,7 +378,12 @@ const make = Effect.gen(function* () {
       };
     }
     if (!viewer) return yield* new GitHubReplyReadError({ reason: "unavailable" });
-    return { viewer, ...(discussionCommentId === undefined ? {} : { discussionCommentId }), reply };
+    return {
+      viewer,
+      ...(discussionCommentId === undefined ? {} : { discussionCommentId }),
+      reply,
+      baseline,
+    };
   });
   return GitHubReplyReader.of({ read });
 });

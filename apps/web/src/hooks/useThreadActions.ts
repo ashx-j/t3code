@@ -366,6 +366,7 @@ export function useThreadActions() {
       const shouldNavigateToDraft =
         currentRouteThreadRef?.threadId === threadRef.threadId &&
         currentRouteThreadRef.environmentId === threadRef.environmentId;
+      const githubReplySnooze = thread.githubReplySnooze ?? null;
       const action = ThreadUndo.begin("archive", scopedThreadKey(threadRef));
       const archiveResult = await archiveThreadMutation({
         environmentId: threadRef.environmentId,
@@ -385,7 +386,18 @@ export function useThreadActions() {
         action: "Archived",
         claim: action,
         // Undo also brings the reader back when archiving moved them to a draft.
-        undo: () => unarchiveThread(threadRef, { navigate: shouldNavigateToDraft }),
+        undo: async () => {
+          const unarchived = await unarchiveThread(threadRef, { navigate: shouldNavigateToDraft });
+          if (unarchived._tag !== "Success" || githubReplySnooze === null) return unarchived;
+          return snoozeThreadMutation({
+            environmentId: threadRef.environmentId,
+            input: {
+              threadId: threadRef.threadId,
+              url: githubReplySnooze.url,
+              resumeFrom: githubReplySnooze,
+            },
+          });
+        },
         failureTitle: "Failed to undo archive",
       });
 
@@ -407,6 +419,7 @@ export function useThreadActions() {
       markThreadVisited,
       resolveThreadTarget,
       unarchiveThread,
+      snoozeThreadMutation,
     ],
   );
 
