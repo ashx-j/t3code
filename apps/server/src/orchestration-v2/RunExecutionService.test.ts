@@ -3613,7 +3613,12 @@ function rootProviderTurnFixture(ids: BackgroundScenarioIds): OrchestrationV2Pro
     status: "running",
     startedAt: DateTime.makeUnsafe("2026-10-07T10:00:00Z"),
     completedAt: null,
-    tokenUsage: { inputTokens: 12, outputTokens: 4, updatedAt: "2026-10-07T10:00:01Z" },
+    tokenUsage: {
+      usedTokens: 16,
+      inputTokens: 12,
+      outputTokens: 4,
+      updatedAt: "2026-10-07T10:00:01Z",
+    },
   };
 }
 
