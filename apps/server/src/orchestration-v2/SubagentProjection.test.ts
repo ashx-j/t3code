@@ -8,6 +8,7 @@ import {
   EventId,
   TurnItemId,
   type OrchestrationV2Run,
+  type OrchestrationV2TurnItem,
   type OrchestrationV2AppThread,
   ProjectId,
   ProviderInstanceId,
@@ -269,6 +270,58 @@ it("waits for nested work and retains the report across monitor acknowledgements
   });
   assert.equal(progress.state, "result_available");
   assert.equal(progress.resultRun?.id, report.id);
+});
+
+it.each([
+  ["pending", "waiting_for_children"],
+  ["running", "waiting_for_children"],
+  ["waiting", "waiting_for_children"],
+  ["completed", "result_available"],
+  ["failed", "result_available"],
+  ["interrupted", "result_available"],
+  ["cancelled", "result_available"],
+] as const)("reports a %s background command as %s", (status, expected) => {
+  const { projection, run } = taskFixture();
+  const command: OrchestrationV2TurnItem = {
+    id: TurnItemId.make("background-command"),
+    threadId: parentThreadId,
+    runId: run.id,
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 1,
+    type: "command_execution",
+    status,
+    title: null,
+    startedAt: parentCreatedAt,
+    completedAt: null,
+    updatedAt: childCreatedAt,
+    input: "test --watch",
+  };
+  assert.equal(delegatedTaskProgress({ ...projection, turnItems: [command] }).state, expected);
+  assert.equal(
+    delegatedTaskProgress({ ...projection, turnItems: [{ ...command, runId: null }] }).state,
+    expected,
+  );
+  assert.equal(
+    delegatedTaskProgress({
+      ...projection,
+      runs: [run, { ...run, id: RunId.make("abandoned"), ordinal: 2, status: "rolled_back" }],
+      turnItems: [{ ...command, runId: RunId.make("abandoned") }],
+    }).state,
+    "result_available",
+  );
+  assert.equal(
+    delegatedTaskProgress({
+      ...projection,
+      turnItems: [
+        { ...command, type: "dynamic_tool", toolName: "monitor", input: { persistent: true } },
+      ],
+    }).state,
+    "result_available",
+  );
 });
 
 it("exposes the provider failure rather than a progress message from the failed run", () => {

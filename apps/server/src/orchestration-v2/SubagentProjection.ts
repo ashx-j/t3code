@@ -17,6 +17,7 @@ import type {
   TurnItemId,
 } from "@t3tools/contracts";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
+import { pendingBackgroundTurnItems } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
 import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
 
@@ -206,9 +207,10 @@ export function subagentResultForRun(
   };
 }
 
-/** A finished turn can still own live children or queued completion follow-ups. */
+/** A finished turn can still own background work or queued completion follow-ups. */
 export function delegatedTaskProgress(projection: {
   readonly runs: OrchestrationV2ThreadProjection["runs"];
+  readonly turnItems: OrchestrationV2ThreadProjection["turnItems"];
   readonly messages: ReadonlyArray<
     Pick<OrchestrationV2ConversationMessage, "runId" | "notification">
   >;
@@ -239,7 +241,8 @@ export function delegatedTaskProgress(projection: {
         task.completionDelivery?.state === "pending" ||
         task.completionDelivery?.state === "claimed",
     ) ||
-    projection.providerThreads.some((thread) => (thread.pendingBackgroundTasks?.length ?? 0) > 0);
+    projection.providerThreads.some((thread) => (thread.pendingBackgroundTasks?.length ?? 0) > 0) ||
+    pendingBackgroundTurnItems(projection).length > 0;
   const resultRun = workRuns
     .filter((run) => terminal(run.status) && (run.startedAt !== null || run.ordinal === 1))
     .toSorted((a, b) => (runRanAfter(a, b) ? -1 : runRanAfter(b, a) ? 1 : 0))[0];

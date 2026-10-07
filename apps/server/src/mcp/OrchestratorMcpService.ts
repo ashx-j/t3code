@@ -1210,8 +1210,12 @@ const make = Effect.gen(function* () {
       const childControls = yield* threadManagement
         .getThreadRecords(
           task.childThreadId,
-          ["runs", "messages", "contextTransfers", "subagents", "providerThreads"],
-          { messageRoles: ["user"] },
+          ["runs", "messages", "contextTransfers", "subagents", "providerThreads", "turnItems"],
+          {
+            messageRoles: ["user"],
+            turnItemTypes: ["command_execution", "dynamic_tool", "subagent"],
+            turnItemStatuses: ["pending", "running", "waiting"],
+          },
         )
         .pipe(Effect.mapError(threadManagementFailure));
       const childRun = delegatedTaskRun(childControls, task);

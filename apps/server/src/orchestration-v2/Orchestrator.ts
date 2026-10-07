@@ -58,6 +58,7 @@ import { modelSelectionsEqual } from "@t3tools/shared/model";
 import {
   derivePendingBackgroundWork,
   pendingBackgroundTurnItems,
+  turnItemUpdateCanEndBackgroundWork,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -9563,8 +9564,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     Effect.gen(function* () {
       const childControls = yield* projectionStore.getThreadRecords(
         childThreadId,
-        ["runs", "messages", "subagents", "providerThreads", "providerTurns", "attempts"],
-        { messageRoles: ["user"] },
+        [
+          "runs",
+          "messages",
+          "subagents",
+          "providerThreads",
+          "providerTurns",
+          "attempts",
+          "turnItems",
+        ],
+        {
+          messageRoles: ["user"],
+          turnItemTypes: ["command_execution", "dynamic_tool", "subagent"],
+          turnItemStatuses: ["pending", "running", "waiting"],
+        },
       );
       const forkedFrom = childControls.thread.forkedFrom;
       if (
@@ -10665,6 +10678,37 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Effect.forkDetach,
     );
 
+  // Background commands can end after the last run update. Keep draining item
+  // output while a parent's lock is busy, retaining only settlement identifiers.
+  yield* eventSink
+    .stream({ afterSequence: terminalEventsAfterSequence, eventType: "turn-item.updated" })
+    .pipe(
+      Stream.filter(
+        (stored) =>
+          stored.event.type === "turn-item.updated" &&
+          !String(stored.commandId).startsWith("command:runtime-reconcile:") &&
+          turnItemUpdateCanEndBackgroundWork(stored.event.payload),
+      ),
+      Stream.map((stored) => ({ threadId: stored.event.threadId, sequence: stored.sequence })),
+      Stream.buffer({ capacity: "unbounded" }),
+      Stream.runForEach(({ threadId, sequence }) =>
+        Effect.gen(function* () {
+          const parentThreadId = yield* appOwnedSubagentParentThreadId(threadId);
+          if (parentThreadId === undefined) return;
+          yield* threadDispatch.withLock(parentThreadId, finalizeAppOwnedSubagent(threadId));
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Failed to settle app-owned subagent after background work", {
+              threadId,
+              sequence,
+              cause,
+            }),
+          ),
+        ),
+      ),
+      Effect.forkDetach,
+    );
+
   // Settles child results and completion deliveries whose runs ended without
   // the listener above: before this boot, or in runtime reconciliation, which
   // it skips. Startup runs this after reconciliation and before the effect
@@ -10763,8 +10807,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     Effect.gen(function* () {
       const child = yield* projectionStore.getThreadRecords(
         childThreadId,
-        ["runs", "messages", "subagents", "providerThreads", "providerTurns", "attempts"],
-        { messageRoles: ["user"] },
+        [
+          "runs",
+          "messages",
+          "subagents",
+          "providerThreads",
+          "providerTurns",
+          "attempts",
+          "turnItems",
+        ],
+        {
+          messageRoles: ["user"],
+          turnItemTypes: ["command_execution", "dynamic_tool", "subagent"],
+          turnItemStatuses: ["pending", "running", "waiting"],
+        },
       );
       const progress = delegatedTaskProgress(child);
       // A caller's older read saw a result; newer work since then means it is not final.

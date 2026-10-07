@@ -310,6 +310,7 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
     ],
     subagents: [],
     providerThreads: [],
+    turnItems: [],
     updatedAt: now,
   } as unknown as OrchestrationV2ThreadProjection;
 

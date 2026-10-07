@@ -14,6 +14,8 @@ import {
   ProviderThreadId,
   RunId,
   ThreadId,
+  TurnItemId,
+  type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -900,6 +902,125 @@ const seedRestartCancelledChild = (input: {
     });
     return { taskId, childThreadId, childRunId };
   });
+
+it.layer(layerTest)("delegated background work", (it) => {
+  it.effect.each(["completed", "interrupted"] as const)(
+    "delivers the child result only after its background command is %s",
+    (status) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make(`thread:background-parent-${status}`);
+        const projectId = ProjectId.make(`project:background-parent-${status}`);
+        const runId = RunId.make(`run:background-parent-${status}`);
+        const rootNodeId = NodeId.make(`node:background-parent-${status}`);
+        yield* seedParentWithTerminalTask({
+          threadId,
+          projectId,
+          runId,
+          rootNodeId,
+          taskId: NodeId.make(`node:background-settled-${status}`),
+          deliveryState: "delivered",
+          now,
+        });
+        const child = yield* seedRestartCancelledChild({
+          parentThreadId: threadId,
+          projectId,
+          parentRunId: runId,
+          rootNodeId,
+          name: `background-child-${status}`,
+          completionWake: "always",
+          continuationPending: false,
+          runStatus: "completed",
+          now,
+        });
+        const command: OrchestrationV2TurnItem = {
+          id: TurnItemId.make(`background-command-${status}`),
+          threadId: child.childThreadId,
+          runId: child.childRunId,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          type: "command_execution",
+          status: "running",
+          title: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+          input: "test --watch",
+        };
+        yield* eventSink.write({
+          commandId: CommandId.make(`command:background-start-${status}`),
+          events: [
+            {
+              id: EventId.make(`event:background-start-${status}`),
+              type: "turn-item.updated",
+              threadId: child.childThreadId,
+              occurredAt: now,
+              payload: command,
+            },
+          ],
+        });
+        // Use the same finalization path synchronously so the negative assertion
+        // cannot pass merely because the terminal-run listener has not run yet.
+        yield* orchestrator.recoverDelegatedTask(child.childThreadId, child.childRunId);
+        assert.isTrue(yield* orchestrator.delegatedTaskResultPending(child.childThreadId));
+        const pending = yield* orchestrator.getThreadProjection(threadId);
+        const task = pending.subagents.find((row) => row.id === child.taskId);
+        assert.equal(task?.status, "running");
+        assert.isNull(task?.result);
+        assert.isUndefined(task?.completionDelivery);
+        assert.isFalse(
+          pending.contextTransfers.some(
+            (transfer) => transfer.sourceThreadId === child.childThreadId,
+          ),
+        );
+
+        const afterSequence = yield* eventSink.latestSequence();
+        // No new run event follows this update. The item ending must trigger delivery.
+        yield* eventSink.write({
+          commandId: CommandId.make(`command:background-end-${status}`),
+          events: [
+            {
+              id: EventId.make(`event:background-end-${status}`),
+              type: "turn-item.updated",
+              threadId: child.childThreadId,
+              occurredAt: now,
+              payload: { ...command, status, completedAt: now },
+            },
+          ],
+        });
+        yield* eventSink.stream({ afterSequence, eventType: "subagent.updated" }).pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "subagent.updated" &&
+              stored.event.payload.id === child.taskId &&
+              stored.event.payload.status === "completed",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        const finished = yield* orchestrator.getThreadProjection(threadId);
+        const result = finished.subagents.find((row) => row.id === child.taskId);
+        assert.equal(result?.status, "completed");
+        assert.equal(result?.result, "Child task completed without an assistant result.");
+        assert.equal(result?.completionDelivery?.state, "claimed");
+        assert.isFalse(yield* orchestrator.delegatedTaskResultPending(child.childThreadId));
+        assert.equal(
+          finished.contextTransfers.filter(
+            (transfer) =>
+              transfer.sourceThreadId === child.childThreadId &&
+              transfer.type === "subagent_result",
+          ).length,
+          1,
+        );
+      }),
+  );
+});
 
 it.layer(layerTest)("delegated tasks across a server restart", (it) => {
   it.effect("holds a restart-cancelled child for its continuation's result", () =>
