@@ -60,8 +60,10 @@ import {
   pendingBackgroundTurnItems,
   turnItemUpdateCanEndBackgroundWork,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -10682,6 +10684,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   // output while a parent's lock is busy, with at most one queued recheck per
   // thread. Finalization reads current state, so repeated signals can coalesce.
   const pendingBackgroundSettlements = new Set<ThreadId>();
+  // Lineage is immutable. Cache negative lookups too so ordinary command
+  // completions do not each read a thread record; failed reads remain retryable.
+  const backgroundSettlementParents = yield* Cache.makeWith(appOwnedSubagentParentThreadId, {
+    capacity: 1024,
+    timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
+  });
   yield* eventSink
     .stream({ afterSequence: terminalEventsAfterSequence, eventType: "turn-item.updated" })
     .pipe(
@@ -10702,7 +10710,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         Effect.gen(function* () {
           // A signal arriving during this recheck must queue another one.
           pendingBackgroundSettlements.delete(threadId);
-          const parentThreadId = yield* appOwnedSubagentParentThreadId(threadId);
+          const parentThreadId = yield* Cache.get(backgroundSettlementParents, threadId);
           if (parentThreadId === undefined) return;
           yield* threadDispatch.withLock(parentThreadId, finalizeAppOwnedSubagent(threadId));
         }).pipe(

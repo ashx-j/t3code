@@ -1,6 +1,7 @@
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import {
   CommandId,
   EventId,
@@ -18,6 +19,7 @@ import {
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -37,6 +39,7 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
@@ -104,6 +107,7 @@ const layerTestProviderInstanceRegistry = Layer.succeed(
 );
 
 const layerTest = Layer.mergeAll(RuntimeLayer.layer, RuntimeLayer.layerEventSink).pipe(
+  Layer.provideMerge(ProjectionStore.layer),
   Layer.provideMerge(RuntimeLayer.layerProjectService),
   Layer.provide(
     Layer.mock(WorkspacePaths.WorkspacePaths)({
@@ -999,11 +1003,55 @@ it.layer(layerTest)("delegated background work", (it) => {
         const stillPending = yield* orchestrator.getThreadProjection(threadId);
         assert.isNull(stillPending.subagents.find((row) => row.id === child.taskId)?.result);
 
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const firstOrdinaryRead = yield* Deferred.make<void>();
+        const getThread = projections.getThread;
+        let ordinaryReads = 0;
+        const readSpy = vi.spyOn(projections, "getThread").mockImplementation((id) =>
+          getThread(id).pipe(
+            Effect.tap(() => {
+              if (id !== threadId) return Effect.void;
+              ordinaryReads += 1;
+              return Deferred.succeed(firstOrdinaryRead, undefined);
+            }),
+          ),
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(() => readSpy.mockRestore()));
+        const ordinaryCompletion = {
+          ...command,
+          id: TurnItemId.make(`ordinary-command-${status}`),
+          threadId,
+          runId,
+          status: "completed" as const,
+          completedAt: now,
+        };
+        yield* eventSink.write({
+          commandId: CommandId.make(`command:ordinary-first-${status}`),
+          events: [
+            {
+              id: EventId.make(`event:ordinary-first-${status}`),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: now,
+              payload: ordinaryCompletion,
+            },
+          ],
+        });
+        // The first lookup means its queued key was already cleared. The next
+        // completion must use the lineage cache, not just queue coalescing.
+        yield* Deferred.await(firstOrdinaryRead);
         const afterSequence = yield* eventSink.latestSequence();
         // No new run event follows this update. The item ending must trigger delivery.
         yield* eventSink.write({
           commandId: CommandId.make(`command:background-end-${status}`),
           events: [
+            {
+              id: EventId.make(`event:ordinary-second-${status}`),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: now,
+              payload: ordinaryCompletion,
+            },
             {
               id: EventId.make(`event:background-end-${status}`),
               type: "turn-item.updated",
@@ -1024,6 +1072,7 @@ it.layer(layerTest)("delegated background work", (it) => {
           Stream.runDrain,
         );
         const finished = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(ordinaryReads, 1);
         const result = finished.subagents.find((row) => row.id === child.taskId);
         assert.equal(result?.status, "completed");
         assert.equal(result?.result, "Child task completed without an assistant result.");
