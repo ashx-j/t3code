@@ -102,6 +102,7 @@ export type ToolGroupAction =
   | "update";
 
 export type ToolGroupSummaryKind =
+  | "discussion"
   | "pull-request"
   | ToolGroupAction
   | "dynamic-tool"
@@ -739,6 +740,11 @@ export function toolGroupSummaryKind(
     entries.every((entry) => resolveWorkEntryToolPresentation(entry)?.icon === "pull-request")
   )
     return "pull-request";
+  if (
+    entries.length > 0 &&
+    entries.every((entry) => resolveWorkEntryToolPresentation(entry)?.icon === "discussion")
+  )
+    return "discussion";
   const actions = new Set(entries.map(toolGroupAction));
   if (actions.size !== 1) return "mixed";
   const action = actions.values().next().value!;

@@ -369,6 +369,19 @@ export function summarizeT3ToolCalls(
       );
       break;
     }
+    case "link-discussion":
+      label = phrase("Linked", "link", quantity(selected.length, "discussion"));
+      break;
+    case "unlink-discussion":
+      label = phrase("Unlinked", "unlink", quantity(selected.length, "discussion"));
+      break;
+    case "list-discussions":
+      label = phrase(
+        "Checked",
+        "check",
+        `linked discussions${selected.length === 1 ? "" : ` ${times}`}`,
+      );
+      break;
     case "link-pr":
       label = phrase("Linked", "link", quantity(selected.length, "pull request"));
       break;
