@@ -41,6 +41,7 @@ export function limitRecoveryCommand(
       type: "thread.metadata.update",
       commandId: CommandId.make(`limit-arm:${identity}`),
       threadId: thread.id,
+      automaticLimitRecovery: true,
       limitRecovery: {
         runId: thread.latestRunId,
         resetAt: thread.usageLimitResetAt,

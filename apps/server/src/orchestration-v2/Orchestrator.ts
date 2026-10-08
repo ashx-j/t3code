@@ -2686,6 +2686,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         !Number.isFinite(resetMs) ||
         thread.archivedAt !== null ||
         thread.settledOverride === "settled" ||
+        (command.automaticLimitRecovery === true &&
+          (thread.githubReplySnooze != null ||
+            thread.githubReplyAutoResumeBlockedRunId === command.limitRecovery.runId)) ||
         run?.id !== command.limitRecovery.runId ||
         failure?.class !== "usage_limit" ||
         failure.resetAt !== command.limitRecovery.resetAt ||

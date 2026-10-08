@@ -5268,6 +5268,8 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
     "queued-resume",
     "github-running",
     "github-limited",
+    "github-arm-while-snoozed",
+    "github-arm-after-wake",
     "cancel",
     "rearm",
     "snooze-race",
@@ -5423,11 +5425,68 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         (thread) => thread.id === threadId,
       )!;
       assert.isNull(limitRecoveryCommand(shell, false, DateTime.toEpochMillis(now)));
+      if (scenario === "github-arm-while-snoozed" || scenario === "github-arm-after-wake") {
+        const staleArm = limitRecoveryCommand(shell, true, DateTime.toEpochMillis(now), true);
+        assert.isNotNull(staleArm);
+        yield* orchestrator.dispatch(snoozeForReply);
+        if (scenario === "github-arm-after-wake") {
+          yield* orchestrator.dispatch({
+            type: "thread.github-reply.sync",
+            commandId: CommandId.make(`recovery:github-wake:${scenario}`),
+            threadId,
+            requestId: snoozeForReply.commandId,
+            watch: null,
+            notice: {
+              type: "reply",
+              url: snoozeForReply.url,
+              text: "Feedback",
+              receivedAt: DateTime.formatIso(now),
+            },
+          });
+        }
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(
+          before.thread.githubReplySnooze?.requestId ?? null,
+          scenario === "github-arm-while-snoozed" ? snoozeForReply.commandId : null,
+        );
+        assert.equal(before.thread.githubReplyAutoResumeBlockedRunId, run.id);
+        assert.isNull(before.thread.limitRecovery);
+        assert.isNull(before.thread.snoozedUntil);
+        const result = yield* orchestrator.dispatch(staleArm!).pipe(Effect.exit);
+        assert.equal(result._tag, "Failure");
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(after.thread, before.thread);
+        assert.deepEqual(after.runs, before.runs);
+        assert.deepEqual(after.messages, before.messages);
+        yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make(`recovery:github-manual-snooze:${scenario}`),
+          threadId,
+          limitRecovery: { runId: run.id, resetAt, snooze: true },
+        });
+        const manuallySnoozed = yield* orchestrator.getThreadProjection(threadId);
+        assert.isNull(manuallySnoozed.thread.githubReplySnooze);
+        assert.equal(
+          DateTime.toEpochMillis(manuallySnoozed.thread.snoozedUntil!),
+          Date.parse(resetAt),
+        );
+        assert.isTrue(manuallySnoozed.thread.limitRecovery?.snooze);
+        assert.isFalse(manuallySnoozed.thread.limitRecovery?.autoResume);
+        assert.lengthOf(manuallySnoozed.runs, 1);
+        return;
+      }
       if (scenario === "github-running" || scenario === "github-limited") {
+        let staleResume = null;
         if (scenario === "github-limited") {
           yield* orchestrator.dispatch(
             limitRecoveryCommand(shell, true, DateTime.toEpochMillis(now))!,
           );
+          staleResume = limitRecoveryCommand(
+            (yield* orchestrator.getThreadShell(threadId))!,
+            true,
+            Date.parse(resetAt),
+          );
+          assert.isNotNull(staleResume);
           yield* orchestrator.dispatch(snoozeForReply);
         }
         yield* orchestrator.dispatch({
@@ -5453,23 +5512,19 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           run.id,
         );
         assert.isNull(limitRecoveryCommand(woke, true, Date.parse(resetAt)));
-        // A stale worker can have prepared an arm command before the snooze. Even if it
-        // commits after the reply, dispatch must still refuse to start this run again.
-        yield* orchestrator.dispatch({
-          type: "thread.metadata.update",
-          commandId: CommandId.make(`recovery:github-stale-arm:${scenario}`),
-          threadId,
-          limitRecovery: { runId: run.id, resetAt, autoResume: true },
-        });
-        const rearmed = (yield* getShell)!;
-        assert.isNull(limitRecoveryCommand(rearmed, true, Date.parse(resetAt)));
-        const staleResume = limitRecoveryCommand(
-          { ...rearmed, githubReplyAutoResumeBlockedRunId: null },
-          true,
-          Date.parse(resetAt),
-        );
-        assert.isNotNull(staleResume);
-        yield* orchestrator.dispatch(staleResume!);
+        // a stale worker cannot re-arm this run after the reply, even after the reset.
+        const staleArm = yield* orchestrator
+          .dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make(`recovery:github-stale-arm:${scenario}`),
+            threadId,
+            automaticLimitRecovery: true,
+            limitRecovery: { runId: run.id, resetAt, autoResume: true },
+          })
+          .pipe(Effect.exit);
+        assert.equal(staleArm._tag, "Failure");
+        assert.isNull((yield* getShell)!.limitRecovery);
+        if (staleResume !== null) yield* orchestrator.dispatch(staleResume);
         assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
         const candidates = yield* projections.getLimitRecoveryCandidates({
           now: yield* DateTime.now,

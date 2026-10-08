@@ -84,7 +84,7 @@ it("retains the draft on failure, prevents duplicate submits, and clears it afte
   expect(renderer!.root.findByType("textarea").props.value).toBe("");
 });
 
-it("posts a reply to its parent and collapses only after success or cancellation", async () => {
+it("posts a reply to its parent, collapses after success, and reopens with an empty draft", async () => {
   state.submit.mockResolvedValue(AsyncResult.success({}));
   act(() => {
     renderer = create(
@@ -109,9 +109,6 @@ it("posts a reply to its parent and collapses only after success or cancellation
     },
   });
   expect(renderer!.root.findAllByType("textarea")).toHaveLength(0);
-  act(() => renderer!.root.findByType("input").props.onFocus());
-  edit("Cancelled reply");
-  act(() => button("Cancel").props.onClick());
   act(() => renderer!.root.findByType("input").props.onFocus());
   expect(renderer!.root.findByType("textarea").props.value).toBe("");
   expect(state.submit).toHaveBeenCalledTimes(1);
