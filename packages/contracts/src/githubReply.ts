@@ -32,7 +32,12 @@ export const GitHubConversationUrl = Schema.String.pipe(
   ),
 );
 
+export const GitHubReplyWakeCondition = Schema.Literals(["any-reply", "changes-requested"]);
+export type GitHubReplyWakeCondition = typeof GitHubReplyWakeCondition.Type;
+
 export const GitHubReplySnooze = Schema.Struct({
+  /** omitted on older snoozes, which wait for any reply. */
+  wakeCondition: Schema.optional(GitHubReplyWakeCondition),
   requestId: CommandId,
   url: GitHubConversationUrl,
   startedAt: IsoDateTime,
@@ -52,6 +57,7 @@ export const GitHubReplySnooze = Schema.Struct({
 export type GitHubReplySnooze = typeof GitHubReplySnooze.Type;
 
 export const GitHubReplyNotice = Schema.Struct({
+  wakeCondition: Schema.optional(GitHubReplyWakeCondition),
   type: Schema.Literals(["reply", "error"]),
   /** Original watched scope, distinct from the individual reply URL. */
   conversationUrl: Schema.optional(GitHubConversationUrl),

@@ -235,14 +235,19 @@ count as existing. If the check fails, T3 does not apply the snooze.
 
 T3 checks from the thread's environment using its signed-in GitHub CLI account,
 usually every two minutes. New comments, submitted reviews and inline review
-replies from other accounts bring the thread back with a link to the response.
+replies from other accounts bring the thread back.
 Your own comments, existing comments, edits, reactions, CI changes and merge state
 do not wake it. PR links watch the whole PR conversation. A discussion link watches
 its comments and replies; a discussion comment link limits the watch to that
 comment's reply thread. No agent starts or replies when feedback arrives. A running
 agent can finish its current turn while the thread waits.
 
-Choose **Snooze** on the reply notice to wait for another reply to the same conversation.
+Choose **Snooze → Until changes are requested** to wait for a formal GitHub
+"Request changes" review on a linked open PR. Comments, inline replies, approvals
+and your own reviews do not wake it. A newly submitted review counts even when
+its text is empty or its draft predates the snooze. There is no time limit.
+
+To wait again, choose the same GitHub snooze option from the thread's menu.
 
 The watch survives a server restart. **Wake thread**, a different snooze, settle,
 archive or delete cancels it. Sending a message also wakes the thread. The open

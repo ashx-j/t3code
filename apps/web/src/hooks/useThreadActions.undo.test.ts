@@ -218,26 +218,30 @@ describe("settle and snooze Undo", () => {
     });
   });
 
-  it("restores the GitHub reply baseline when undoing settle", async () => {
-    const saved: GitHubReplySnooze = {
-      requestId: CommandId.make("saved-watch"),
-      url: "https://github.com/team/repo/pull/1",
-      startedAt: "2026-01-01T00:00:00.000Z",
-      nextCheckAt: "2026-01-01T00:02:00.000Z",
-      status: "watching",
-      failures: 0,
-      viewer: "me",
-    };
-    threadShell.githubReplySnooze = saved;
-    const actions = useThreadActions();
-    await actions.settleThread(target);
-    threadShell.githubReplySnooze = null;
-    await currentUndo()();
-    expect(commands.snooze).toHaveBeenCalledExactlyOnceWith({
-      environmentId: target.environmentId,
-      input: { threadId: target.threadId, url: saved.url, resumeFrom: saved },
-    });
-  });
+  it.each([undefined, "changes-requested"] as const)(
+    "restores the GitHub reply baseline and %s condition when undoing settle",
+    async (wakeCondition) => {
+      const saved: GitHubReplySnooze = {
+        wakeCondition,
+        requestId: CommandId.make("saved-watch"),
+        url: "https://github.com/team/repo/pull/1",
+        startedAt: "2026-01-01T00:00:00.000Z",
+        nextCheckAt: "2026-01-01T00:02:00.000Z",
+        status: "watching",
+        failures: 0,
+        viewer: "me",
+      };
+      threadShell.githubReplySnooze = saved;
+      const actions = useThreadActions();
+      await actions.settleThread(target);
+      threadShell.githubReplySnooze = null;
+      await currentUndo()();
+      expect(commands.snooze).toHaveBeenCalledExactlyOnceWith({
+        environmentId: target.environmentId,
+        input: { threadId: target.threadId, url: saved.url, resumeFrom: saved },
+      });
+    },
+  );
 
   it("expires an older unpin Undo when the thread is settled", async () => {
     const actions = useThreadActions();

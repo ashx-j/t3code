@@ -89,7 +89,10 @@ import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import { useAcknowledgeThreadWoke, useThreadActions } from "../hooks/useThreadActions";
 import { useOpenChangeRequestLink } from "../lib/openPullRequestLink";
-import { eligibleThreadGitHubConversations } from "@t3tools/client-runtime/github-reply-conversations";
+import {
+  eligibleThreadGitHubConversations,
+  type GitHubReplySnoozeChoice,
+} from "@t3tools/client-runtime/github-reply-conversations";
 import { GitHubReplySnoozeButton } from "./GitHubReplySnoozeMenu";
 import { DiscussionDetailPanel } from "./discussion/DiscussionDetailPanel";
 import {
@@ -7068,12 +7071,12 @@ export default function ChatView(props: ChatViewProps) {
   const [resnoozingThreadKey, setResnoozingThreadKey] = useState<string | null>(null);
   const isResnoozing = resnoozingThreadKey !== null && resnoozingThreadKey === activeThreadKey;
   const handleSnoozeGitHubReply = useCallback(
-    async (url: string) => {
+    async (choice: GitHubReplySnoozeChoice) => {
       if (!activeThreadRef) return;
       const threadKey = scopedThreadKey(activeThreadRef);
       setResnoozingThreadKey(threadKey);
       try {
-        const result = await snoozeThread(activeThreadRef, { url });
+        const result = await snoozeThread(activeThreadRef, choice);
         if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
           toastManager.add(
@@ -7437,25 +7440,24 @@ export default function ChatView(props: ChatViewProps) {
     isStoppingBackgroundWork,
     onOpenRelatedThread,
   ]);
-  // A woken thread announces itself in the open view, not just the sidebar
-  // pill. Dismissing marks the wake as seen (same acknowledgment as the
-  // pill); sending a message clears it as a side effect of the send path.
+  // Successful GitHub wakes use the sidebar's unread state. Only failed
+  // watches and time-based wakes need a notice above the composer.
   const wokeThreadBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     const notice = activeThreadShell?.githubReplyNotice;
+    if (notice?.type === "reply") return null;
     if (!activeThreadWokeVisible && !notice) return null;
     if (notice)
       return {
         id: `github-reply:${notice.receivedAt}`,
-        ...(notice.type === "reply" ? { layout: "inline" as const } : {}),
         variant: "info",
         icon: <AlarmClockIcon />,
         title:
-          notice.type === "reply"
-            ? `GitHub reply from ${notice.author}`
+          notice.wakeCondition === "changes-requested"
+            ? "Changes-requested snooze stopped"
             : "GitHub reply snooze stopped",
         description: (
           <>
-            {notice.type === "error" ? <>{notice.text} </> : null}
+            {notice.text}{" "}
             <a
               href={notice.url}
               className="chat-link"
@@ -7466,15 +7468,23 @@ export default function ChatView(props: ChatViewProps) {
           </>
         ),
         actions:
-          serverConfig?.environment.capabilities.threadGitHubReplySnooze === true ? (
+          serverConfig?.environment.capabilities.threadGitHubReplySnooze === true &&
+          (notice.wakeCondition !== "changes-requested" ||
+            serverConfig.environment.capabilities.threadGitHubChangesRequestedSnooze === true) ? (
             <GitHubReplySnoozeButton
               conversationUrl={notice.conversationUrl ?? null}
+              wakeCondition={notice.wakeCondition}
               conversations={eligibleThreadGitHubConversations(activeThreadShell)}
               pending={isResnoozing}
-              onSnooze={(url) => void handleSnoozeGitHubReply(url)}
+              onSnooze={(url) =>
+                void handleSnoozeGitHubReply({ url, wakeCondition: notice.wakeCondition })
+              }
             />
           ) : undefined,
-        dismissLabel: "Dismiss GitHub reply",
+        dismissLabel:
+          notice.wakeCondition === "changes-requested"
+            ? "Dismiss changes requested"
+            : "Dismiss GitHub reply",
         onDismiss: () => void handleUnsnoozeActiveThread(),
       };
     return {
@@ -7496,6 +7506,7 @@ export default function ChatView(props: ChatViewProps) {
     isResnoozing,
     openGitHubConversation,
     serverConfig?.environment.capabilities.threadGitHubReplySnooze,
+    serverConfig?.environment.capabilities.threadGitHubChangesRequestedSnooze,
   ]);
   const parkedThreadBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (!activeThreadSnoozed && !activeThreadSettled) {
@@ -7508,7 +7519,9 @@ export default function ChatView(props: ChatViewProps) {
       variant: "info",
       icon: isSnoozed ? <AlarmClockIcon /> : <CheckCircle2Icon />,
       title: activeThreadShell?.githubReplySnooze
-        ? "Waiting for a GitHub reply"
+        ? activeThreadShell.githubReplySnooze.wakeCondition === "changes-requested"
+          ? "Waiting for changes to be requested"
+          : "Waiting for a GitHub reply"
         : `This thread is ${isSnoozed ? "snoozed" : "settled"}`,
       description: activeThreadShell?.githubReplySnooze ? (
         <a
@@ -7736,6 +7749,7 @@ export default function ChatView(props: ChatViewProps) {
       {
         id: `branch-mismatch:${activeBranchMismatchKey}`,
         variant: "info",
+        layout: "inline",
         icon: <GitBranchIcon />,
         title: (
           <span className="flex min-w-0 items-baseline gap-1.5">

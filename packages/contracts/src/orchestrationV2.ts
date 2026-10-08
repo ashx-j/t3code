@@ -3,7 +3,12 @@ import {
   ThreadDiscussionLink,
   GitHubDiscussionUrl,
 } from "./threadDiscussion.ts";
-import { GitHubConversationUrl, GitHubReplySnooze, GitHubReplyNotice } from "./githubReply.ts";
+import {
+  GitHubConversationUrl,
+  GitHubReplySnooze,
+  GitHubReplyNotice,
+  GitHubReplyWakeCondition,
+} from "./githubReply.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -2692,6 +2697,7 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     url: GitHubConversationUrl,
+    wakeCondition: Schema.optional(GitHubReplyWakeCondition),
     /** Undo restores the original observation baseline under a new subscription identity. */
     resumeFrom: Schema.optional(GitHubReplySnooze),
   }),

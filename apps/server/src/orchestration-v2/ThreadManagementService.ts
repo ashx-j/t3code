@@ -26,6 +26,7 @@ import {
   ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
+import { isLinkedOpenGitHubPullRequest } from "@t3tools/shared/threadPullRequests";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -511,10 +512,21 @@ const make = Effect.gen(function* () {
           cause: "The thread's project is unavailable.",
         });
       }
+      if (
+        command.wakeCondition === "changes-requested" &&
+        !isLinkedOpenGitHubPullRequest(thread.pullRequests ?? [], command.url)
+      ) {
+        return yield* new Orchestrator.OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "Changes-requested snooze requires a linked open github.com pull request.",
+        });
+      }
       const now = DateTime.formatIso(yield* DateTime.now);
       const watch: GitHubReplySnooze = {
         requestId: command.commandId,
         url: command.url,
+        wakeCondition: command.wakeCondition,
         startedAt: now,
         nextCheckAt: now,
         status: "pending",

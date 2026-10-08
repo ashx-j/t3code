@@ -223,6 +223,7 @@ export function ThreadPullRequestBadgeControl({
   number,
   url,
   status,
+  tooltipHidden = false,
   onOpenList,
   onOpenPullRequest,
 }: {
@@ -232,6 +233,7 @@ export function ThreadPullRequestBadgeControl({
   number?: number | undefined;
   url?: string | undefined;
   status: PrStatusIndicator | null;
+  tooltipHidden?: boolean;
   onOpenList: () => void;
   onOpenPullRequest: (event: MouseEvent<HTMLElement>, url?: string) => void;
 }) {
@@ -245,6 +247,7 @@ export function ThreadPullRequestBadgeControl({
       url={url}
       number={number}
       status={status}
+      tooltipHidden={tooltipHidden}
       pullRequests={pullRequests}
       onOpenList={onOpenList}
       onOpenPullRequest={onOpenPullRequest}
@@ -259,6 +262,7 @@ function PullRequestBadge({
   url,
   number,
   status,
+  tooltipHidden,
   pullRequests,
   onOpenList,
   onOpenPullRequest,
@@ -269,6 +273,7 @@ function PullRequestBadge({
   url: string | undefined;
   number: number | undefined;
   status: PrStatusIndicator | null;
+  tooltipHidden: boolean;
   pullRequests: ReadonlyArray<ThreadPullRequestLink>;
   onOpenList: () => void;
   onOpenPullRequest: (event: MouseEvent<HTMLElement>, url?: string) => void;
@@ -305,32 +310,34 @@ function PullRequestBadge({
           <presentation.Icon aria-hidden className="size-3 shrink-0" />
           {/* An element, not bare text: bare text takes its line box from the control, which
               inherits the row's size, so beside a text-sm title it sat below the other meta. */}
-          <span>{presentation.text}</span>
+          <span className="min-w-0 truncate">{presentation.text}</span>
         </span>
       </TooltipTrigger>
-      <TooltipPopup
-        side="top"
-        sideOffset={0}
-        variant="glass"
-        className="pointer-events-auto w-80 max-w-[calc(100vw-2rem)] text-left whitespace-normal"
-      >
-        {visibleThreadPullRequests(pullRequests).length > 0 ? (
-          <ThreadPullRequestsMiniList
-            pullRequests={pullRequests}
-            onOpenPullRequest={onOpenPullRequest}
-          />
-        ) : number !== undefined && url !== undefined ? (
-          <ul className="flex flex-col gap-1">
-            <ThreadPullRequestMiniListItem
-              number={number}
-              url={url}
-              title={status?.tooltipTitle ?? presentation.label}
-              presentation={presentation}
+      {!tooltipHidden ? (
+        <TooltipPopup
+          side="top"
+          sideOffset={0}
+          variant="glass"
+          className="pointer-events-auto w-80 max-w-[calc(100vw-2rem)] text-left whitespace-normal"
+        >
+          {visibleThreadPullRequests(pullRequests).length > 0 ? (
+            <ThreadPullRequestsMiniList
+              pullRequests={pullRequests}
               onOpenPullRequest={onOpenPullRequest}
             />
-          </ul>
-        ) : null}
-      </TooltipPopup>
+          ) : number !== undefined && url !== undefined ? (
+            <ul className="flex flex-col gap-1">
+              <ThreadPullRequestMiniListItem
+                number={number}
+                url={url}
+                title={status?.tooltipTitle ?? presentation.label}
+                presentation={presentation}
+                onOpenPullRequest={onOpenPullRequest}
+              />
+            </ul>
+          ) : null}
+        </TooltipPopup>
+      ) : null}
     </Tooltip>
   );
 }

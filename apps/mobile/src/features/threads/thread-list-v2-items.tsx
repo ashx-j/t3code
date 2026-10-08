@@ -1,5 +1,8 @@
 import { githubReplySnoozeMenuAction, useGitHubReplySnooze } from "./GitHubReplySnooze";
-import { eligibleThreadGitHubConversations } from "@t3tools/client-runtime/github-reply-conversations";
+import {
+  eligibleThreadGitHubConversations,
+  githubReplySnoozeChoice,
+} from "@t3tools/client-runtime/github-reply-conversations";
 import { environmentServerConfigsAtom } from "../../state/server";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import {
@@ -24,7 +27,7 @@ import type { EnvironmentMachineKind } from "@t3tools/contracts";
 import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
-import { Alert, Pressable, useWindowDimensions, View } from "react-native";
+import { Alert, Platform, Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
 import type { ThreadListProvider } from "../../state/thread-list-environments";
@@ -614,6 +617,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const githubSnoozeSupported =
     appAtomRegistry.get(environmentServerConfigsAtom).get(thread.environmentId)?.environment
       .capabilities.threadGitHubReplySnooze === true;
+  const githubChangesRequestedSupported =
+    appAtomRegistry.get(environmentServerConfigsAtom).get(thread.environmentId)?.environment
+      .capabilities.threadGitHubChangesRequestedSnooze === true;
   // A recycled cell reassigns this mounted row to a different thread without
   // remounting it, and the render closure stops running while list equality
   // says the item is unchanged — so any row-local UI state must be dismissed
@@ -667,18 +673,28 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     () => (swipeActions.secondary === "snooze" ? resolveSnoozePresets(new Date()) : ([] as const)),
     [props.snoozePresetMinute, swipeActions.secondary],
   );
-  const snoozePresetActions = useMemo<MenuAction[]>(
-    () => [
+  const snoozePresetActions = useMemo<MenuAction[]>(() => {
+    const githubActions = githubSnoozeSupported
+      ? [
+          githubReplySnoozeMenuAction(githubConversations),
+          ...(githubChangesRequestedSupported
+            ? [githubReplySnoozeMenuAction(githubConversations, "changes-requested")]
+            : []),
+        ]
+      : [];
+    return [
       ...snoozePresets.map((preset) => ({
         id: `snooze:${preset.id}`,
         title: preset.label,
         subtitle: preset.whenLabel,
       })),
-      ...(githubSnoozeSupported ? [githubReplySnoozeMenuAction(githubConversations)] : []),
+      // ios draws dividers around inline groups; android keeps its flat menu.
+      ...(Platform.OS === "ios" && githubActions.length > 0
+        ? [{ title: "", displayInline: true, subactions: githubActions }]
+        : githubActions),
       { id: "snooze:custom", title: "Custom…" },
-    ],
-    [snoozePresets, githubSnoozeSupported, githubConversations],
-  );
+    ];
+  }, [snoozePresets, githubSnoozeSupported, githubChangesRequestedSupported, githubConversations]);
   // Pinned cards keep the full lifecycle menu; only the pin item flips to
   // Unpin. (Settling a pinned thread clears the pin server-side; snoozing
   // hides the card until wake with the pin intact.)
@@ -834,10 +850,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       }
       if (nativeEvent.event === "delete") handleDelete();
       if (nativeEvent.event.startsWith("snooze:github:")) {
-        const conversation = githubConversations.find(
-          (candidate) => `snooze:github:${candidate.url}` === nativeEvent.event,
-        );
-        if (conversation) snoozeUrl(conversation.url);
+        const choice = githubReplySnoozeChoice(nativeEvent.event, githubConversations);
+        if (choice) snoozeUrl(choice.url, choice.wakeCondition);
         return;
       }
       if (nativeEvent.event === "snooze:custom") {

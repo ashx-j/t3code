@@ -7,6 +7,7 @@ import {
 } from "@t3tools/shared/orchestrationV2ThreadError";
 import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
 import {
+  isLinkedOpenGitHubPullRequest,
   normalizeThreadPullRequestKey,
   visibleThreadPullRequests,
   threadPullRequestKeysEqual,
@@ -2701,12 +2702,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (
       command.type === "thread.github-reply.snooze" &&
       command.resumeFrom &&
-      command.resumeFrom.url !== command.url
+      (command.resumeFrom.url !== command.url ||
+        (command.wakeCondition !== undefined &&
+          command.wakeCondition !== (command.resumeFrom.wakeCondition ?? "any-reply")))
     ) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: "The restored GitHub snooze must use the same conversation.",
+        cause: "The restored GitHub snooze must use the same conversation and wake condition.",
+      });
+    }
+    if (
+      command.type === "thread.github-reply.snooze" &&
+      (command.wakeCondition ?? command.resumeFrom?.wakeCondition) === "changes-requested" &&
+      !isLinkedOpenGitHubPullRequest(thread.pullRequests ?? [], command.url)
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Changes-requested snooze requires a linked open github.com pull request.",
       });
     }
     let snoozedUntil: DateTime.Utc | null = null;
@@ -2837,6 +2851,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               ...command.resumeFrom,
               requestId: command.commandId,
               url: command.url,
+              wakeCondition: command.wakeCondition ?? command.resumeFrom?.wakeCondition,
               startedAt: command.resumeFrom?.startedAt ?? DateTime.formatIso(now),
               nextCheckAt: DateTime.formatIso(now),
               status: "pending",
@@ -2861,6 +2876,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : {
                   githubReplyNotice: {
                     ...command.notice,
+                    wakeCondition: thread.githubReplySnooze?.wakeCondition,
                     conversationUrl:
                       thread.githubReplySnooze?.url ?? command.notice.conversationUrl,
                   },

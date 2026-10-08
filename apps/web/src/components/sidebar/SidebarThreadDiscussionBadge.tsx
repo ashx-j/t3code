@@ -7,10 +7,12 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 export function SidebarThreadDiscussionBadge({
   discussion,
   iconOnly = false,
+  tooltipHidden = false,
   onOpen,
 }: {
   discussion: ThreadDiscussionLink;
   iconOnly?: boolean;
+  tooltipHidden?: boolean;
   onOpen: (event: MouseEvent<HTMLElement>, url: string) => void;
 }) {
   const label = `Discussion #${discussion.number}${discussion.title ? `: ${discussion.title}` : ""}`;
@@ -30,13 +32,15 @@ export function SidebarThreadDiscussionBadge({
       >
         <span className="contents font-normal text-xs tabular-nums">
           <GitHubDiscussionIcon className="size-3 shrink-0" />
-          {iconOnly ? null : <span>#{discussion.number}</span>}
+          {iconOnly ? null : <span className="min-w-0 truncate">#{discussion.number}</span>}
         </span>
       </TooltipTrigger>
-      <TooltipPopup side="top" sideOffset={0} variant="glass">
-        <div>{label}</div>
-        <div className="text-muted-foreground">{discussion.repository}</div>
-      </TooltipPopup>
+      {!tooltipHidden ? (
+        <TooltipPopup side="top" sideOffset={0} variant="glass">
+          <div>{label}</div>
+          <div className="text-muted-foreground">{discussion.repository}</div>
+        </TooltipPopup>
+      ) : null}
     </Tooltip>
   );
 }

@@ -182,7 +182,9 @@ const make = Effect.gen(function* () {
     readonly captureBaseline?: boolean;
   }) {
     const target = parseGitHubConversationUrl(watch.url);
-    if (!target) return yield* new GitHubReplyReadError({ reason: "unavailable" });
+    const changesRequested = watch.wakeCondition === "changes-requested";
+    if (!target || (changesRequested && target.kind !== "pull"))
+      return yield* new GitHubReplyReadError({ reason: "unavailable" });
     if (!captureBaseline && !watch.baseline)
       return yield* new GitHubReplyReadError({ reason: "baseline-missing" });
     // Setup must see fresh data. Only acknowledge snooze after this observation completes.
@@ -259,7 +261,7 @@ const make = Effect.gen(function* () {
 
     if (target.kind === "discussion" && discussionCommentId) {
       yield* readReplies(discussionCommentId);
-    } else {
+    } else if (!changesRequested) {
       let before: string | null = null;
       while (true) {
         const field = target.kind === "pull" ? "pullRequest" : "discussion";
@@ -311,7 +313,7 @@ const make = Effect.gen(function* () {
         }
       }
     }
-    // Reviews and inline threads are independent connections. State and CI changes never enter this reader.
+    // reviews and inline threads are independent connections. PR state and CI changes never enter this reader.
     if (target.kind === "pull" && !responseId) {
       let before: string | null = null;
       while (true) {
@@ -325,7 +327,9 @@ const make = Effect.gen(function* () {
         if (!page) return yield* new GitHubReplyReadError({ reason: "unavailable" });
         responseId = page.nodes.find(
           (review) =>
-            review.state !== "PENDING" &&
+            (changesRequested
+              ? review.state === "CHANGES_REQUESTED"
+              : review.state !== "PENDING") &&
             review.submittedAt !== null &&
             isResponse({ ...review, createdAt: review.submittedAt }),
         )?.id;
@@ -337,7 +341,7 @@ const make = Effect.gen(function* () {
       }
       let after: string | null = null;
       while (true) {
-        if (responseId) break;
+        if (changesRequested || responseId) break;
         const result: typeof Response.Type = yield* readQuery(
           cwd,
           `query($owner: String!, $name: String!, $number: Int!, $after: String) { viewer { login } repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first: 100, after: $after) { nodes { id comments(last: 1) { nodes { ${commentFields} } ${pageFields} } } pageInfo { hasNextPage endCursor } } } } }`,

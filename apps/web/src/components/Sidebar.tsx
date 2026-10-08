@@ -11,11 +11,13 @@ import { discardComposerDraft } from "../lib/discardComposerDraft";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
 import {
   commonGitHubReplyConversations,
+  githubReplySnoozeChoice,
   eligibleThreadGitHubConversations,
   type GitHubReplyConversation,
+  type GitHubReplySnoozeChoice,
 } from "@t3tools/client-runtime/github-reply-conversations";
 import { GitHubReplySnoozeMenuItem } from "./GitHubReplySnoozeMenu";
-import { githubReplySnoozeMenuItem, githubReplySnoozeChoice } from "./githubReplySnoozeMenu.logic";
+import { githubReplySnoozeMenuItem } from "./githubReplySnoozeMenu.logic";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { useAtomValue } from "@effect/atom-react";
@@ -100,8 +102,10 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type TransitionEvent as ReactTransitionEvent,
   type ReactNode,
 } from "react";
+import { flushSync } from "react-dom";
 import { useParams, useRouter } from "@tanstack/react-router";
 
 import { useRightPanelStore } from "../rightPanelStore";
@@ -546,7 +550,7 @@ function SidebarThreadTooltip({
   );
 }
 
-type SnoozeChoice = { readonly snoozedUntil: string } | { readonly url: string };
+type SnoozeChoice = { readonly snoozedUntil: string } | GitHubReplySnoozeChoice;
 
 /**
  * Hover entry point for snooze: a clock button opening the preset menu.
@@ -555,6 +559,7 @@ type SnoozeChoice = { readonly snoozedUntil: string } | { readonly url: string }
  */
 function SnoozeMenuButton(props: {
   githubReplySnoozeSupported: boolean;
+  githubChangesRequestedSnoozeSupported: boolean;
   githubConversations: ReadonlyArray<GitHubReplyConversation>;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -604,10 +609,20 @@ function SnoozeMenuButton(props: {
           </MenuItem>
         ))}
         {props.githubReplySnoozeSupported ? (
-          <GitHubReplySnoozeMenuItem
-            conversations={props.githubConversations}
-            onSnooze={onSnooze}
-          />
+          <>
+            <MenuSeparator />
+            <GitHubReplySnoozeMenuItem
+              conversations={props.githubConversations}
+              onSnooze={onSnooze}
+            />
+            {props.githubChangesRequestedSnoozeSupported ? (
+              <GitHubReplySnoozeMenuItem
+                conversations={props.githubConversations}
+                onSnooze={onSnooze}
+                wakeCondition="changes-requested"
+              />
+            ) : null}
+          </>
         ) : null}
         <MenuSeparator />
         <MenuItem
@@ -1101,6 +1116,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // Same contract for thread.snooze/unsnooze.
   snoozeSupported: boolean;
   githubReplySnoozeSupported: boolean;
+  githubChangesRequestedSnoozeSupported: boolean;
   // Renders the pin glyph. Pinned cards keep the full settle/snooze quick
   // actions: settling clears the pin server-side, and snoozing hides the
   // card until wake with the pin intact underneath. The glyph is also the
@@ -1331,6 +1347,52 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                       }
                     : null;
   const isWokeStatus = topStatus?.icon === "woke";
+  const hasSnoozeWakeLabel = variantAction === "unsnooze" && props.snoozeWakeLabelText !== null;
+  const [snoozeLayoutMoving, setSnoozeLayoutMoving] = useState(false);
+  const snoozeSlotRef = useRef<HTMLSpanElement | null>(null);
+  const activeSnoozeTransitions = useRef(new Set<string>());
+  const handleSnoozePointerEntry = useCallback(() => {
+    if (!hasSnoozeWakeLabel || snoozeLayoutMoving) return;
+    for (const animation of snoozeSlotRef.current?.getAnimations() ?? []) {
+      if (
+        animation instanceof CSSTransition &&
+        animation.playState === "running" &&
+        (animation.transitionProperty === "margin-left" ||
+          animation.transitionProperty === "grid-template-columns")
+      ) {
+        activeSnoozeTransitions.current.add(animation.transitionProperty);
+      }
+    }
+    if (activeSnoozeTransitions.current.size > 0) {
+      // block the badge before its hover handler runs, even before transitionrun is delivered.
+      flushSync(() => setSnoozeLayoutMoving(true));
+    }
+  }, [hasSnoozeWakeLabel, snoozeLayoutMoving]);
+  const handleSnoozeLayoutTransition = useCallback(
+    (event: ReactTransitionEvent<HTMLSpanElement>) => {
+      if (
+        event.target === event.currentTarget &&
+        (event.propertyName === "margin-left" || event.propertyName === "grid-template-columns")
+      ) {
+        if (event.type === "transitionrun") {
+          activeSnoozeTransitions.current.add(event.propertyName);
+        } else {
+          activeSnoozeTransitions.current.delete(event.propertyName);
+        }
+        setSnoozeLayoutMoving(activeSnoozeTransitions.current.size > 0);
+      }
+    },
+    [],
+  );
+  const handleSnoozeSlotRef = useCallback((element: HTMLSpanElement | null) => {
+    snoozeSlotRef.current = element;
+    if (element === null) {
+      activeSnoozeTransitions.current.clear();
+      setSnoozeLayoutMoving(false);
+    }
+  }, []);
+  // hiding the popup preserves keyboard focus while pointer interaction is blocked.
+  const linkedItemMoving = hasSnoozeWakeLabel && snoozeLayoutMoving;
 
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
     effectiveEnvMode: thread.worktreePath === null ? "local" : "worktree",
@@ -1688,11 +1750,16 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         number={pr?.number ?? currentLinkedPr?.number}
         url={pr?.url ?? currentLinkedPr?.url}
         status={prStatus}
+        tooltipHidden={linkedItemMoving}
         onOpenList={handlePrListClick}
         onOpenPullRequest={handlePrClick}
       />
     ) : discussion ? (
-      <SidebarThreadDiscussionBadge discussion={discussion} onOpen={handlePrClick} />
+      <SidebarThreadDiscussionBadge
+        discussion={discussion}
+        onOpen={handlePrClick}
+        tooltipHidden={linkedItemMoving}
+      />
     ) : null;
   const terminalStatusIcon = terminalStatus ? (
     <span
@@ -1785,6 +1852,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 aria-label={accessibility.label}
                 aria-current={accessibility.current}
                 data-testid="sidebar-row-slim"
+                onMouseOverCapture={handleSnoozePointerEntry}
                 aria-busy={isRegeneratingTitle || undefined}
                 className={cn(rowSurfaceClassName, "flex h-9 items-center gap-2.5 px-2.5")}
                 onClick={handleClick}
@@ -1807,34 +1875,56 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               {props.project ? <ProjectFavicon project={props.project} className="size-4" /> : null}
             </span>
             {draftIndicator}
-            {title}
-            {pinIndicator}
-            {terminalStatusIcon}
-            {isRegeneratingTitle ? (
-              <span role="status" className="sr-only">
-                Regenerating title
-              </span>
-            ) : null}
-            {/* The linked item badge stays outside the hover-fading slot: it must
-              remain visible AND clickable while the row is hovered. Only
-              the time/jump label yields to the settle affordance. */}
-            {linkedItemBadge}
+            <span
+              className={
+                hasSnoozeWakeLabel ? "flex min-w-0 flex-1 items-center gap-2.5" : "contents"
+              }
+            >
+              {title}
+              {pinIndicator}
+              {terminalStatusIcon}
+              {isRegeneratingTitle ? (
+                <span role="status" className="sr-only">
+                  Regenerating title
+                </span>
+              ) : null}
+              {/* the title yields first; oversized link numbers stay within the space
+                before the wake control and keep their full value in the tooltip. */}
+              {linkedItemBadge ? (
+                <span
+                  className={cn(
+                    hasSnoozeWakeLabel ? "grid min-w-0 grid-cols-[minmax(0,1fr)]" : "contents",
+                    linkedItemMoving && "pointer-events-none",
+                  )}
+                >
+                  {linkedItemBadge}
+                </span>
+              ) : null}
+            </span>
             {sortable?.isDragging ? (
               dragDestination
             ) : (
               <span
                 className={cn(
                   "relative ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end",
+                  hasSnoozeWakeLabel &&
+                    "ml-0 grid min-w-0 grid-cols-[1fr] transition-[grid-template-columns,margin-left] duration-150 group-focus-visible/sidebar-row:-ml-2 group-focus-visible/sidebar-row:grid-cols-[0fr] group-has-[:focus-visible]/sidebar-row:-ml-2 group-has-[:focus-visible]/sidebar-row:grid-cols-[0fr] group-any-hover/sidebar-row:-ml-2 group-any-hover/sidebar-row:grid-cols-[0fr] motion-reduce:transition-none",
                   props.sweepAction !== null && "hidden",
                 )}
+                ref={handleSnoozeSlotRef}
+                onTransitionRun={handleSnoozeLayoutTransition}
+                onTransitionEnd={handleSnoozeLayoutTransition}
+                onTransitionCancel={handleSnoozeLayoutTransition}
               >
                 <span
                   className={cn(
                     "inline-flex justify-end tabular-nums text-secondary-label transition-opacity",
                     !isWoke && "group-any-hover/sidebar-row:opacity-0",
+                    hasSnoozeWakeLabel &&
+                      "col-start-1 row-start-1 min-w-0 overflow-hidden whitespace-nowrap duration-150 group-focus-visible/sidebar-row:opacity-0 group-has-[:focus-visible]/sidebar-row:opacity-0 motion-reduce:transition-none",
                   )}
                 >
-                  {variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
+                  {hasSnoozeWakeLabel ? (
                     // Snoozed rows show when they come BACK, not when they were
                     // last touched — the return ticket is the row's whole story.
                     <span className="text-xs text-info-foreground tabular-nums">
@@ -1876,6 +1966,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                       onPointerDown={handleActionPointerDown}
                       className={cn(
                         "pointer-events-none absolute inset-y-0 right-0 -mr-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
+                        hasSnoozeWakeLabel &&
+                          "relative col-start-1 row-start-1 h-full justify-self-end duration-150 group-focus-visible/sidebar-row:pointer-events-auto group-has-[:focus-visible]/sidebar-row:pointer-events-auto group-focus-visible/sidebar-row:opacity-100 group-has-[:focus-visible]/sidebar-row:opacity-100 motion-reduce:transition-none",
                         isWoke && "group-any-hover/sidebar-row:static",
                       )}
                     >
@@ -2090,6 +2182,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                       {showSnoozeButton ? (
                         <SnoozeMenuButton
                           githubReplySnoozeSupported={props.githubReplySnoozeSupported}
+                          githubChangesRequestedSnoozeSupported={
+                            props.githubChangesRequestedSnoozeSupported
+                          }
                           githubConversations={
                             snoozeMenuOpen ? eligibleThreadGitHubConversations(thread) : []
                           }
@@ -4273,10 +4368,26 @@ export default function Sidebar() {
                             .threadGitHubReplySnooze === true,
                       )
                         ? [
-                            githubReplySnoozeMenuItem(
-                              githubConversations,
-                              "No shared linked conversation",
-                            ),
+                            {
+                              ...githubReplySnoozeMenuItem(
+                                githubConversations,
+                                "No shared linked conversation",
+                              ),
+                              separatorBefore: true,
+                            },
+                            ...(selectedThreads.every(
+                              (thread) =>
+                                serverConfigs.get(thread.environmentId)?.environment.capabilities
+                                  .threadGitHubChangesRequestedSnooze === true,
+                            )
+                              ? [
+                                  githubReplySnoozeMenuItem(
+                                    githubConversations,
+                                    undefined,
+                                    "changes-requested",
+                                  ),
+                                ]
+                              : []),
                           ]
                         : []),
                       { id: "snooze:custom", label: "Custom…", separatorBefore: true },
@@ -4554,6 +4665,9 @@ export default function Sidebar() {
                 githubReplySnooze:
                   serverConfigs.get(thread.environmentId)?.environment.capabilities
                     .threadGitHubReplySnooze === true,
+                githubChangesRequestedSnooze:
+                  serverConfigs.get(thread.environmentId)?.environment.capabilities
+                    .threadGitHubChangesRequestedSnooze === true,
                 pinning: supportsPinning,
                 titleRegeneration: supportsTitleRegeneration,
               },
@@ -5211,6 +5325,10 @@ export default function Sidebar() {
                               serverConfigs.get(thread.environmentId)?.environment.capabilities
                                 .threadGitHubReplySnooze === true
                             }
+                            githubChangesRequestedSnoozeSupported={
+                              serverConfigs.get(thread.environmentId)?.environment.capabilities
+                                .threadGitHubChangesRequestedSnooze === true
+                            }
                             pinningSupported={
                               serverConfigs.get(thread.environmentId)?.environment.capabilities
                                 .threadPinning === true
@@ -5230,7 +5348,9 @@ export default function Sidebar() {
                             }
                             snoozeWakeLabelText={
                               thread.githubReplySnooze
-                                ? "Until GitHub reply"
+                                ? thread.githubReplySnooze.wakeCondition === "changes-requested"
+                                  ? "Until change request"
+                                  : "Until reply"
                                 : section === "snoozed" && thread.snoozedUntil != null
                                   ? snoozeWakeLabel(thread.snoozedUntil, {
                                       now: new Date().toISOString(),

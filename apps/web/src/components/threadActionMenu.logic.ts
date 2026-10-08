@@ -97,6 +97,7 @@ export interface ThreadActionMenuState {
     readonly autoSettleOptOut: boolean;
     readonly snooze: boolean;
     readonly githubReplySnooze: boolean;
+    readonly githubChangesRequestedSnooze?: boolean;
     readonly pinning: boolean;
     readonly titleRegeneration: boolean;
   };
@@ -154,7 +155,21 @@ export function buildThreadActionMenuItems(
                     label: `${preset.label} (${preset.whenLabel})`,
                   })),
                   ...(state.supports.githubReplySnooze
-                    ? [githubReplySnoozeMenuItem(state.githubConversations)]
+                    ? [
+                        {
+                          ...githubReplySnoozeMenuItem(state.githubConversations),
+                          separatorBefore: true,
+                        },
+                        ...(state.supports.githubChangesRequestedSnooze
+                          ? [
+                              githubReplySnoozeMenuItem(
+                                state.githubConversations,
+                                undefined,
+                                "changes-requested",
+                              ),
+                            ]
+                          : []),
+                      ]
                     : []),
                   { id: "snooze:custom" as const, label: "Custom…", separatorBefore: true },
                 ],

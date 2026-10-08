@@ -278,6 +278,15 @@ export function readEnvironmentSupportsSnooze(environmentId: EnvironmentId): boo
   );
 }
 
+export function readEnvironmentSupportsGitHubChangesRequestedSnooze(
+  environmentId: EnvironmentId,
+): boolean {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .threadGitHubChangesRequestedSnooze === true
+  );
+}
+
 export function readEnvironmentSupportsGitHubReplySnooze(environmentId: EnvironmentId): boolean {
   return (
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities

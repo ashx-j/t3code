@@ -428,3 +428,138 @@ it.effect("keeps the selected discussion parent and boundary reply IDs through s
     ),
   ),
 );
+
+const changesWatch: GitHubReplySnooze = { ...watch, wakeCondition: "changes-requested" };
+const review = (
+  id: string,
+  state = "CHANGES_REQUESTED",
+  author = "someone",
+  submittedAt: string | null = recent,
+  createdAt = old,
+) => ({
+  ...comment(id, author, createdAt),
+  state,
+  submittedAt,
+});
+const reviews = (nodes: ReadonlyArray<ReturnType<typeof review>>, cursor: string | null = null) =>
+  response({ repository: { pullRequest: { reviews: page(nodes, cursor) } } });
+const emptyReviewBody = response({
+  node: {
+    url: "https://github.com/team/repo/pull/1#pullrequestreview-2",
+    bodyText: "",
+    author: { login: "someone" },
+  },
+});
+
+it.effect(
+  "changes-requested snooze reads only reviews and ignores approvals, comments, own and pending reviews",
+  () => {
+    const queries: string[] = [];
+    return Effect.gen(function* () {
+      const reader = yield* GitHubReplyReader.GitHubReplyReader;
+      const result = yield* reader.read({ cwd: "/repo", watch: changesWatch });
+      assert.isNull(result.reply);
+      assert.equal(queries.length, 1);
+      assert.include(queries[0]!, "reviews(last:");
+      assert.notInclude(queries[0]!, "comments(");
+      assert.notInclude(queries[0]!, "reviewThreads(");
+    }).pipe(
+      Effect.provide(
+        layer(
+          [
+            reviews([
+              review("existing", "CHANGES_REQUESTED", "someone", old),
+              review("approval", "APPROVED"),
+              review("comment", "COMMENTED"),
+              review("self", "CHANGES_REQUESTED", "me"),
+              review("pending", "PENDING", "someone", null),
+              review("unsubmitted", "CHANGES_REQUESTED", "someone", null),
+            ]),
+          ],
+          queries,
+        ),
+      ),
+    );
+  },
+);
+
+it.effect(
+  "changes-requested snooze wakes for an empty review submitted from an older draft beyond the first page",
+  () =>
+    Effect.gen(function* () {
+      const reader = yield* GitHubReplyReader.GitHubReplyReader;
+      const result = yield* reader.read({ cwd: "/repo", watch: changesWatch });
+      assert.deepEqual(result.reply, {
+        url: "https://github.com/team/repo/pull/1#pullrequestreview-2",
+        text: "",
+        author: "someone",
+      });
+    }).pipe(
+      Effect.provide(
+        layer([
+          reviews(
+            [
+              review("approval", "APPROVED"),
+              review("existing", "CHANGES_REQUESTED", "someone", old),
+            ],
+            "older",
+          ),
+          reviews([review("draft-submitted-later")]),
+          emptyReviewBody,
+        ]),
+      ),
+    ),
+);
+
+it.effect(
+  "captures all existing requested-changes reviews and preserves same-second novelty across restart",
+  () =>
+    Effect.gen(function* () {
+      const setup = yield* Effect.gen(function* () {
+        const reader = yield* GitHubReplyReader.GitHubReplyReader;
+        return yield* reader.read({ cwd: "/repo", watch: changesWatch, captureBaseline: true });
+      }).pipe(
+        Effect.provide(
+          layer([
+            reviews([review("existing-2"), review("draft", "PENDING", "someone", null)], "older"),
+            reviews([review("existing-1"), review("ancient", "CHANGES_REQUESTED", "someone", old)]),
+          ]),
+        ),
+      );
+      assert.isNull(setup.reply);
+      assert.deepEqual(setup.baseline, { latestAt: recent, ids: ["existing-2", "existing-1"] });
+      const restored = { ...changesWatch, viewer: setup.viewer, baseline: setup.baseline };
+      const unchanged = yield* Effect.gen(function* () {
+        const reader = yield* GitHubReplyReader.GitHubReplyReader;
+        return yield* reader.read({ cwd: "/repo", watch: restored });
+      }).pipe(Effect.provide(layer([reviews([review("existing-1"), review("existing-2")])])));
+      assert.isNull(unchanged.reply);
+      const result = yield* Effect.gen(function* () {
+        const reader = yield* GitHubReplyReader.GitHubReplyReader;
+        return yield* reader.read({ cwd: "/repo", watch: restored });
+      }).pipe(
+        Effect.provide(
+          layer([
+            reviews([review("existing-2")], "older"),
+            reviews([review("existing-1"), review("draft")]),
+            emptyReviewBody,
+          ]),
+        ),
+      );
+      assert.isNotNull(result.reply);
+    }),
+);
+
+it.effect("rejects a discussion for changes-requested snooze without reading GitHub", () =>
+  Effect.gen(function* () {
+    const reader = yield* GitHubReplyReader.GitHubReplyReader;
+    const error = yield* reader
+      .read({
+        cwd: "/repo",
+        watch: { ...changesWatch, url: "https://github.com/team/repo/discussions/1" },
+        captureBaseline: true,
+      })
+      .pipe(Effect.flip);
+    assert.equal(error.reason, "unavailable");
+  }).pipe(Effect.provide(layer([]))),
+);

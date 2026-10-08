@@ -154,40 +154,50 @@ describe("remote thread lifecycle commands", () => {
       }),
   );
 
-  it.effect("keeps GitHub snoozed through acknowledgement and adopts the server watch", () =>
-    Effect.gen(function* () {
-      const h = yield* makeHarness();
-      const result = h.commands.snooze.run(h.registry, {
-        environmentId: ENVIRONMENT_ID,
-        input: { threadId: THREAD_ID, url: githubUrl },
-      });
-      const request = yield* Queue.take(h.requests);
-      yield* Deferred.succeed(request.reply, { sequence: 2 });
-      expect((yield* Effect.promise(() => result))._tag).toBe("Success");
-      expect(h.registry.get(h.visibleAtom)?.threads[0]?.githubReplySnooze?.url).toBe(githubUrl);
-      const confirmed = {
-        ...SNAPSHOT,
-        snapshotSequence: 2,
-        threads: [
-          {
-            ...SNAPSHOT.threads[0]!,
-            snoozedAt: NOW,
-            githubReplySnooze: {
-              requestId: request.command.commandId,
-              url: githubUrl,
-              startedAt: DateTime.formatIso(NOW),
-              nextCheckAt: DateTime.formatIso(NOW),
-              status: "watching" as const,
-              failures: 0,
-              viewer: "ash",
-              baseline: { latestAt: null, ids: [] },
+  it.effect.each([undefined, "changes-requested"] as const)(
+    "keeps GitHub snoozed through acknowledgement and adopts the server watch with %s",
+    (wakeCondition) =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        const result = h.commands.snooze.run(h.registry, {
+          environmentId: ENVIRONMENT_ID,
+          input: { threadId: THREAD_ID, url: githubUrl, wakeCondition },
+        });
+        const request = yield* Queue.take(h.requests);
+        expect(request.command).toMatchObject({
+          type: "thread.github-reply.snooze",
+          ...(wakeCondition === undefined ? {} : { wakeCondition }),
+        });
+        expect(h.registry.get(h.visibleAtom)?.threads[0]?.githubReplySnooze?.wakeCondition).toBe(
+          wakeCondition,
+        );
+        yield* Deferred.succeed(request.reply, { sequence: 2 });
+        expect((yield* Effect.promise(() => result))._tag).toBe("Success");
+        expect(h.registry.get(h.visibleAtom)?.threads[0]?.githubReplySnooze?.url).toBe(githubUrl);
+        const confirmed = {
+          ...SNAPSHOT,
+          snapshotSequence: 2,
+          threads: [
+            {
+              ...SNAPSHOT.threads[0]!,
+              snoozedAt: NOW,
+              githubReplySnooze: {
+                requestId: request.command.commandId,
+                url: githubUrl,
+                wakeCondition,
+                startedAt: DateTime.formatIso(NOW),
+                nextCheckAt: DateTime.formatIso(NOW),
+                status: "watching" as const,
+                failures: 0,
+                viewer: "ash",
+                baseline: { latestAt: null, ids: [] },
+              },
             },
-          },
-        ],
-      };
-      h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), confirmed);
-      expect(h.registry.get(h.visibleAtom)).toBe(confirmed);
-    }),
+          ],
+        };
+        h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), confirmed);
+        expect(h.registry.get(h.visibleAtom)).toBe(confirmed);
+      }),
   );
 
   it.effect.each(["success", "failure"] as const)(

@@ -3,6 +3,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   commonGitHubReplyConversations,
   eligibleThreadGitHubConversations,
+  githubReplyConversationsForCondition,
+  githubReplySnoozeChoice,
 } from "./githubReplyConversations.ts";
 
 const linkedAt = "2026-10-07T12:00:00.000Z";
@@ -59,6 +61,7 @@ describe("eligibleThreadGitHubConversations", () => {
         repository: "owner/repo",
         number: 12,
         title: "Closed work",
+        isOpenPullRequest: false,
       },
       {
         url: discussion.url,
@@ -66,6 +69,7 @@ describe("eligibleThreadGitHubConversations", () => {
         repository: "owner/repo",
         number: 4,
         title: "Feedback",
+        isOpenPullRequest: false,
       },
     ]);
   });
@@ -94,4 +98,64 @@ describe("eligibleThreadGitHubConversations", () => {
     expect(commonGitHubReplyConversations([both, []])).toEqual([]);
     expect(commonGitHubReplyConversations([])).toEqual([]);
   });
+});
+
+it("limits requested-changes targets to linked open GitHub PRs on every selected thread", () => {
+  const snapshot = {
+    state: "open" as const,
+    title: "Open",
+    headBranch: "work",
+    baseBranch: "main",
+    isDraft: false,
+    updatedAt: linkedAt,
+    syncedAt: linkedAt,
+  };
+  const conversations = eligibleThreadGitHubConversations({
+    pullRequests: [
+      { ...pull, snapshot },
+      {
+        ...pull,
+        number: 2,
+        url: "https://github.com/owner/repo/pull/2",
+        snapshot: { ...snapshot, state: "closed" },
+      },
+      {
+        ...pull,
+        number: 3,
+        url: "https://github.com/owner/repo/pull/3",
+        snapshot: { ...snapshot, state: "merged" },
+      },
+      { ...pull, number: 4, url: "https://github.com/owner/repo/pull/4", snapshot: null },
+      {
+        ...pull,
+        number: 5,
+        url: "https://github.com/owner/repo/pull/5",
+        snapshot,
+        source: "stack-dismissed",
+      },
+      {
+        ...pull,
+        number: 6,
+        url: "https://ghe.example/owner/repo/pull/6",
+        host: "ghe.example",
+        snapshot,
+      },
+    ],
+    discussions: [discussion],
+  });
+  expect(
+    githubReplyConversationsForCondition(conversations, "changes-requested").map(
+      (item) => item.url,
+    ),
+  ).toEqual([pull.url]);
+  expect(githubReplyConversationsForCondition(conversations)).toHaveLength(5);
+  const closedElsewhere = eligibleThreadGitHubConversations({
+    pullRequests: [{ ...pull, snapshot: { ...snapshot, state: "closed" } }],
+  });
+  const shared = commonGitHubReplyConversations([conversations, closedElsewhere]);
+  expect(shared).toHaveLength(1);
+  expect(githubReplyConversationsForCondition(shared, "changes-requested")).toEqual([]);
+  expect(
+    githubReplySnoozeChoice(`snooze:github:changes-requested:${discussion.url}`, conversations),
+  ).toBeUndefined();
 });

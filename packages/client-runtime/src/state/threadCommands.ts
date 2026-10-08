@@ -453,6 +453,7 @@ export function createThreadEnvironmentAtoms<R, E>(
                   requestId:
                     input.commandId ?? CommandId.make(`optimistic:${DateTime.toEpochMillis(now)}`),
                   url: input.url,
+                  wakeCondition: input.wakeCondition ?? input.resumeFrom?.wakeCondition,
                   startedAt: DateTime.formatIso(now),
                   nextCheckAt: DateTime.formatIso(now),
                   status: "pending",

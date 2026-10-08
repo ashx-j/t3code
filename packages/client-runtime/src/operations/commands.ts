@@ -110,7 +110,11 @@ export interface ReorderActiveThreadInput extends ThreadCommandInput {
 export type SnoozeThreadInput = ThreadCommandInput &
   (
     | { readonly snoozedUntil: string }
-    | { readonly url: string; readonly resumeFrom?: GitHubReplySnooze }
+    | {
+        readonly url: string;
+        readonly wakeCondition?: GitHubReplySnooze["wakeCondition"];
+        readonly resumeFrom?: GitHubReplySnooze;
+      }
   );
 
 export interface UnsnoozeThreadInput extends ThreadCommandInput {
@@ -527,6 +531,7 @@ export const snoozeThread = Effect.fn("EnvironmentCommands.snoozeThread")(functi
       ? {
           type: "thread.github-reply.snooze" as const,
           url: input.url,
+          ...(input.wakeCondition === undefined ? {} : { wakeCondition: input.wakeCondition }),
           ...(input.resumeFrom === undefined ? {} : { resumeFrom: input.resumeFrom }),
         }
       : { type: "thread.snooze" as const, snoozedUntil: input.snoozedUntil }),

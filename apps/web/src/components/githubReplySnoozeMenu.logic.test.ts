@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { GitHubReplyConversation } from "@t3tools/client-runtime/github-reply-conversations";
-import { githubReplySnoozeChoice, githubReplySnoozeMenuItem } from "./githubReplySnoozeMenu.logic";
+import {
+  githubReplySnoozeChoice,
+  type GitHubReplyConversation,
+} from "@t3tools/client-runtime/github-reply-conversations";
+import { githubReplySnoozeMenuItem } from "./githubReplySnoozeMenu.logic";
 
 const pull: GitHubReplyConversation = {
   url: "https://github.com/owner/repo/pull/1",
@@ -8,6 +11,7 @@ const pull: GitHubReplyConversation = {
   repository: "owner/repo",
   number: 1,
   title: "A fix",
+  isOpenPullRequest: true,
 };
 const discussion: GitHubReplyConversation = {
   url: "https://github.com/owner/repo/discussions/1",
@@ -42,4 +46,35 @@ describe("GitHub reply snooze selection", () => {
       githubReplySnoozeChoice("snooze:github:https://github.com/other/repo/pull/4", [pull]),
     ).toBeUndefined();
   });
+});
+
+it("selects one open PR directly and several through the requested-changes submenu", () => {
+  const single = githubReplySnoozeMenuItem([pull, discussion], undefined, "changes-requested");
+  expect(single.label).toBe("Until changes are requested");
+  expect(single.children).toBeUndefined();
+  expect(githubReplySnoozeChoice(single.id, [pull, discussion])).toEqual({
+    url: pull.url,
+    wakeCondition: "changes-requested",
+  });
+  const other = { ...pull, number: 2, url: "https://github.com/owner/repo/pull/2" };
+  const several = githubReplySnoozeMenuItem(
+    [pull, other, discussion],
+    undefined,
+    "changes-requested",
+  );
+  expect(several.children).toHaveLength(2);
+  expect(githubReplySnoozeChoice(several.children![1]!.id, [pull, other, discussion])).toEqual({
+    url: other.url,
+    wakeCondition: "changes-requested",
+  });
+  expect(
+    githubReplySnoozeMenuItem(
+      [{ ...pull, isOpenPullRequest: false }, discussion],
+      undefined,
+      "changes-requested",
+    ),
+  ).toMatchObject({ disabled: true });
+  expect(
+    githubReplySnoozeChoice(single.id, [{ ...pull, isOpenPullRequest: false }]),
+  ).toBeUndefined();
 });

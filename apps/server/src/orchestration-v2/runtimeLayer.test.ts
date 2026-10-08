@@ -5891,7 +5891,130 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
 
 it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
   it.effect.each([
+    "discussion",
+    "unlinked",
+    "closed",
+    "merged",
+    "unknown-state",
+    "other-host",
+    "mismatched-identity",
+    "dismissed",
+    "unsupported-url",
+  ] as const)(
+    "rejects changes-requested snooze for %s before reading GitHub, including restored watches",
+    (scenario) =>
+      Effect.gen(function* () {
+        const projects = yield* ProjectService.ProjectService;
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const projectId = ProjectId.make(`changes-invalid:${scenario}:project`);
+        const threadId = ThreadId.make(`changes-invalid:${scenario}:thread`);
+        yield* projects.create({
+          commandId: CommandId.make(`${projectId}:create`),
+          projectId,
+          title: "Invalid target",
+          workspaceRoot: `/tmp/${projectId}`,
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`${threadId}:create`),
+          threadId,
+          projectId,
+          title: "Invalid target",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const key = {
+          host: scenario === "other-host" ? "ghe.example" : "github.com",
+          repository: scenario === "mismatched-identity" ? "other/repo" : "team/repo",
+          number: 1,
+        };
+        if (scenario !== "unlinked") {
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request.link",
+            commandId: CommandId.make(`${threadId}:link`),
+            threadId,
+            ...key,
+            url: "https://github.com/team/repo/pull/1",
+            source: scenario === "dismissed" ? "stack-dismissed" : "manual",
+          });
+          if (scenario !== "unknown-state")
+            yield* orchestrator.dispatch({
+              type: "thread.pull-request-link.sync",
+              commandId: CommandId.make(`${threadId}:sync`),
+              threadId,
+              ...key,
+              snapshot: {
+                state: scenario === "closed" || scenario === "merged" ? scenario : "open",
+                title: "PR",
+                headBranch: "work",
+                baseBranch: "main",
+                isDraft: false,
+                updatedAt: null,
+                syncedAt: DateTime.formatIso(yield* DateTime.now),
+              },
+              stack: null,
+            });
+        }
+        let reads = 0;
+        const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+          Effect.provide(
+            ThreadManagementService.layer.pipe(
+              Layer.provide(
+                Layer.succeed(GitHubReplyReader.GitHubReplyReader, {
+                  read: () =>
+                    Effect.sync(() => {
+                      reads++;
+                      return { viewer: "me", baseline: { latestAt: null, ids: [] }, reply: null };
+                    }),
+                }),
+              ),
+              Layer.provide(CommandReceiptStore.layerFromApplicationReceipts),
+              Layer.provide(ProjectStore.layer),
+            ),
+          ),
+        );
+        const command = {
+          type: "thread.github-reply.snooze" as const,
+          commandId: CommandId.make(`${threadId}:snooze`),
+          threadId,
+          url:
+            scenario === "discussion"
+              ? "https://github.com/team/repo/discussions/1"
+              : scenario === "unsupported-url"
+                ? "https://example.com/arbitrary"
+                : "https://github.com/team/repo/pull/1",
+          wakeCondition: "changes-requested" as const,
+        };
+        assert.equal((yield* service.dispatch(command).pipe(Effect.result))._tag, "Failure");
+        assert.equal(reads, 0);
+        const restored = yield* service
+          .dispatch({
+            ...command,
+            commandId: CommandId.make(`${threadId}:restore`),
+            resumeFrom: {
+              requestId: command.commandId,
+              url: command.url,
+              wakeCondition: command.wakeCondition,
+              startedAt: "2026-10-01T12:00:00Z",
+              nextCheckAt: "2026-10-01T12:00:00Z",
+              status: "watching",
+              failures: 0,
+              baseline: { latestAt: null, ids: [] },
+            },
+          })
+          .pipe(Effect.result);
+        assert.equal(restored._tag, "Failure");
+        assert.isNull((yield* orchestrator.getThreadShell(threadId))!.githubReplySnooze ?? null);
+      }),
+  );
+  it.effect.each([
     "success",
+    "changes-requested",
     "failure",
     "discussion",
     "discussion-comment",
@@ -5931,6 +6054,36 @@ it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
           createdBy: "user",
           creationSource: "web",
         });
+        if (scenario === "changes-requested") {
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request.link",
+            commandId: CommandId.make(`${threadId}:link`),
+            threadId,
+            host: "github.com",
+            repository: "team/repo",
+            number: 1,
+            url: "https://github.com/team/repo/pull/1",
+            source: "manual",
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request-link.sync",
+            commandId: CommandId.make(`${threadId}:sync`),
+            threadId,
+            host: "github.com",
+            repository: "team/repo",
+            number: 1,
+            snapshot: {
+              state: "open",
+              title: "Open PR",
+              headBranch: "work",
+              baseBranch: "main",
+              isDraft: false,
+              updatedAt: null,
+              syncedAt: DateTime.formatIso(yield* DateTime.now),
+            },
+            stack: null,
+          });
+        }
         if (scenario === "provider-completion") {
           yield* orchestrator.dispatch({
             type: "message.dispatch",
@@ -5973,6 +6126,10 @@ it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
                     Effect.gen(function* () {
                       reads++;
                       assert.isTrue(input.captureBaseline);
+                      assert.equal(
+                        input.watch.wakeCondition,
+                        scenario === "changes-requested" ? "changes-requested" : undefined,
+                      );
                       assert.equal(input.cwd, `/tmp/${projectId}`);
                       yield* Deferred.succeed(entered, undefined);
                       yield* Deferred.await(release);
@@ -5997,6 +6154,9 @@ it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
           type: "thread.github-reply.snooze" as const,
           commandId: CommandId.make(`${threadId}:snooze`),
           threadId,
+          ...(scenario === "changes-requested"
+            ? { wakeCondition: "changes-requested" as const }
+            : {}),
           url:
             scenario === "discussion"
               ? "https://github.com/team/repo/discussions/1"
@@ -6093,6 +6253,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
         const result = yield* Fiber.join(fiber);
         if (
           scenario !== "success" &&
+          scenario !== "changes-requested" &&
           scenario !== "discussion" &&
           scenario !== "discussion-comment" &&
           scenario !== "provider-completion"
@@ -6108,6 +6269,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
         assert.deepEqual(accepted.runs, latest.runs);
         const watch = accepted.thread.githubReplySnooze!;
         assert.deepEqual(watch.baseline, baseline);
+        assert.equal(watch.wakeCondition, command.wakeCondition);
         const restarted = yield* ProjectionStore.ProjectionStoreV2.pipe(
           Effect.provide(ProjectionStore.layer),
         );
@@ -6136,40 +6298,54 @@ it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
         assert.isNull((yield* restarted.getThread(threadId)).githubReplySnooze);
         const notice = (yield* restarted.getThread(threadId)).githubReplyNotice!;
         assert.equal(notice.conversationUrl, command.url);
+        assert.equal(notice.wakeCondition, command.wakeCondition);
         assert.notEqual(notice.url, notice.conversationUrl);
         yield* service.dispatch({
           type: "thread.github-reply.snooze",
           commandId: CommandId.make(`${threadId}:snooze-again`),
           threadId,
           url: notice.conversationUrl!,
+          wakeCondition: notice.wakeCondition,
         });
         assert.equal(reads, 2);
         const resnoozed = yield* restarted.getThread(threadId);
         assert.equal(resnoozed.githubReplySnooze?.url, command.url);
         assert.deepEqual(resnoozed.githubReplySnooze?.baseline, freshBaseline);
         assert.isNull(resnoozed.githubReplyNotice);
+        assert.equal(resnoozed.githubReplySnooze?.wakeCondition, command.wakeCondition);
       }),
   );
-  it.effect.each([
-    "wake",
-    "cancel",
-    "replace",
-    "undo",
-    "archive-undo",
-    "timed",
-    "settle",
-    "archive",
-    "failure",
-    "retry",
-    "rate-limit",
-  ] as const)("persists and handles %s without starting a provider turn", (scenario) =>
+  it.effect.each(
+    (
+      [
+        "wake",
+        "cancel",
+        "replace",
+        "undo",
+        "archive-undo",
+        "timed",
+        "settle",
+        "archive",
+        "failure",
+        "retry",
+        "rate-limit",
+      ] as const
+    ).flatMap((scenario) =>
+      ([undefined, "changes-requested"] as const).map((wakeCondition) => ({
+        scenario,
+        wakeCondition,
+      })),
+    ),
+  )("persists $scenario with $wakeCondition", ({ scenario, wakeCondition }) =>
     Effect.gen(function* () {
       const projects = yield* ProjectService.ProjectService;
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const projections = yield* ProjectionStore.ProjectionStoreV2;
       const workerEffects = yield* EffectWorker.OrchestrationEffectWorkerV2;
-      const projectId = ProjectId.make(`github-reply-${scenario}-project`);
-      const threadId = ThreadId.make(`github-reply-${scenario}-thread`);
+      const projectId = ProjectId.make(
+        `github-reply-${scenario}-${wakeCondition ?? "any"}-project`,
+      );
+      const threadId = ThreadId.make(`github-reply-${scenario}-${wakeCondition ?? "any"}-thread`);
       yield* projects.create({
         commandId: CommandId.make(`${projectId}:create`),
         projectId,
@@ -6190,6 +6366,36 @@ it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
         branch: null,
         worktreePath: null,
       });
+      if (wakeCondition === "changes-requested") {
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.link",
+          commandId: CommandId.make(`${threadId}:link`),
+          threadId,
+          host: "github.com",
+          repository: "team/repo",
+          number: 1,
+          url: "https://github.com/team/repo/pull/1",
+          source: "manual",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request-link.sync",
+          commandId: CommandId.make(`${threadId}:sync`),
+          threadId,
+          host: "github.com",
+          repository: "team/repo",
+          number: 1,
+          snapshot: {
+            state: "open",
+            title: "Open PR",
+            headBranch: "work",
+            baseBranch: "main",
+            isDraft: false,
+            updatedAt: null,
+            syncedAt: DateTime.formatIso(yield* DateTime.now),
+          },
+          stack: null,
+        });
+      }
       yield* workerEffects.drain();
       yield* orchestrator.dispatch({
         type: "thread.settle",
@@ -6202,6 +6408,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
         threadId,
         url: "https://github.com/team/repo/pull/1",
         resumeFrom: {
+          wakeCondition,
           requestId: CommandId.make(`${threadId}:snooze`),
           url: "https://github.com/team/repo/pull/1",
           startedAt: DateTime.formatIso(yield* DateTime.now),
@@ -6214,6 +6421,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
       });
       const saved = yield* projections.getThread(threadId);
       assert.isNotNull(saved.githubReplySnooze);
+      assert.equal(saved.githubReplySnooze?.wakeCondition, wakeCondition);
       assert.isNull(saved.snoozedUntil);
       assert.equal(saved.settledOverride, "active");
       const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
@@ -6259,7 +6467,12 @@ it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
         yield* worker.sweep;
       }).pipe(
         Effect.provide(GitHubReplySnoozeWorker.layer),
-        Effect.provideService(GitHubReplyReader.GitHubReplyReader, { read: () => read }),
+        Effect.provideService(GitHubReplyReader.GitHubReplyReader, {
+          read: ({ watch }) => {
+            assert.equal(watch.wakeCondition, wakeCondition);
+            return read;
+          },
+        }),
       );
       const fiber = yield* runSweep.pipe(Effect.forkChild);
       yield* Deferred.await(entered);
@@ -6326,6 +6539,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
       assert.deepEqual(final.providerTurns, []);
       if (scenario === "wake" || scenario === "failure") {
         assert.isNull(final.thread.githubReplySnooze);
+        assert.equal(final.thread.githubReplyNotice?.wakeCondition, wakeCondition);
         assert.equal(final.thread.githubReplyNotice?.type, scenario === "wake" ? "reply" : "error");
         assert.equal(final.thread.settledOverride, "active");
         yield* runSweep;
@@ -6340,6 +6554,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
         );
         assert.isNull(final.thread.githubReplyNotice);
       } else if (scenario === "undo" || scenario === "archive-undo") {
+        assert.equal(final.thread.githubReplySnooze?.wakeCondition, wakeCondition);
         assert.deepEqual(
           final.thread.githubReplySnooze?.baseline,
           saved.githubReplySnooze?.baseline,

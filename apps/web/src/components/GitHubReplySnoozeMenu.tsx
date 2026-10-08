@@ -1,5 +1,7 @@
 import {
   githubReplyConversationLabel,
+  githubReplyConversationsForCondition,
+  type GitHubReplySnoozeChoice,
   type GitHubReplyConversation,
 } from "@t3tools/client-runtime/github-reply-conversations";
 import { Button } from "./ui/button";
@@ -18,10 +20,15 @@ import {
 export function GitHubReplySnoozeMenuItem({
   conversations,
   onSnooze,
+  wakeCondition,
 }: {
   conversations: ReadonlyArray<GitHubReplyConversation>;
-  onSnooze: (choice: { readonly url: string }) => void;
+  onSnooze: (choice: GitHubReplySnoozeChoice) => void;
+  wakeCondition?: GitHubReplySnoozeChoice["wakeCondition"];
 }) {
+  conversations = githubReplyConversationsForCondition(conversations, wakeCondition);
+  const label =
+    wakeCondition === "changes-requested" ? "Until changes are requested" : "Until a GitHub reply";
   const only = conversations.length === 1 ? conversations[0] : undefined;
   if (conversations.length < 2) {
     return (
@@ -29,14 +36,16 @@ export function GitHubReplySnoozeMenuItem({
         disabled={!only}
         onClick={(event) => {
           event.stopPropagation();
-          if (only) onSnooze({ url: only.url });
+          if (only) onSnooze({ url: only.url, wakeCondition });
         }}
       >
         <span className="flex flex-col gap-0.5">
-          <span>Until a GitHub reply</span>
+          <span>{label}</span>
           {!only ? (
             <span className="text-xs text-muted-foreground">
-              Link a GitHub PR or discussion first
+              {wakeCondition === "changes-requested"
+                ? "Link an open GitHub PR first"
+                : "Link a GitHub PR or discussion first"}
             </span>
           ) : null}
         </span>
@@ -46,7 +55,7 @@ export function GitHubReplySnoozeMenuItem({
   return (
     <MenuSub>
       <MenuSubTrigger openOnHover={false} onClick={(event) => event.stopPropagation()}>
-        Until a GitHub reply
+        {label}
       </MenuSubTrigger>
       <MenuSubPopup animated className="max-w-80">
         {conversations.map((conversation) => (
@@ -54,7 +63,7 @@ export function GitHubReplySnoozeMenuItem({
             key={conversation.url}
             onClick={(event) => {
               event.stopPropagation();
-              onSnooze({ url: conversation.url });
+              onSnooze({ url: conversation.url, wakeCondition });
             }}
           >
             <Tooltip>
@@ -73,18 +82,32 @@ export function GitHubReplySnoozeMenuItem({
 /** Received notices preserve their original scope; older notices choose from saved links. */
 export function GitHubReplySnoozeButton({
   conversationUrl,
+  wakeCondition,
   conversations,
   pending,
   onSnooze,
 }: {
   conversationUrl?: string | null;
+  wakeCondition?: GitHubReplySnoozeChoice["wakeCondition"];
   conversations: ReadonlyArray<GitHubReplyConversation>;
   pending: boolean;
   onSnooze: (url: string) => void;
 }) {
+  conversations = githubReplyConversationsForCondition(conversations, wakeCondition);
+  const originalUrl =
+    wakeCondition === "changes-requested"
+      ? conversations.find(
+          (conversation) =>
+            conversation.url.toLowerCase() === conversationUrl?.split("#")[0]?.toLowerCase(),
+        )?.url
+      : conversationUrl;
   const directUrl =
-    conversationUrl ?? (conversations.length === 1 ? conversations[0]?.url : undefined);
-  if (!directUrl && conversations.length === 0) {
+    conversationUrl == null
+      ? conversations.length === 1
+        ? conversations[0]?.url
+        : undefined
+      : originalUrl;
+  if ((conversationUrl != null && !originalUrl) || (!directUrl && conversations.length === 0)) {
     return (
       <Tooltip>
         <TooltipTrigger render={<span className="inline-flex" />}>
@@ -92,7 +115,11 @@ export function GitHubReplySnoozeButton({
             Snooze
           </Button>
         </TooltipTrigger>
-        <TooltipPopup>Link a GitHub PR or discussion first</TooltipPopup>
+        <TooltipPopup>
+          {wakeCondition === "changes-requested"
+            ? "Link an open GitHub PR first"
+            : "Link a GitHub PR or discussion first"}
+        </TooltipPopup>
       </Tooltip>
     );
   }

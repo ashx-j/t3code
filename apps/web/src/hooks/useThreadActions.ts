@@ -9,7 +9,10 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { githubReplySnoozeFailureMessage } from "@t3tools/client-runtime/github-reply-conversations";
+import {
+  githubReplySnoozeFailureMessage,
+  type GitHubReplySnoozeChoice,
+} from "@t3tools/client-runtime/github-reply-conversations";
 import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import { EnvironmentId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
@@ -913,13 +916,17 @@ export function useThreadActions() {
   );
 
   const snoozeThread = useCallback(
-    async (target: ScopedThreadRef, snoozedUntil: string | { readonly url: string }) => {
+    async (target: ScopedThreadRef, snoozedUntil: string | GitHubReplySnoozeChoice) => {
       // Version skew: never send the command to a server that predates it.
       if (
         !readEnvironmentSupportsSnooze(target.environmentId) ||
         (typeof snoozedUntil !== "string" &&
           appAtomRegistry.get(environmentServerConfigsAtom).get(target.environmentId)?.environment
-            .capabilities.threadGitHubReplySnooze !== true)
+            .capabilities.threadGitHubReplySnooze !== true) ||
+        (typeof snoozedUntil !== "string" &&
+          snoozedUntil.wakeCondition === "changes-requested" &&
+          appAtomRegistry.get(environmentServerConfigsAtom).get(target.environmentId)?.environment
+            .capabilities.threadGitHubChangesRequestedSnooze !== true)
       ) {
         return AsyncResult.failure(
           Cause.fail(

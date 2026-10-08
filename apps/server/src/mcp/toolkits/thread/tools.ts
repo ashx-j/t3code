@@ -31,7 +31,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   description:
-    "Pin, snooze, settle, archive, or mark a thread unread. Omit threadId for this thread. snooze requires snoozedUntil. snooze_until_github_reply requires conversationUrl, a github.com PR or discussion URL. Use it only when asked to wait for feedback. New comments by other accounts return the thread to the inbox without running an agent. PR issue comments are flat; a discussion comment anchor watches its replies. Open, merged and closed PRs are supported. Existing thread lifecycle rules apply; this does not schedule a future action.",
+    "Pin, snooze, settle, archive, or mark a thread unread. Omit threadId for this thread. snooze requires snoozedUntil. snooze_until_github_reply requires conversationUrl, a github.com PR or discussion URL. Use it only when asked to wait for feedback. New comments by other accounts return the thread to the inbox without running an agent. PR issue comments are flat; a discussion comment anchor watches its replies. Open, merged and closed PRs are supported for reply snooze. snooze_until_changes_requested requires conversationUrl for a linked open github.com PR and waits only for a new submitted CHANGES_REQUESTED review by another account, including reviews with no text. It has no deadline and does not run an agent. Existing thread lifecycle rules apply; this does not schedule a future action.",
   parameters: Schema.Struct({
     threadId: Schema.optional(ThreadId),
     action: Schema.Literals([
@@ -39,6 +39,7 @@ const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
       "unpin",
       "snooze",
       "snooze_until_github_reply",
+      "snooze_until_changes_requested",
       "unsnooze",
       "settle",
       "unsettle",

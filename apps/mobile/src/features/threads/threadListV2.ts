@@ -511,7 +511,9 @@ export function buildThreadListV2ListItems(input: {
 }): ThreadListV2ListItem[] {
   const threadItems = input.items.map((item): ThreadListV2ListItem => {
     const snoozeWakeLabelText = item.thread.githubReplySnooze
-      ? "Until GitHub reply"
+      ? item.thread.githubReplySnooze.wakeCondition === "changes-requested"
+        ? "Until change request"
+        : "Until reply"
       : item.snoozed && item.thread.snoozedUntil != null && input.snoozeLabelNow !== undefined
         ? snoozeWakeLabel(item.thread.snoozedUntil, { now: input.snoozeLabelNow })
         : undefined;

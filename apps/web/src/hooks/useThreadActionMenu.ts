@@ -1,7 +1,10 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
-import { eligibleThreadGitHubConversations } from "@t3tools/client-runtime/github-reply-conversations";
-import { githubReplySnoozeChoice } from "../components/githubReplySnoozeMenu.logic";
+import {
+  eligibleThreadGitHubConversations,
+  githubReplySnoozeChoice,
+} from "@t3tools/client-runtime/github-reply-conversations";
+
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
@@ -27,6 +30,7 @@ import {
   readEnvironmentSupportsSettlement,
   readEnvironmentSupportsSnooze,
   readEnvironmentSupportsGitHubReplySnooze,
+  readEnvironmentSupportsGitHubChangesRequestedSnooze,
   readEnvironmentSupportsTitleRegeneration,
   readThreadShell,
   useProjects,
@@ -140,6 +144,9 @@ export function useThreadActionMenu(input: {
           autoSettleOptOut: readEnvironmentSupportsAutoSettleOptOut(threadRef.environmentId),
           snooze: readEnvironmentSupportsSnooze(threadRef.environmentId),
           githubReplySnooze: readEnvironmentSupportsGitHubReplySnooze(threadRef.environmentId),
+          githubChangesRequestedSnooze: readEnvironmentSupportsGitHubChangesRequestedSnooze(
+            threadRef.environmentId,
+          ),
           pinning: readEnvironmentSupportsPinning(threadRef.environmentId),
           titleRegeneration: readEnvironmentSupportsTitleRegeneration(threadRef.environmentId),
         };
