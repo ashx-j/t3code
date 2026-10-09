@@ -1,6 +1,7 @@
 import {
   DiscussionOperationError,
   McpCapabilityUnavailableError,
+  OrchestratorMcpFailure,
   PositiveInt,
   ThreadDiscussionLink,
   ThreadId,
@@ -11,10 +12,12 @@ import * as Tool from "effect/ai/Tool";
 import * as Toolkit from "effect/ai/Toolkit";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as ThreadDiscussionMcpService from "../../ThreadDiscussionMcpService.ts";
+import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
   ThreadDiscussionMcpService.ThreadDiscussionMcpService,
+  ThreadManagement.ThreadManagementService,
 ];
 const target = Schema.Struct({
   threadId: Schema.optional(
@@ -43,7 +46,11 @@ const identity = {
   repository: Schema.String,
   number: PositiveInt,
 };
-const failure = Schema.Union([DiscussionOperationError, McpCapabilityUnavailableError]);
+const failure = Schema.Union([
+  DiscussionOperationError,
+  McpCapabilityUnavailableError,
+  OrchestratorMcpFailure,
+]);
 
 const LinkDiscussionTool = Tool.make("link_discussion", {
   description:

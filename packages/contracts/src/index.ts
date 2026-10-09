@@ -49,6 +49,7 @@ export * from "./filesystem.ts";
 export * from "./agentSessions.ts";
 export * from "./assets.ts";
 export * from "./review.ts";
+export * from "./mcpApps.ts";
 export * from "./browserImport.ts";
 export * from "./browserProfile.ts";
 export * from "./device.ts";
@@ -65,3 +66,4 @@ export * from "./secretRequest.ts";
 export * from "./githubReply.ts";
 
 export * from "./threadDiscussion.ts";
+export * from "./clientRpcPermissions.ts";

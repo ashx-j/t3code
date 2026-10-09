@@ -10,11 +10,17 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadDiscussionService from "../orchestration-v2/ThreadDiscussionService.ts";
 import { v2PullRequestThread } from "../orchestration-v2/testkit/pullRequestFixtures.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import * as ThreadDiscussionMcpService from "./ThreadDiscussionMcpService.ts";
+import * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as McpToolAccess from "./McpToolAccess.ts";
+import * as DiscussionsHandlers from "./toolkits/discussions/handlers.ts";
+import { DiscussionsToolkit } from "./toolkits/discussions/tools.ts";
 
 const threadId = ThreadId.make("caller");
 const scope: McpInvocationScope = {
@@ -85,7 +91,33 @@ const harness = Effect.fn("discussionMcpTest.harness")(function* (
       ),
     ),
   );
-  return { service, targets };
+  const toolkit = yield* DiscussionsToolkit.pipe(
+    Effect.provide(
+      McpToolAccess.HandlersLayer.layer(DiscussionsHandlers.layer).pipe(
+        Layer.provide(
+          Layer.succeed(ThreadDiscussionMcpService.ThreadDiscussionMcpService, service),
+        ),
+      ),
+    ),
+  );
+  const call = <Name extends keyof typeof DiscussionsToolkit.tools>(
+    name: Name,
+    input: Parameters<typeof toolkit.handle<Name>>[1],
+    invocation: McpInvocationScope = scope,
+  ) =>
+    toolkit.handle(name, input).pipe(
+      Stream.unwrap,
+      Stream.runCollect,
+      Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+      Effect.provideService(ThreadDiscussionMcpService.ThreadDiscussionMcpService, service),
+      Effect.provide(
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          getThreadShell: (id) =>
+            Effect.succeed(threads.find((thread) => thread.id === id) ?? null),
+        }),
+      ),
+    );
+  return { service, targets, call };
 });
 
 it.effect("uses the calling thread for link, list and unlink", () =>
@@ -123,32 +155,36 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const other = ThreadId.make("other");
-      const { service, targets } = yield* harness([thread(threadId), thread(other)]);
-      assert.include(
-        (yield* service
-          .link(scope, { threadId: other, repository: "team/repo", number: 1 })
-          .pipe(Effect.flip)).message,
-        "cannot be changed",
+      const { call, targets } = yield* harness([thread(threadId), thread(other)]);
+      assert.propertyVal(
+        yield* call("link_discussion", {
+          threadId: other,
+          repository: "team/repo",
+          number: 1,
+        }).pipe(Effect.flip),
+        "code",
+        "parent_not_active",
       );
-      assert.include(
-        (yield* service
-          .unlink(
-            { ...scope, thread: undefined },
-            { threadId: other, repository: "team/repo", number: 1 },
-          )
-          .pipe(Effect.flip)).message,
-        "cannot be changed",
+      assert.propertyVal(
+        yield* call(
+          "unlink_discussion",
+          { threadId: other, repository: "team/repo", number: 1 },
+          { ...scope, thread: undefined },
+        ).pipe(Effect.flip),
+        "code",
+        "runtime_mode_escalation_denied",
       );
       assert.deepEqual(yield* Ref.get(targets), []);
       const active = yield* harness([
         thread(threadId, { activeRunId: RunId.make("run"), runtimeMode: "approval-required" }),
         thread(other),
       ]);
-      assert.include(
-        (yield* active.service
-          .link(scope, { threadId: other, repository: "team/repo", number: 1 })
-          .pipe(Effect.flip)).message,
-        "cannot be changed",
+      assert.propertyVal(
+        yield* active
+          .call("link_discussion", { threadId: other, repository: "team/repo", number: 1 })
+          .pipe(Effect.flip),
+        "code",
+        "runtime_mode_escalation_denied",
       );
     }),
 );
@@ -156,11 +192,33 @@ it.effect(
 it.effect("allows an owned active caller to link another thread within its permissions", () =>
   Effect.gen(function* () {
     const other = ThreadId.make("other");
-    const { service, targets } = yield* harness([
+    const { call, targets } = yield* harness([
       thread(threadId, { activeRunId: RunId.make("run") }),
       thread(other),
     ]);
-    yield* service.link(scope, { threadId: other, repository: "team/repo", number: 1 });
+    yield* call("link_discussion", { threadId: other, repository: "team/repo", number: 1 });
     assert.deepEqual(yield* Ref.get(targets), [other]);
+  }),
+);
+
+it.effect("read-only clients can list links but cannot link or unlink discussions", () =>
+  Effect.gen(function* () {
+    const { call, targets } = yield* harness([thread(threadId)]);
+    const readOnly: McpInvocationScope = {
+      ...scope,
+      thread: undefined,
+      client: { sessionId: "reader", label: "Reader", access: "read-only" },
+    };
+    for (const name of ["link_discussion", "unlink_discussion"] as const) {
+      const error = yield* call(
+        name,
+        { threadId, repository: "team/repo", number: 1 },
+        readOnly,
+      ).pipe(Effect.flip);
+      assert.propertyVal(error, "code", "capability_denied");
+    }
+    assert.deepEqual(yield* Ref.get(targets), []);
+    yield* call("list_thread_discussions", { threadId }, readOnly);
+    assert.deepEqual(yield* Ref.get(targets), [threadId]);
   }),
 );

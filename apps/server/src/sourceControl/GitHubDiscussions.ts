@@ -7,7 +7,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import * as GitHubCli from "./GitHubCli.ts";
+import * as GitHubApi from "./GitHubApi.ts";
 
 const SummaryResponse = Schema.Struct({
   data: Schema.Struct({
@@ -31,9 +31,8 @@ export class GitHubDiscussions extends Context.Service<
 >()("t3/sourceControl/GitHubDiscussions") {}
 
 const make = Effect.gen(function* () {
-  const cli = yield* GitHubCli.GitHubCli;
+  const api = yield* GitHubApi.GitHubApi;
   const summary = Effect.fn("GitHubDiscussions.summary")(function* ({
-    cwd,
     url,
   }: {
     readonly cwd: string;
@@ -44,16 +43,17 @@ const make = Effect.gen(function* () {
       return yield* new DiscussionOperationError({
         message: "Use a github.com repository discussion URL.",
       });
-    const output = yield* cli
-      .query({
-        cwd,
+    const output = yield* api
+      .graphql({
+        operation: "discussionSummary",
+        allowReserve: false,
         host: "github.com",
-        document:
+        query:
           "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { discussion(number: $number) { title } } }",
         variables: { owner: target.owner, name: target.repository, number: target.number },
       })
       .pipe(Effect.mapError((cause) => new DiscussionOperationError({ message: cause.message })));
-    const result = yield* decodeSummary(output.stdout).pipe(
+    const result = yield* decodeSummary(output).pipe(
       Effect.mapError(
         () =>
           new DiscussionOperationError({

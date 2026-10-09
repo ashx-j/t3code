@@ -4,7 +4,8 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import * as GitHubCli from "./GitHubCli.ts";
+import * as GitHubApi from "./GitHubApi.ts";
+import * as SourceControlRateLimit from "./SourceControlRateLimit.ts";
 
 export class GitHubReplyReadError extends Schema.TaggedError<GitHubReplyReadError>()(
   "GitHubReplyReadError",
@@ -31,7 +32,7 @@ export class GitHubReplyReadError extends Schema.TaggedError<GitHubReplyReadErro
       case "baseline-missing":
         return "This saved GitHub snooze needs to be renewed. Snooze again to continue checking replies.";
       case "unavailable":
-        return "GitHub replies could not be checked. Check GitHub CLI sign-in and repository access, then snooze again.";
+        return "GitHub replies could not be checked. Check GitHub sign-in and repository access, then snooze again.";
     }
   }
 }
@@ -128,31 +129,40 @@ const Variables = Schema.Record(
   Schema.String,
   Schema.Union([Schema.String, Schema.Number, Schema.Null]),
 );
-const QueryKey = Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.String, Variables]));
+const QueryKey = Schema.fromJsonString(
+  Schema.Tuple([Schema.String, Schema.String, Schema.String, Variables]),
+);
 const encodeKey = Schema.encodeSync(QueryKey);
 const decodeKey = Schema.decodeUnknownEffect(QueryKey);
 const decodeResponse = Schema.decodeUnknownEffect(Schema.fromJsonString(Response));
 
 const make = Effect.gen(function* () {
-  const cli = yield* GitHubCli.GitHubCli;
+  const api = yield* GitHubApi.GitHubApi;
+  const mapApiError = (cause: GitHubApi.GitHubApiError) => {
+    const rateLimited =
+      cause._tag === "GitHubApiRateLimitError" ||
+      cause._tag === "SourceControlRateLimitPausedError";
+    return new GitHubReplyReadError({
+      reason: rateLimited ? "rate-limited" : "unavailable",
+      ...(rateLimited && cause.retryAt !== undefined ? { retryAt: cause.retryAt } : {}),
+      cause,
+    });
+  };
   const queryRaw = Effect.fn("GitHubReplyReader.query")(function* (
-    cwd: string,
+    _cwd: string,
     document: string,
     variables: Readonly<Record<string, string | number | null>>,
   ) {
-    const result = yield* cli.query({ cwd, host: "github.com", document, variables }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new GitHubReplyReadError({
-            reason: cause._tag === "GitHubCliRateLimitError" ? "rate-limited" : "unavailable",
-            ...(cause._tag === "GitHubCliRateLimitError" && cause.retryAt !== undefined
-              ? { retryAt: cause.retryAt }
-              : {}),
-            cause,
-          }),
-      ),
-    );
-    return yield* decodeResponse(result.stdout).pipe(
+    const result = yield* api
+      .graphql({
+        host: "github.com",
+        operation: "readGitHubReplies",
+        query: document,
+        variables,
+        allowReserve: false,
+      })
+      .pipe(Effect.mapError(mapApiError));
+    return yield* decodeResponse(result).pipe(
       Effect.mapError((cause) => new GitHubReplyReadError({ reason: "unavailable", cause })),
     );
   });
@@ -163,24 +173,20 @@ const make = Effect.gen(function* () {
     lookup: (key: string) =>
       decodeKey(key).pipe(
         Effect.orDie,
-        Effect.flatMap(([cwd, document, variables]) => queryRaw(cwd, document, variables)),
+        Effect.flatMap(([, cwd, document, variables]) => queryRaw(cwd, document, variables)),
       ),
   });
   const query = (
     cwd: string,
     document: string,
     variables: Readonly<Record<string, string | number | null>>,
-  ) => Cache.get(queries, encodeKey([cwd, document, variables]));
+    credentialFingerprint: string,
+  ) => Cache.get(queries, encodeKey([credentialFingerprint, cwd, document, variables]));
 
-  const read = Effect.fn("GitHubReplyReader.read")(function* ({
-    cwd,
-    watch,
-    captureBaseline = false,
-  }: {
-    readonly cwd: string;
-    readonly watch: GitHubReplySnooze;
-    readonly captureBaseline?: boolean;
-  }) {
+  const readConversation = Effect.fnUntraced(function* (
+    { cwd, watch, captureBaseline = false }: Parameters<GitHubReplyReader["Service"]["read"]>[0],
+    credentialFingerprint: string,
+  ) {
     const target = parseGitHubConversationUrl(watch.url);
     const changesRequested = watch.wakeCondition === "changes-requested";
     if (!target || (changesRequested && target.kind !== "pull"))
@@ -189,7 +195,14 @@ const make = Effect.gen(function* () {
       return yield* new GitHubReplyReadError({ reason: "baseline-missing" });
     // Setup must see fresh data. Only acknowledge snooze after this observation completes.
     // GitHub has no snapshot across connections; responses observed during setup are existing.
-    const readQuery = captureBaseline ? queryRaw : query;
+    const readQuery = (
+      cwd: string,
+      document: string,
+      variables: Readonly<Record<string, string | number | null>>,
+    ) =>
+      captureBaseline
+        ? queryRaw(cwd, document, variables)
+        : query(cwd, document, variables, credentialFingerprint);
     let baseline = (captureBaseline ? undefined : watch.baseline) ?? { latestAt: null, ids: [] };
     const existingIds = new Set(baseline.ids);
     const observe = (comment: typeof Comment.Type) => {
@@ -388,6 +401,19 @@ const make = Effect.gen(function* () {
       reply,
       baseline,
     };
+  });
+  const read = Effect.fn("GitHubReplyReader.read")(function* (
+    input: Parameters<GitHubReplyReader["Service"]["read"]>[0],
+  ) {
+    const credential = yield* api.credential("github.com").pipe(Effect.mapError(mapApiError));
+    return yield* readConversation(input, credential.fingerprint).pipe(
+      Effect.provideService(GitHubApi.PinnedGitHubCredential, {
+        host: "github.com",
+        token: credential.token,
+        credentialFingerprint: credential.fingerprint,
+      }),
+      Effect.provideService(SourceControlRateLimit.CredentialScope, credential.fingerprint),
+    );
   });
   return GitHubReplyReader.of({ read });
 });

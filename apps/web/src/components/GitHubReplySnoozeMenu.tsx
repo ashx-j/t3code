@@ -48,7 +48,7 @@ export function GitHubReplySnoozeMenuItem({
       <MenuSubTrigger openOnHover={false} onClick={(event) => event.stopPropagation()}>
         {label}
       </MenuSubTrigger>
-      <MenuSubPopup animated className="max-w-80">
+      <MenuSubPopup className="max-w-80">
         {conversations.map((conversation) => (
           <MenuItem
             key={conversation.url}

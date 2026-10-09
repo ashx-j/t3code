@@ -3,8 +3,10 @@ import { CommandId, type GitHubReplySnooze } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import * as GitHubCli from "./GitHubCli.ts";
+import * as Redacted from "effect/Redacted";
+import * as Ref from "effect/Ref";
+import * as SourceControlRateLimit from "./SourceControlRateLimit.ts";
+import * as GitHubApi from "./GitHubApi.ts";
 import * as GitHubReplyReader from "./GitHubReplyReader.ts";
 
 const watch: GitHubReplySnooze = {
@@ -48,22 +50,24 @@ const body = response({
 });
 const encode = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
-function layer(responses: ReadonlyArray<unknown>, queries: string[] = []) {
+function layer(
+  responses: ReadonlyArray<unknown>,
+  queries: string[] = [],
+  fingerprint: Effect.Effect<string> = Effect.succeed("test-credential"),
+) {
   let index = 0;
   return GitHubReplyReader.layer.pipe(
     Layer.provide(
-      Layer.mock(GitHubCli.GitHubCli)({
-        query: (input) =>
+      Layer.mock(GitHubApi.GitHubApi)({
+        credential: () =>
+          fingerprint.pipe(
+            Effect.map((fingerprint) => ({ token: Redacted.make("test-token"), fingerprint })),
+          ),
+        graphql: (input) =>
           Effect.sync(() => {
-            queries.push(input.document);
+            queries.push(input.query);
             assert.isBelow(index, responses.length, "unexpected GitHub request");
-            return {
-              exitCode: ChildProcessSpawner.ExitCode(0),
-              stdout: encode(responses[index++]),
-              stderr: "",
-              stdoutTruncated: false,
-              stderrTruncated: false,
-            };
+            return encode(responses[index++]);
           }),
       }),
     ),
@@ -562,4 +566,66 @@ it.effect("rejects a discussion for changes-requested snooze without reading Git
       .pipe(Effect.flip);
     assert.equal(error.reason, "unavailable");
   }).pipe(Effect.provide(layer([]))),
+);
+
+it.effect("does not reuse another credential's cached viewer", () =>
+  Effect.gen(function* () {
+    const fingerprint = yield* Ref.make("first-account");
+    const queries: string[] = [];
+    const reader = yield* GitHubReplyReader.GitHubReplyReader.pipe(
+      Effect.provide(
+        layer(
+          [
+            pr([]),
+            emptyReviews,
+            emptyThreads,
+            { data: { ...pr([]).data, viewer: { login: "other-account" } } },
+          ],
+          queries,
+          Ref.get(fingerprint),
+        ),
+      ),
+    );
+    const saved = { ...watch, viewer: "me" };
+    assert.isNull((yield* reader.read({ cwd: "/repo", watch: saved })).reply);
+    yield* Ref.set(fingerprint, "second-account");
+    const error = yield* reader.read({ cwd: "/repo", watch: saved }).pipe(Effect.flip);
+    assert.equal(error.reason, "account-changed");
+    assert.lengthOf(queries, 4);
+  }),
+);
+
+it.effect.each([
+  new GitHubApi.GitHubApiRateLimitError({
+    host: "github.com",
+    operation: "readGitHubReplies",
+    retryAt: 1_800_000_000_000,
+  }),
+  new SourceControlRateLimit.SourceControlRateLimitPausedError({
+    provider: "github",
+    host: "github.com",
+    retryAt: 1_800_000_000_000,
+  }),
+])("preserves GitHub quota pauses: %s", (cause) =>
+  Effect.gen(function* () {
+    const reader = yield* GitHubReplyReader.GitHubReplyReader;
+    const error = yield* reader.read({ cwd: "/repo", watch }).pipe(Effect.flip);
+    assert.equal(error.reason, "rate-limited");
+    assert.equal(error.retryAt, cause.retryAt);
+  }).pipe(
+    Effect.provide(
+      GitHubReplyReader.layer.pipe(
+        Layer.provide(
+          Layer.mock(GitHubApi.GitHubApi)({
+            credential: () =>
+              Effect.succeed({
+                token: Redacted.make("test-token"),
+                fingerprint: "test-credential",
+              }),
+            graphql: () => Effect.fail(cause),
+          }),
+        ),
+      ),
+    ),
+  ),
 );
