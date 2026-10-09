@@ -218,6 +218,33 @@ export function threadWokeAt(
   return wakeAtMs <= Date.parse(options.now) ? shell.snoozedUntil : null;
 }
 
+/** A GitHub notice remains unread until a visit covers its receipt time, including on a new thread. */
+export function threadHasUnseenGitHubReply(shell: {
+  readonly githubReplyNotice?: Pick<GitHubReplyNotice, "receivedAt"> | null | undefined;
+  readonly lastVisitedAt?: string | null | undefined;
+}): boolean {
+  const receivedAt = Date.parse(shell.githubReplyNotice?.receivedAt ?? "");
+  if (Number.isNaN(receivedAt)) return false;
+  if (!shell.lastVisitedAt) return true;
+  const visitedAt = Date.parse(shell.lastVisitedAt);
+  return Number.isNaN(visitedAt) || receivedAt > visitedAt;
+}
+
+/** Completions and GitHub wakes share the client's existing visited watermark. */
+export function threadHasUnseenActivity(shell: {
+  readonly latestRun?: Pick<SettlementRunLike, "completedAt"> | null | undefined;
+  readonly githubReplyNotice?: Pick<GitHubReplyNotice, "receivedAt"> | null | undefined;
+  readonly lastVisitedAt?: string | null | undefined;
+}): boolean {
+  if (threadHasUnseenGitHubReply(shell)) return true;
+  // Historical completions without visits stay read.
+  if (!shell.lastVisitedAt) return false;
+  const completedAt = Date.parse(shell.latestRun?.completedAt ?? "");
+  if (Number.isNaN(completedAt)) return false;
+  const visitedAt = Date.parse(shell.lastVisitedAt);
+  return Number.isNaN(visitedAt) || completedAt > visitedAt;
+}
+
 const HOUR_MS = 60 * 60 * 1_000;
 const EVENING_HOUR = 18;
 const MORNING_HOUR = 9;

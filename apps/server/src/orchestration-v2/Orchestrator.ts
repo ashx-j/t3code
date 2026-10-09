@@ -289,7 +289,10 @@ export interface OrchestratorV2Shape {
   readonly dispatch: (
     command: OrchestrationV2ServerCommand,
     /** Baseline setup uses a server-owned cursor; clients cannot supply this precondition. */
-    preconditions?: { readonly githubReplySnoozeAfterSequence: number },
+    preconditions?: {
+      readonly githubReplySnoozeAfterSequence: number;
+      readonly githubReplySnoozeRecoveryRequestId: CommandId | null;
+    },
   ) => Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error>;
   readonly searchThreadStream: (
     input: OrchestrationV2SearchThreadInput,
@@ -2922,6 +2925,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : {
                   githubReplyNotice: {
                     ...command.notice,
+                    receivedAt: DateTime.formatIso(now),
                     wakeCondition: thread.githubReplySnooze?.wakeCondition,
                     conversationUrl:
                       thread.githubReplySnooze?.url ?? command.notice.conversationUrl,
@@ -4766,12 +4770,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
         projection = yield* getProjectionWithPendingEvents(command.threadId, events);
       }
-      if (projection.thread.snoozedUntil != null || projection.thread.githubReplySnooze != null) {
+      const clearReplyResumeBlock =
+        command.createdBy === "user" && projection.thread.githubReplyAutoResumeBlockedRunId != null;
+      if (
+        projection.thread.snoozedUntil != null ||
+        projection.thread.githubReplySnooze != null ||
+        clearReplyResumeBlock
+      ) {
         const now = yield* DateTime.now;
         const thread: OrchestrationV2AppThread = {
           ...projection.thread,
           snoozedUntil: null,
           githubReplySnooze: null,
+          ...(clearReplyResumeBlock ? { githubReplyAutoResumeBlockedRunId: null } : {}),
           snoozedAt: null,
           updatedAt: now,
         };
@@ -10336,7 +10347,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             .pipe(mapDispatchError(command)),
         })
         .pipe(
-          Stream.filter(({ event }) => {
+          Stream.filter(({ event, commandId: eventCommandId }) => {
             switch (event.type) {
               case "thread.snoozed":
               case "thread.unsnoozed":
@@ -10348,6 +10359,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               case "thread.pinned":
               case "run.created":
                 return true;
+              case "thread.metadata-updated":
+                // Recovery writes carry their command ID; a rename keeps the older ID.
+                return (
+                  (event.payload.limitRecovery?.requestId ?? null) !==
+                    preconditions.githubReplySnoozeRecoveryRequestId ||
+                  (eventCommandId !== null &&
+                    event.payload.limitRecovery?.requestId === eventCommandId)
+                );
               case "message.updated":
                 return event.payload.role === "user";
               default:

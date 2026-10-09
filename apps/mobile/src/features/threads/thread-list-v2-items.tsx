@@ -24,7 +24,11 @@ import type {
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 import { AuthOrchestrationOperateScope, type EnvironmentMachineKind } from "@t3tools/contracts";
-import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  canSnooze,
+  resolveSnoozePresets,
+  threadHasUnseenGitHubReply,
+} from "@t3tools/client-runtime/state/thread-settled";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
 import { Alert, Platform, Pressable, useWindowDimensions, View } from "react-native";
@@ -630,7 +634,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   // "Done" marks a completion the user has not opened yet — same emerald
   // label as the web sidebar, sourced from the server-side visited watermark
   // so checking a thread on any device clears it everywhere.
-  const isUnread = status === "ready" && threadHasUnseenCompletion(thread);
+  const isUnread =
+    status === "ready" &&
+    threadHasUnseenCompletion({ latestRun: thread.latestRun, lastVisitedAt: thread.lastVisitedAt });
+  const showUnreadReplyDot = threadHasUnseenGitHubReply(thread);
   const workingLabel = STATUS_LABEL_BY_STATUS[status];
   const statusLabel =
     // A native /goal keeps the agent going across turns until it is met.
@@ -1026,6 +1033,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             size={11}
             tintColorClassName={rowAppearance.mutedIconTintClassName}
             type="monochrome"
+          />
+        ) : null}
+        {showUnreadReplyDot ? (
+          <View
+            accessible
+            accessibilityLabel="Unread GitHub activity"
+            className="h-1.5 w-1.5 rounded-full bg-adaptive-emerald-600-400"
           />
         ) : null}
         {statusLabel ? (

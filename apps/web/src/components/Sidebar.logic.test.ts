@@ -575,6 +575,34 @@ function makeLatestRun(overrides?: {
 }
 
 describe("hasUnseenCompletion", () => {
+  it.each(["reply", "error"] as const)(
+    "marks a %s wake unread using the authoritative visit",
+    (type) => {
+      const thread = {
+        hasActionableProposedPlan: false,
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+        interactionMode: "default" as const,
+        latestRun: null,
+        runtime: null,
+        githubReplyNotice: {
+          type,
+          receivedAt: "2026-03-09T10:06:00.000Z",
+          url: "https://github.com/team/repo/pull/1",
+          text: "Feedback",
+        },
+        lastVisitedAt: resolveThreadLastVisitedAt(
+          "2026-03-09T10:04:00.000Z",
+          "2026-03-09T10:08:00.000Z",
+        ),
+      };
+      expect(hasUnseenCompletion(thread)).toBe(true);
+      expect(
+        hasUnseenCompletion({ ...thread, lastVisitedAt: thread.githubReplyNotice.receivedAt }),
+      ).toBe(false);
+    },
+  );
+
   it("returns true when a thread completed after its last visit", () => {
     expect(
       hasUnseenCompletion({

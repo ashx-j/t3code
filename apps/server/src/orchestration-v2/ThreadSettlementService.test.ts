@@ -2,6 +2,8 @@ import { assert, describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import {
   DEFAULT_SERVER_SETTINGS,
+  CommandId,
+  RuntimeRequestId,
   ProjectId,
   EventId,
   ProviderInstanceId,
@@ -1254,6 +1256,63 @@ describe("ThreadSettlementServiceV2 single-thread sweeps", () => {
 });
 
 describe("isSnoozed", () => {
+  const replySnoozed = shell({
+    snoozedAt: at(-2 * DAY_MS),
+    snoozedUntil: null,
+    githubReplySnooze: {
+      requestId: CommandId.make("reply-watch"),
+      url: "https://github.com/team/repo/pull/1",
+      startedAt: DateTime.formatIso(at(-2 * DAY_MS)),
+      nextCheckAt: DateTime.formatIso(at(0)),
+      status: "watching",
+      failures: 0,
+    },
+  });
+  it("keeps a reply watch snoozed through completion and old failures", () => {
+    expect(ThreadSettlementService.isSnoozed(replySnoozed, NOW_MS)).toBe(true);
+    expect(
+      ThreadSettlementService.isSnoozed(
+        {
+          ...replySnoozed,
+          status: "completed",
+          latestRunCompletedAt: at(-DAY_MS),
+        },
+        NOW_MS,
+      ),
+    ).toBe(true);
+    expect(
+      ThreadSettlementService.isSnoozed(
+        {
+          ...replySnoozed,
+          status: "failed",
+          latestRunCompletedAt: at(-3 * DAY_MS),
+        },
+        NOW_MS,
+      ),
+    ).toBe(true);
+    expect(
+      ThreadSettlementService.isSnoozed(
+        {
+          ...replySnoozed,
+          status: "failed",
+          latestRunCompletedAt: at(-DAY_MS),
+        },
+        NOW_MS,
+      ),
+    ).toBe(false);
+  });
+  it.each(["command", "user_input"] as const)("wakes a reply watch for %s", (kind) => {
+    expect(
+      ThreadSettlementService.isSnoozed(
+        {
+          ...replySnoozed,
+          pendingRuntimeRequest: { id: RuntimeRequestId.make("request"), kind, createdAt: at(0) },
+        },
+        NOW_MS,
+      ),
+    ).toBe(false);
+  });
+
   const snoozed = { snoozedAt: at(-2 * DAY_MS), snoozedUntil: at(DAY_MS) };
   it("wakes for completed work after the snooze, but not an interrupted run", () => {
     expect(ThreadSettlementService.isSnoozed(shell(snoozed), NOW_MS)).toBe(true);
