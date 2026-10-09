@@ -11105,7 +11105,7 @@ export default function ChatView(props: ChatViewProps) {
         threadRef={activeThreadRef}
         url={renderedRightPanelSurface.url}
         cwd={activeThread.worktreePath ?? activeProject?.workspaceRoot ?? ""}
-        supported={serverConfig?.environment.capabilities.threadDiscussions === true}
+        supported={serverConfig?.environment.capabilities.discussionReader === true}
       />
     ) : renderedRightPanelSurface?.kind === "pull-requests" && activeThreadRef ? (
       <ThreadPullRequestsPanel threadRef={activeThreadRef} />

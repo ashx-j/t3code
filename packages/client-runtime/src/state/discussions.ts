@@ -101,15 +101,28 @@ export function createDiscussionState<R, E>(runtime: Atom.AtomRuntime<Environmen
             atom,
             AsyncResult.map((detail) => ({
               ...detail,
+              commentCount:
+                result.replyToId === null &&
+                !detail.comments.some((comment) => comment.id === result.comment.id)
+                  ? (detail.commentCount ?? detail.comments.length) + 1
+                  : detail.commentCount,
               comments:
                 result.replyToId === null
                   ? detail.comments.some((comment) => comment.id === result.comment.id)
                     ? detail.comments
-                    : [...detail.comments, { ...result.comment, replies: [] }]
+                    : [
+                        ...detail.comments,
+                        { ...result.comment, replyCount: 0, repliesTruncated: false, replies: [] },
+                      ]
                   : detail.comments.map((comment) =>
                       comment.id === result.replyToId
                         ? {
                             ...comment,
+                            replyCount: comment.replies.some(
+                              (reply) => reply.id === result.comment.id,
+                            )
+                              ? comment.replyCount
+                              : (comment.replyCount ?? comment.replies.length) + 1,
                             replies: comment.replies.some((reply) => reply.id === result.comment.id)
                               ? comment.replies
                               : [...comment.replies, result.comment],

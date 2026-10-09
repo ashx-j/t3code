@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
-import { discussionParticipants, sortDiscussionComments } from "./discussion.logic";
+import {
+  discussionHasAnchor,
+  discussionParticipants,
+  sortDiscussionComments,
+} from "./discussion.logic";
 
 const comments = [
   { id: "old", createdAt: "2026-10-01T12:00:00Z", upvoteCount: 1 },
@@ -80,5 +84,30 @@ describe("discussion participants", () => {
       "opener",
       "new-replier",
     ]);
+  });
+});
+
+describe("discussion anchor fallback", () => {
+  const url = "https://github.com/team/repo/discussions/1";
+  const detail = {
+    url,
+    comments: [
+      {
+        ...comments[0]!,
+        url: `${url}#discussioncomment-1`,
+        replies: [{ ...comments[1]!, url: `${url}#discussioncomment-2` }],
+      },
+    ],
+  };
+
+  it("keeps loaded root and reply anchors in the reader", () => {
+    expect(discussionHasAnchor(detail, "")).toBe(true);
+    expect(discussionHasAnchor(detail, "discussioncomment-1")).toBe(true);
+    expect(discussionHasAnchor(detail, "discussioncomment-2")).toBe(true);
+  });
+
+  it("requires a github fallback for anchors outside the loaded preview", () => {
+    expect(discussionHasAnchor(detail, "discussioncomment-99")).toBe(false);
+    expect(discussionHasAnchor(detail, "discussion-123")).toBe(false);
   });
 });

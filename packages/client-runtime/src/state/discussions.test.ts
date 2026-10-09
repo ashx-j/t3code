@@ -71,7 +71,11 @@ const detail: GitHubDiscussionDetail = {
   closed: false,
   isAnswered: false,
   category: null,
-  comments: [{ ...post("parent"), replies: [post("reply")] }],
+  commentCount: 100,
+  commentsTruncated: true,
+  comments: [
+    { ...post("parent"), replyCount: 30, repliesTruncated: true, replies: [post("reply")] },
+  ],
 };
 
 type DiscussionRpc =
@@ -173,6 +177,8 @@ it.effect(
         for (const input of [
           { ...target.input, body: "top" },
           { ...target.input, body: "new-reply", replyToId: "parent" },
+          { ...target.input, body: "top" },
+          { ...target.input, body: "new-reply", replyToId: "parent" },
         ]) {
           expect(
             (yield* Effect.promise(() => state.comment.run(registry, { ...target, input })))._tag,
@@ -189,6 +195,12 @@ it.effect(
         const value = Option.getOrThrow(AsyncResult.value(registry.get(atom)));
         expect(value.comments.map((comment) => comment.id)).toEqual(["parent", "top"]);
         expect(value.comments[0]?.replies.map((reply) => reply.id)).toEqual(["reply", "new-reply"]);
+        expect(value.commentCount).toBe(101);
+        expect(value.commentsTruncated).toBe(true);
+        expect(value.comments[0]?.replyCount).toBe(31);
+        expect(value.comments[0]?.repliesTruncated).toBe(true);
+        expect(value.comments[1]?.replyCount).toBe(0);
+        expect(value.comments[1]?.repliesTruncated).toBe(false);
         expect(value.reactions?.[0]?.content).toBe("heart");
         expect(value.comments[0]?.reactions?.[0]?.content).toBe("heart");
         expect(value.comments[0]?.replies[0]?.reactions?.[0]?.content).toBe("heart");

@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Redacted from "effect/Redacted";
 import * as GitHubApi from "./GitHubApi.ts";
 import * as GitHubDiscussions from "./GitHubDiscussions.ts";
 
@@ -50,8 +51,13 @@ const comment = (id: string) => ({
   viewerHasUpvoted: false,
   reactionGroups: [],
 });
-const page = <T>(nodes: ReadonlyArray<T>, cursor: string | null = null) => ({
+const page = <T>(
+  nodes: ReadonlyArray<T>,
+  cursor: string | null = null,
+  totalCount = nodes.length,
+) => ({
   nodes,
+  totalCount,
   pageInfo: { hasNextPage: cursor !== null, endCursor: cursor },
 });
 const discussion = (comments: ReturnType<typeof page>) => ({
@@ -96,8 +102,12 @@ function layer(
   return GitHubDiscussions.layer.pipe(
     Layer.provide(
       Layer.mock(GitHubApi.GitHubApi)({
+        credential: () =>
+          Effect.succeed({ token: Redacted.make("test-token"), fingerprint: "test-account" }),
         graphql: (input) =>
           Effect.gen(function* () {
+            const pinned = yield* GitHubApi.PinnedGitHubCredential;
+            assert.equal(pinned?.credentialFingerprint, "test-account");
             if (input.query.startsWith("mutation")) {
               mutations.push(input);
               if (mutationFailure) return yield* mutationFailure;
@@ -110,60 +120,47 @@ function layer(
   );
 }
 
-it.effect(
-  "reads markdown, deleted authors and every comment and reply page in the selected workspace",
-  () => {
-    const queries: Array<GitHubApi.GitHubGraphQlInput> = [];
-    return Effect.gen(function* () {
-      const reader = yield* GitHubDiscussions.GitHubDiscussions;
-      const result = yield* reader.read({ cwd: "/worktree", url });
-      assert.equal(result.body, "**Body**");
-      assert.equal(result.isAnswered, false);
-      assert.equal(result.upvoteCount, 3);
-      assert.equal(result.viewerCanUpvote, true);
-      assert.equal(result.viewerHasUpvoted, false);
-      assert.deepEqual(result.category, { name: "General", emoji: ":speech_balloon:" });
-      assert.deepEqual(result.labels, [{ name: "ideas", color: "aabbcc" }]);
-      assert.equal(result.comments[0]?.viewerCanUpvote, true);
-      assert.equal(result.comments[0]?.replies[0]?.viewerHasUpvoted, false);
-      assert.deepEqual(
-        result.comments.map((entry) => entry.id),
-        ["1", "2"],
-      );
-      assert.deepEqual(
-        result.comments[0]?.replies.map((entry) => entry.id),
-        ["3", "4"],
-      );
-      assert.isNull(result.comments[1]?.author);
-      assert.equal(result.comments[0]?.replies[1]?.body, "**Comment 4**");
-      assert.isTrue(
-        queries.every((query) => query.host === "github.com" && query.allowReserve === true),
-      );
-      assert.deepEqual(
-        queries.map((query) => query.variables?.after),
-        [null, "replies-next", "comments-next"],
-      );
-      assert.include(queries[0]!.query, "labels(first: 100) { nodes { name color } }");
-      assert.notInclude(queries[2]!.query, "labels(");
-    }).pipe(
-      Effect.provide(
-        layer(
-          [
-            discussion(
-              page(
-                [{ ...comment("1"), replies: page([comment("3")], "replies-next") }],
-                "comments-next",
-              ),
-            ),
-            { data: { node: { replies: page([comment("4")]) } } },
-            discussion(page([{ ...comment("2"), author: null, replies: page([]) }])),
-          ],
-          queries,
-        ),
-      ),
-    );
-  },
-);
+it.effect("reads one bounded preview with total counts, markdown and deleted authors", () => {
+  const queries: Array<GitHubApi.GitHubGraphQlInput> = [];
+  const roots = Array.from({ length: 20 }, (_, index) => ({
+    ...comment(String(index + 1)),
+    author: index === 1 ? null : author,
+    replies: page(
+      Array.from({ length: 5 }, (_, reply) => comment(`${index}-${reply}`)),
+      "more-replies",
+      30,
+    ),
+  }));
+  return Effect.gen(function* () {
+    const reader = yield* GitHubDiscussions.GitHubDiscussions;
+    const result = yield* reader.read({ cwd: "/worktree", url });
+    assert.equal(result.body, "**Body**");
+    assert.equal(result.isAnswered, false);
+    assert.equal(result.upvoteCount, 3);
+    assert.equal(result.viewerCanUpvote, true);
+    assert.equal(result.viewerHasUpvoted, false);
+    assert.deepEqual(result.category, { name: "General", emoji: ":speech_balloon:" });
+    assert.deepEqual(result.labels, [{ name: "ideas", color: "aabbcc" }]);
+    assert.equal(result.comments[0]?.viewerCanUpvote, true);
+    assert.equal(result.comments[0]?.replies[0]?.viewerHasUpvoted, false);
+    assert.equal(result.comments[0]?.replies[0]?.body, "**Comment 0-0**");
+    assert.isNull(result.comments[1]?.author);
+    assert.equal(result.commentCount, 100);
+    assert.equal(result.commentsTruncated, true);
+    assert.lengthOf(result.comments, 20);
+    for (const root of result.comments) {
+      assert.equal(root.replyCount, 30);
+      assert.equal(root.repliesTruncated, true);
+      assert.lengthOf(root.replies, 5);
+    }
+    assert.lengthOf(queries, 1);
+    assert.equal(queries[0]!.host, "github.com");
+    assert.equal(queries[0]!.allowReserve, true);
+    assert.include(queries[0]!.query, "comments(first: 20)");
+    assert.include(queries[0]!.query, "replies(first: 5)");
+    assert.include(queries[0]!.query, "labels(first: 100) { nodes { name color } }");
+  }).pipe(Effect.provide(layer([discussion(page(roots, "more-comments", 100))], queries)));
+});
 
 it.effect.each([null, { nodes: [] }])("reads a discussion without labels: %j", (labels) =>
   Effect.gen(function* () {
@@ -467,12 +464,6 @@ it.effect.each([
     message: "cannot upvote",
   },
   {
-    name: "locked discussion",
-    response: target({ id: "discussion-id" }, { locked: true }),
-    subjectId: "discussion-id",
-    message: "cannot upvote",
-  },
-  {
     name: "archived repository",
     response: target(
       { id: "discussion-id" },
@@ -554,15 +545,16 @@ it.effect("links with a title-only read without fetching discussion comments", (
   );
 });
 
-it.effect("fails rather than silently truncating a broken page", () =>
+it.effect("reports a complete preview when both connections fit in one page", () =>
   Effect.gen(function* () {
     const reader = yield* GitHubDiscussions.GitHubDiscussions;
-    const result = yield* reader.read({ cwd: "/repo", url }).pipe(Effect.flip);
-    assert.include(result.message, "next page");
+    const result = yield* reader.read({ cwd: "/repo", url });
+    assert.equal(result.commentCount, 1);
+    assert.equal(result.commentsTruncated, false);
+    assert.equal(result.comments[0]?.replyCount, 1);
+    assert.equal(result.comments[0]?.repliesTruncated, false);
   }).pipe(
-    Effect.provide(
-      layer([discussion({ nodes: [], pageInfo: { hasNextPage: true, endCursor: null } })]),
-    ),
+    Effect.provide(layer([discussion(page([{ ...comment("1"), replies: page([comment("2")]) }]))])),
   ),
 );
 
@@ -891,3 +883,207 @@ it.effect("bounds label candidate reads and reports truncation", () => {
     ),
   );
 });
+
+it.effect.each(["WRITE", "MAINTAIN", "ADMIN"])(
+  "allows comments on locked discussions with %s permission",
+  (viewerPermission) => {
+    const mutations: Array<GitHubApi.GitHubGraphQlInput> = [];
+    return Effect.gen(function* () {
+      const service = yield* GitHubDiscussions.GitHubDiscussions;
+      const result = yield* service.comment({ cwd: "/repo", url, body: "Maintainer reply" });
+      assert.equal(result.comment.id, "new");
+      assert.lengthOf(mutations, 1);
+    }).pipe(
+      Effect.provide(
+        layer(
+          [
+            target(null, { locked: true, repository: { isArchived: false, viewerPermission } }),
+            { data: { addDiscussionComment: { comment: comment("new") } } },
+          ],
+          [],
+          mutations,
+        ),
+      ),
+    );
+  },
+);
+
+it.effect.each([null, "READ", "TRIAGE", "WRITE", "MAINTAIN", "ADMIN"])(
+  "reports locked discussion comment permission for %s while preserving reactions and votes",
+  (viewerPermission) => {
+    const response = discussion(page([{ ...comment("1"), replies: page([comment("2")]) }]));
+    return Effect.gen(function* () {
+      const service = yield* GitHubDiscussions.GitHubDiscussions;
+      const result = yield* service.read({ cwd: "/repo", url });
+      assert.equal(
+        result.canComment,
+        ["WRITE", "MAINTAIN", "ADMIN"].includes(viewerPermission ?? ""),
+      );
+      assert.equal(result.viewerCanReact, true);
+      assert.equal(result.viewerCanUpvote, true);
+      assert.equal(result.comments[0]?.viewerCanReact, true);
+      assert.equal(result.comments[0]?.replies[0]?.viewerCanUpvote, true);
+    }).pipe(
+      Effect.provide(
+        layer([
+          {
+            data: {
+              ...response.data,
+              repository: {
+                discussion: {
+                  ...response.data.repository.discussion,
+                  locked: true,
+                  repository: { isArchived: false, viewerPermission },
+                },
+              },
+            },
+          },
+        ]),
+      ),
+    );
+  },
+);
+
+it.effect.each(["discussion", "comment", "reply"])(
+  "allows permitted reactions and votes on a locked %s for a reader",
+  (subject) => {
+    const node =
+      subject === "discussion"
+        ? { id: "discussion-id" }
+        : targetComment({
+            id: subject,
+            replyTo: subject === "reply" ? { id: "parent-id" } : null,
+          });
+    const response = target(node, {
+      locked: true,
+      repository: { isArchived: false, viewerPermission: "READ" },
+    });
+    const mutations: Array<GitHubApi.GitHubGraphQlInput> = [];
+    return Effect.gen(function* () {
+      const service = yield* GitHubDiscussions.GitHubDiscussions;
+      yield* service.setReaction({
+        cwd: "/repo",
+        url,
+        subjectId: node.id,
+        content: "heart",
+        reacted: true,
+      });
+      yield* service.setUpvote({ cwd: "/repo", url, subjectId: node.id, upvoted: true });
+      assert.lengthOf(mutations, 2);
+    }).pipe(
+      Effect.provide(
+        layer(
+          [
+            response,
+            { data: { reaction: { reactionGroups: [] } } },
+            response,
+            { data: { upvote: { subject: { upvoteCount: 4, viewerHasUpvoted: true } } } },
+          ],
+          [],
+          mutations,
+        ),
+      ),
+    );
+  },
+);
+
+it.effect(
+  "pins the original account across preflight and mutation, then uses the newly selected account next time",
+  () => {
+    const original = { token: Redacted.make("original-token"), fingerprint: "original" };
+    const replacement = { token: Redacted.make("replacement-token"), fingerprint: "replacement" };
+    let active = original;
+    let resolutions = 0;
+    const accounts: string[] = [];
+    return Effect.gen(function* () {
+      const service = yield* GitHubDiscussions.GitHubDiscussions;
+      yield* service.comment({ cwd: "/repo", url, body: "First" });
+      yield* service.comment({ cwd: "/repo", url, body: "Second" });
+      assert.equal(resolutions, 2);
+      assert.deepEqual(accounts, ["original", "original", "replacement", "replacement"]);
+    }).pipe(
+      Effect.provide(
+        GitHubDiscussions.layer.pipe(
+          Layer.provide(
+            Layer.mock(GitHubApi.GitHubApi)({
+              credential: () =>
+                Effect.sync(() => {
+                  resolutions++;
+                  return active;
+                }),
+              graphql: (input) =>
+                Effect.gen(function* () {
+                  const pinned = yield* GitHubApi.PinnedGitHubCredential;
+                  assert.isNotNull(pinned);
+                  accounts.push(pinned!.credentialFingerprint);
+                  assert.equal(
+                    Redacted.value(pinned!.token),
+                    `${pinned!.credentialFingerprint}-token`,
+                  );
+                  if (input.query.startsWith("mutation")) {
+                    return encode({ data: { addDiscussionComment: { comment: comment("new") } } });
+                  }
+                  active = replacement;
+                  return encode(target());
+                }),
+            }),
+          ),
+        ),
+      ),
+    );
+  },
+);
+
+it.effect("disables comment, reaction and vote controls throughout an archived preview", () => {
+  const response = discussion(page([{ ...comment("1"), replies: page([comment("2")]) }]));
+  return Effect.gen(function* () {
+    const service = yield* GitHubDiscussions.GitHubDiscussions;
+    const result = yield* service.read({ cwd: "/repo", url });
+    assert.equal(result.canComment, false);
+    for (const post of [result, result.comments[0]!, result.comments[0]!.replies[0]!]) {
+      assert.equal(post.viewerCanReact, false);
+      assert.equal(post.viewerCanUpvote, false);
+    }
+  }).pipe(
+    Effect.provide(
+      layer([
+        {
+          data: {
+            ...response.data,
+            repository: {
+              discussion: {
+                ...response.data.repository.discussion,
+                repository: { isArchived: true, viewerPermission: "ADMIN" },
+              },
+            },
+          },
+        },
+      ]),
+    ),
+  );
+});
+
+it.effect("maps credential failures to discussion errors before any request", () =>
+  Effect.gen(function* () {
+    const service = yield* GitHubDiscussions.GitHubDiscussions;
+    const error = yield* service.summary({ cwd: "/repo", url }).pipe(Effect.flip);
+    assert.equal(error._tag, "DiscussionOperationError");
+    assert.include(error.message, "GitHub refused the credential");
+  }).pipe(
+    Effect.provide(
+      GitHubDiscussions.layer.pipe(
+        Layer.provide(
+          Layer.mock(GitHubApi.GitHubApi)({
+            credential: () =>
+              Effect.fail(
+                new GitHubApi.GitHubApiAuthenticationError({
+                  host: "github.com",
+                  operation: "credential",
+                }),
+              ),
+          }),
+        ),
+      ),
+    ),
+  ),
+);

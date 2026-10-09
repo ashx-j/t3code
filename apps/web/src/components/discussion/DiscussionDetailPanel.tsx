@@ -38,6 +38,7 @@ import { DiscussionUpvoteButton } from "./DiscussionUpvoteButton";
 import { ReactionBar } from "../pullRequest/PullRequestReactions";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import {
+  discussionHasAnchor,
   discussionParticipants,
   sortDiscussionComments,
   type DiscussionCommentSort,
@@ -63,7 +64,6 @@ function DiscussionPost({
   cwd,
   selected,
   discussionUrl,
-  interactive,
   attached = false,
 }: {
   post: DiscussionPost;
@@ -71,7 +71,6 @@ function DiscussionPost({
   cwd: string;
   selected: boolean;
   discussionUrl: string;
-  interactive: boolean;
   attached?: boolean;
 }) {
   const canWrite = useAtomValue(
@@ -165,9 +164,7 @@ function DiscussionPost({
         ) : null}
         <ReactionBar
           reactions={post.reactions ?? []}
-          canReact={
-            canWrite && interactive && post.viewerCanReact === true && post.id !== undefined
-          }
+          canReact={canWrite && post.viewerCanReact === true && post.id !== undefined}
           pending={pending}
           onToggle={(content, reacted) => void react(content, reacted)}
         />
@@ -214,7 +211,11 @@ export function DiscussionDetailPanel({
     if (scroller) scroller.scrollTop = Math.max(0, scroller.scrollTop + delta);
   }, [condensed]);
   const anchor = new URL(url).hash.slice(1);
-  const detail = query.data;
+  const detail = supported ? query.data : undefined;
+  const partial =
+    detail?.commentsTruncated === true ||
+    detail?.comments.some((comment) => comment.repliesTruncated === true) === true;
+  const missingAnchor = detail != null && !discussionHasAnchor(detail, anchor);
   const discussionUrl = new URL(detail?.url ?? url);
   const repository = discussionUrl.pathname.split("/").slice(1, 3).join("/");
   const repositoryUrl = `${discussionUrl.origin}/${repository}`;
@@ -232,10 +233,13 @@ export function DiscussionDetailPanel({
     const comment = [
       ...(contentRef.current?.querySelectorAll<HTMLElement>("[data-discussion-comment]") ?? []),
     ].find((element) => element.dataset.discussionComment === anchor);
-    if (!comment) return;
+    const target =
+      comment ??
+      contentRef.current?.querySelector<HTMLElement>("[data-discussion-anchor-fallback]");
+    if (!target) return;
     focusedAnchor.current = anchor;
-    comment.scrollIntoView({ block: "center" });
-    comment.focus({ preventScroll: true });
+    target.scrollIntoView({ block: "center" });
+    target.focus({ preventScroll: true });
   }, [anchor, detail]);
   const openBrowser = () => {
     void openUrlInPreview({ threadRef, url, openPreview }).then((result) => {
@@ -511,7 +515,10 @@ export function DiscussionDetailPanel({
                     ) : null}
                   </span>
                 </PullRequestMetaRow>
-                <PullRequestMetaRow icon={<UsersIcon className="size-3.5" />} label="Participants">
+                <PullRequestMetaRow
+                  icon={<UsersIcon className="size-3.5" />}
+                  label={partial ? "Loaded participants" : "Participants"}
+                >
                   <span className="flex min-w-0 flex-wrap items-center gap-2">
                     <span className="flex items-center -space-x-1">
                       {participants.slice(0, 8).map((participant) => (
@@ -529,25 +536,44 @@ export function DiscussionDetailPanel({
                   </span>
                 </PullRequestMetaRow>
               </div>
+              {missingAnchor ? (
+                <p
+                  role="status"
+                  tabIndex={-1}
+                  data-discussion-anchor-fallback
+                  className="text-sm text-muted-foreground"
+                >
+                  The linked post is outside this preview or is no longer available.{" "}
+                  <a href={url} target="_blank" rel="noreferrer" className="text-primary underline">
+                    Open the linked post on GitHub
+                  </a>
+                </p>
+              ) : null}
               <DiscussionPost
                 post={detail}
                 threadRef={threadRef}
                 cwd={cwd}
                 selected={false}
                 discussionUrl={detail.url}
-                interactive={detail.canComment === true}
               />
               <div className="flex items-center justify-between gap-3">
-                <h3 className="text-sm font-medium">Comments ({detail.comments.length})</h3>
+                <h3 className="text-sm font-medium">
+                  Comments ({detail.commentCount ?? detail.comments.length})
+                </h3>
                 <Select
                   value={sort}
                   onValueChange={(value) => {
                     if (value === "oldest" || value === "newest" || value === "top") setSort(value);
                   }}
                 >
-                  <SelectTrigger variant="ghost" size="sm" aria-label="Sort comments">
+                  <SelectTrigger
+                    variant="ghost"
+                    size="sm"
+                    aria-label={partial ? "Sort loaded comments" : "Sort comments"}
+                  >
                     <SelectValue>
                       {sort === "oldest" ? "Oldest" : sort === "newest" ? "Newest" : "Top"}
+                      {partial ? " loaded" : ""}
                     </SelectValue>
                   </SelectTrigger>
                   <SelectPopup align="end">
@@ -557,6 +583,21 @@ export function DiscussionDetailPanel({
                   </SelectPopup>
                 </Select>
               </div>
+              {partial ? (
+                <p className="text-sm text-muted-foreground">
+                  Showing {detail.comments.length} of{" "}
+                  {detail.commentCount ?? detail.comments.length} comments. Some comments or replies
+                  are outside this preview. Sorting and participants cover loaded posts only.{" "}
+                  <a
+                    href={detail.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-primary underline"
+                  >
+                    Read all comments and replies on GitHub
+                  </a>
+                </p>
+              ) : null}
               {sortDiscussionComments(detail.comments, sort).map((comment) => (
                 <div
                   key={comment.id}
@@ -568,7 +609,6 @@ export function DiscussionDetailPanel({
                     cwd={cwd}
                     selected={new URL(comment.url).hash.slice(1) === anchor}
                     discussionUrl={detail.url}
-                    interactive={detail.canComment === true}
                     attached
                   />
                   {comment.replies.length > 0 ? (
@@ -581,10 +621,22 @@ export function DiscussionDetailPanel({
                           cwd={cwd}
                           selected={new URL(reply.url).hash.slice(1) === anchor}
                           discussionUrl={detail.url}
-                          interactive={detail.canComment === true}
                         />
                       ))}
                     </div>
+                  ) : null}
+                  {comment.repliesTruncated ? (
+                    <p className="mx-4 mb-3 text-sm text-muted-foreground">
+                      Showing {comment.replies.length} of {comment.replyCount} replies.{" "}
+                      <a
+                        href={comment.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-primary underline"
+                      >
+                        Read all replies on GitHub
+                      </a>
+                    </p>
                   ) : null}
                   {detail.canComment ? (
                     <DiscussionComposer
@@ -601,7 +653,7 @@ export function DiscussionDetailPanel({
               ) : (
                 <p className="text-sm text-muted-foreground">
                   {detail.canComment === undefined
-                    ? "Update this environment's server to comment and react here."
+                    ? "Update this environment's server to comment here."
                     : detail.locked
                       ? "This discussion is locked. Comments are unavailable."
                       : "Comments are unavailable for this discussion."}

@@ -234,7 +234,7 @@ export function useOpenChangeRequestLink(
         if (
           !resolvedThreadRef ||
           serverConfigs.get(resolvedThreadRef.environmentId)?.environment.capabilities
-            .threadDiscussions !== true
+            .discussionReader !== true
         )
           return false;
         event.preventDefault();

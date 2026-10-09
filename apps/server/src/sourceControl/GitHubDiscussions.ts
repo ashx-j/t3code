@@ -25,6 +25,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as GitHubApi from "./GitHubApi.ts";
+import * as SourceControlRateLimit from "./SourceControlRateLimit.ts";
 import {
   REACTION_GROUPS_FIELDS,
   RawReactionGroupsSchema,
@@ -47,7 +48,11 @@ const RawComment = Schema.Struct({
   viewerCanReact: Schema.Boolean,
   reactionGroups: RawReactionGroupsSchema,
 });
-const Replies = Schema.Struct({ nodes: Schema.Array(RawComment), pageInfo: PageInfo });
+const Replies = Schema.Struct({
+  nodes: Schema.Array(RawComment),
+  totalCount: NonNegativeInt,
+  pageInfo: PageInfo,
+});
 const Comment = Schema.Struct({ ...RawComment.fields, replies: Replies });
 const DiscussionMetadata = Schema.Struct({
   ...UpvoteState.fields,
@@ -69,7 +74,11 @@ const Discussion = Schema.Struct({
   labels: Schema.optional(
     Schema.NullOr(Schema.Struct({ nodes: Schema.Array(Schema.NullOr(PullRequestLabel)) })),
   ),
-  comments: Schema.Struct({ nodes: Schema.Array(Comment), pageInfo: PageInfo }),
+  comments: Schema.Struct({
+    nodes: Schema.Array(Comment),
+    totalCount: NonNegativeInt,
+    pageInfo: PageInfo,
+  }),
 });
 const Response = Schema.Struct({
   data: Schema.Struct({
@@ -77,7 +86,6 @@ const Response = Schema.Struct({
     repository: Schema.optional(
       Schema.NullOr(Schema.Struct({ discussion: Schema.NullOr(Discussion) })),
     ),
-    node: Schema.optional(Schema.NullOr(Schema.Struct({ replies: Replies }))),
   }),
 });
 const SummaryResponse = Schema.Struct({
@@ -230,12 +238,26 @@ function canEditCategory(
   );
 }
 
+function canComment(discussion: typeof DiscussionMetadata.Type) {
+  return (
+    !discussion.repository.isArchived &&
+    (!discussion.locked ||
+      ["WRITE", "MAINTAIN", "ADMIN"].includes(discussion.repository.viewerPermission ?? ""))
+  );
+}
+
 function normalizeComment(
   comment: typeof RawComment.Type,
   viewer: string | null,
+  isArchived = false,
 ): GitHubDiscussionComment {
   const { reactionGroups, ...post } = comment;
-  return { ...post, reactions: toReactions(reactionGroups, viewer) };
+  return {
+    ...post,
+    viewerCanReact: post.viewerCanReact && !isArchived,
+    viewerCanUpvote: post.viewerCanUpvote && !isArchived,
+    reactions: toReactions(reactionGroups, viewer),
+  };
 }
 
 export class GitHubDiscussions extends Context.Service<
@@ -314,71 +336,40 @@ const make = Effect.gen(function* () {
       return yield* new DiscussionOperationError({
         message: "Use a github.com repository discussion URL.",
       });
-    let after: string | null = null;
-    let detail: GitHubDiscussionDetail | undefined;
-    const comments: Array<GitHubDiscussionDetail["comments"][number]> = [];
-    const commentCursors = new Set<string>();
-    while (true) {
-      const response: typeof Response.Type = yield* query(
-        cwd,
-        `query($owner: String!, $name: String!, $number: Int!, $after: String) { viewer { login } repository(owner: $owner, name: $name) { discussion(number: $number) { ${metadataFields} number url title body author { login avatarUrl url } createdAt updatedAt closed isAnswered category { id name emoji } ${detail === undefined ? "labels(first: 100) { nodes { name color } }" : ""} comments(first: 10, after: $after) { nodes { ${commentFields} replies(first: 5) { nodes { ${commentFields} } ${pageFields} } } ${pageFields} } } } }`,
-        { owner: target.owner, name: target.repository, number: target.number, after },
-      );
-      const discussion = response.data.repository?.discussion;
-      if (!discussion)
-        return yield* new DiscussionOperationError({
-          message: "Discussion not found. Check GitHub sign-in and repository access.",
-        });
-      const viewer = response.data.viewer?.login ?? null;
-      const { repository, reactionGroups, labels, poll, viewerCanLabel, ...post } = discussion;
-      detail ??= {
-        ...post,
-        isAnswered: discussion.isAnswered ?? false,
-        canComment: !discussion.locked && !repository.isArchived,
-        canEditLabels: viewerCanLabel && !repository.isArchived,
-        canEditCategory: canEditCategory(repository, poll),
-        reactions: toReactions(reactionGroups, viewer),
-        labels: labels?.nodes.filter((label) => label !== null) ?? [],
-        comments: [],
-      };
-      for (const comment of discussion.comments.nodes) {
-        const replies = [...comment.replies.nodes];
-        let page = comment.replies;
-        const replyCursors = new Set<string>();
-        while (page.pageInfo.hasNextPage) {
-          const cursor = page.pageInfo.endCursor;
-          if (!cursor || replyCursors.has(cursor))
-            return yield* new DiscussionOperationError({
-              message: "GitHub did not return the next page of discussion replies.",
-            });
-          replyCursors.add(cursor);
-          const response: typeof Response.Type = yield* query(
-            cwd,
-            `query($id: ID!, $after: String!) { node(id: $id) { ... on DiscussionComment { replies(first: 25, after: $after) { nodes { ${commentFields} } ${pageFields} } } } }`,
-            { id: comment.id, after: cursor },
-          );
-          if (!response.data.node)
-            return yield* new DiscussionOperationError({
-              message: "A discussion comment is no longer available. Refresh the discussion.",
-            });
-          page = response.data.node.replies;
-          replies.push(...page.nodes);
-        }
-        comments.push({
-          ...normalizeComment(comment, viewer),
-          replies: replies.map((reply) => normalizeComment(reply, viewer)),
-        });
-      }
-      if (!discussion.comments.pageInfo.hasNextPage) break;
-      const cursor = discussion.comments.pageInfo.endCursor;
-      if (!cursor || commentCursors.has(cursor))
-        return yield* new DiscussionOperationError({
-          message: "GitHub did not return the next page of discussion comments.",
-        });
-      commentCursors.add(cursor);
-      after = cursor;
-    }
-    return { ...detail, comments };
+    // a bounded preview keeps both the github request and markdown rendering predictable.
+    const response = yield* query(
+      cwd,
+      `query($owner: String!, $name: String!, $number: Int!) { viewer { login } repository(owner: $owner, name: $name) { discussion(number: $number) { ${metadataFields} number url title body author { login avatarUrl url } createdAt updatedAt closed isAnswered category { id name emoji } labels(first: 100) { nodes { name color } } comments(first: 20) { totalCount nodes { ${commentFields} replies(first: 5) { totalCount nodes { ${commentFields} } ${pageFields} } } ${pageFields} } } } }`,
+      { owner: target.owner, name: target.repository, number: target.number },
+    );
+    const discussion = response.data.repository?.discussion;
+    if (!discussion)
+      return yield* new DiscussionOperationError({
+        message: "Discussion not found. Check GitHub sign-in and repository access.",
+      });
+    const viewer = response.data.viewer?.login ?? null;
+    const { repository, reactionGroups, labels, poll, viewerCanLabel, ...post } = discussion;
+    return {
+      ...post,
+      isAnswered: discussion.isAnswered ?? false,
+      canComment: canComment(discussion),
+      viewerCanReact: discussion.viewerCanReact && !repository.isArchived,
+      viewerCanUpvote: discussion.viewerCanUpvote && !repository.isArchived,
+      canEditLabels: viewerCanLabel && !repository.isArchived,
+      canEditCategory: canEditCategory(repository, poll),
+      reactions: toReactions(reactionGroups, viewer),
+      labels: labels?.nodes.filter((label) => label !== null) ?? [],
+      commentCount: discussion.comments.totalCount,
+      commentsTruncated: discussion.comments.pageInfo.hasNextPage,
+      comments: discussion.comments.nodes.map((comment) => ({
+        ...normalizeComment(comment, viewer, repository.isArchived),
+        replyCount: comment.replies.totalCount,
+        repliesTruncated: comment.replies.pageInfo.hasNextPage,
+        replies: comment.replies.nodes.map((reply) =>
+          normalizeComment(reply, viewer, repository.isArchived),
+        ),
+      })),
+    };
   });
   const summary = Effect.fn("GitHubDiscussions.summary")(function* ({
     url,
@@ -491,7 +482,7 @@ const make = Effect.gen(function* () {
           message: "Write a comment between 1 and 65,536 characters.",
         });
       const { discussion, node, viewer } = yield* target(input.cwd, input.url, input.replyToId);
-      if (discussion.locked || discussion.repository.isArchived)
+      if (!canComment(discussion))
         return yield* new DiscussionOperationError({
           message:
             "This discussion is locked or its repository is archived. Comments are unavailable.",
@@ -525,7 +516,7 @@ const make = Effect.gen(function* () {
   )(function* (input) {
     const { discussion, node, viewer } = yield* target(input.cwd, input.url, input.subjectId);
     const subject = input.subjectId === discussion.id ? discussion : node;
-    if (!subject?.viewerCanReact || discussion.locked || discussion.repository.isArchived)
+    if (!subject?.viewerCanReact || discussion.repository.isArchived)
       return yield* new DiscussionOperationError({
         message: "Your GitHub account cannot react to this discussion.",
       });
@@ -554,7 +545,7 @@ const make = Effect.gen(function* () {
   )(function* (input) {
     const { discussion, node } = yield* target(input.cwd, input.url, input.subjectId);
     const subject = input.subjectId === discussion.id ? discussion : node;
-    if (!subject?.viewerCanUpvote || discussion.locked || discussion.repository.isArchived)
+    if (!subject?.viewerCanUpvote || discussion.repository.isArchived)
       return yield* new DiscussionOperationError({
         message: "Your GitHub account cannot upvote this discussion or comment.",
       });
@@ -751,15 +742,31 @@ const make = Effect.gen(function* () {
     return { category: updated.category, isAnswered: updated.isAnswered ?? false };
   });
 
+  // keep preflight, pagination and writes on the account selected when the operation began.
+  const withCredential = <A, E, R>(operation: Effect.Effect<A, E, R>) =>
+    api.credential("github.com").pipe(
+      Effect.mapError((cause) => new DiscussionOperationError({ message: cause.message })),
+      Effect.flatMap((credential) =>
+        operation.pipe(
+          Effect.provideService(GitHubApi.PinnedGitHubCredential, {
+            host: "github.com",
+            token: credential.token,
+            credentialFingerprint: credential.fingerprint,
+          }),
+          Effect.provideService(SourceControlRateLimit.CredentialScope, credential.fingerprint),
+        ),
+      ),
+    );
+
   return GitHubDiscussions.of({
-    read,
-    summary,
-    comment,
-    setReaction,
-    setUpvote,
-    metadataOptions,
-    setLabel,
-    setCategory,
+    read: (input) => withCredential(read(input)),
+    summary: (input) => withCredential(summary(input)),
+    comment: (input) => withCredential(comment(input)),
+    setReaction: (input) => withCredential(setReaction(input)),
+    setUpvote: (input) => withCredential(setUpvote(input)),
+    metadataOptions: (input) => withCredential(metadataOptions(input)),
+    setLabel: (input) => withCredential(setLabel(input)),
+    setCategory: (input) => withCredential(setCategory(input)),
   });
 });
 

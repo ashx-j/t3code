@@ -92,9 +92,13 @@ export const GitHubDiscussionDetail = Schema.Struct({
     }),
   ),
   labels: Schema.optional(Schema.Array(PullRequestLabel)),
+  commentCount: Schema.optional(NonNegativeInt),
+  commentsTruncated: Schema.optional(Schema.Boolean),
   comments: Schema.Array(
     Schema.Struct({
       ...GitHubDiscussionComment.fields,
+      replyCount: Schema.optional(NonNegativeInt),
+      repliesTruncated: Schema.optional(Schema.Boolean),
       replies: Schema.Array(GitHubDiscussionComment),
     }),
   ),

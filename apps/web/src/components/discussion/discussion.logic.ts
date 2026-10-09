@@ -2,7 +2,7 @@ import type { GitHubDiscussionDetail } from "@t3tools/contracts";
 
 export type DiscussionCommentSort = "oldest" | "newest" | "top";
 
-/** the reader loads every comment and reply page, so all identifiable authors count. */
+/** counts identifiable authors in the loaded preview, including the discussion author. */
 export function discussionParticipants(
   detail: Pick<GitHubDiscussionDetail, "author" | "comments">,
 ) {
@@ -27,4 +27,17 @@ export function sortDiscussionComments(
     if (sort === "top") return (right.upvoteCount ?? 0) - (left.upvoteCount ?? 0) || age;
     return sort === "newest" ? -age : age;
   });
+}
+
+/** an anchor outside the preview must remain reachable through the original github link. */
+export function discussionHasAnchor(
+  detail: Pick<GitHubDiscussionDetail, "url" | "comments">,
+  anchor: string,
+) {
+  if (!anchor || new URL(detail.url).hash.slice(1) === anchor) return true;
+  return detail.comments.some(
+    (comment) =>
+      new URL(comment.url).hash.slice(1) === anchor ||
+      comment.replies.some((reply) => new URL(reply.url).hash.slice(1) === anchor),
+  );
 }
