@@ -1,5 +1,4 @@
 import {
-  eligibleThreadGitHubConversations,
   githubReplyConversationLabel,
   githubReplyConversationsForCondition,
   githubReplySnoozeFailureMessage,
@@ -14,7 +13,6 @@ import type { MenuAction } from "@react-native-menu/menu";
 import { useCallback, useRef, useState } from "react";
 import { Alert, Linking, Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/AppText";
-import { ControlPillMenu } from "../../components/ControlPill";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 
@@ -81,89 +79,20 @@ export function useGitHubReplySnooze(thread: EnvironmentThreadShell) {
 
 export function GitHubReplySnoozeCard({ thread }: { readonly thread: EnvironmentThreadShell }) {
   const unsnooze = useAtomCommand(threadEnvironment.unsnooze);
-  const { pending, snoozeUrl } = useGitHubReplySnooze(thread);
   const watch = thread.githubReplySnooze;
-  const notice = thread.githubReplyNotice;
-  const wakeCondition = watch?.wakeCondition ?? notice?.wakeCondition;
-  const conversations = githubReplyConversationsForCondition(
-    eligibleThreadGitHubConversations(thread),
-    wakeCondition,
-  );
-  const changesRequestedSupported =
-    appAtomRegistry.get(environmentServerConfigsAtom).get(thread.environmentId)?.environment
-      .capabilities.threadGitHubChangesRequestedSnooze === true;
-  if (!watch && notice?.type !== "error") return null;
-  const url = watch?.url ?? notice!.url;
-  const originalUrl =
-    wakeCondition === "changes-requested"
-      ? conversations.find(
-          (conversation) =>
-            conversation.url.toLowerCase() ===
-            notice?.conversationUrl?.split("#")[0]?.toLowerCase(),
-        )?.url
-      : notice?.conversationUrl;
-  const directUrl =
-    notice?.conversationUrl == null
-      ? conversations.length === 1
-        ? conversations[0]?.url
-        : undefined
-      : originalUrl;
-  const unavailableOriginal = notice?.conversationUrl != null && !originalUrl;
-  const snoozeButton = (
-    <Text className="font-t3-semibold">{pending ? "Snoozing..." : "Snooze"}</Text>
-  );
+  if (!watch) return null;
   return (
     <View className="mx-3 mb-2 gap-2 rounded-xl border border-border bg-background p-3">
       <Text className="font-t3-semibold">
-        {watch
-          ? wakeCondition === "changes-requested"
-            ? "Waiting for changes to be requested"
-            : "Waiting for a GitHub reply"
-          : wakeCondition === "changes-requested"
-            ? "Changes-requested snooze stopped"
-            : "GitHub reply snooze stopped"}
+        {watch.wakeCondition === "changes-requested"
+          ? "Waiting for changes to be requested"
+          : "Waiting for a GitHub reply"}
       </Text>
-      {!watch && notice?.type === "error" ? <Text>{notice.text}</Text> : null}
       <View className="flex-row items-center gap-6">
-        <Pressable accessibilityRole="link" onPress={() => void Linking.openURL(url)}>
+        <Pressable accessibilityRole="link" onPress={() => void Linking.openURL(watch.url)}>
           <Text className="text-primary-text">View</Text>
         </Pressable>
         <View className="flex-1" />
-        {!watch &&
-        notice &&
-        (wakeCondition !== "changes-requested" || changesRequestedSupported) ? (
-          directUrl ? (
-            <Pressable
-              accessibilityRole="button"
-              disabled={pending}
-              onPress={() => snoozeUrl(directUrl, wakeCondition)}
-            >
-              {snoozeButton}
-            </Pressable>
-          ) : (
-            <ControlPillMenu
-              actions={
-                conversations.length === 0 || unavailableOriginal
-                  ? [githubReplySnoozeMenuAction([], wakeCondition)]
-                  : conversations.map((conversation) => ({
-                      id: conversation.url,
-                      title: githubReplyConversationLabel(conversation),
-                    }))
-              }
-              onPressAction={({ nativeEvent }) => {
-                if (
-                  !pending &&
-                  conversations.some((conversation) => conversation.url === nativeEvent.event)
-                )
-                  snoozeUrl(nativeEvent.event, wakeCondition);
-              }}
-            >
-              <Pressable accessibilityRole="button" disabled={pending || unavailableOriginal}>
-                {snoozeButton}
-              </Pressable>
-            </ControlPillMenu>
-          )
-        ) : null}
         <Pressable
           accessibilityRole="button"
           onPress={() =>
@@ -173,7 +102,7 @@ export function GitHubReplySnoozeCard({ thread }: { readonly thread: Environment
             })
           }
         >
-          <Text>{watch ? "Wake now" : "Dismiss"}</Text>
+          <Text>Wake now</Text>
         </Pressable>
       </View>
     </View>

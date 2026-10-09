@@ -252,6 +252,6 @@ To wait again, choose the same GitHub snooze option from the thread's menu.
 The watch survives a server restart. **Wake thread**, a different snooze, settle,
 archive or delete cancels it. Sending a message also wakes the thread. The open
 thread shows whether checks are pending, active or retrying. If access fails
-repeatedly, T3 returns the thread to the inbox with an error. Rate limits pause
+repeatedly, T3 returns the thread to the inbox. Rate limits pause
 checks until GitHub permits them again. Other GitHub hosts and non-GitHub services
 are not supported.
