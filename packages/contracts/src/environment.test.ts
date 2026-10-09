@@ -97,3 +97,18 @@ describe("ExecutionEnvironmentDescriptor", () => {
     ).toBe(true);
   });
 });
+
+it("requires the separate reader capability even when discussion links are supported", () => {
+  expect(
+    decodeDescriptor({
+      ...descriptor,
+      capabilities: { ...descriptor.capabilities, threadDiscussions: true },
+    }).capabilities.discussionReader,
+  ).toBeUndefined();
+  expect(
+    decodeDescriptor({
+      ...descriptor,
+      capabilities: { ...descriptor.capabilities, threadDiscussions: true, discussionReader: true },
+    }).capabilities.discussionReader,
+  ).toBe(true);
+});

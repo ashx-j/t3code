@@ -10,6 +10,7 @@ type InputProps = Omit<InputPrimitive.Props & React.RefAttributes<HTMLInputEleme
   /** Monospace with tabular digits, for paths, commands, colors and numbers. */
   font?: "default" | "mono";
   unstyled?: boolean;
+  padding?: "default" | "none";
   nativeInput?: boolean;
 };
 
@@ -18,6 +19,7 @@ function Input({
   size = "default",
   font = "default",
   unstyled = false,
+  padding = "default",
   nativeInput = false,
   ...props
 }: InputProps) {
@@ -26,6 +28,7 @@ function Input({
     size === "compact" && "h-7 px-[calc(--spacing(2.5)-1px)] text-xs leading-7 sm:h-7 sm:leading-7",
     size === "sm" && "h-7.5 px-[calc(--spacing(2.5)-1px)] leading-7.5 sm:h-6.5 sm:leading-6.5",
     size === "lg" && "h-9.5 leading-9.5 sm:h-8.5 sm:leading-8.5",
+    padding === "none" && "px-0",
     props.type === "search" &&
       "[&::-webkit-search-cancel-button]:appearance-none [&::-webkit-search-decoration]:appearance-none [&::-webkit-search-results-button]:appearance-none [&::-webkit-search-results-decoration]:appearance-none",
     // Number fields are typed into; browser spin buttons crowd narrow fields and step by 1.
