@@ -213,12 +213,8 @@ out from the matching organization and repository.
 
 ## GitHub discussions
 
-Ask your agent to link a GitHub discussion to the thread. In web and desktop, clicking a discussion
-link opens it beside the conversation. Ctrl-click or Cmd-click opens GitHub in your external browser.
-You can post Markdown comments and replies, react, and upvote using the server's GitHub account.
-Sort comments by oldest, newest, or most upvotes.
-If your GitHub account has permission, you can also change the discussion's labels and category.
-On mobile, discussions open on GitHub.
+Ask your agent to link a GitHub discussion to its thread. Linked discussions let you
+snooze until someone replies. Open the link to read or respond on GitHub.
 
 ## GitHub stacks
 

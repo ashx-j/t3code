@@ -2,20 +2,6 @@ import {
   CommandId,
   DiscussionOperationError,
   parseGitHubConversationUrl,
-  type GitHubDiscussionMetadataOptionsInput,
-  type GitHubDiscussionMetadataOptions,
-  type GitHubDiscussionSetLabelInput,
-  type GitHubDiscussionSetLabelResult,
-  type GitHubDiscussionSetCategoryInput,
-  type GitHubDiscussionSetCategoryResult,
-  type GitHubDiscussionDetail,
-  type GitHubDiscussionDetailInput,
-  type GitHubDiscussionCommentInput,
-  type GitHubDiscussionCommentResult,
-  type GitHubDiscussionReactionInput,
-  type GitHubDiscussionReactionResult,
-  type GitHubDiscussionUpvoteInput,
-  type GitHubDiscussionUpvoteResult,
   type ThreadDiscussionLink,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -60,27 +46,6 @@ export class ThreadDiscussionService extends Context.Service<
       { readonly discussions: ReadonlyArray<ThreadDiscussionLink> },
       DiscussionOperationError
     >;
-    readonly metadataOptions: (
-      input: GitHubDiscussionMetadataOptionsInput,
-    ) => Effect.Effect<GitHubDiscussionMetadataOptions, DiscussionOperationError>;
-    readonly setLabel: (
-      input: GitHubDiscussionSetLabelInput,
-    ) => Effect.Effect<GitHubDiscussionSetLabelResult, DiscussionOperationError>;
-    readonly setCategory: (
-      input: GitHubDiscussionSetCategoryInput,
-    ) => Effect.Effect<GitHubDiscussionSetCategoryResult, DiscussionOperationError>;
-    readonly detail: (
-      input: GitHubDiscussionDetailInput,
-    ) => Effect.Effect<GitHubDiscussionDetail, DiscussionOperationError>;
-    readonly comment: (
-      input: GitHubDiscussionCommentInput,
-    ) => Effect.Effect<GitHubDiscussionCommentResult, DiscussionOperationError>;
-    readonly setReaction: (
-      input: GitHubDiscussionReactionInput,
-    ) => Effect.Effect<GitHubDiscussionReactionResult, DiscussionOperationError>;
-    readonly setUpvote: (
-      input: GitHubDiscussionUpvoteInput,
-    ) => Effect.Effect<GitHubDiscussionUpvoteResult, DiscussionOperationError>;
   }
 >()("t3/orchestration-v2/ThreadDiscussionService") {}
 
@@ -142,9 +107,6 @@ const make = Effect.gen(function* () {
         : project.value.workspaceRoot;
     return cwd;
   });
-
-  const detail = (input: GitHubDiscussionDetailInput) =>
-    workspace(input.threadId).pipe(Effect.flatMap((cwd) => reader.read({ cwd, url: input.url })));
 
   const link = Effect.fn("ThreadDiscussionService.link")(function* (input: DiscussionTargetInput) {
     const thread = yield* requireThread(input.threadId);
@@ -211,25 +173,6 @@ const make = Effect.gen(function* () {
   return ThreadDiscussionService.of({
     link,
     unlink,
-    metadataOptions: (input) =>
-      workspace(input.threadId).pipe(
-        Effect.flatMap((cwd) => reader.metadataOptions({ ...input, cwd })),
-      ),
-    setLabel: (input) =>
-      workspace(input.threadId).pipe(Effect.flatMap((cwd) => reader.setLabel({ ...input, cwd }))),
-    setCategory: (input) =>
-      workspace(input.threadId).pipe(
-        Effect.flatMap((cwd) => reader.setCategory({ ...input, cwd })),
-      ),
-    detail,
-    comment: (input) =>
-      workspace(input.threadId).pipe(Effect.flatMap((cwd) => reader.comment({ ...input, cwd }))),
-    setReaction: (input) =>
-      workspace(input.threadId).pipe(
-        Effect.flatMap((cwd) => reader.setReaction({ ...input, cwd })),
-      ),
-    setUpvote: (input) =>
-      workspace(input.threadId).pipe(Effect.flatMap((cwd) => reader.setUpvote({ ...input, cwd }))),
     list: (threadId) =>
       requireThread(threadId).pipe(
         Effect.map((thread) => ({ discussions: thread.discussions ?? [] })),

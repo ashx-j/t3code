@@ -1853,19 +1853,15 @@ code {
   display: inline-block;
 }
 
-.chat-link,
 .chat-markdown a {
   text-decoration: none;
 }
 
 /* File links are Chips and own their color and focus ring. */
-.chat-link,
 .chat-markdown a:not(.chat-markdown-file-link) {
   color: var(--info-foreground);
 }
 
-.chat-link:hover,
-.chat-link:focus-visible,
 .chat-markdown a:not(.chat-markdown-file-link):hover,
 .chat-markdown a:not(.chat-markdown-file-link):focus-visible {
   background-image: radial-gradient(circle, currentcolor 0.75px, transparent 1px);

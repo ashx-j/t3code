@@ -1,4 +1,3 @@
-import * as ThreadDiscussionService from "./orchestration-v2/ThreadDiscussionService.ts";
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
@@ -1221,7 +1220,6 @@ const layerWsRpc = (
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const secretRequests = yield* SecretRequests.SecretRequests;
-      const discussions = yield* ThreadDiscussionService.ThreadDiscussionService;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
@@ -2766,23 +2764,6 @@ const layerWsRpc = (
             ),
             { "rpc.aggregate": "pull-requests" },
           ),
-        [WS_METHODS.discussionsMetadataOptions]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.discussionsMetadataOptions,
-            discussions.metadataOptions(input),
-          ),
-        [WS_METHODS.discussionsSetLabel]: (input) =>
-          observeRpcEffect(WS_METHODS.discussionsSetLabel, discussions.setLabel(input)),
-        [WS_METHODS.discussionsSetCategory]: (input) =>
-          observeRpcEffect(WS_METHODS.discussionsSetCategory, discussions.setCategory(input)),
-        [WS_METHODS.discussionsDetail]: (input) =>
-          observeRpcEffect(WS_METHODS.discussionsDetail, discussions.detail(input)),
-        [WS_METHODS.discussionsComment]: (input) =>
-          observeRpcEffect(WS_METHODS.discussionsComment, discussions.comment(input)),
-        [WS_METHODS.discussionsSetReaction]: (input) =>
-          observeRpcEffect(WS_METHODS.discussionsSetReaction, discussions.setReaction(input)),
-        [WS_METHODS.discussionsSetUpvote]: (input) =>
-          observeRpcEffect(WS_METHODS.discussionsSetUpvote, discussions.setUpvote(input)),
         [WS_METHODS.pullRequestsDetail]: (input) =>
           observeRpcEffect(
             WS_METHODS.pullRequestsDetail,
@@ -3811,7 +3792,6 @@ export const layer = Layer.unwrap(
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
     const serverBrowser = yield* ServerBrowser.ServerBrowser;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
-    const discussions = yield* ThreadDiscussionService.ThreadDiscussionService;
     const pullRequests = yield* PullRequestService.PullRequestService;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
@@ -3874,9 +3854,6 @@ export const layer = Layer.unwrap(
               // One server-lifetime service means clients share the same PR caches, and a WS
               // mutation invalidates the HTTP diff cache that every client reads from.
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
-              Layer.provide(
-                Layer.succeed(ThreadDiscussionService.ThreadDiscussionService, discussions),
-              ),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(
