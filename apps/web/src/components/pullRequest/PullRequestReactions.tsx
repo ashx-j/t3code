@@ -25,6 +25,11 @@ import {
 const PILL_CLASS =
   "inline-flex h-6 shrink-0 items-center gap-1 rounded-full border px-2 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring";
 
+// prefer color emoji fonts over monochrome glyphs in system text fonts.
+const EMOJI_STYLE = {
+  fontFamily: '"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif',
+};
+
 const EMPTY_PENDING: ReadonlyMap<PullRequestReactionContent, boolean> = new Map();
 
 /** What the host last said, so a press in flight is forgotten the moment the real counts land. */
@@ -130,7 +135,9 @@ export function ReactionBar({
               />
             }
           >
-            <span aria-hidden>{pullRequestReactionEmoji(reaction.content)}</span>
+            <span aria-hidden style={EMOJI_STYLE}>
+              {pullRequestReactionEmoji(reaction.content)}
+            </span>
             <span className="tabular-nums">{reaction.count}</span>
           </TooltipTrigger>
           <TooltipPopup side="top">{pullRequestReactionTooltip(reaction)}</TooltipPopup>
@@ -176,7 +183,9 @@ export function ReactionBar({
                       onToggle(content, !reacted);
                     }}
                   >
-                    <span aria-hidden>{pullRequestReactionEmoji(content)}</span>
+                    <span aria-hidden style={EMOJI_STYLE}>
+                      {pullRequestReactionEmoji(content)}
+                    </span>
                   </button>
                 );
               })}

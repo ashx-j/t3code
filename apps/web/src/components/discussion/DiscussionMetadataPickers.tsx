@@ -100,12 +100,7 @@ export function DiscussionLabelPicker({ detail, threadRef }: MetadataPickerProps
               className="size-2 shrink-0 rounded-full bg-muted-foreground"
               {...(color ? { style: { backgroundColor: color } } : {})}
             />
-            <span className="min-w-0 flex-1 truncate">
-              {label.name}
-              {label.description ? (
-                <span className="text-muted-foreground"> · {label.description}</span>
-              ) : null}
-            </span>
+            <span className="min-w-0 flex-1 truncate">{label.name}</span>
             {applied.has(label.name) ? (
               <CheckIcon aria-label="Applied" className="size-3.5 shrink-0" />
             ) : null}
