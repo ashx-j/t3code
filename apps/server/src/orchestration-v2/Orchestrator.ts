@@ -2768,7 +2768,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       snoozedUntil = Option.getOrNull(parsedSnoozedUntil);
       if (command.type === "thread.github-reply.snooze") {
-        // Keep this run suppressed after the watch wakes; only an explicit send can continue it.
+        // Keep this run suppressed after wake until an explicit send or recovery request.
         githubReplyAutoResumeBlockedRunId = latestExecutedRun(projection.runs)?.id ?? null;
       }
     }
@@ -3002,10 +3002,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     snooze: command.limitRecovery.snooze ?? previousRecovery?.snooze ?? false,
                     requestId: command.commandId,
                   };
+          const explicitlyResuming =
+            command.automaticLimitRecovery !== true && command.limitRecovery?.autoResume === true;
           return {
             ...thread,
             ...(command.title === undefined ? {} : { title: command.title }),
             ...(command.limitRecovery === undefined ? {} : { limitRecovery }),
+            // Explicit recovery replaces a passive GitHub wait; automatic re-arms stay blocked.
+            ...(explicitlyResuming
+              ? {
+                  githubReplyAutoResumeBlockedRunId: null,
+                  githubReplySnooze: null,
+                  ...(thread.githubReplySnooze != null ? { snoozedAt: null } : {}),
+                }
+              : {}),
             ...(command.limitRecovery !== undefined &&
             limitRecovery?.snooze === true &&
             Date.parse(limitRecovery.resetAt) > DateTime.toEpochMillis(now)
