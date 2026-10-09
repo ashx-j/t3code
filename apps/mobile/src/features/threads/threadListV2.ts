@@ -2,6 +2,7 @@ import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests
 import {
   canSnooze,
   effectiveSnoozed,
+  threadHasUnseenActivity,
   hasQueuedTurnStart,
   QUEUED_TURN_START_GRACE_MS,
   resolveSnoozePresets,
@@ -162,24 +163,16 @@ export const THREAD_LIST_V2_SETTLED_INITIAL_COUNT = 10;
 export const THREAD_LIST_V2_SETTLED_PAGE_COUNT = 25;
 
 /**
- * Completed-but-not-yet-seen, mirroring the web sidebar's
+ * Unseen completions and GitHub wakes, mirroring the web sidebar's
  * hasUnseenCompletion. The visited watermark is server state
  * (thread.lastVisitedAt), so the marker agrees across web and mobile.
- * Never-visited threads count as read — a fresh environment must not light
- * up its whole history — and pre-tracking servers (field absent) never
- * report unread.
+ * Completion history without a visit watermark stays read. A GitHub notice
+ * counts as unread even if the thread has no runs or prior visits.
  */
 export function threadHasUnseenCompletion(
-  thread: Pick<EnvironmentThreadShell, "latestRun" | "lastVisitedAt">,
+  thread: Pick<EnvironmentThreadShell, "latestRun" | "lastVisitedAt" | "githubReplyNotice">,
 ): boolean {
-  const completedAt = thread.latestRun?.completedAt;
-  if (!completedAt) return false;
-  const completedAtMs = Date.parse(completedAt);
-  if (Number.isNaN(completedAtMs)) return false;
-  if (!thread.lastVisitedAt) return false;
-  const lastVisitedAtMs = Date.parse(thread.lastVisitedAt);
-  if (Number.isNaN(lastVisitedAtMs)) return true;
-  return completedAtMs > lastVisitedAtMs;
+  return threadHasUnseenActivity(thread);
 }
 
 export function resolveThreadListV2Status(
@@ -465,7 +458,11 @@ function resolveThreadListV2ItemTimeLabel(
   if (showSnoozeWakeLabel) return "";
   if (
     variant === "card" &&
-    (resolveThreadListV2Status(thread) !== "ready" || threadHasUnseenCompletion(thread))
+    (resolveThreadListV2Status(thread) !== "ready" ||
+      threadHasUnseenCompletion({
+        latestRun: thread.latestRun,
+        lastVisitedAt: thread.lastVisitedAt,
+      }))
   )
     return "";
   const settledTimestamp =

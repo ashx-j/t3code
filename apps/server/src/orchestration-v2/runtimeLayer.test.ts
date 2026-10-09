@@ -5338,6 +5338,10 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
     "resume",
     "queued-resume",
     "github-running",
+    "github-steer-snoozed",
+    "github-steer-woke",
+    "github-restart-snoozed",
+    "github-restart-woke",
     "github-limited",
     "github-arm-while-snoozed",
     "github-arm-after-wake",
@@ -5365,6 +5369,8 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const events = yield* EventSink.EventSinkV2;
+      const sameRunReplyMessage =
+        scenario.startsWith("github-steer-") || scenario.startsWith("github-restart-");
       const threadId = ThreadId.make(`recovery:${scenario}`);
       const projectId = ProjectId.make(`recovery:project:${scenario}`);
       yield* seedProject({
@@ -5395,7 +5401,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         messageId: MessageId.make(`recovery:message:${scenario}`),
         text: "Work on this.",
         attachments: [],
-        dispatchMode: { type: "defer_start" },
+        dispatchMode: { type: sameRunReplyMessage ? "start_immediately" : "defer_start" },
         createdBy: "user",
         creationSource: "web",
       });
@@ -5413,13 +5419,132 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         });
       }
       const projection = yield* orchestrator.getThreadProjection(threadId);
-      const run = projection.runs[0]!;
+      let run = projection.runs[0]!;
       const snoozeForReply = {
         type: "thread.github-reply.snooze" as const,
         commandId: CommandId.make(`recovery:github-snooze:${scenario}`),
         threadId,
         url: "https://github.com/team/repo/pull/1",
       };
+      if (sameRunReplyMessage) {
+        const now = yield* DateTime.now;
+        const providerThread = projection.providerThreads[0]!;
+        const providerSession = {
+          id: providerThread.providerSessionId!,
+          driver,
+          providerInstanceId: modelSelection.instanceId,
+          status: "running" as const,
+          cwd: process.cwd(),
+          model: modelSelection.model,
+          capabilities: CodexProviderCapabilitiesV2,
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        };
+        yield* events.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}:running`),
+              type: "run.updated",
+              threadId,
+              runId: run.id,
+              occurredAt: now,
+              payload: { ...run, status: "running", startedAt: now },
+            },
+            {
+              id: EventId.make(`${threadId}:session`),
+              type: "provider-session.attached",
+              threadId,
+              occurredAt: now,
+              payload: providerSession,
+            },
+            {
+              id: EventId.make(`${threadId}:turn`),
+              type: "provider-turn.updated",
+              threadId,
+              runId: run.id,
+              occurredAt: now,
+              payload: {
+                id: ProviderTurnId.make(`${threadId}:turn`),
+                providerThreadId: providerThread.id,
+                nodeId: run.rootNodeId!,
+                runAttemptId: run.activeAttemptId,
+                nativeTurnRef: null,
+                ordinal: 1,
+                status: "running",
+                startedAt: now,
+                completedAt: null,
+              },
+            },
+          ],
+        });
+        const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const sessionSpy = vi
+          .spyOn(sessions, "get")
+          .mockReturnValue(
+            Effect.succeed(Option.some({ providerSession } as ProviderAdapterV2SessionRuntime)),
+          );
+        yield* Effect.addFinalizer(() => Effect.sync(() => sessionSpy.mockRestore()));
+        yield* orchestrator.dispatch(snoozeForReply);
+        if (scenario.endsWith("-woke"))
+          yield* orchestrator.dispatch({
+            type: "thread.github-reply.sync",
+            commandId: CommandId.make(`${threadId}:reply`),
+            threadId,
+            requestId: snoozeForReply.commandId,
+            watch: null,
+            notice: {
+              type: "reply",
+              receivedAt: DateTime.formatIso(now),
+              url: snoozeForReply.url,
+              text: "Feedback",
+            },
+          });
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(threadId)).thread
+            .githubReplyAutoResumeBlockedRunId,
+          run.id,
+        );
+        const message = {
+          type: "message.dispatch" as const,
+          threadId,
+          text: "Continue with this feedback",
+          attachments: [],
+          dispatchMode: {
+            type: scenario.startsWith("github-steer-")
+              ? ("steer_active" as const)
+              : ("restart_active" as const),
+            targetRunId: run.id,
+          },
+          createdBy: "user" as const,
+          creationSource: "web" as const,
+        };
+        const rejected = yield* orchestrator
+          .dispatch({
+            ...message,
+            commandId: CommandId.make(`${threadId}:invalid-message`),
+            messageId: MessageId.make(`${threadId}:invalid-message`),
+            dispatchMode: { ...message.dispatchMode, targetRunId: RunId.make("missing-run") },
+          })
+          .pipe(Effect.result);
+        assert.equal(rejected._tag, "Failure");
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(threadId)).thread
+            .githubReplyAutoResumeBlockedRunId,
+          run.id,
+        );
+        yield* orchestrator.dispatch({
+          ...message,
+          commandId: CommandId.make(`${threadId}:explicit-message`),
+          messageId: MessageId.make(`${threadId}:explicit-message`),
+        });
+        const steered = yield* orchestrator.getThreadProjection(threadId);
+        assert.lengthOf(steered.runs, 1);
+        assert.equal(steered.runs[0]!.id, run.id);
+        assert.isNull(steered.thread.githubReplySnooze);
+        assert.isNull(steered.thread.githubReplyAutoResumeBlockedRunId);
+        run = steered.runs[0]!;
+      }
       if (scenario === "github-running") yield* orchestrator.dispatch(snoozeForReply);
       const now = yield* DateTime.now;
       const resetAt =
@@ -6034,7 +6159,8 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       assert.lengthOf(
         after.runs,
         before.runs.length +
-          (scenario === "resume" ||
+          (sameRunReplyMessage ||
+          scenario === "resume" ||
           scenario === "queued-resume" ||
           scenario === "snooze-resume" ||
           scenario === "wake-preserve-resume" ||
@@ -6046,7 +6172,8 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       assert.lengthOf(
         after.messages,
         before.messages.length +
-          (scenario === "resume" ||
+          (sameRunReplyMessage ||
+          scenario === "resume" ||
           scenario === "queued-resume" ||
           scenario === "snooze-resume" ||
           scenario === "wake-preserve-resume" ||
@@ -6222,6 +6349,9 @@ it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
     "archive",
     "delete",
     "provider-completion",
+    "resume-reset",
+    "cancel-recovery",
+    "rename-with-recovery",
   ] as const)(
     "captures the baseline before committing reply snooze and gives later user actions precedence: %s",
     (scenario) =>
@@ -6308,6 +6438,80 @@ it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
             ],
           });
         }
+        let recovery: { runId: RunId; resetAt: string; autoResume: boolean } | undefined;
+        if (
+          scenario === "resume-reset" ||
+          scenario === "cancel-recovery" ||
+          scenario === "rename-with-recovery"
+        ) {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`${threadId}:limited-work`),
+            messageId: MessageId.make(`${threadId}:limited-work`),
+            threadId,
+            text: "Original work",
+            attachments: [],
+            dispatchMode: { type: "defer_start" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+          const now = yield* DateTime.now;
+          recovery = {
+            runId: run.id,
+            resetAt: DateTime.formatIso(DateTime.add(now, { minutes: 1 })),
+            autoResume: true,
+          };
+          const sink = yield* EventSink.EventSinkV2;
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make(`${threadId}:limited`),
+                type: "run.updated",
+                threadId,
+                occurredAt: now,
+                payload: { ...run, status: "failed", completedAt: now },
+              },
+              {
+                id: EventId.make(`${threadId}:limit-error`),
+                type: "turn-item.updated",
+                threadId,
+                occurredAt: now,
+                payload: {
+                  id: TurnItemId.make(`${threadId}:limit-error`),
+                  type: "error",
+                  threadId,
+                  runId: run.id,
+                  nodeId: run.rootNodeId,
+                  providerThreadId: null,
+                  providerTurnId: null,
+                  nativeItemRef: null,
+                  parentItemId: null,
+                  ordinal: 2,
+                  status: "failed",
+                  title: "Usage limit reached",
+                  startedAt: now,
+                  completedAt: now,
+                  updatedAt: now,
+                  failure: {
+                    class: "usage_limit",
+                    message: "Plan limit reached.",
+                    code: "usageLimitExceeded",
+                    retryable: null,
+                    resetAt: recovery.resetAt,
+                  },
+                },
+              },
+            ],
+          });
+          if (scenario !== "resume-reset")
+            yield* orchestrator.dispatch({
+              type: "thread.metadata.update",
+              commandId: CommandId.make(`${threadId}:existing-recovery`),
+              threadId,
+              limitRecovery: recovery,
+            });
+        }
         const entered = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
         let reads = 0;
@@ -6366,6 +6570,23 @@ it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
           (yield* orchestrator.getThreadProjection(threadId)).thread.githubReplySnooze ?? null,
         );
         switch (scenario) {
+          case "resume-reset":
+          case "cancel-recovery":
+            yield* orchestrator.dispatch({
+              type: "thread.metadata.update",
+              commandId: CommandId.make(`${threadId}:later-recovery`),
+              threadId,
+              limitRecovery: scenario === "cancel-recovery" ? null : recovery!,
+            });
+            break;
+          case "rename-with-recovery":
+            yield* orchestrator.dispatch({
+              type: "thread.metadata.update",
+              commandId: CommandId.make(`${threadId}:rename`),
+              threadId,
+              title: "Renamed while fetching baseline",
+            });
+            break;
           case "timed":
             yield* orchestrator.dispatch({
               type: "thread.snooze",
@@ -6452,6 +6673,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
           scenario !== "changes-requested" &&
           scenario !== "discussion" &&
           scenario !== "discussion-comment" &&
+          scenario !== "rename-with-recovery" &&
           scenario !== "provider-completion"
         ) {
           assert.equal(result._tag, "Failure");
@@ -6726,6 +6948,16 @@ it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
           resumeFrom: saved.githubReplySnooze!,
         });
       }
+      if (scenario === "wake" || scenario === "failure") {
+        yield* TestClock.adjust("1 second");
+        yield* orchestrator.dispatch({
+          type: "thread.visit",
+          commandId: CommandId.make(`${threadId}:visit-during-poll`),
+          threadId,
+          visitedAt: DateTime.formatIso(yield* DateTime.now),
+        });
+        yield* TestClock.adjust("1 second");
+      }
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.join(fiber);
       yield* workerEffects.drain();
@@ -6734,6 +6966,14 @@ it.layer(layerSharedApplicationDataPlaneTest)("GitHub reply snooze", (it) => {
       assert.deepEqual(final.messages, []);
       assert.deepEqual(final.providerTurns, []);
       if (scenario === "wake" || scenario === "failure") {
+        assert.equal(
+          final.thread.githubReplyNotice?.receivedAt,
+          DateTime.formatIso(yield* DateTime.now),
+        );
+        assert.isAbove(
+          Date.parse(final.thread.githubReplyNotice!.receivedAt),
+          DateTime.toEpochMillis(final.thread.lastVisitedAt!),
+        );
         assert.isNull(final.thread.githubReplySnooze);
         assert.equal(final.thread.githubReplyNotice?.wakeCondition, wakeCondition);
         assert.equal(final.thread.githubReplyNotice?.type, scenario === "wake" ? "reply" : "error");

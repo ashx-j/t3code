@@ -604,7 +604,10 @@ const make = Effect.gen(function* () {
               : { discussionCommentId: observed.discussionCommentId }),
           },
         },
-        { githubReplySnoozeAfterSequence: snapshotSequence },
+        {
+          githubReplySnoozeAfterSequence: snapshotSequence,
+          githubReplySnoozeRecoveryRequestId: thread.limitRecovery?.requestId ?? null,
+        },
       );
     }
     return yield* orchestrator.dispatch(command);
