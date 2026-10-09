@@ -9,6 +9,12 @@ import { WS_METHODS } from "./rpc.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
+  [WS_METHODS.discussionsSetLabel]: AuthSourceControlWriteScope,
+  [WS_METHODS.discussionsSetCategory]: AuthSourceControlWriteScope,
+  [WS_METHODS.discussionsComment]: AuthSourceControlWriteScope,
+  [WS_METHODS.discussionsSetReaction]: AuthSourceControlWriteScope,
+  [WS_METHODS.discussionsSetUpvote]: AuthSourceControlWriteScope,
+
   [WS_METHODS.pullRequestsRunAction]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsUpdate]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsComment]: AuthSourceControlWriteScope,

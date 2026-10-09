@@ -127,6 +127,33 @@ describe("rightPanelStore", () => {
     expect(useClosedViewStore.getState().entries).toHaveLength(1);
   });
 
+  it("reuses a discussion tab for new comment anchors and keeps other threads separate", () => {
+    const store = useRightPanelStore.getState();
+    const url = "https://github.com/owner/repo/discussions/1";
+    store.openDiscussion(refA, url, 1);
+    store.openDiscussion(refA, `${url}#discussioncomment-42`, 1);
+    store.openDiscussion(refB, url, 1);
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces).toEqual([
+      {
+        id: `discussion:${url}`,
+        kind: "discussion",
+        url: `${url}#discussioncomment-42`,
+        number: 1,
+      },
+    ]);
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refB)?.kind,
+    ).toBe("discussion");
+    store.closeSurface(refA, state.activeSurfaceId!);
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
+    ).toBeNull();
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refB),
+    ).not.toBeNull();
+  });
+
   it("gives each host/device its own tab and preserves renamed tabs", () => {
     const store = useRightPanelStore.getState();
     const android = {

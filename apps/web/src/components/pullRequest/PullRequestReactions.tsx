@@ -25,6 +25,11 @@ import {
 const PILL_CLASS =
   "inline-flex h-6 shrink-0 items-center gap-1 rounded-full border px-2 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring";
 
+// prefer color emoji fonts over monochrome glyphs in system text fonts.
+const EMOJI_STYLE = {
+  fontFamily: '"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif',
+};
+
 const EMPTY_PENDING: ReadonlyMap<PullRequestReactionContent, boolean> = new Map();
 
 /** What the host last said, so a press in flight is forgotten the moment the real counts land. */
@@ -53,7 +58,6 @@ export function PullRequestReactionBar({
   readonly onRefresh: () => void;
   readonly className?: string | undefined;
 }) {
-  const [pickerOpen, setPickerOpen] = useState(false);
   const [pending, setPending] = useState<{
     readonly signature: string;
     readonly values: ReadonlyMap<PullRequestReactionContent, boolean>;
@@ -89,11 +93,31 @@ export function PullRequestReactionBar({
     onRefresh();
   };
 
-  if (shown.length === 0 && !canReact) return null;
+  return (
+    <ReactionBar reactions={shown} canReact={canReact} onToggle={toggle} className={className} />
+  );
+}
+
+/** shared reaction controls; callers own posting and pending state. */
+export function ReactionBar({
+  reactions,
+  canReact,
+  onToggle,
+  pending = false,
+  className,
+}: {
+  readonly reactions: ReadonlyArray<PullRequestReaction>;
+  readonly canReact: boolean;
+  readonly onToggle: (content: PullRequestReactionContent, reacted: boolean) => void;
+  readonly pending?: boolean;
+  readonly className?: string | undefined;
+}) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  if (reactions.length === 0 && !canReact) return null;
 
   return (
     <div className={cn("flex min-w-0 max-w-full flex-wrap items-center gap-1", className)}>
-      {shown.map((reaction) => (
+      {reactions.map((reaction) => (
         <Tooltip key={reaction.content}>
           <TooltipTrigger
             render={
@@ -101,7 +125,7 @@ export function PullRequestReactionBar({
                 type="button"
                 aria-pressed={reaction.viewerHasReacted}
                 aria-label={`${pullRequestReactionName(reaction.content)}, ${reaction.count}`}
-                disabled={!canReact}
+                disabled={!canReact || pending}
                 className={cn(
                   PILL_CLASS,
                   reaction.viewerHasReacted
@@ -109,11 +133,13 @@ export function PullRequestReactionBar({
                     : "border-border/70 bg-muted/40 text-muted-foreground",
                   canReact ? "hover:border-primary/60" : "cursor-default",
                 )}
-                onClick={() => void toggle(reaction.content, !reaction.viewerHasReacted)}
+                onClick={() => onToggle(reaction.content, !reaction.viewerHasReacted)}
               />
             }
           >
-            <span aria-hidden>{pullRequestReactionEmoji(reaction.content)}</span>
+            <span aria-hidden style={EMOJI_STYLE}>
+              {pullRequestReactionEmoji(reaction.content)}
+            </span>
             <span className="tabular-nums">{reaction.count}</span>
           </TooltipTrigger>
           <TooltipPopup side="top">{pullRequestReactionTooltip(reaction)}</TooltipPopup>
@@ -127,6 +153,7 @@ export function PullRequestReactionBar({
               <button
                 type="button"
                 aria-label="Add a reaction"
+                disabled={pending}
                 className={cn(
                   PILL_CLASS,
                   "border-border/70 px-1.5 text-muted-foreground hover:border-primary/60 hover:text-foreground",
@@ -140,23 +167,27 @@ export function PullRequestReactionBar({
             <div className="flex items-center gap-0.5">
               {PULL_REQUEST_REACTION_ORDER.map((content) => {
                 const reacted =
-                  shown.find((reaction) => reaction.content === content)?.viewerHasReacted ?? false;
+                  reactions.find((reaction) => reaction.content === content)?.viewerHasReacted ??
+                  false;
                 return (
                   <button
                     key={content}
                     type="button"
                     aria-pressed={reacted}
                     aria-label={pullRequestReactionName(content)}
+                    disabled={pending}
                     className={cn(
                       "flex size-7 items-center justify-center rounded-md text-base outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
                       reacted && "bg-primary/10",
                     )}
                     onClick={() => {
                       setPickerOpen(false);
-                      void toggle(content, !reacted);
+                      onToggle(content, !reacted);
                     }}
                   >
-                    <span aria-hidden>{pullRequestReactionEmoji(content)}</span>
+                    <span aria-hidden style={EMOJI_STYLE}>
+                      {pullRequestReactionEmoji(content)}
+                    </span>
                   </button>
                 );
               })}

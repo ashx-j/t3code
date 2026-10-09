@@ -303,8 +303,10 @@ function MenuSubPopup({
   sideOffset = 0,
   alignOffset,
   align = "start",
+  animated = false,
   ...props
 }: MenuPrimitive.Popup.Props & {
+  animated?: boolean;
   align?: MenuPrimitive.Positioner.Props["align"];
   sideOffset?: MenuPrimitive.Positioner.Props["sideOffset"];
   alignOffset?: MenuPrimitive.Positioner.Props["alignOffset"];
@@ -315,7 +317,11 @@ function MenuSubPopup({
     <MenuPopup
       align={align}
       alignOffset={alignOffset ?? defaultAlignOffset}
-      className={className}
+      className={cn(
+        animated &&
+          "transition-[opacity,transform] duration-150 ease-out data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0 motion-reduce:transition-none",
+        className,
+      )}
       data-slot="menu-sub-content"
       side="inline-end"
       sideOffset={sideOffset}

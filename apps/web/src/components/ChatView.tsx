@@ -96,6 +96,7 @@ import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import { useAcknowledgeThreadWoke, useThreadActions } from "../hooks/useThreadActions";
 import { useOpenChangeRequestLink } from "../lib/openPullRequestLink";
+import { DiscussionDetailPanel } from "./discussion/DiscussionDetailPanel";
 import {
   deriveProviderSubagentStatus,
   deriveReportedModelSelection,
@@ -7843,6 +7844,7 @@ export default function ChatView(props: ChatViewProps) {
       {
         id: `branch-mismatch:${activeBranchMismatchKey}`,
         variant: "info",
+        layout: "inline",
         icon: <GitBranchIcon />,
         title: (
           <span className="flex min-w-0 items-baseline gap-1.5">
@@ -11096,6 +11098,14 @@ export default function ChatView(props: ChatViewProps) {
             ? addPullRequestsSurface
             : undefined
         }
+      />
+    ) : renderedRightPanelSurface?.kind === "discussion" && activeThreadRef ? (
+      <DiscussionDetailPanel
+        key={renderedRightPanelSurface.id}
+        threadRef={activeThreadRef}
+        url={renderedRightPanelSurface.url}
+        cwd={activeThread.worktreePath ?? activeProject?.workspaceRoot ?? ""}
+        supported={serverConfig?.environment.capabilities.threadDiscussions === true}
       />
     ) : renderedRightPanelSurface?.kind === "pull-requests" && activeThreadRef ? (
       <ThreadPullRequestsPanel threadRef={activeThreadRef} />

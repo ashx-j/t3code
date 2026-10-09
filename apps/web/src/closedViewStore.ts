@@ -83,6 +83,12 @@ const isClosedViewEntry = (entry: unknown): entry is ClosedViewEntry => {
             typeof surface.target.name === "string" &&
             (surface.target.platform === "ios" || surface.target.platform === "android")))
       );
+    case "discussion":
+      return (
+        typeof surface.url === "string" &&
+        Number.isSafeInteger(surface.number) &&
+        surface.number > 0
+      );
     case "pull-request":
       return (
         typeof surface.projectId === "string" &&

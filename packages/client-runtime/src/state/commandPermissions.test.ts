@@ -261,3 +261,33 @@ it.effect("rejects protected unary and streamed RPCs outside a guarded command",
     expect(writes).toBe(0);
   }),
 );
+
+it.effect.each([
+  WS_METHODS.discussionsSetLabel,
+  WS_METHODS.discussionsSetCategory,
+  WS_METHODS.discussionsComment,
+  WS_METHODS.discussionsSetReaction,
+  WS_METHODS.discussionsSetUpvote,
+])("requires source control write access for %s", (method) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const registry = yield* setup;
+      const permissions = createCommandPermissions(runtime, method);
+      registry.set(sessions(env), AsyncResult.success(grant(true)));
+      expect(registry.get(permissions.permissionAtom(env))).toBe(false);
+      expect(
+        (yield* permissions.authorize(registry, env).pipe(Effect.flip)).requiredPermission,
+      ).toBe(AuthSourceControlWriteScope);
+      registry.set(
+        sessions(env),
+        AsyncResult.success({
+          ...grant(false),
+          scopes: [AuthSourceControlWriteScope],
+          permissions: [AuthSourceControlWriteScope],
+        }),
+      );
+      expect(registry.get(permissions.permissionAtom(env))).toBe(true);
+      yield* permissions.authorize(registry, env);
+    }),
+  ),
+);
