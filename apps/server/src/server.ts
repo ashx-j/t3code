@@ -1,3 +1,5 @@
+import * as ThreadDiscussionService from "./orchestration-v2/ThreadDiscussionService.ts";
+import * as GitHubDiscussions from "./sourceControl/GitHubDiscussions.ts";
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
 import * as Clock from "effect/Clock";
 import * as Random from "effect/Random";
@@ -698,6 +700,7 @@ const layerMakeRoutes = Layer.mergeAll(
     Layer.provide(McpOAuth.layerMcpClientAuthenticator),
   ),
 ).pipe(
+  Layer.provide(ThreadDiscussionService.layer.pipe(Layer.provide(GitHubDiscussions.layer))),
   // Both transports consume the same service instance, so caches single-flight across clients
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP.
   Layer.provide(layerPullRequestService),

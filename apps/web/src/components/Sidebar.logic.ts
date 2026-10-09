@@ -1,6 +1,9 @@
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
-import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
+import {
+  threadPullRequestSearchTerms,
+  visibleThreadPullRequests,
+} from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
 import {
   isAtomCommandInterrupted,
@@ -14,6 +17,7 @@ import type { AsyncResult } from "effect/reactivity";
 import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
 import {
   effectiveSnoozed,
+  threadHasUnseenActivity,
   type ThreadSnoozeShell,
 } from "@t3tools/client-runtime/state/thread-settled";
 import {
@@ -45,6 +49,23 @@ export function shouldNavigateAfterThreadPark(input: {
 
 const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
+
+export function resolveSidebarDiscussionBadge(
+  thread: Pick<
+    SidebarThreadSummary,
+    "discussions" | "pullRequests" | "linkedPullRequest" | "branchPullRequest"
+  >,
+) {
+  if (
+    thread.discussions?.length !== 1 ||
+    visibleThreadPullRequests(thread.pullRequests).length > 0 ||
+    thread.linkedPullRequest != null ||
+    thread.branchPullRequest != null
+  ) {
+    return null;
+  }
+  return thread.discussions[0] ?? null;
+}
 
 export function resolveSidebarRowAccessibility(input: {
   readonly title: string;
@@ -657,6 +678,7 @@ type ThreadStatusInput = Pick<
   | "runtime"
 > & {
   lastVisitedAt?: string | null | undefined;
+  githubReplyNotice?: SidebarThreadSummary["githubReplyNotice"];
   pendingBackgroundTasks?: SidebarThreadSummary["pendingBackgroundTasks"] | undefined;
 };
 
@@ -771,14 +793,7 @@ export function resolveThreadLastVisitedAt(
 }
 
 export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
-  if (!thread.latestRun?.completedAt) return false;
-  const completedAt = Date.parse(thread.latestRun.completedAt);
-  if (Number.isNaN(completedAt)) return false;
-  if (!thread.lastVisitedAt) return false;
-
-  const lastVisitedAt = Date.parse(thread.lastVisitedAt);
-  if (Number.isNaN(lastVisitedAt)) return true;
-  return completedAt > lastVisitedAt;
+  return threadHasUnseenActivity(thread);
 }
 
 export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null): boolean {

@@ -1,3 +1,5 @@
+import * as GitHubReplySnoozeWorker from "./GitHubReplySnoozeWorker.ts";
+import * as GitHubReplyReader from "../sourceControl/GitHubReplyReader.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as Layer from "effect/Layer";
@@ -240,7 +242,14 @@ const layerAgentSessionImporterProvided = AgentSessionImporter.layer.pipe(
 );
 
 const layerThreadManagementProvided = ThreadManagementService.layerWithLegacyImporter.pipe(
-  Layer.provide(Layer.merge(layerOrchestratorProvided, layerLegacyV1ThreadImporterProvided)),
+  Layer.provide(
+    Layer.mergeAll(
+      layerOrchestratorProvided,
+      layerLegacyV1ThreadImporterProvided,
+      layerCommandReceiptStoreProvided,
+      ProjectStore.layer,
+    ),
+  ),
 );
 export const layerProjectSetupScriptRunner = ProjectSetupScriptRunner.layer.pipe(
   Layer.provide(layerProjectService),
@@ -349,10 +358,23 @@ export const layerProduction = Layer.mergeAll(
   layerThreadLifecycleProvided,
   layerScheduledTaskProvided,
   layerSecretRequestsProvided,
+  GitHubReplySnoozeWorker.layerScheduled.pipe(
+    Layer.provide(
+      GitHubReplySnoozeWorker.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(ProjectionStore.layer, ProjectStore.layer, layerThreadManagementProvided),
+        ),
+      ),
+    ),
+  ),
   UsageLimitRecoveryWorker.layer.pipe(
     Layer.provide(Layer.mergeAll(ProjectionStore.layer, layerThreadManagementProvided)),
   ),
   layerProviderContinuationWorkerProvided,
   layerAgentSessionImporterProvided,
   EffectOutbox.layerPruneWorker.pipe(Layer.provide(EffectOutbox.layer)),
-).pipe(Layer.provide(Scheduler.layer), Layer.provideMerge(layerEventInfrastructure));
+).pipe(
+  Layer.provide(GitHubReplyReader.layer),
+  Layer.provide(Scheduler.layer),
+  Layer.provideMerge(layerEventInfrastructure),
+);

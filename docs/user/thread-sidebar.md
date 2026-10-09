@@ -231,3 +231,33 @@ Choose **Snooze → Custom…** from a thread's menu to pick a date and time in 
 local time zone, or a duration in minutes, hours, or days. Durations start when
 you confirm; one day means 24 hours. On web and desktop, you can also snooze
 several selected threads together. Choose **Wake thread** to bring a thread back early.
+
+To wait for feedback on GitHub, choose **Snooze → Until a GitHub reply**. T3 uses the
+thread's linked github.com PRs and discussions. With one linked conversation,
+snooze starts immediately; with several, choose one from the menu. Ask your agent
+to link a discussion or PR first if none is linked. Open, merged and closed PRs
+all work. You can also ask your agent to snooze the thread for a conversation URL.
+T3 reads existing replies before hiding the thread. Replies observed during setup
+count as existing. If the check fails, T3 does not apply the snooze.
+
+T3 checks from the thread's environment using its configured GitHub credentials,
+usually every two minutes. New comments, submitted reviews and inline review
+replies from other accounts bring the thread back.
+Your own comments, existing comments, edits, reactions, CI changes and merge state
+do not wake it. PR links watch the whole PR conversation. A discussion link watches
+its comments and replies; a discussion comment link limits the watch to that
+comment's reply thread. No agent starts or replies when feedback arrives. A running
+agent can finish its current turn while the thread waits.
+
+Choose **Snooze → Until changes are requested** to wait for a formal GitHub
+"Request changes" review on a linked open PR. Comments, inline replies, approvals
+and your own reviews do not wake it. A newly submitted review counts even when
+its text is empty or its draft predates the snooze. There is no time limit.
+
+To wait again, choose the same GitHub snooze option from the thread's menu.
+
+The watch survives a server restart. **Wake thread**, a different snooze, settle,
+archive or delete cancels it. Sending a message also wakes the thread. If access fails
+repeatedly, T3 returns the thread to the inbox. Rate limits pause
+checks until GitHub permits them again. Other GitHub hosts and non-GitHub services
+are not supported.

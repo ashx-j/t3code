@@ -301,6 +301,22 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       }
       let command: OrchestrationV2Command;
       switch (input.action) {
+        case "snooze_until_github_reply":
+        case "snooze_until_changes_requested":
+          if (input.conversationUrl === undefined)
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: `${input.action} requires conversationUrl.`,
+            });
+          command = {
+            ...common,
+            type: "thread.github-reply.snooze",
+            url: input.conversationUrl,
+            ...(input.action === "snooze_until_changes_requested"
+              ? { wakeCondition: "changes-requested" as const }
+              : {}),
+          };
+          break;
         case "snooze":
           if (input.snoozedUntil === undefined) {
             return yield* new OrchestratorMcpFailure({

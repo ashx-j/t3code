@@ -903,6 +903,37 @@ describe("pull request tool presentation", () => {
   });
 });
 
+describe("discussion tool presentation", () => {
+  it("recognizes discussion calls across provider identities without claiming another integration", () => {
+    const entries = [
+      { label: "mcp__t3_code__link_discussion" },
+      { label: "T3-code · unlink_discussion" },
+      { label: "MCP tool call", toolData: { server: "t3-code", tool: "list_thread_discussions" } },
+    ].map((entry, index): WorkLogPresentationEntry => ({
+      ...entry,
+      id: String(index),
+      createdAt: "2026-10-07T00:00:00.000Z",
+      tone: "tool",
+      itemType: "dynamic_tool",
+      toolLifecycleStatus: "completed",
+    }));
+    expect(entries.map((entry) => resolveWorkEntryToolPresentation(entry)?.icon)).toEqual([
+      "discussion",
+      "discussion",
+      "discussion",
+    ]);
+    expect(toolGroupSummaryKind(entries)).toBe("discussion");
+    expect(summarizeToolGroup([entries[0]!, entries[2]!]).summary).toBe(
+      "Linked 1 discussion and checked linked discussions",
+    );
+    expect(
+      resolveWorkEntryToolPresentation({
+        label: "mcp__another-server__link_discussion",
+      }),
+    ).toBeNull();
+  });
+});
+
 describe("device group summaries", () => {
   const deviceEntry = (tool: string): WorkLogPresentationEntry => ({
     id: tool,

@@ -10,6 +10,15 @@ import {
 } from "./chat/threadContextDrag";
 import { discardComposerDraft } from "../lib/discardComposerDraft";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
+import {
+  commonGitHubReplyConversations,
+  githubReplySnoozeChoice,
+  eligibleThreadGitHubConversations,
+  type GitHubReplyConversation,
+  type GitHubReplySnoozeChoice,
+} from "@t3tools/client-runtime/github-reply-conversations";
+import { GitHubReplySnoozeMenuItem } from "./GitHubReplySnoozeMenu";
+import { githubReplySnoozeMenuItem } from "./githubReplySnoozeMenu.logic";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { useAtomValue } from "@effect/atom-react";
@@ -95,8 +104,10 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type TransitionEvent as ReactTransitionEvent,
   type ReactNode,
 } from "react";
+import { flushSync } from "react-dom";
 import { useParams, useRouter } from "@tanstack/react-router";
 
 import { useRightPanelStore } from "../rightPanelStore";
@@ -201,6 +212,7 @@ import {
   resolveSidebarDropTarget,
   resolveSidebarDropVerb,
   resolveSidebarThreadSection,
+  resolveSidebarDiscussionBadge,
   resolveSidebarRowAccessibility,
   type SidebarDropVerb,
   resolveSidebarThreadStatus,
@@ -247,7 +259,7 @@ import {
   type TerminalStatusIndicator,
   useLinkedThreadPullRequest,
 } from "./ThreadStatusIndicators";
-import { resolveSnoozePresets, snoozeWakeLabel, type SnoozePreset } from "./Sidebar.snooze";
+import { resolveSnoozePresets, snoozeWakeLabel } from "./Sidebar.snooze";
 import { ProjectFavicon, type ProjectFaviconProject } from "./ProjectFavicon";
 import { ThreadSearchMatchExcerpt } from "./ThreadSearchMatch";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
@@ -274,6 +286,7 @@ import {
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
+import { SidebarThreadDiscussionBadge } from "./sidebar/SidebarThreadDiscussionBadge";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { MiddleTruncate } from "./ui/middle-truncate";
@@ -565,15 +578,20 @@ function SidebarThreadTooltip({
   );
 }
 
+type SnoozeChoice = { readonly snoozedUntil: string } | GitHubReplySnoozeChoice;
+
 /**
  * Hover entry point for snooze: a clock button opening the preset menu.
  * Controlled by the row (which also uses the open state to pin its hover
  * actions while the menu is up).
  */
 function SnoozeMenuButton(props: {
+  githubReplySnoozeSupported: boolean;
+  githubChangesRequestedSnoozeSupported: boolean;
+  githubConversations: ReadonlyArray<GitHubReplyConversation>;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSnooze: (preset: Pick<SnoozePreset, "snoozedUntil">) => void;
+  onSnooze: (preset: SnoozeChoice) => void;
   timestampFormat: TimestampFormat;
 }) {
   const { open, onOpenChange, onSnooze, timestampFormat } = props;
@@ -618,6 +636,22 @@ function SnoozeMenuButton(props: {
             <MenuShortcut>{preset.whenLabel}</MenuShortcut>
           </MenuItem>
         ))}
+        {props.githubReplySnoozeSupported ? (
+          <>
+            <MenuSeparator />
+            <GitHubReplySnoozeMenuItem
+              conversations={props.githubConversations}
+              onSnooze={onSnooze}
+            />
+            {props.githubChangesRequestedSnoozeSupported ? (
+              <GitHubReplySnoozeMenuItem
+                conversations={props.githubConversations}
+                onSnooze={onSnooze}
+                wakeCondition="changes-requested"
+              />
+            ) : null}
+          </>
+        ) : null}
         <MenuSeparator />
         <MenuItem
           onClick={async (event) => {
@@ -1111,6 +1145,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   settlementSupported: boolean;
   // Same contract for thread.snooze/unsnooze.
   snoozeSupported: boolean;
+  githubReplySnoozeSupported: boolean;
+  githubChangesRequestedSnoozeSupported: boolean;
   // Renders the pin glyph. Pinned cards keep the full settle/snooze quick
   // actions: settling clears the pin server-side, and snoozing hides the
   // card until wake with the pin intact underneath. The glyph is also the
@@ -1163,7 +1199,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     event: PointerEvent,
   ) => void;
   onUnsettle: (threadRef: ScopedThreadRef) => void;
-  onSnooze: (threadRef: ScopedThreadRef, preset: Pick<SnoozePreset, "snoozedUntil">) => void;
+  onSnooze: (threadRef: ScopedThreadRef, preset: SnoozeChoice) => void;
   onUnsnooze: (threadRef: ScopedThreadRef) => void;
   onUnpin: (threadRef: ScopedThreadRef) => void;
   onAcknowledgeWoke: (threadRef: ScopedThreadRef, visitedAt: string) => void;
@@ -1258,8 +1294,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     ? resolveThreadCurrentPullRequestLink(thread.pullRequests)
     : null;
 
-  // Same semantics as the legacy sidebar (never-visited counts as read):
-  // switching sidebars must not light up every historical thread as unread.
+  // Historical completions without visits stay read; new GitHub notices still count as unread.
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
   const status = resolveSidebarThreadStatus(thread);
   const isInFlight =
@@ -1346,6 +1381,52 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                       }
                     : null;
   const isWokeStatus = topStatus?.icon === "woke";
+  const hasSnoozeWakeLabel = variantAction === "unsnooze" && props.snoozeWakeLabelText !== null;
+  const [snoozeLayoutMoving, setSnoozeLayoutMoving] = useState(false);
+  const snoozeSlotRef = useRef<HTMLSpanElement | null>(null);
+  const activeSnoozeTransitions = useRef(new Set<string>());
+  const handleSnoozePointerEntry = useCallback(() => {
+    if (!hasSnoozeWakeLabel || snoozeLayoutMoving) return;
+    for (const animation of snoozeSlotRef.current?.getAnimations() ?? []) {
+      if (
+        animation instanceof CSSTransition &&
+        animation.playState === "running" &&
+        (animation.transitionProperty === "margin-left" ||
+          animation.transitionProperty === "grid-template-columns")
+      ) {
+        activeSnoozeTransitions.current.add(animation.transitionProperty);
+      }
+    }
+    if (activeSnoozeTransitions.current.size > 0) {
+      // block the badge before its hover handler runs, even before transitionrun is delivered.
+      flushSync(() => setSnoozeLayoutMoving(true));
+    }
+  }, [hasSnoozeWakeLabel, snoozeLayoutMoving]);
+  const handleSnoozeLayoutTransition = useCallback(
+    (event: ReactTransitionEvent<HTMLSpanElement>) => {
+      if (
+        event.target === event.currentTarget &&
+        (event.propertyName === "margin-left" || event.propertyName === "grid-template-columns")
+      ) {
+        if (event.type === "transitionrun") {
+          activeSnoozeTransitions.current.add(event.propertyName);
+        } else {
+          activeSnoozeTransitions.current.delete(event.propertyName);
+        }
+        setSnoozeLayoutMoving(activeSnoozeTransitions.current.size > 0);
+      }
+    },
+    [],
+  );
+  const handleSnoozeSlotRef = useCallback((element: HTMLSpanElement | null) => {
+    snoozeSlotRef.current = element;
+    if (element === null) {
+      activeSnoozeTransitions.current.clear();
+      setSnoozeLayoutMoving(false);
+    }
+  }, []);
+  // hiding the popup preserves keyboard focus while pointer interaction is blocked.
+  const linkedItemMoving = hasSnoozeWakeLabel && snoozeLayoutMoving;
 
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
     effectiveEnvMode: thread.worktreePath === null ? "local" : "worktree",
@@ -1528,7 +1609,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     [onUnpin, threadRef],
   );
   const handleSnoozePreset = useCallback(
-    (preset: Pick<SnoozePreset, "snoozedUntil">) => {
+    (preset: SnoozeChoice) => {
       onSnooze(threadRef, preset);
     },
     [onSnooze, threadRef],
@@ -1706,7 +1787,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     useRightPanelStore.getState().open(threadRef, "pull-requests");
     if (!props.isActive) onThreadActivate(threadRef);
   }, [onThreadActivate, props.isActive, threadRef]);
-  const prBadge =
+  const discussion = resolveSidebarDiscussionBadge(thread);
+  const linkedItemBadge =
     prBadgeShape?.kind === "stack" || pr || currentLinkedPr ? (
       <ThreadPullRequestBadgeControl
         render={<InlineButton />}
@@ -1715,8 +1797,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         number={pr?.number ?? currentLinkedPr?.number}
         url={pr?.url ?? currentLinkedPr?.url}
         status={prStatus}
+        tooltipHidden={linkedItemMoving}
         onOpenList={handlePrListClick}
         onOpenPullRequest={handlePrClick}
+      />
+    ) : discussion ? (
+      <SidebarThreadDiscussionBadge
+        discussion={discussion}
+        onOpen={handlePrClick}
+        tooltipHidden={linkedItemMoving}
       />
     ) : null;
   const terminalStatusIcon = terminalStatus ? (
@@ -1810,6 +1899,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 aria-label={accessibility.label}
                 aria-current={accessibility.current}
                 data-testid="sidebar-row-slim"
+                onMouseOverCapture={handleSnoozePointerEntry}
                 aria-busy={isRegeneratingTitle || undefined}
                 className={cn(rowSurfaceClassName, "flex h-9 items-center gap-2.5 px-2.5")}
                 onClick={handleClick}
@@ -1832,34 +1922,56 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               {props.project ? <ProjectFavicon project={props.project} className="size-4" /> : null}
             </span>
             {draftIndicator}
-            {title}
-            {pinIndicator}
-            {terminalStatusIcon}
-            {isRegeneratingTitle ? (
-              <span role="status" className="sr-only">
-                Regenerating title
-              </span>
-            ) : null}
-            {/* The PR badge stays outside the hover-fading slot: it must
-              remain visible AND clickable while the row is hovered. Only
-              the time/jump label yields to the settle affordance. */}
-            {prBadge}
+            <span
+              className={
+                hasSnoozeWakeLabel ? "flex min-w-0 flex-1 items-center gap-2.5" : "contents"
+              }
+            >
+              {title}
+              {pinIndicator}
+              {terminalStatusIcon}
+              {isRegeneratingTitle ? (
+                <span role="status" className="sr-only">
+                  Regenerating title
+                </span>
+              ) : null}
+              {/* the title yields first; oversized link numbers stay within the space
+                before the wake control and keep their full value in the tooltip. */}
+              {linkedItemBadge ? (
+                <span
+                  className={cn(
+                    hasSnoozeWakeLabel ? "grid min-w-0 grid-cols-[minmax(0,1fr)]" : "contents",
+                    linkedItemMoving && "pointer-events-none",
+                  )}
+                >
+                  {linkedItemBadge}
+                </span>
+              ) : null}
+            </span>
             {sortable?.isDragging ? (
               dragDestination
             ) : (
               <span
                 className={cn(
                   "relative ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end",
+                  hasSnoozeWakeLabel &&
+                    "ml-0 grid min-w-0 grid-cols-[1fr] transition-[grid-template-columns,margin-left] duration-150 group-focus-visible/sidebar-row:-ml-2 group-focus-visible/sidebar-row:grid-cols-[0fr] group-has-[:focus-visible]/sidebar-row:-ml-2 group-has-[:focus-visible]/sidebar-row:grid-cols-[0fr] group-any-hover/sidebar-row:-ml-2 group-any-hover/sidebar-row:grid-cols-[0fr] motion-reduce:transition-none",
                   props.sweepAction !== null && "hidden",
                 )}
+                ref={handleSnoozeSlotRef}
+                onTransitionRun={handleSnoozeLayoutTransition}
+                onTransitionEnd={handleSnoozeLayoutTransition}
+                onTransitionCancel={handleSnoozeLayoutTransition}
               >
                 <span
                   className={cn(
                     "inline-flex justify-end tabular-nums text-secondary-label transition-opacity",
                     !isWoke && "group-any-hover/sidebar-row:opacity-0",
+                    hasSnoozeWakeLabel &&
+                      "col-start-1 row-start-1 min-w-0 overflow-hidden whitespace-nowrap duration-150 group-focus-visible/sidebar-row:opacity-0 group-has-[:focus-visible]/sidebar-row:opacity-0 motion-reduce:transition-none",
                   )}
                 >
-                  {variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
+                  {hasSnoozeWakeLabel ? (
                     // Snoozed rows show when they come BACK, not when they were
                     // last touched — the return ticket is the row's whole story.
                     <span className="text-xs text-info-foreground tabular-nums">
@@ -1901,6 +2013,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                       onPointerDown={handleActionPointerDown}
                       className={cn(
                         "pointer-events-none absolute inset-y-0 right-0 -mr-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
+                        hasSnoozeWakeLabel &&
+                          "relative col-start-1 row-start-1 h-full justify-self-end duration-150 group-focus-visible/sidebar-row:pointer-events-auto group-has-[:focus-visible]/sidebar-row:pointer-events-auto group-focus-visible/sidebar-row:opacity-100 group-has-[:focus-visible]/sidebar-row:opacity-100 motion-reduce:transition-none",
                         isWoke && "group-any-hover/sidebar-row:static",
                       )}
                     >
@@ -2114,6 +2228,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                       ) : null}
                       {showSnoozeButton ? (
                         <SnoozeMenuButton
+                          githubReplySnoozeSupported={props.githubReplySnoozeSupported}
+                          githubChangesRequestedSnoozeSupported={
+                            props.githubChangesRequestedSnoozeSupported
+                          }
+                          githubConversations={
+                            snoozeMenuOpen ? eligibleThreadGitHubConversations(thread) : []
+                          }
                           open={snoozeMenuOpen}
                           onOpenChange={setSnoozeMenuOpen}
                           onSnooze={handleSnoozePreset}
@@ -2182,7 +2303,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 <span className="flex-1" />
               )}
               {terminalStatusIcon}
-              {prBadge}
+              {linkedItemBadge}
               {diff ? (
                 <span className="shrink-0 font-mono">
                   <span className="text-diff-addition-foreground">+{diff.insertions}</span>{" "}
@@ -3669,14 +3790,19 @@ export default function Sidebar() {
       if (
         canonicalSection === optimisticDrop.section &&
         thread.pinnedAt == null &&
-        (!optimisticDrop.clearsSnooze || thread.snoozedUntil == null)
+        (!optimisticDrop.clearsSnooze ||
+          (thread.snoozedUntil == null && thread.githubReplySnooze == null))
       ) {
         setOptimisticDrop(null);
       }
       return;
     }
     if (canonicalSection !== optimisticDrop.section) return;
-    if (optimisticDrop.clearsSnooze && thread.snoozedUntil != null) return;
+    if (
+      optimisticDrop.clearsSnooze &&
+      (thread.snoozedUntil != null || thread.githubReplySnooze != null)
+    )
+      return;
     const destinationKeys = optimisticDrop.section === "pinned" ? pinnedKeys : activeKeys;
     const canonicalDestination = destinationKeys.flatMap((key) => {
       const canonical = canonicalByKey.get(key);
@@ -4175,7 +4301,7 @@ export default function Sidebar() {
   const performSnooze = useCallback(
     async (
       threadRef: ScopedThreadRef,
-      preset: Pick<SnoozePreset, "snoozedUntil">,
+      preset: SnoozeChoice,
       opts: { coSnoozingKeys?: ReadonlySet<string> } = {},
     ) => {
       const threadKey = scopedThreadKey(threadRef);
@@ -4187,9 +4313,22 @@ export default function Sidebar() {
         // Snoozing the open thread moves you forward, same as settle —
         // both park the thread you're done with for now.
         const navigateAfterSnooze = planForwardNavigation(threadKey, opts.coSnoozingKeys);
-        const result = await snoozeThread(threadRef, preset.snoozedUntil);
+        const request = snoozeThread(threadRef, "url" in preset ? preset : preset.snoozedUntil);
+        if (
+          "url" in preset &&
+          shouldNavigateAfterThreadPark({
+            threadKey,
+            currentThreadKey: routeThreadKeyRef.current,
+            action: "snooze",
+            now: new Date().toISOString(),
+            thread: readThreadShell(threadRef),
+          })
+        ) {
+          navigateAfterSnooze?.();
+        }
+        const result = await request;
         if (result._tag === "Failure") {
-          // Never navigate away from a thread that did not snooze.
+          // Rollback restores the row without forcing navigation back to it.
           return isAtomCommandInterrupted(result)
             ? ({ status: "interrupted" } as const)
             : ({ status: "failure", error: squashAtomCommandFailure(result) } as const);
@@ -4197,6 +4336,7 @@ export default function Sidebar() {
         // Only move forward if the user is still on the snoozed thread —
         // a navigation made during the await wins over ours.
         if (
+          !("url" in preset) &&
           shouldNavigateAfterThreadPark({
             threadKey,
             currentThreadKey: routeThreadKeyRef.current,
@@ -4217,7 +4357,7 @@ export default function Sidebar() {
   const attemptSnooze = useCallback(
     (
       threadRef: ScopedThreadRef,
-      preset: Pick<SnoozePreset, "snoozedUntil">,
+      preset: SnoozeChoice,
       opts: { coSnoozingKeys?: ReadonlySet<string> } = {},
     ) => {
       void (async () => {
@@ -4292,6 +4432,9 @@ export default function Sidebar() {
         pinnedCount: pinnedSelectedThreads.length,
       });
       const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
+      const githubConversations = commonGitHubReplyConversations(
+        selectedThreads.map(eligibleThreadGitHubConversations),
+      );
       const clicked = await settlePromise(() =>
         api.contextMenu.show(
           [
@@ -4315,6 +4458,34 @@ export default function Sidebar() {
                         label: `${preset.label} (${preset.whenLabel})`,
                         disabled: !canOperateThreads(selectedThreads),
                       })),
+                      ...(selectedThreads.every(
+                        (thread) =>
+                          serverConfigs.get(thread.environmentId)?.environment.capabilities
+                            .threadGitHubReplySnooze === true,
+                      )
+                        ? [
+                            {
+                              ...githubReplySnoozeMenuItem(
+                                githubConversations,
+                                "No shared linked conversation",
+                              ),
+                              separatorBefore: true,
+                            },
+                            ...(selectedThreads.every(
+                              (thread) =>
+                                serverConfigs.get(thread.environmentId)?.environment.capabilities
+                                  .threadGitHubChangesRequestedSnooze === true,
+                            )
+                              ? [
+                                  githubReplySnoozeMenuItem(
+                                    githubConversations,
+                                    undefined,
+                                    "changes-requested",
+                                  ),
+                                ]
+                              : []),
+                          ]
+                        : []),
                       {
                         id: "snooze:custom",
                         label: "Custom…",
@@ -4366,7 +4537,9 @@ export default function Sidebar() {
         const preset =
           clicked.value === "snooze:custom"
             ? await requestCustomSnooze()
-            : snoozePresets.find((candidate) => `snooze:${candidate.id}` === clicked.value);
+            : clicked.value.startsWith("snooze:github:")
+              ? githubReplySnoozeChoice(clicked.value, githubConversations)
+              : snoozePresets.find((candidate) => `snooze:${candidate.id}` === clicked.value);
         if (preset) {
           // Post-snooze navigation must skip threads snoozing in this same
           // batch — they are all leaving the card block together.
@@ -4602,6 +4775,7 @@ export default function Sidebar() {
         const isPinned = thread.pinnedAt != null;
         // Presets resolve at menu-open time (same as the popover).
         const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
+        const githubConversations = eligibleThreadGitHubConversations(thread);
         const threadProjectGroup =
           projectGroupsRef.current.find((project) =>
             project.memberProjectRefs.some(
@@ -4635,10 +4809,17 @@ export default function Sidebar() {
                 settlement: supportsSettlement,
                 autoSettleOptOut: supportsAutoSettleOptOut,
                 snooze: supportsSnooze,
+                githubReplySnooze:
+                  serverConfigs.get(thread.environmentId)?.environment.capabilities
+                    .threadGitHubReplySnooze === true,
+                githubChangesRequestedSnooze:
+                  serverConfigs.get(thread.environmentId)?.environment.capabilities
+                    .threadGitHubChangesRequestedSnooze === true,
                 pinning: supportsPinning,
                 titleRegeneration: supportsTitleRegeneration,
               },
               snoozePresets,
+              githubConversations,
             }),
             position,
           ),
@@ -4649,7 +4830,9 @@ export default function Sidebar() {
           const preset =
             clicked.value === "snooze:custom"
               ? await requestCustomSnooze()
-              : snoozePresets.find((candidate) => `snooze:${candidate.id}` === clicked.value);
+              : clicked.value.startsWith("snooze:github:")
+                ? githubReplySnoozeChoice(clicked.value, githubConversations)
+                : snoozePresets.find((candidate) => `snooze:${candidate.id}` === clicked.value);
           if (preset) attemptSnooze(threadRef, preset);
           return;
         }
@@ -5286,6 +5469,14 @@ export default function Sidebar() {
                               serverConfigs.get(thread.environmentId)?.environment.capabilities
                                 .threadSnooze === true
                             }
+                            githubReplySnoozeSupported={
+                              serverConfigs.get(thread.environmentId)?.environment.capabilities
+                                .threadGitHubReplySnooze === true
+                            }
+                            githubChangesRequestedSnoozeSupported={
+                              serverConfigs.get(thread.environmentId)?.environment.capabilities
+                                .threadGitHubChangesRequestedSnooze === true
+                            }
                             pinningSupported={
                               serverConfigs.get(thread.environmentId)?.environment.capabilities
                                 .threadPinning === true
@@ -5304,11 +5495,15 @@ export default function Sidebar() {
                               actionSweep?.keys.has(threadKey) ? actionSweep.action : null
                             }
                             snoozeWakeLabelText={
-                              section === "snoozed" && thread.snoozedUntil != null
-                                ? snoozeWakeLabel(thread.snoozedUntil, {
-                                    now: new Date().toISOString(),
-                                  })
-                                : null
+                              thread.githubReplySnooze
+                                ? thread.githubReplySnooze.wakeCondition === "changes-requested"
+                                  ? "Until change request"
+                                  : "Until reply"
+                                : section === "snoozed" && thread.snoozedUntil != null
+                                  ? snoozeWakeLabel(thread.snoozedUntil, {
+                                      now: new Date().toISOString(),
+                                    })
+                                  : null
                             }
                             // All sections: a woken thread can classify straight
                             // into the settled tail (PR merged while snoozed), and

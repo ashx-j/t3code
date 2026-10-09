@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./github-reply-conversations": {
+      "types": "./src/githubReplyConversations.ts",
+      "default": "./src/githubReplyConversations.ts"
+    },
     "./composerThreadItems": {
       "types": "./src/composerThreadItems.ts",
       "default": "./src/composerThreadItems.ts"

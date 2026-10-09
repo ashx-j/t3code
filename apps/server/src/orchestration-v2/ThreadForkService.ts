@@ -108,6 +108,8 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
           settledOverride: null,
           settledAt: null,
           snoozedUntil: null,
+          githubReplySnooze: null,
+          githubReplyNotice: null,
           snoozedAt: null,
           lastVisitedAt: null,
           deletedAt: null,

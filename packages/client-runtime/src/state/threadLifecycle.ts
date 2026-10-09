@@ -5,7 +5,8 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { Atom } from "effect/reactivity";
+import * as Cause from "effect/Cause";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import type { AtomCommand } from "./runtime.ts";
 
@@ -13,6 +14,7 @@ interface PendingThreadUpdate {
   readonly threadId: ThreadId;
   readonly apply: (thread: OrchestrationV2ThreadShell) => OrchestrationV2ThreadShell;
   sequence?: number;
+  superseded?: boolean;
 }
 
 export function createOptimisticThreadLifecycle(
@@ -60,6 +62,7 @@ export function createOptimisticThreadLifecycle(
       now: DateTime.Utc,
       accepted: boolean,
     ) => OrchestrationV2ThreadShell,
+    ignoreSupersededResult?: (input: Input) => boolean,
   ): typeof command {
     return {
       label: command.label,
@@ -77,6 +80,7 @@ export function createOptimisticThreadLifecycle(
         let confirmed = false;
         try {
           const result = await command.run(registry, target);
+          const superseded = update.superseded && ignoreSupersededResult?.(target.input);
           if (result._tag === "Success") {
             update.sequence = result.value.sequence;
             registry.update(pending, (current) => [...current]);
@@ -90,7 +94,7 @@ export function createOptimisticThreadLifecycle(
             reconcile(registry.get(source));
             confirmed = true;
           }
-          return result;
+          return superseded ? AsyncResult.failure(Cause.interrupt()) : result;
         } finally {
           if (!confirmed) remove();
         }
@@ -98,5 +102,25 @@ export function createOptimisticThreadLifecycle(
     };
   }
 
-  return { snapshotAtom, wrap };
+  /** New lifecycle choices silence obsolete results without changing request order or rollback. */
+  function supersede<
+    W extends {
+      readonly environmentId: EnvironmentId;
+      readonly input: { readonly threadId: ThreadId };
+    },
+    A,
+    E,
+  >(command: AtomCommand<W, A, E>): typeof command {
+    return {
+      ...command,
+      run: (registry, target) => {
+        for (const update of registry.get(pendingAtom(target.environmentId))) {
+          if (update.threadId === target.input.threadId) update.superseded = true;
+        }
+        return command.run(registry, target);
+      },
+    };
+  }
+
+  return { snapshotAtom, wrap, supersede };
 }

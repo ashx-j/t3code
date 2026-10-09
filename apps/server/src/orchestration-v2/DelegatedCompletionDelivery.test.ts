@@ -1,3 +1,4 @@
+import * as GitHubReplyReader from "../sourceControl/GitHubReplyReader.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -102,7 +103,10 @@ const layerTestProviderInstanceRegistry = Layer.succeed(
   },
 );
 
-const layerTest = Layer.mergeAll(RuntimeLayer.layer, RuntimeLayer.layerEventSink).pipe(
+const layerTest = Layer.mergeAll(
+  RuntimeLayer.layer.pipe(Layer.provide(Layer.mock(GitHubReplyReader.GitHubReplyReader)({}))),
+  RuntimeLayer.layerEventSink,
+).pipe(
   Layer.provideMerge(RuntimeLayer.layerProjectService),
   Layer.provide(
     Layer.mock(WorkspacePaths.WorkspacePaths)({

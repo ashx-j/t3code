@@ -4,7 +4,15 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  isAtomCommandInterrupted,
+  settlePromise,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import {
+  githubReplySnoozeFailureMessage,
+  type GitHubReplySnoozeChoice,
+} from "@t3tools/client-runtime/github-reply-conversations";
 import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import {
@@ -393,6 +401,7 @@ export function useThreadActions() {
       const shouldNavigateToDraft =
         currentRouteThreadRef?.threadId === threadRef.threadId &&
         currentRouteThreadRef.environmentId === threadRef.environmentId;
+      const githubReplySnooze = thread.githubReplySnooze ?? null;
       const action = ThreadUndo.begin("archive", scopedThreadKey(threadRef));
       const archiveResult = await archiveThreadMutation({
         environmentId: threadRef.environmentId,
@@ -412,7 +421,18 @@ export function useThreadActions() {
         action: "Archived",
         claim: action,
         // Undo also brings the reader back when archiving moved them to a draft.
-        undo: () => unarchiveThread(threadRef, { navigate: shouldNavigateToDraft }),
+        undo: async () => {
+          const unarchived = await unarchiveThread(threadRef, { navigate: shouldNavigateToDraft });
+          if (unarchived._tag !== "Success" || githubReplySnooze === null) return unarchived;
+          return snoozeThreadMutation({
+            environmentId: threadRef.environmentId,
+            input: {
+              threadId: threadRef.threadId,
+              url: githubReplySnooze.url,
+              resumeFrom: githubReplySnooze,
+            },
+          });
+        },
         failureTitle: "Failed to undo archive",
       });
 
@@ -434,6 +454,7 @@ export function useThreadActions() {
       markThreadVisited,
       resolveThreadTarget,
       unarchiveThread,
+      snoozeThreadMutation,
     ],
   );
 
@@ -790,6 +811,7 @@ export function useThreadActions() {
       const pinOrderKey = resolved?.thread.pinnedAt != null ? resolved.thread.pinOrderKey : null;
       const wasPinned = resolved?.thread.pinnedAt != null;
       const snoozedUntil = resolved?.thread.snoozedUntil ?? null;
+      const githubReplySnooze = resolved?.thread.githubReplySnooze ?? null;
       // An older unpin/snooze Undo would re-pin or re-snooze, and the server
       // treats either as a promotion that un-settles; settling supersedes them.
       ThreadUndo.invalidate("pin", scopedThreadKey(target));
@@ -819,10 +841,23 @@ export function useThreadActions() {
             );
             if (pinned._tag !== "Success") return pinned;
           }
+          if (githubReplySnooze !== null) {
+            return snoozeThreadMutation({
+              environmentId: target.environmentId,
+              input: {
+                threadId: target.threadId,
+                url: githubReplySnooze.url,
+                resumeFrom: githubReplySnooze,
+              },
+            });
+          }
           if (snoozedUntil !== null) {
             return snoozeThreadMutation({
               environmentId: target.environmentId,
-              input: { threadId: target.threadId, snoozedUntil },
+              input: {
+                threadId: target.threadId,
+                snoozedUntil,
+              },
             });
           }
           return unsettled;
@@ -929,9 +964,18 @@ export function useThreadActions() {
   );
 
   const snoozeThread = useCallback(
-    async (target: ScopedThreadRef, snoozedUntil: string) => {
+    async (target: ScopedThreadRef, snoozedUntil: string | GitHubReplySnoozeChoice) => {
       // Version skew: never send the command to a server that predates it.
-      if (!readEnvironmentSupportsSnooze(target.environmentId)) {
+      if (
+        !readEnvironmentSupportsSnooze(target.environmentId) ||
+        (typeof snoozedUntil !== "string" &&
+          appAtomRegistry.get(environmentServerConfigsAtom).get(target.environmentId)?.environment
+            .capabilities.threadGitHubReplySnooze !== true) ||
+        (typeof snoozedUntil !== "string" &&
+          snoozedUntil.wakeCondition === "changes-requested" &&
+          appAtomRegistry.get(environmentServerConfigsAtom).get(target.environmentId)?.environment
+            .capabilities.threadGitHubChangesRequestedSnooze !== true)
+      ) {
         return AsyncResult.failure(
           Cause.fail(
             new ThreadSnoozeUnsupportedError({
@@ -958,10 +1002,16 @@ export function useThreadActions() {
       const action = ThreadUndo.begin("snooze", scopedThreadKey(target));
       const result = await snoozeThreadMutation({
         environmentId: target.environmentId,
-        input: { threadId: target.threadId, snoozedUntil },
+        input: {
+          threadId: target.threadId,
+          ...(typeof snoozedUntil === "string" ? { snoozedUntil } : snoozedUntil),
+        },
       });
       if (result._tag !== "Success") {
         action.finish();
+        if (typeof snoozedUntil !== "string" && !isAtomCommandInterrupted(result)) {
+          return AsyncResult.failure(Cause.fail(new Error(githubReplySnoozeFailureMessage)));
+        }
         return result;
       }
       // Snooze hides the row, so keep its confirmation in the sidebar.

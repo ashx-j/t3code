@@ -9,7 +9,7 @@ import { InlineButton } from "../ui/button";
  */
 export function ThreadStatusLine(props: {
   readonly icon: ReactNode;
-  readonly label: string;
+  readonly label: ReactNode;
   readonly actionLabel: string;
   readonly actionDisabled?: boolean;
   readonly onAction: () => void;

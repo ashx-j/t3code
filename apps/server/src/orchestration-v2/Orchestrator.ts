@@ -1,3 +1,4 @@
+import { parseGitHubConversationUrl } from "@t3tools/contracts";
 import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -11,6 +12,7 @@ import {
 } from "@t3tools/shared/orchestrationV2ThreadError";
 import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
 import {
+  isLinkedOpenGitHubPullRequest,
   normalizeThreadPullRequestKey,
   visibleThreadPullRequests,
   threadPullRequestKeysEqual,
@@ -89,6 +91,7 @@ import { notificationTurnItem } from "@t3tools/provider-core/server/notification
 import { isRestartNoteSource } from "./RestartBackgroundNote.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
 import { EventSinkV2 } from "./EventSink.ts";
+import * as EventStore from "./EventStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import { IdAllocatorV2 } from "@t3tools/provider-core/server/IdAllocator";
@@ -285,6 +288,11 @@ export interface OrchestratorV2Shape {
   ) => Effect.Effect<boolean, OrchestratorProjectionError>;
   readonly dispatch: (
     command: OrchestrationV2ServerCommand,
+    /** Baseline setup uses a server-owned cursor; clients cannot supply this precondition. */
+    preconditions?: {
+      readonly githubReplySnoozeAfterSequence: number;
+      readonly githubReplySnoozeRecoveryRequestId: CommandId | null;
+    },
   ) => Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error>;
   readonly searchThreadStream: (
     input: OrchestrationV2SearchThreadInput,
@@ -433,6 +441,8 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.settle":
     case "thread.auto-settle":
     case "thread.unsettle":
+    case "thread.github-reply.snooze":
+    case "thread.github-reply.sync":
     case "thread.snooze":
     case "thread.unsnooze":
     case "thread.auto-settle.set":
@@ -443,6 +453,8 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.visit":
     case "thread.mark-unread":
     case "thread.metadata.update":
+    case "thread.discussion.link":
+    case "thread.discussion.unlink":
     case "thread.pull-request.link":
     case "thread.pull-request.unlink":
     case "thread.pull-request-link.sync":
@@ -799,6 +811,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const commandPolicy = yield* CommandPolicyV2;
   const contextHandoffService = yield* ContextHandoffServiceV2;
   const eventSink = yield* EventSinkV2;
+  const eventStore = yield* EventStore.EventStoreV2;
   const commandReceipts = yield* CommandReceiptStoreV2;
   const idAllocator = yield* IdAllocatorV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
@@ -2335,6 +2348,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         thread.archivedAt !== null ||
         thread.settledOverride === "settled" ||
         thread.settledAt !== null ||
+        thread.githubReplySnooze != null ||
         isProviderNativeSubagentThread(thread);
       if (link?.watch?.startedAt !== command.startedAt || (command.wake && inactive)) {
         return yield* new OrchestratorDispatchError({
@@ -2373,6 +2387,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.unarchive"
           | "thread.settle"
           | "thread.unsettle"
+          | "thread.github-reply.snooze"
+          | "thread.github-reply.sync"
           | "thread.snooze"
           | "thread.unsnooze"
           | "thread.auto-settle.set"
@@ -2382,6 +2398,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.active.reorder"
           | "thread.mark-unread"
           | "thread.metadata.update"
+          | "thread.discussion.link"
+          | "thread.discussion.unlink"
           | "thread.pull-request.link"
           | "thread.pull-request.unlink"
           | "thread.pull-request-link.sync"
@@ -2429,12 +2447,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.watching &&
       (thread.settledOverride === "settled" ||
         thread.settledAt !== null ||
-        thread.archivedAt !== null)
+        thread.archivedAt !== null ||
+        thread.githubReplySnooze != null)
     ) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: `Thread ${command.threadId} is settled or archived and cannot watch pull requests.`,
+        cause: `Thread ${command.threadId} is settled, archived, or snoozed for a GitHub reply and cannot watch pull requests.`,
       });
     }
     // A subagent or delegated task reports to its parent thread, which owns the pull request.
@@ -2511,6 +2530,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (
       (command.type === "thread.settle" ||
         command.type === "thread.unsettle" ||
+        command.type === "thread.github-reply.snooze" ||
         command.type === "thread.snooze" ||
         command.type === "thread.unsnooze" ||
         command.type === "thread.auto-settle.set" ||
@@ -2712,6 +2732,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         !Number.isFinite(resetMs) ||
         thread.archivedAt !== null ||
         thread.settledOverride === "settled" ||
+        (command.automaticLimitRecovery === true &&
+          (thread.githubReplySnooze != null ||
+            thread.githubReplyAutoResumeBlockedRunId === command.limitRecovery.runId)) ||
         run?.id !== command.limitRecovery.runId ||
         failure?.class !== "usage_limit" ||
         failure.resetAt !== command.limitRecovery.resetAt ||
@@ -2725,15 +2748,49 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
     }
+    if (
+      command.type === "thread.github-reply.snooze" &&
+      command.resumeFrom &&
+      (command.resumeFrom.url !== command.url ||
+        (command.wakeCondition !== undefined &&
+          command.wakeCondition !== (command.resumeFrom.wakeCondition ?? "any-reply")))
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "The restored GitHub snooze must use the same conversation and wake condition.",
+      });
+    }
+    if (
+      command.type === "thread.github-reply.snooze" &&
+      (command.wakeCondition ?? command.resumeFrom?.wakeCondition) === "changes-requested" &&
+      !isLinkedOpenGitHubPullRequest(thread.pullRequests ?? [], command.url)
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Changes-requested snooze requires a linked open github.com pull request.",
+      });
+    }
     let snoozedUntil: DateTime.Utc | null = null;
-    if (command.type === "thread.snooze") {
+    let githubReplyAutoResumeBlockedRunId = thread.githubReplyAutoResumeBlockedRunId ?? null;
+    if (
+      command.type === "thread.github-reply.sync" &&
+      (thread.githubReplySnooze?.requestId !== command.requestId ||
+        thread.archivedAt !== null ||
+        thread.settledOverride === "settled")
+    )
+      return;
+    if (command.type === "thread.snooze" || command.type === "thread.github-reply.snooze") {
       const projection = yield* loadProjectionForCommand(command, ["runs", "runtimeRequests"], {
         turnItemTypes: [],
       });
-      const parsedSnoozedUntil = DateTime.make(command.snoozedUntil);
+      const parsedSnoozedUntil =
+        command.type === "thread.snooze" ? DateTime.make(command.snoozedUntil) : Option.some(now);
       if (
-        Option.isNone(parsedSnoozedUntil) ||
-        DateTime.toEpochMillis(parsedSnoozedUntil.value) <= DateTime.toEpochMillis(now)
+        command.type === "thread.snooze" &&
+        (Option.isNone(parsedSnoozedUntil) ||
+          DateTime.toEpochMillis(parsedSnoozedUntil.value) <= DateTime.toEpochMillis(now))
       ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -2755,7 +2812,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Thread ${command.threadId} has a queued run and cannot be snoozed.`,
         });
       }
-      snoozedUntil = parsedSnoozedUntil.value;
+      snoozedUntil = Option.getOrNull(parsedSnoozedUntil);
+      if (command.type === "thread.github-reply.snooze") {
+        // Keep this run suppressed after wake until an explicit send or recovery request.
+        githubReplyAutoResumeBlockedRunId = latestExecutedRun(projection.runs)?.id ?? null;
+      }
     }
     let markUnreadVisitedAt: DateTime.Utc | null = null;
     if (command.type === "thread.mark-unread") {
@@ -2770,6 +2831,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       markUnreadVisitedAt = DateTime.subtract(latestRunCompletedAt, { milliseconds: 1 });
     }
+    if (command.type === "thread.discussion.link") {
+      const target = command.discussion;
+      const parsed = parseGitHubConversationUrl(target.url);
+      if (
+        parsed?.kind !== "discussion" ||
+        parsed.number !== target.number ||
+        `${parsed.owner}/${parsed.repository}`.toLowerCase() !== target.repository.toLowerCase()
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "Discussion URL does not match its repository and number.",
+        });
+      }
+    }
+
     const updatedThread: OrchestrationV2AppThread = (() => {
       switch (command.type) {
         case "thread.archive":
@@ -2777,6 +2854,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return {
             ...thread,
             archivedAt: now,
+            githubReplySnooze: null,
+            githubReplyNotice: null,
+            snoozedAt: thread.githubReplySnooze ? null : thread.snoozedAt,
             titleRegeneration: null,
             pullRequests: thread.pullRequests?.map((link) => withPullRequestWatch(link, undefined)),
             updatedAt: now,
@@ -2792,6 +2872,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return {
             ...thread,
             settledOverride: "settled",
+            githubReplySnooze: null,
+            snoozedAt: thread.githubReplySnooze ? null : thread.snoozedAt,
             settledAt: alreadySettled ? thread.settledAt : (command.settledAt ?? now),
             pullRequests: thread.pullRequests?.map((link) => withPullRequestWatch(link, undefined)),
             unsettledAt: null,
@@ -2811,6 +2893,50 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             updatedAt: alreadyPinnedActive ? thread.updatedAt : now,
           };
         }
+        case "thread.github-reply.snooze":
+          return {
+            ...thread,
+            githubReplySnooze: {
+              ...command.resumeFrom,
+              requestId: command.commandId,
+              url: command.url,
+              wakeCondition: command.wakeCondition ?? command.resumeFrom?.wakeCondition,
+              startedAt: command.resumeFrom?.startedAt ?? DateTime.formatIso(now),
+              nextCheckAt: DateTime.formatIso(now),
+              status: "pending",
+              failures: 0,
+            },
+            githubReplyNotice: null,
+            snoozedUntil: null,
+            snoozedAt: now,
+            settledOverride: "active",
+            settledAt: null,
+            limitRecovery: null,
+            githubReplyAutoResumeBlockedRunId,
+            pullRequests: thread.pullRequests?.map((link) => withPullRequestWatch(link, undefined)),
+            updatedAt: now,
+          };
+        case "thread.github-reply.sync":
+          return {
+            ...thread,
+            githubReplySnooze: command.watch,
+            ...(command.notice === undefined
+              ? {}
+              : {
+                  githubReplyNotice: {
+                    ...command.notice,
+                    receivedAt: DateTime.formatIso(now),
+                    wakeCondition: thread.githubReplySnooze?.wakeCondition,
+                    conversationUrl:
+                      thread.githubReplySnooze?.url ?? command.notice.conversationUrl,
+                  },
+                  snoozedAt: null,
+                  settledOverride: "active" as const,
+                  settledAt: null,
+                  unsettledAt: now,
+                  updatedAt: now,
+                }),
+          };
         case "thread.snooze": {
           const sameWakeTime =
             thread.snoozedUntil != null &&
@@ -2820,16 +2946,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return {
             ...thread,
             snoozedUntil,
+            githubReplySnooze: null,
+            githubReplyNotice: null,
             limitRecovery: thread.limitRecovery ? { ...thread.limitRecovery, snooze: false } : null,
             snoozedAt: existingSnoozedAt ?? now,
             updatedAt: existingSnoozedAt === null ? now : thread.updatedAt,
           };
         }
         case "thread.unsnooze": {
-          const alreadyAwake = thread.snoozedUntil == null;
+          const alreadyAwake =
+            thread.snoozedUntil == null &&
+            thread.githubReplySnooze == null &&
+            thread.githubReplyNotice == null;
           return {
             ...thread,
             snoozedUntil: null,
+            githubReplySnooze: null,
+            githubReplyNotice: null,
             snoozedAt: null,
             updatedAt: alreadyAwake ? thread.updatedAt : now,
           };
@@ -2861,6 +2994,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               thread.settledOverride === "settled" ? "active" : thread.settledOverride,
             settledAt: thread.settledOverride === "settled" ? null : thread.settledAt,
             snoozedUntil: null,
+            githubReplySnooze: null,
             snoozedAt: null,
             updatedAt: alreadyPinned && !promotes ? thread.updatedAt : now,
           };
@@ -2915,15 +3049,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     snooze: command.limitRecovery.snooze ?? previousRecovery?.snooze ?? false,
                     requestId: command.commandId,
                   };
+          const explicitlyResuming =
+            command.automaticLimitRecovery !== true && command.limitRecovery?.autoResume === true;
           return {
             ...thread,
             ...(command.title === undefined ? {} : { title: command.title }),
             ...(command.limitRecovery === undefined ? {} : { limitRecovery }),
+            // Explicit recovery replaces a passive GitHub wait; automatic re-arms stay blocked.
+            ...(explicitlyResuming
+              ? {
+                  githubReplyAutoResumeBlockedRunId: null,
+                  githubReplySnooze: null,
+                  ...(thread.githubReplySnooze != null ? { snoozedAt: null } : {}),
+                }
+              : {}),
             ...(command.limitRecovery !== undefined &&
             limitRecovery?.snooze === true &&
             Date.parse(limitRecovery.resetAt) > DateTime.toEpochMillis(now)
               ? {
                   snoozedUntil: DateTime.makeUnsafe(limitRecovery.resetAt),
+                  githubReplySnooze: null,
                   // Recovery changes acknowledge the same stopped run; keep its
                   // metadata timestamp from appearing as a fresh failure wake.
                   snoozedAt: now,
@@ -2971,6 +3116,37 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : command.regenerateTitle === false || command.title !== undefined
                 ? { titleRegeneration: null }
                 : {}),
+            updatedAt: now,
+          };
+        }
+        case "thread.discussion.link":
+        case "thread.discussion.unlink": {
+          const target = command.discussion;
+          const links = thread.discussions ?? [];
+          const matches = (link: typeof target) =>
+            link.host === target.host &&
+            link.repository.toLowerCase() === target.repository.toLowerCase() &&
+            link.number === target.number;
+          const exists = links.some(matches);
+          if (command.type === "thread.discussion.unlink") {
+            return exists
+              ? { ...thread, discussions: links.filter((link) => !matches(link)), updatedAt: now }
+              : thread;
+          }
+          if (exists) return thread;
+          return {
+            ...thread,
+            discussions: [
+              ...links,
+              {
+                ...target,
+                repository: target.repository.toLowerCase(),
+                url: `https://github.com/${target.repository.toLowerCase()}/discussions/${target.number}`,
+                title: command.title ?? null,
+                source: command.source,
+                linkedAt: DateTime.formatIso(now),
+              },
+            ],
             updatedAt: now,
           };
         }
@@ -3189,8 +3365,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return "thread.settled" as const;
         case "thread.unsettle":
           return "thread.unsettled" as const;
+        case "thread.github-reply.snooze":
         case "thread.snooze":
           return "thread.snoozed" as const;
+        case "thread.github-reply.sync":
+          return command.notice
+            ? ("thread.unsnoozed" as const)
+            : ("thread.metadata-updated" as const);
         case "thread.unsnooze":
           return "thread.unsnoozed" as const;
         case "thread.auto-settle.set":
@@ -3206,6 +3387,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         case "thread.mark-unread":
           return "thread.marked-unread" as const;
         case "thread.metadata.update":
+        case "thread.discussion.link":
+        case "thread.discussion.unlink":
         case "thread.title.regeneration.complete":
           return "thread.metadata-updated" as const;
         case "thread.pull-request.link":
@@ -4502,6 +4685,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           projection.thread.archivedAt !== null ||
           projection.thread.deletedAt !== null ||
           projection.thread.settledOverride === "settled" ||
+          projection.thread.githubReplySnooze != null ||
+          projection.thread.githubReplyAutoResumeBlockedRunId === run?.id ||
           projection.thread.providerInstanceId !== run.providerInstanceId ||
           projection.runtimeRequests.some((request) => request.status === "pending") ||
           (projection.thread.snoozedUntil != null &&
@@ -4537,6 +4722,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           isRestartNoteSource(source, projection.providerTurns) ||
           projection.thread.archivedAt !== null ||
           projection.thread.deletedAt !== null ||
+          projection.thread.githubReplySnooze != null ||
+          projection.thread.githubReplyAutoResumeBlockedRunId === source.id ||
           projection.thread.providerInstanceId !== source.providerInstanceId ||
           // Held queued runs never started; they wait behind the continuation.
           projection.runs.some(
@@ -4583,11 +4770,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
         projection = yield* getProjectionWithPendingEvents(command.threadId, events);
       }
-      if (projection.thread.snoozedUntil != null) {
+      const clearReplyResumeBlock =
+        command.createdBy === "user" && projection.thread.githubReplyAutoResumeBlockedRunId != null;
+      if (
+        projection.thread.snoozedUntil != null ||
+        projection.thread.githubReplySnooze != null ||
+        clearReplyResumeBlock
+      ) {
         const now = yield* DateTime.now;
         const thread: OrchestrationV2AppThread = {
           ...projection.thread,
           snoozedUntil: null,
+          githubReplySnooze: null,
+          ...(clearReplyResumeBlock ? { githubReplyAutoResumeBlockedRunId: null } : {}),
           snoozedAt: null,
           updatedAt: now,
         };
@@ -10122,6 +10317,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const dispatchOnce = Effect.fn("orchestrationV2.dispatch.once")(function* (
     command: OrchestrationV2ServerCommand,
+    preconditions?: Parameters<OrchestratorV2Shape["dispatch"]>[1],
   ): Effect.fn.Return<
     {
       readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
@@ -10138,6 +10334,56 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "orchestration_v2.command_type": command.type,
       "orchestration_v2.thread_id": commandThreadId(command),
     });
+
+    if (command.type === "thread.github-reply.snooze" && preconditions !== undefined) {
+      // Lifecycle events catch even a no-op Wake or changes within the same clock tick.
+      // Provider progress and completion can still finish during the baseline fetch.
+      const superseded = yield* eventStore
+        .read({
+          threadId: command.threadId,
+          afterSequence: preconditions.githubReplySnoozeAfterSequence,
+          throughSequence: yield* eventSink
+            .latestSequence({ threadId: command.threadId })
+            .pipe(mapDispatchError(command)),
+        })
+        .pipe(
+          Stream.filter(({ event, commandId: eventCommandId }) => {
+            switch (event.type) {
+              case "thread.snoozed":
+              case "thread.unsnoozed":
+              case "thread.settled":
+              case "thread.unsettled":
+              case "thread.archived":
+              case "thread.unarchived":
+              case "thread.deleted":
+              case "thread.pinned":
+              case "run.created":
+                return true;
+              case "thread.metadata-updated":
+                // Recovery writes carry their command ID; a rename keeps the older ID.
+                return (
+                  (event.payload.limitRecovery?.requestId ?? null) !==
+                    preconditions.githubReplySnoozeRecoveryRequestId ||
+                  (eventCommandId !== null &&
+                    event.payload.limitRecovery?.requestId === eventCommandId)
+                );
+              case "message.updated":
+                return event.payload.role === "user";
+              default:
+                return false;
+            }
+          }),
+          Stream.runHead,
+          mapDispatchError(command),
+        );
+      if (Option.isSome(superseded)) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The thread changed while the GitHub reply snooze was being prepared.",
+        });
+      }
+    }
 
     const events = yield* Ref.make<Array<OrchestrationV2DomainEvent>>([]);
     const effects = yield* Ref.make<Array<PendingOrchestrationEffectV2>>([]);
@@ -10219,6 +10465,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.unarchive":
       case "thread.settle":
       case "thread.unsettle":
+      case "thread.github-reply.snooze":
+      case "thread.github-reply.sync":
       case "thread.snooze":
       case "thread.unsnooze":
       case "thread.auto-settle.set":
@@ -10228,6 +10476,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.active.reorder":
       case "thread.mark-unread":
       case "thread.metadata.update":
+      case "thread.discussion.link":
+      case "thread.discussion.unlink":
       case "thread.pull-request.link":
       case "thread.pull-request.unlink":
       case "thread.pull-request-link.sync":
@@ -10420,6 +10670,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const dispatchWithReceiptEffect = Effect.fn("orchestrationV2.dispatch.withReceipt")(function* (
     command: OrchestrationV2ServerCommand,
+    preconditions?: Parameters<OrchestratorV2Shape["dispatch"]>[1],
   ): Effect.fn.Return<OrchestratorV2DispatchResult, OrchestratorV2Error> {
     yield* Effect.annotateCurrentSpan({
       "orchestration_v2.command_id": command.commandId,
@@ -10493,7 +10744,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (shell !== null) yield* refuseAboveDispatchModeLimit(command, threadId, shell);
     }
 
-    const plan = yield* dispatchOnce(command).pipe(
+    const plan = yield* dispatchOnce(command, preconditions).pipe(
       Effect.flatMap((planned) =>
         // A settle that finds the provider already ended everything, or a
         // stop that finds nothing running, has nothing to record. That is
@@ -10624,8 +10875,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     } satisfies OrchestratorV2DispatchResult;
   });
 
-  const dispatchWithReceipt = (command: OrchestrationV2ServerCommand) =>
-    threadDispatch.withLock(commandThreadId(command), dispatchWithReceiptEffect(command));
+  const dispatchWithReceipt: OrchestratorV2Shape["dispatch"] = (command, preconditions) =>
+    threadDispatch.withLock(
+      commandThreadId(command),
+      dispatchWithReceiptEffect(command, preconditions),
+    );
 
   const handleTerminalRun = (stored: OrchestrationV2StoredEvent) =>
     Effect.gen(function* () {
@@ -10955,6 +11209,7 @@ export const layer: Layer.Layer<
   | ContextHandoffServiceV2
   | EffectOutbox.EffectOutboxV2
   | EventSinkV2
+  | EventStore.EventStoreV2
   | IdAllocatorV2
   | ProjectStore.ProjectStoreV2
   | ProviderAdapterRegistryV2

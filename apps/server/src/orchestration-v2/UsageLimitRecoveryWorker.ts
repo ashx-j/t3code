@@ -15,6 +15,8 @@ export function limitRecoveryCommand(
   snooze = false,
 ): OrchestrationV2Command | null {
   if (
+    thread.githubReplySnooze != null ||
+    thread.githubReplyAutoResumeBlockedRunId === thread.latestRunId ||
     thread.status !== "failed" ||
     thread.lastErrorClass !== "usage_limit" ||
     !thread.latestRunId ||
@@ -39,6 +41,7 @@ export function limitRecoveryCommand(
       type: "thread.metadata.update",
       commandId: CommandId.make(`limit-arm:${identity}`),
       threadId: thread.id,
+      automaticLimitRecovery: true,
       limitRecovery: {
         runId: thread.latestRunId,
         resetAt: thread.usageLimitResetAt,

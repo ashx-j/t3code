@@ -53,6 +53,9 @@ export type T3McpToolSummaryAction =
   | "attachment-prepare"
   | "attachment-discard"
   | "attachment-send"
+  | "link-discussion"
+  | "unlink-discussion"
+  | "list-discussions"
   | "link-pr"
   | "unlink-pr"
   | "list-prs"
@@ -66,7 +69,7 @@ export type T3McpToolSummaryAction =
 export interface T3McpToolDefinition {
   readonly displayName: string;
   readonly labels: readonly [action: string, running: string, completed: string, detail: string];
-  readonly icon: "t3-code" | "browser" | "device" | "pull-request";
+  readonly icon: "t3-code" | "browser" | "device" | "pull-request" | "discussion";
   readonly summaryAction: T3McpToolSummaryAction;
 }
 
@@ -83,6 +86,21 @@ const T3_MCP_SERVER_ALIASES = new Set(["t3-code", "t3_code", "t3code"]);
 
 // Cards, activity rows, summaries, and provider identity recovery share this inventory.
 const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
+  link_discussion: tool(
+    ["Link", "Linking", "Linked", "a discussion"],
+    "link-discussion",
+    "discussion",
+  ),
+  unlink_discussion: tool(
+    ["Unlink", "Unlinking", "Unlinked", "a discussion"],
+    "unlink-discussion",
+    "discussion",
+  ),
+  list_thread_discussions: tool(
+    ["Check", "Checking", "Checked", "linked discussions"],
+    "list-discussions",
+    "discussion",
+  ),
   link_pull_request: tool(
     ["Link", "Linking", "Linked", "a pull request"],
     "link-pr",

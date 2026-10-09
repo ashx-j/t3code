@@ -1,7 +1,7 @@
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
 import { MarkdownFindContext, useFindRevealRef } from "./markdownFindContext";
-import { ComputerUseAppIcon } from "~/components/Icons";
+import { ComputerUseAppIcon, GitHubDiscussionIcon } from "~/components/Icons";
 import { useChatCanvas } from "./ChatCanvasContext";
 import { WorkLogBlock, WorkLogButton, WorkLogDetails, WorkLogList, WorkLogRow } from "./WorkLog";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
@@ -4052,6 +4052,8 @@ function toolGroupSummaryIconName(
   kind: Extract<TimelineRow, { kind: "work-toggle" }>["summaryKind"],
 ): WorkEntryIconName {
   switch (kind) {
+    case "discussion":
+      return "discussion";
     case "pull-request":
     case "link-pr":
     case "unlink-pr":
@@ -4945,6 +4947,7 @@ type WorkEntryIconName =
   | "search"
   | "square-pen"
   | "terminal"
+  | "discussion"
   | "pull-request"
   | "t3-code"
   | "wrench"
@@ -5126,6 +5129,8 @@ function ToolActivityImageIcon(props: {
 
 function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className: string }) {
   switch (name) {
+    case "discussion":
+      return <GitHubDiscussionIcon className={className} />;
     case "pull-request":
       return <PullRequestGlyph.pullRequest className={className} aria-hidden />;
     case "bot":

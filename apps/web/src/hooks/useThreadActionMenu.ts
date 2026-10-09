@@ -1,6 +1,11 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
 import {
+  eligibleThreadGitHubConversations,
+  githubReplySnoozeChoice,
+} from "@t3tools/client-runtime/github-reply-conversations";
+
+import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
   settlePromise,
@@ -30,6 +35,8 @@ import {
   readEnvironmentSupportsPinning,
   readEnvironmentSupportsSettlement,
   readEnvironmentSupportsSnooze,
+  readEnvironmentSupportsGitHubReplySnooze,
+  readEnvironmentSupportsGitHubChangesRequestedSnooze,
   readEnvironmentSupportsTitleRegeneration,
   readThreadShell,
   useProjects,
@@ -142,11 +149,16 @@ export function useThreadActionMenu(input: {
           settlement: readEnvironmentSupportsSettlement(threadRef.environmentId),
           autoSettleOptOut: readEnvironmentSupportsAutoSettleOptOut(threadRef.environmentId),
           snooze: readEnvironmentSupportsSnooze(threadRef.environmentId),
+          githubReplySnooze: readEnvironmentSupportsGitHubReplySnooze(threadRef.environmentId),
+          githubChangesRequestedSnooze: readEnvironmentSupportsGitHubChangesRequestedSnooze(
+            threadRef.environmentId,
+          ),
           pinning: readEnvironmentSupportsPinning(threadRef.environmentId),
           titleRegeneration: readEnvironmentSupportsTitleRegeneration(threadRef.environmentId),
         };
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const snoozePresets = resolveSnoozePresets(now, timestampFormat);
+        const githubConversations = eligibleThreadGitHubConversations(thread);
         const items = buildThreadActionMenuItems({
           canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
           branch: thread.branch ?? null,
@@ -160,6 +172,7 @@ export function useThreadActionMenu(input: {
           isRunning: !threadRuntimeCanArchive(thread.runtime),
           supports,
           snoozePresets,
+          githubConversations,
         });
         const clicked = await settlePromise(() => api.contextMenu.show(items, position));
         if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -178,9 +191,14 @@ export function useThreadActionMenu(input: {
           const preset =
             action === "snooze:custom"
               ? await requestCustomSnooze()
-              : snoozePresets.find((candidate) => `snooze:${candidate.id}` === action);
+              : action.startsWith("snooze:github:")
+                ? githubReplySnoozeChoice(action, githubConversations)
+                : snoozePresets.find((candidate) => `snooze:${candidate.id}` === action);
           if (!preset) return;
-          const result = await snoozeThread(threadRef, preset.snoozedUntil);
+          const result = await snoozeThread(
+            threadRef,
+            "url" in preset ? preset : preset.snoozedUntil,
+          );
           if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
             failureToast("Failed to snooze thread", squashAtomCommandFailure(result));
           }

@@ -140,6 +140,7 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "thread.settle":
     case "thread.auto-settle":
     case "thread.unsettle":
+    case "thread.github-reply.snooze":
     case "thread.snooze":
     case "thread.unsnooze":
     case "thread.auto-settle.set":
@@ -150,6 +151,8 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "thread.visit":
     case "thread.mark-unread":
     case "thread.metadata.update":
+    case "thread.discussion.link":
+    case "thread.discussion.unlink":
     case "thread.pull-request.link":
     case "thread.pull-request.unlink":
     case "thread.pull-request-link.sync":

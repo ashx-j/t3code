@@ -1,3 +1,6 @@
+import * as DiscussionsHandlers from "./toolkits/discussions/handlers.ts";
+import { DiscussionsToolkit } from "./toolkits/discussions/tools.ts";
+import * as ThreadDiscussionMcpService from "./ThreadDiscussionMcpService.ts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -833,6 +836,11 @@ const layerDeviceStandardToolkitRegistration = toolkitRegistration(
   DeviceHandlers.layerStandard,
 );
 
+const layerDiscussionsToolkit = toolkitRegistration(
+  DiscussionsToolkit,
+  DiscussionsHandlers.layer,
+).pipe(Layer.provide(ThreadDiscussionMcpService.layer));
+
 const layerDeviceScreenshotRegistration = imageToolRegistration(
   registerDeviceScreenshot(),
   DeviceHandlers.layerScreenshot,
@@ -860,6 +868,7 @@ export const layer = Layer.mergeAll(
   layerPreviewControlsRegistration,
   layerWorktreeToolkitRegistration,
   layerPullRequestsToolkit,
+  layerDiscussionsToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
 ).pipe(Layer.provideMerge(layerMcpTransport));

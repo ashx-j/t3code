@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  CommandId,
   MessageId,
   ProjectId,
   ProviderDriverKind,
@@ -32,6 +33,14 @@ const driver = ProviderDriverKind.make("codex");
 const providerThreadId = ProviderThreadId.make("provider-thread:restart");
 const sessionId = ProviderSessionId.make("session:restart");
 const attemptId = RunAttemptId.make("attempt:restart");
+const replySnooze = {
+  requestId: CommandId.make("reply-snooze:restart"),
+  url: "https://github.com/team/repo/pull/1",
+  startedAt: "2026-10-01T00:00:00Z",
+  nextCheckAt: "2026-10-01T00:00:00Z",
+  status: "pending" as const,
+  failures: 0,
+};
 // "No project" threads belong to the environment's Scratch project.
 const scratchProjectId = ProjectId.make("project:scratch");
 
@@ -138,6 +147,67 @@ it("continues a live turn whose session the adapter never marked running", () =>
   for (const status of ["stopped", "error"])
     assert.isUndefined(restartContinuationRun(withSessionStatus(status)), status);
 });
+
+it.each(["watching", "reply-received", "prepared-continuation"] as const)(
+  "does not select GitHub reply snoozed work for restart: %s",
+  (scenario) => {
+    const base = makeProjection();
+    const prepared = scenario === "prepared-continuation";
+    const projection = {
+      ...base,
+      thread: {
+        ...base.thread,
+        githubReplySnooze: scenario === "watching" ? replySnooze : null,
+        githubReplyAutoResumeBlockedRunId: scenario === "watching" ? null : runId,
+      },
+      runs: prepared
+        ? [
+            {
+              ...base.runs[0]!,
+              id: RunId.make("run:prepared-continuation"),
+              status: "starting" as const,
+              restartContinuationOfRunId: runId,
+            },
+          ]
+        : base.runs,
+    };
+    assert.isUndefined(restartContinuationRun(projection));
+  },
+);
+
+it.effect.each(["watching", "reply-received"] as const)(
+  "does not deliver a pending restart after GitHub reply snooze: %s",
+  (scenario) =>
+    Effect.gen(function* () {
+      const base = makeProjection();
+      const projection = {
+        ...base,
+        thread: {
+          ...base.thread,
+          githubReplySnooze: scenario === "watching" ? replySnooze : null,
+          githubReplyAutoResumeBlockedRunId: scenario === "watching" ? null : runId,
+        },
+        runs: [{ ...base.runs[0]!, status: "cancelled" as const }],
+      };
+      let deliveries = 0;
+      yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(
+        Effect.provide(
+          Layer.merge(
+            Layer.mock(ThreadManagementService.ThreadManagementService)({
+              getThreadRecords: () => Effect.succeed(projection),
+              recoverDelegatedTask: () => Effect.void,
+              dispatch: () => {
+                deliveries++;
+                return Effect.succeed({} as never);
+              },
+            }),
+            ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+          ),
+        ),
+      );
+      assert.equal(deliveries, 0);
+    }),
+);
 
 it("recovers an admitted continuation after another crash before provider start", () => {
   const projection = makeProjection();

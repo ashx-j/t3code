@@ -1,3 +1,9 @@
+import { githubReplySnoozeMenuAction, useGitHubReplySnooze } from "./GitHubReplySnooze";
+import {
+  eligibleThreadGitHubConversations,
+  githubReplySnoozeChoice,
+} from "@t3tools/client-runtime/github-reply-conversations";
+import { environmentServerConfigsAtom } from "../../state/server";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import {
   THREAD_LIST_V2_MONO_FONT as MONO_FONT,
@@ -18,10 +24,14 @@ import type {
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 import { AuthOrchestrationOperateScope, type EnvironmentMachineKind } from "@t3tools/contracts";
-import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  canSnooze,
+  resolveSnoozePresets,
+  threadHasUnseenGitHubReply,
+} from "@t3tools/client-runtime/state/thread-settled";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
-import { Alert, Pressable, useWindowDimensions, View } from "react-native";
+import { Alert, Platform, Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
 import type { ThreadListProvider } from "../../state/thread-list-environments";
@@ -624,7 +634,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   // "Done" marks a completion the user has not opened yet — same emerald
   // label as the web sidebar, sourced from the server-side visited watermark
   // so checking a thread on any device clears it everywhere.
-  const isUnread = status === "ready" && threadHasUnseenCompletion(thread);
+  const isUnread =
+    status === "ready" &&
+    threadHasUnseenCompletion({ latestRun: thread.latestRun, lastVisitedAt: thread.lastVisitedAt });
+  const showUnreadReplyDot = threadHasUnseenGitHubReply(thread);
   const workingLabel = STATUS_LABEL_BY_STATUS[status];
   const statusLabel =
     // A native /goal keeps the agent going across turns until it is met.
@@ -645,6 +658,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   );
   const handleSettle = useCallback(() => onSettleThread(thread), [onSettleThread, thread]);
   const [customSnoozeOpen, setCustomSnoozeOpen] = useState(false);
+  const { snoozeUrl } = useGitHubReplySnooze(thread);
+  const githubConversations = useMemo(() => eligibleThreadGitHubConversations(thread), [thread]);
+  const githubSnoozeSupported =
+    appAtomRegistry.get(environmentServerConfigsAtom).get(thread.environmentId)?.environment
+      .capabilities.threadGitHubReplySnooze === true;
+  const githubChangesRequestedSupported =
+    appAtomRegistry.get(environmentServerConfigsAtom).get(thread.environmentId)?.environment
+      .capabilities.threadGitHubChangesRequestedSnooze === true;
   // A recycled cell reassigns this mounted row to a different thread without
   // remounting it, and the render closure stops running while list equality
   // says the item is unchanged — so any row-local UI state must be dismissed
@@ -698,17 +719,28 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     () => (swipeActions.secondary === "snooze" ? resolveSnoozePresets(new Date()) : ([] as const)),
     [props.snoozePresetMinute, swipeActions.secondary],
   );
-  const snoozePresetActions = useMemo<MenuAction[]>(
-    () => [
+  const snoozePresetActions = useMemo<MenuAction[]>(() => {
+    const githubActions = githubSnoozeSupported
+      ? [
+          githubReplySnoozeMenuAction(githubConversations),
+          ...(githubChangesRequestedSupported
+            ? [githubReplySnoozeMenuAction(githubConversations, "changes-requested")]
+            : []),
+        ]
+      : [];
+    return [
       ...snoozePresets.map((preset) => ({
         id: `snooze:${preset.id}`,
         title: preset.label,
         subtitle: preset.whenLabel,
       })),
+      // ios draws dividers around inline groups; android keeps its flat menu.
+      ...(Platform.OS === "ios" && githubActions.length > 0
+        ? [{ title: "", displayInline: true, subactions: githubActions }]
+        : githubActions),
       { id: "snooze:custom", title: "Custom…" },
-    ],
-    [snoozePresets],
-  );
+    ];
+  }, [snoozePresets, githubSnoozeSupported, githubChangesRequestedSupported, githubConversations]);
   // Pinned cards keep the full lifecycle menu; only the pin item flips to
   // Unpin. (Settling a pinned thread clears the pin server-side; snoozing
   // hides the card until wake with the pin intact.)
@@ -863,6 +895,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         copyTextWithHaptic(thread.id, { target: "thread-id" });
       }
       if (nativeEvent.event === "delete") handleDelete();
+      if (nativeEvent.event.startsWith("snooze:github:")) {
+        const choice = githubReplySnoozeChoice(nativeEvent.event, githubConversations);
+        if (choice) snoozeUrl(choice.url, choice.wakeCondition);
+        return;
+      }
       if (nativeEvent.event === "snooze:custom") {
         setCustomSnoozeOpen(true);
         return;
@@ -890,6 +927,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       handlePin,
       handleSettle,
       handleSnooze,
+      githubConversations,
+      snoozeUrl,
       handleSetAutoSettle,
       handleUnpin,
       handleUnsettle,
@@ -994,6 +1033,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             size={11}
             tintColorClassName={rowAppearance.mutedIconTintClassName}
             type="monochrome"
+          />
+        ) : null}
+        {showUnreadReplyDot ? (
+          <View
+            accessible
+            accessibilityLabel="Unread GitHub activity"
+            className="h-1.5 w-1.5 rounded-full bg-adaptive-emerald-600-400"
           />
         ) : null}
         {statusLabel ? (

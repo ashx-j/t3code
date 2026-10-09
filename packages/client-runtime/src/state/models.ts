@@ -1,3 +1,4 @@
+import type { GitHubReplySnooze, GitHubReplyNotice } from "@t3tools/contracts";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
 import type {
@@ -124,6 +125,8 @@ export interface EnvironmentThreadShell {
   readonly settledAt: string | null;
   readonly unsettledAt: string | null;
   readonly snoozedUntil: string | null;
+  readonly githubReplySnooze?: GitHubReplySnooze | null;
+  readonly githubReplyNotice?: GitHubReplyNotice | null;
   readonly snoozedAt: string | null;
   readonly limitRecovery?: import("@t3tools/contracts").OrchestrationV2LimitRecovery | null;
   readonly pinnedAt: string | null;
@@ -133,6 +136,7 @@ export interface EnvironmentThreadShell {
   /** Slot in the user-arranged active order; null for keyless active threads. */
   readonly activeOrderKey: string | null;
   readonly pullRequests: ReadonlyArray<import("@t3tools/contracts").ThreadPullRequestLink>;
+  readonly discussions?: ReadonlyArray<import("@t3tools/contracts").ThreadDiscussionLink>;
   readonly linkedPullRequest?: ThreadLinkedPullRequest | null;
   readonly branchPullRequest?: ThreadLinkedPullRequest | null;
   /**
@@ -241,6 +245,7 @@ export function presentThreadShell(
     branch: thread.branch,
     worktreePath: thread.worktreePath,
     pullRequests: threadPullRequestsOf(thread),
+    discussions: thread.discussions ?? [],
     linkedPullRequest: thread.linkedPullRequest ?? null,
     branchPullRequest: thread.branchPullRequest ?? null,
     lineage: thread.lineage,
@@ -270,6 +275,8 @@ export function presentThreadShell(
     settledAt: nullableIso(thread.settledAt),
     unsettledAt: nullableIso(thread.unsettledAt ?? null),
     snoozedUntil: nullableIso(thread.snoozedUntil ?? null),
+    githubReplySnooze: thread.githubReplySnooze ?? null,
+    githubReplyNotice: thread.githubReplyNotice ?? null,
     snoozedAt: nullableIso(thread.snoozedAt ?? null),
     limitRecovery: thread.limitRecovery ?? null,
     pinnedAt: nullableIso(thread.pinnedAt ?? null),

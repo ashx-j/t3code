@@ -199,6 +199,24 @@ describe("resolveThreadListV2Status", () => {
     },
   );
 
+  it.each(["reply", "error"] as const)("marks a %s wake unread without a run", (type) => {
+    const thread = makeThread({
+      id: ThreadId.make("reply-wake"),
+      title: "Reply wake",
+      latestRun: null,
+      lastVisitedAt: "2026-06-01T23:59:00.000Z",
+      githubReplyNotice: {
+        type,
+        receivedAt: NOW,
+        url: "https://github.com/team/repo/pull/1",
+        text: "Feedback",
+      },
+    });
+    expect(threadHasUnseenCompletion(thread)).toBe(true);
+    expect(threadHasUnseenCompletion({ ...thread, lastVisitedAt: null })).toBe(true);
+    expect(threadHasUnseenCompletion({ ...thread, lastVisitedAt: NOW })).toBe(false);
+  });
+
   it("resolves ready for quiescent threads", () => {
     expect(resolveThreadListV2Status(makeThread({ id: ThreadId.make("t"), title: "t" }))).toBe(
       "ready",

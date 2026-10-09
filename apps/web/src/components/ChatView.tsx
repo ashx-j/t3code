@@ -95,6 +95,7 @@ import { readPastedComposerContext } from "./composerInlineTokenPaste";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import { useAcknowledgeThreadWoke, useThreadActions } from "../hooks/useThreadActions";
+import { useOpenChangeRequestLink } from "../lib/openPullRequestLink";
 import {
   deriveProviderSubagentStatus,
   deriveReportedModelSelection,
@@ -153,6 +154,7 @@ import {
   lazy,
   memo,
   type SetStateAction,
+  type MouseEvent,
   Suspense,
   useCallback,
   useEffect,
@@ -1591,6 +1593,7 @@ export default function ChatView(props: ChatViewProps) {
     [environmentId, threadId],
   );
   const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
+  const openChangeRequestLink = useOpenChangeRequestLink(routeThreadRef);
   const currentRouteThreadKeyRef = useRef<string | null>(routeThreadKey);
   useLayoutEffect(() => {
     currentRouteThreadKeyRef.current = routeThreadKey;
@@ -7268,6 +7271,26 @@ export default function ChatView(props: ChatViewProps) {
       setUnsnoozingThreadKey((current) => (current === threadKey ? null : current));
     }
   }, [activeThreadRef, activeThreadShell, unsnoozeThreadMutation, updateThreadMetadata]);
+  const openGitHubConversation = useCallback(
+    (event: MouseEvent<HTMLElement>, url: string) => {
+      if (event.metaKey || event.ctrlKey) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (openChangeRequestLink(event, url) || !activeThreadRef) return;
+      void openUrlInPreview({ threadRef: activeThreadRef, url, openPreview }).then((result) => {
+        if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Unable to open GitHub conversation",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      });
+    },
+    [activeThreadRef, openChangeRequestLink, openPreview],
+  );
   const [isRestoringThreadBranch, setIsRestoringThreadBranch] = useState(false);
   const [branchRestoreConfirmOpen, setBranchRestoreConfirmOpen] = useState(false);
   // Once revealed for a given mismatch, the banner stays mounted until the
@@ -7605,7 +7628,8 @@ export default function ChatView(props: ChatViewProps) {
   ]);
   // Settled, snoozed, and woke are thread state, not composer actions: each
   // gets one quiet line after the last message instead of a banner. A woken
-  // thread announces itself here, not just in the sidebar pill. Dismissing
+  // timed snooze announces itself here as well as in the sidebar pill; GitHub
+  // feedback wakes use only the unread state. Dismissing a timed wake
   // marks the wake as seen (same acknowledgment as the pill); sending a
   // message clears it as a side effect of the send path.
   // Memoized: it is the timeline's list footer, and a new element re-renders that footer.
@@ -7616,9 +7640,27 @@ export default function ChatView(props: ChatViewProps) {
       <ThreadStatusLine
         icon={<AlarmClockIcon />}
         label={
-          activeThreadShell?.snoozedUntil
-            ? `Snoozed, ${formatRelativeTimeUntilLabel(activeThreadShell.snoozedUntil)}`
-            : "Snoozed"
+          activeThreadShell?.githubReplySnooze ? (
+            <>
+              {activeThreadShell.githubReplySnooze.wakeCondition === "changes-requested"
+                ? "Waiting for changes to be requested"
+                : "Waiting for a GitHub reply"}
+              {" · "}
+              <a
+                href={activeThreadShell.githubReplySnooze.url}
+                className="text-foreground underline underline-offset-2"
+                onClick={(event) =>
+                  openGitHubConversation(event, activeThreadShell.githubReplySnooze!.url)
+                }
+              >
+                View
+              </a>
+            </>
+          ) : activeThreadShell?.snoozedUntil ? (
+            `Snoozed, ${formatRelativeTimeUntilLabel(activeThreadShell.snoozedUntil)}`
+          ) : (
+            "Snoozed"
+          )
         }
         actionLabel={isUnsnoozing ? "Waking..." : "Wake now"}
         actionDisabled={!canOperateThread || isUnsnoozing}
@@ -7636,7 +7678,7 @@ export default function ChatView(props: ChatViewProps) {
         actionDisabled={!canOperateThread || isUnsettling}
         onAction={() => void handleUnsettleActiveThread()}
       />
-    ) : activeThreadWokeVisible ? (
+    ) : activeThreadWokeVisible && !activeThreadShell?.githubReplyNotice ? (
       <ThreadStatusLine
         icon={<AlarmClockIcon />}
         label="Woke from snooze"
@@ -7647,8 +7689,8 @@ export default function ChatView(props: ChatViewProps) {
   }, [
     acknowledgeActiveThreadWoke,
     activeThreadSettled,
-    activeThreadShell?.settledAt,
-    activeThreadShell?.snoozedUntil,
+    activeThreadShell,
+    openGitHubConversation,
     activeThreadSnoozed,
     activeThreadWokeVisible,
     canOperateThread,

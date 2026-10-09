@@ -1,5 +1,5 @@
 // @effect-diagnostics globalDate:off -- Tests exercise local calendar snooze boundaries.
-import { ThreadId } from "@t3tools/contracts";
+import { CommandId, ThreadId } from "@t3tools/contracts";
 import { TurnId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -11,6 +11,8 @@ import {
   snoozeWakeLabel,
   threadRaisedHandWhileSnoozed,
   threadWokeAt,
+  threadHasUnseenActivity,
+  threadHasUnseenGitHubReply,
   type ThreadSnoozeShell,
 } from "./threadSettled.ts";
 
@@ -366,4 +368,112 @@ describe("resolveSnoozePresets", () => {
     const tomorrow = new Date(presets.find((preset) => preset.id === "tomorrow")!.snoozedUntil);
     expect(tomorrow.getDay()).toBe(1);
   });
+});
+
+it("keeps a GitHub reply snooze through the registering agent's completion", () => {
+  const shell = {
+    ...makeShell({ turnCompletedAt: "2026-04-10T10:30:00.000Z" }),
+    snoozedAt: "2026-04-10T09:00:00.000Z",
+    githubReplySnooze: {
+      requestId: CommandId.make("github-watch"),
+      url: "https://github.com/team/repo/pull/1",
+      startedAt: "2026-04-10T09:00:00.000Z",
+      nextCheckAt: "2026-04-10T09:02:00.000Z",
+      status: "watching" as const,
+      failures: 0,
+    },
+  };
+  expect(effectiveSnoozed(shell, { now: NOW })).toBe(true);
+  expect(effectiveSnoozed({ ...shell, hasPendingApprovals: true }, { now: NOW })).toBe(false);
+  const notice = {
+    type: "reply" as const,
+    url: shell.githubReplySnooze.url,
+    receivedAt: NOW,
+    text: "Feedback",
+    author: "reviewer",
+  };
+  expect(
+    threadWokeAt({ ...shell, githubReplySnooze: null, githubReplyNotice: notice }, { now: NOW }),
+  ).toBe(NOW);
+});
+
+describe("threadHasUnseenActivity", () => {
+  const completedAt = "2026-04-10T09:00:00.000Z";
+  const receivedAt = "2026-04-10T11:00:00.000Z";
+  it.each([null, { completedAt }])(
+    "counts a GitHub wake independently of the run: %j",
+    (latestRun) => {
+      const shell = { latestRun, githubReplyNotice: { receivedAt } };
+      expect(threadHasUnseenActivity({ ...shell, lastVisitedAt: "2026-04-10T10:00:00.000Z" })).toBe(
+        true,
+      );
+      expect(threadHasUnseenActivity({ ...shell, lastVisitedAt: receivedAt })).toBe(false);
+      expect(threadHasUnseenActivity({ ...shell, lastVisitedAt: NOW })).toBe(false);
+    },
+  );
+
+  it.each([null, undefined])(
+    "counts a GitHub notice with no visit watermark: %s",
+    (lastVisitedAt) => {
+      expect(
+        threadHasUnseenActivity({
+          latestRun: null,
+          lastVisitedAt,
+          githubReplyNotice: { receivedAt },
+        }),
+      ).toBe(true);
+      expect(
+        threadHasUnseenActivity({
+          latestRun: { completedAt },
+          lastVisitedAt,
+          githubReplyNotice: { receivedAt },
+        }),
+      ).toBe(true);
+      expect(
+        threadHasUnseenActivity({
+          lastVisitedAt,
+          githubReplyNotice: { receivedAt: "invalid" },
+        }),
+      ).toBe(false);
+    },
+  );
+
+  it("keeps existing visit and malformed timestamp behavior", () => {
+    const shell = { latestRun: { completedAt }, githubReplyNotice: { receivedAt } };
+    expect(threadHasUnseenActivity({ latestRun: { completedAt } })).toBe(false);
+    expect(threadHasUnseenActivity({ latestRun: { completedAt }, lastVisitedAt: null })).toBe(
+      false,
+    );
+    expect(threadHasUnseenActivity({ ...shell, lastVisitedAt: "invalid" })).toBe(true);
+    expect(
+      threadHasUnseenActivity({
+        ...shell,
+        lastVisitedAt: completedAt,
+        githubReplyNotice: { receivedAt: "invalid" },
+      }),
+    ).toBe(false);
+    expect(
+      threadHasUnseenActivity({
+        latestRun: { completedAt: "invalid" },
+        githubReplyNotice: { receivedAt },
+        lastVisitedAt: completedAt,
+      }),
+    ).toBe(true);
+  });
+});
+
+it("keeps GitHub unread separate from a newer unseen completion", () => {
+  expect(
+    threadHasUnseenGitHubReply({
+      githubReplyNotice: { receivedAt: "2026-04-10T09:00:00.000Z" },
+      lastVisitedAt: "2026-04-10T10:00:00.000Z",
+    }),
+  ).toBe(false);
+  expect(
+    threadHasUnseenActivity({
+      latestRun: { completedAt: "2026-04-10T11:00:00.000Z" },
+      githubReplyNotice: { receivedAt: "2026-04-10T09:00:00.000Z" },
+      lastVisitedAt: "2026-04-10T10:00:00.000Z",
+    }),
+  ).toBe(true);
 });

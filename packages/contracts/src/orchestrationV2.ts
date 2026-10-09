@@ -1,3 +1,14 @@
+import {
+  ThreadDiscussionKey,
+  ThreadDiscussionLink,
+  GitHubDiscussionUrl,
+} from "./threadDiscussion.ts";
+import {
+  GitHubConversationUrl,
+  GitHubReplySnooze,
+  GitHubReplyNotice,
+  GitHubReplyWakeCondition,
+} from "./githubReply.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -376,6 +387,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
       pre-linking servers still decode. */
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
+  discussions: Schema.optional(Schema.Array(ThreadDiscussionLink)),
   /** Pull request discovered from the thread's current branch. */
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   activeProviderThreadId: Schema.NullOr(ProviderThreadId),
@@ -404,7 +416,10 @@ export const OrchestrationV2AppThread = Schema.Struct({
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  githubReplySnooze: Schema.optional(Schema.NullOr(GitHubReplySnooze)),
+  githubReplyNotice: Schema.optional(Schema.NullOr(GitHubReplyNotice)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
+  githubReplyAutoResumeBlockedRunId: Schema.optional(Schema.NullOr(RunId)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   // Fractional-index slot in the user-arranged pinned order. Optional so
@@ -1847,6 +1862,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   /** Pull request the user linked to this thread (#8160). */
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
+  discussions: Schema.optional(Schema.Array(ThreadDiscussionLink)),
   /** Pull request discovered from the thread's current branch. */
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   lineage: OrchestrationV2AppThreadLineage,
@@ -1902,7 +1918,10 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  githubReplySnooze: Schema.optional(Schema.NullOr(GitHubReplySnooze)),
+  githubReplyNotice: Schema.optional(Schema.NullOr(GitHubReplyNotice)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
+  githubReplyAutoResumeBlockedRunId: Schema.optional(Schema.NullOr(RunId)),
   /** Omitted by servers that predate thread pinning. */
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -1999,6 +2018,8 @@ export const OrchestrationV2AppThreadJson = OrchestrationV2AppThread.mapFields((
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  githubReplySnooze: Schema.optional(Schema.NullOr(GitHubReplySnooze)),
+  githubReplyNotice: Schema.optional(Schema.NullOr(GitHubReplyNotice)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   lastVisitedAt: Schema.NullOr(Schema.DateTimeUtcFromString).pipe(
@@ -2424,6 +2445,8 @@ export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFiel
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  githubReplySnooze: Schema.optional(Schema.NullOr(GitHubReplySnooze)),
+  githubReplyNotice: Schema.optional(Schema.NullOr(GitHubReplyNotice)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   lastVisitedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
@@ -2673,6 +2696,15 @@ export const OrchestrationV2Command = Schema.Union([
     reason: Schema.Literal("user"),
   }),
   Schema.Struct({
+    type: Schema.Literal("thread.github-reply.snooze"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    url: GitHubConversationUrl,
+    wakeCondition: Schema.optional(GitHubReplyWakeCondition),
+    /** Undo restores the original observation baseline under a new subscription identity. */
+    resumeFrom: Schema.optional(GitHubReplySnooze),
+  }),
+  Schema.Struct({
     type: Schema.Literal("thread.snooze"),
     commandId: CommandId,
     threadId: ThreadId,
@@ -2749,8 +2781,24 @@ export const OrchestrationV2Command = Schema.Union([
     /** Reject unless no message or run has landed on this thread. */
     expectedEmpty: Schema.optional(Schema.Boolean),
     limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecoveryUpdate)),
+    /** worker-prepared recovery must respect later github reply snoozes. */
+    automaticLimitRecovery: Schema.optional(Schema.Literal(true)),
     /** Link (object) or unlink (null) a pull request (#8160); absent leaves it unchanged. */
     linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.discussion.link"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    discussion: Schema.Struct({ ...ThreadDiscussionKey.fields, url: GitHubDiscussionUrl }),
+    title: Schema.optional(TrimmedNonEmptyString),
+    source: ThreadDiscussionLink.fields.source,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.discussion.unlink"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    discussion: ThreadDiscussionKey,
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request.link"),
@@ -3060,6 +3108,14 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
  * send them.
  */
 const OrchestrationV2InternalCommand = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("thread.github-reply.sync"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    requestId: CommandId,
+    watch: Schema.NullOr(GitHubReplySnooze),
+    notice: Schema.optional(GitHubReplyNotice),
+  }),
   /**
    * Records what a pull request watch saw, and wakes the agent in the same transaction when
    * `wake` is set. Rejected once the watch started at `startedAt` has ended, and a wake is

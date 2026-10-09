@@ -6,7 +6,7 @@ import type {
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
 
-import { pullRequestHostOf } from "@t3tools/contracts";
+import { parseGitHubConversationUrl, pullRequestHostOf } from "@t3tools/contracts";
 import { parseChangeRequestUrl } from "./changeRequestUrl.ts";
 import { canonicalRepositoryKey, sourceControlRepositorySelector } from "./sourceControl.ts";
 
@@ -344,4 +344,22 @@ export function threadPullRequestsOf(thread: {
           stack: null,
         },
       ];
+}
+
+/** changes-requested snoozes require a saved, visible PR confirmed open by its latest sync. */
+export function isLinkedOpenGitHubPullRequest(
+  links: ReadonlyArray<ThreadPullRequestLink>,
+  url: string,
+): boolean {
+  const target = parseGitHubConversationUrl(url);
+  if (target?.kind !== "pull") return false;
+  const canonicalUrl = target.url.split("#")[0]!.toLowerCase();
+  return visibleThreadPullRequests(links).some(
+    (link) =>
+      link.host.toLowerCase() === "github.com" &&
+      link.snapshot?.state === "open" &&
+      link.number === target.number &&
+      link.repository.toLowerCase() === `${target.owner}/${target.repository}`.toLowerCase() &&
+      parseGitHubConversationUrl(link.url)?.url.split("#")[0]?.toLowerCase() === canonicalUrl,
+  );
 }

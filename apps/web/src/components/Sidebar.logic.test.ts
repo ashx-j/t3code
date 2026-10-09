@@ -33,6 +33,7 @@ import {
   resolveSidebarSweepKeys,
   resolveSidebarStageBadgeLabel,
   resolveSidebarThreadSection,
+  resolveSidebarDiscussionBadge,
   resolveSidebarRowAccessibility,
   resolveSidebarThreadStatus,
   resolveSidebarV2TopStatus,
@@ -62,7 +63,15 @@ import {
 } from "./Sidebar.logic";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
-import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  RunId,
+  ThreadId,
+  type ThreadDiscussionLink,
+  type ThreadPullRequestLink,
+} from "@t3tools/contracts";
 
 import {
   DEFAULT_INTERACTION_MODE,
@@ -73,6 +82,70 @@ import {
 import { makeThreadFixture, type ThreadFixtureOverrides } from "../test-fixtures";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("resolveSidebarDiscussionBadge", () => {
+  const discussion = {
+    host: "github.com",
+    repository: "t3tools/t3code",
+    number: 42,
+    url: "https://github.com/t3tools/t3code/discussions/42",
+    title: "A linked discussion",
+    source: "manual",
+    linkedAt: "2026-01-01T00:00:00.000Z",
+  } satisfies ThreadDiscussionLink;
+  const pullRequest = {
+    host: "github.com",
+    repository: discussion.repository,
+    number: 43,
+    url: "https://github.com/t3tools/t3code/pull/43",
+    source: "manual",
+    linkedAt: discussion.linkedAt,
+    snapshot: null,
+    stack: null,
+  } satisfies ThreadPullRequestLink;
+
+  it("shows the discussion only when it is the single linked conversation", () => {
+    expect(resolveSidebarDiscussionBadge({ pullRequests: [] })).toBeNull();
+    expect(resolveSidebarDiscussionBadge({ discussions: [], pullRequests: [] })).toBeNull();
+    expect(resolveSidebarDiscussionBadge({ discussions: [discussion], pullRequests: [] })).toBe(
+      discussion,
+    );
+    expect(
+      resolveSidebarDiscussionBadge({
+        discussions: [discussion, { ...discussion, number: 44, url: `${discussion.url}4` }],
+        pullRequests: [],
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps an unsynced PR link ahead of the discussion", () => {
+    expect(
+      resolveSidebarDiscussionBadge({ discussions: [discussion], pullRequests: [pullRequest] }),
+    ).toBeNull();
+  });
+
+  it.each(["linkedPullRequest", "branchPullRequest"] as const)(
+    "keeps a %s ahead of the discussion",
+    (field) => {
+      expect(
+        resolveSidebarDiscussionBadge({
+          discussions: [discussion],
+          pullRequests: [],
+          [field]: { ...pullRequest, projectId: ProjectId.make("project-test") },
+        }),
+      ).toBeNull();
+    },
+  );
+
+  it("does not count a dismissed stack member as a linked conversation", () => {
+    expect(
+      resolveSidebarDiscussionBadge({
+        discussions: [discussion],
+        pullRequests: [{ ...pullRequest, source: "stack-dismissed" }],
+      }),
+    ).toBe(discussion);
+  });
+});
 
 describe("resolveSidebarRowAccessibility", () => {
   it.each([
@@ -502,6 +575,34 @@ function makeLatestRun(overrides?: {
 }
 
 describe("hasUnseenCompletion", () => {
+  it.each(["reply", "error"] as const)(
+    "marks a %s wake unread using the authoritative visit",
+    (type) => {
+      const thread = {
+        hasActionableProposedPlan: false,
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+        interactionMode: "default" as const,
+        latestRun: null,
+        runtime: null,
+        githubReplyNotice: {
+          type,
+          receivedAt: "2026-03-09T10:06:00.000Z",
+          url: "https://github.com/team/repo/pull/1",
+          text: "Feedback",
+        },
+        lastVisitedAt: resolveThreadLastVisitedAt(
+          "2026-03-09T10:04:00.000Z",
+          "2026-03-09T10:08:00.000Z",
+        ),
+      };
+      expect(hasUnseenCompletion(thread)).toBe(true);
+      expect(
+        hasUnseenCompletion({ ...thread, lastVisitedAt: thread.githubReplyNotice.receivedAt }),
+      ).toBe(false);
+    },
+  );
+
   it("returns true when a thread completed after its last visit", () => {
     expect(
       hasUnseenCompletion({

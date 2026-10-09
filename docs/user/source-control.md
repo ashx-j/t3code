@@ -221,6 +221,11 @@ returns to your inbox.
 Cross-repository links use a project on the same host. Azure DevOps reviews require a project checked
 out from the matching organization and repository.
 
+## GitHub discussions
+
+Ask your agent to link a GitHub discussion to its thread. Linked discussions let you
+snooze until someone replies. Open the link to read or respond on GitHub.
+
 ## GitHub stacks
 
 The Pull Requests page shows each PR's position in its GitHub stack. Open the stack badge in a

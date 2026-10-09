@@ -135,6 +135,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server understands thread.snooze / thread.unsnooze commands. Same
       version-skew contract as threadSettlement. */
   threadSnooze: Schema.optionalKey(Schema.Boolean),
+  threadGitHubReplySnooze: Schema.optionalKey(Schema.Boolean),
+  threadGitHubChangesRequestedSnooze: Schema.optionalKey(Schema.Boolean),
   /** Server streams themes an environment publishes. Absent on servers from
       before environment themes shipped, which never emit the events -- so a
       client reconnecting to one must drop published themes rather than keep
@@ -173,6 +175,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       shaping and validation when this is absent. */
   serverResolvedCommandContext: Schema.optionalKey(Schema.Boolean),
   threadPullRequests: Schema.optionalKey(Schema.Boolean),
+  threadDiscussions: Schema.optionalKey(Schema.Boolean),
   /** Server understands thread.pull-request.watch and wakes agents on pull request changes. */
   threadPullRequestWatch: Schema.optionalKey(Schema.Boolean),
   pullRequestStackActions: Schema.optionalKey(Schema.Boolean),

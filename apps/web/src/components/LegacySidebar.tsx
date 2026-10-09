@@ -195,6 +195,7 @@ import {
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
   resolveProjectStatusIndicator,
+  resolveSidebarDiscussionBadge,
   resolveThreadRowClassName,
   resolveThreadLastVisitedAt,
   resolveThreadStatusPill,
@@ -207,6 +208,7 @@ import {
 } from "./Sidebar.logic";
 import { sortThreads } from "../lib/threadSort";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
+import { SidebarThreadDiscussionBadge } from "./sidebar/SidebarThreadDiscussionBadge";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { CommandDialogTrigger } from "./ui/command";
@@ -506,6 +508,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     ? resolveThreadCurrentPullRequestLink(thread.pullRequests)
     : null;
   const prStatus = prStatusIndicator(pr, linkedPullRequestStatus?.sourceControlProvider);
+  const discussion = resolveSidebarDiscussionBadge(thread);
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
   const isConfirmingArchive =
     canOperateThread && confirmingArchiveThreadKey === threadKey && !isThreadRunning;
@@ -616,15 +619,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     [clearSelection, handleMultiSelectContextMenu, handleThreadContextMenu, isSelected, threadRef],
   );
   const handlePrClick = useCallback(
-    (event: React.MouseEvent<HTMLAnchorElement>) => {
-      const url = prStatus?.url ?? currentLinkedPr?.url;
+    (event: React.MouseEvent<HTMLElement>, targetUrl?: string) => {
+      const url = targetUrl ?? prStatus?.url ?? currentLinkedPr?.url;
       if (!url) return;
-      const openedInRightPanel = openPrLink(
-        event,
-        url,
-        openPullRequestsInRightPanel ? threadRef : undefined,
-      );
-      if (openedInRightPanel && openPullRequestsInRightPanel && !isActive) {
+      const showInRightPanel = targetUrl !== undefined || openPullRequestsInRightPanel;
+      const openedInRightPanel = openPrLink(event, url, showInRightPanel ? threadRef : undefined);
+      if (openedInRightPanel && showInRightPanel && !isActive) {
         navigateToThread(threadRef);
       }
     },
@@ -798,6 +798,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             >
               <PullRequestGlyph.pullRequest className="size-3" />
             </a>
+          ) : null}
+          {!pr && !currentLinkedPr && discussion ? (
+            <SidebarThreadDiscussionBadge discussion={discussion} iconOnly onOpen={handlePrClick} />
           ) : null}
           {threadStatus && <ThreadStatusLabel status={threadStatus} />}
           {canOperateThread && renamingThreadKey === threadKey ? (

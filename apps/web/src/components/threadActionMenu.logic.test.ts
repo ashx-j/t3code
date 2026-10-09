@@ -21,9 +21,11 @@ const baseState: ThreadActionMenuState = {
     settlement: true,
     autoSettleOptOut: true,
     snooze: true,
+    githubReplySnooze: true,
     pinning: true,
     titleRegeneration: true,
   },
+  githubConversations: [],
   snoozePresets: [
     { id: "hour", label: "In 1 hour", whenLabel: "3:00 PM", snoozedUntil: "2026-08-07T15:00:00Z" },
   ],
@@ -99,6 +101,7 @@ describe("buildThreadActionMenuItems", () => {
           settlement: false,
           autoSettleOptOut: false,
           snooze: false,
+          githubReplySnooze: false,
           pinning: false,
           titleRegeneration: false,
         },
@@ -177,7 +180,22 @@ describe("buildThreadActionMenuItems", () => {
       (item) => item.id === "snooze",
     );
     expect(snooze?.disabled).toBe(true);
-    expect(snooze?.children?.map((child) => child.id)).toEqual(["snooze:hour", "snooze:custom"]);
+    expect(snooze?.children?.map((child) => child.id)).toEqual([
+      "snooze:hour",
+      "snooze:github",
+      "snooze:custom",
+    ]);
+  });
+
+  it("separates GitHub replies from time presets and hides the option on older servers", () => {
+    const snooze = buildThreadActionMenuItems(baseState).find((item) => item.id === "snooze");
+    expect(snooze?.children?.find((item) => item.id === "snooze:github")?.separatorBefore).toBe(
+      true,
+    );
+    expect(snooze?.children?.at(-1)).toMatchObject({ id: "snooze:custom", separatorBefore: true });
+    expect(
+      allIds({ ...baseState, supports: { ...baseState.supports, githubReplySnooze: false } }),
+    ).not.toContain("snooze:github");
   });
 
   it("disables title regeneration while one is in flight", () => {
@@ -209,6 +227,7 @@ describe("buildThreadActionMenuItems", () => {
           settlement: false,
           autoSettleOptOut: false,
           snooze: false,
+          githubReplySnooze: false,
           pinning: false,
           titleRegeneration: false,
         },
@@ -243,4 +262,26 @@ describe("buildDraftActionMenuItems", () => {
     expect(items.map((item) => item.id)).toEqual(["copy", "discard"]);
     expect(items.at(-1)).toMatchObject({ label: "Discard draft", destructive: true });
   });
+});
+
+it("places changes-requested immediately after reply snooze only when the server supports it", () => {
+  const state = {
+    ...baseState,
+    supports: { ...baseState.supports, githubChangesRequestedSnooze: true },
+  };
+  const children = buildThreadActionMenuItems(state).find((item) => item.id === "snooze")?.children;
+  expect(children?.map((item) => item.id)).toEqual([
+    "snooze:hour",
+    "snooze:github",
+    "snooze:github:changes-requested",
+    "snooze:custom",
+  ]);
+  expect(children?.map((item) => item.separatorBefore === true)).toEqual([
+    false,
+    true,
+    false,
+    true,
+  ]);
+  expect(allIds(baseState)).not.toContain("snooze:github:changes-requested");
+  expect(allIds(baseState)).toContain("snooze:github");
 });

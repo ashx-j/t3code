@@ -1,3 +1,6 @@
+import * as GitHubReplyReader from "../sourceControl/GitHubReplyReader.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
@@ -612,7 +615,16 @@ describe("orchestrator MCP toolkit", () => {
           ).pipe(Layer.provide(layerContinuationProbe));
           const layerOrchestration = Layer.merge(
             layerOrchestrator,
-            ThreadManagementService.layer.pipe(Layer.provide(layerOrchestrator)),
+            ThreadManagementService.layer.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  Layer.mock(GitHubReplyReader.GitHubReplyReader)({}),
+                  Layer.mock(CommandReceiptStore.CommandReceiptStoreV2)({}),
+                  Layer.mock(ProjectStore.ProjectStoreV2)({}),
+                ),
+              ),
+              Layer.provide(layerOrchestrator),
+            ),
           );
           const layerProviderRegistry = ProviderRegistryMock.layer([
             makeProviderSnapshot({
@@ -3800,7 +3812,16 @@ describe("orchestrator MCP toolkit", () => {
         );
         const layerOrchestration = Layer.merge(
           layerOrchestrator,
-          ThreadManagementService.layer.pipe(Layer.provide(layerOrchestrator)),
+          ThreadManagementService.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.mock(GitHubReplyReader.GitHubReplyReader)({}),
+                Layer.mock(CommandReceiptStore.CommandReceiptStoreV2)({}),
+                Layer.mock(ProjectStore.ProjectStoreV2)({}),
+              ),
+            ),
+            Layer.provide(layerOrchestrator),
+          ),
         );
         const layerProviderRegistry = ProviderRegistryMock.layer([
           makeProviderSnapshot({

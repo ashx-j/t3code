@@ -165,6 +165,8 @@ export type ProjectionLimitRecoveryCandidate = Pick<
   | "updatedAt"
   | "limitRecovery"
   | "snoozedUntil"
+  | "githubReplySnooze"
+  | "githubReplyAutoResumeBlockedRunId"
 >;
 
 /** The thread fields pull request sync reads, for a thread with at least one link. */
@@ -194,6 +196,8 @@ export type ProjectionSettlementCandidate = Pick<
   | "autoSettleDisabledAt"
   | "snoozedUntil"
   | "snoozedAt"
+  | "githubReplySnooze"
+  | "githubReplyNotice"
   | "latestRunId"
   | "latestRunRequestedAt"
   | "latestRunStartedAt"
@@ -388,6 +392,10 @@ export interface ProjectionStoreV2Shape {
   readonly getThread: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2AppThread, ProjectionStoreV2Error>;
+  readonly getGitHubReplySnoozes: () => Effect.Effect<
+    ReadonlyArray<OrchestrationV2AppThread>,
+    ProjectionStoreV2Error
+  >;
   readonly getLimitRecoveryCandidates: (options: {
     readonly now: DateTime.Utc;
     readonly autoResume: boolean;
@@ -1443,6 +1451,7 @@ export function threadShellFromProjection(
     branch: projection.thread.branch,
     worktreePath: projection.thread.worktreePath,
     pullRequests: threadPullRequestsOf(projection.thread),
+    discussions: projection.thread.discussions ?? [],
     ...(projection.thread.linkedPullRequest === undefined
       ? {}
       : { linkedPullRequest: projection.thread.linkedPullRequest }),
@@ -1507,6 +1516,8 @@ export function threadShellFromProjection(
     unsettledAt: projection.thread.unsettledAt ?? null,
     snoozedUntil: projection.thread.snoozedUntil ?? null,
     snoozedAt: projection.thread.snoozedAt ?? null,
+    githubReplySnooze: projection.thread.githubReplySnooze ?? null,
+    githubReplyNotice: projection.thread.githubReplyNotice ?? null,
     pinnedAt: projection.thread.pinnedAt ?? null,
 
     autoSettleDisabledAt: projection.thread.autoSettleDisabledAt ?? null,
@@ -1514,6 +1525,7 @@ export function threadShellFromProjection(
     lastVisitedAt: projection.thread.lastVisitedAt,
     titleRegeneration: projection.thread.titleRegeneration ?? null,
     limitRecovery: projection.thread.limitRecovery ?? null,
+    githubReplyAutoResumeBlockedRunId: projection.thread.githubReplyAutoResumeBlockedRunId ?? null,
     deletedAt: projection.thread.deletedAt,
   };
 }
@@ -1711,6 +1723,7 @@ function shellFromState(input: {
     branch: input.state.thread.branch,
     worktreePath: input.state.thread.worktreePath,
     pullRequests: threadPullRequestsOf(input.state.thread),
+    discussions: input.state.thread.discussions ?? [],
     ...(input.state.thread.linkedPullRequest === undefined
       ? {}
       : { linkedPullRequest: input.state.thread.linkedPullRequest }),
@@ -1762,6 +1775,8 @@ function shellFromState(input: {
     unsettledAt: input.state.thread.unsettledAt ?? null,
     snoozedUntil: input.state.thread.snoozedUntil ?? null,
     snoozedAt: input.state.thread.snoozedAt ?? null,
+    githubReplySnooze: input.state.thread.githubReplySnooze ?? null,
+    githubReplyNotice: input.state.thread.githubReplyNotice ?? null,
     pinnedAt: input.state.thread.pinnedAt ?? null,
 
     autoSettleDisabledAt: input.state.thread.autoSettleDisabledAt ?? null,
@@ -1769,6 +1784,7 @@ function shellFromState(input: {
     lastVisitedAt: input.state.thread.lastVisitedAt,
     titleRegeneration: input.state.thread.titleRegeneration ?? null,
     limitRecovery: input.state.thread.limitRecovery ?? null,
+    githubReplyAutoResumeBlockedRunId: input.state.thread.githubReplyAutoResumeBlockedRunId ?? null,
     deletedAt: input.state.thread.deletedAt,
   };
 }
@@ -3436,6 +3452,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ),
       );
 
+    const getGitHubReplySnoozes = Effect.fn("ProjectionStore.getGitHubReplySnoozes")(
+      function* () {
+        const rows = yield* sql<{ readonly payload_json: string }>`
+        SELECT payload_json FROM orchestration_v2_projection_threads
+        WHERE deleted_at IS NULL
+          AND json_extract(payload_json, '$.archivedAt') IS NULL
+          AND json_extract(payload_json, '$.settledOverride') IS NOT 'settled'
+          AND json_extract(payload_json, '$.githubReplySnooze') IS NOT NULL
+      `;
+        return yield* Effect.forEach(rows, (row) => decodeThreadPayload(row.payload_json));
+      },
+      Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+    );
+
     const getLimitRecoveryCandidates = Effect.fn("ProjectionStore.getLimitRecoveryCandidates")(
       function* (options: Parameters<ProjectionStoreV2Shape["getLimitRecoveryCandidates"]>[0]) {
         // Indexed latest-run and root-error lookups avoid reading run histories,
@@ -3537,7 +3567,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             settledOverride: thread.settledOverride,
             pendingRuntimeRequest: null,
             limitRecovery: thread.limitRecovery ?? null,
+            githubReplyAutoResumeBlockedRunId: thread.githubReplyAutoResumeBlockedRunId ?? null,
             snoozedUntil: thread.snoozedUntil ?? null,
+            githubReplySnooze: thread.githubReplySnooze ?? null,
           });
         }
         return candidates;
@@ -5494,6 +5526,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   autoSettleDisabledAt: thread.autoSettleDisabledAt ?? null,
                   snoozedUntil: thread.snoozedUntil ?? null,
                   snoozedAt: thread.snoozedAt ?? null,
+                  githubReplySnooze: thread.githubReplySnooze ?? null,
+                  githubReplyNotice: thread.githubReplyNotice ?? null,
                   status,
                   latestRunId,
                   latestRunRequestedAt:
@@ -5923,6 +5957,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getRuntimeRequest,
       getPlan,
       getProviderControlContext,
+      getGitHubReplySnoozes,
       getLimitRecoveryCandidates,
       getRecoveryThreadIds,
       getUnreadableThreadIds,
@@ -6069,6 +6104,20 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 settledAt: thread.settledAt,
                 pullRequests: thread.pullRequests ?? [],
               })),
+          ),
+        ),
+      getGitHubReplySnoozes: () =>
+        Ref.get(replayState).pipe(
+          Effect.map((state) =>
+            [...state.projections.values()]
+              .map(({ thread }) => thread)
+              .filter(
+                (thread) =>
+                  thread.deletedAt === null &&
+                  thread.archivedAt === null &&
+                  thread.settledOverride !== "settled" &&
+                  thread.githubReplySnooze != null,
+              ),
           ),
         ),
       getLimitRecoveryCandidates: (options) =>
