@@ -4171,10 +4171,8 @@ export function makeClaudeAdapterV2(
           const settled = status !== "pending" && status !== "running";
           const completedAt = !settled
             ? null
-            : startedAt !== null &&
-                member.durationMs !== undefined &&
-                DateTime.toEpochMillis(startedAt) + member.durationMs <= 8.64e15
-              ? DateTime.makeUnsafe(DateTime.toEpochMillis(startedAt) + member.durationMs)
+            : member.completedAt !== undefined && member.completedAt <= 8.64e15
+              ? DateTime.makeUnsafe(member.completedAt)
               : member.state === "queued" || member.state === "running"
                 ? coordinator.completedAt
                 : null;

@@ -35,6 +35,7 @@ describe("projectedSubagentsToRuntime", () => {
           state: "completed" as const,
           startedAt: DateTime.toEpochMillis(startedAt),
           durationMs: 1000,
+          completedAt: DateTime.toEpochMillis(startedAt) + 3_932,
           totalTokens: 250,
           lastToolName: "Bash",
           result: "Read",
@@ -43,9 +44,10 @@ describe("projectedSubagentsToRuntime", () => {
         { index: 1, label: "Writer", state: "running" as const, phaseIndex: 1 },
         {
           index: 2,
-          label: "Cached",
+          label: "Legacy",
           state: "completed" as const,
           startedAt: DateTime.toEpochMillis(startedAt),
+          durationMs: 1000,
         },
       ],
     };
@@ -73,7 +75,8 @@ describe("projectedSubagentsToRuntime", () => {
       status: "completed",
       childThreadId: "reader",
       result: "Read",
-      completedAt: "2026-06-05T10:00:01.000Z",
+      completedAt: "2026-06-05T10:00:03.932Z",
+      usage: { durationMs: 1000 },
     });
     expect(rows[3]).toMatchObject({
       status: "cancelled",

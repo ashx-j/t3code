@@ -98,6 +98,7 @@ it("retains workflow snapshots, orders phases, and keeps terminal members monoto
           resultPreview: "Report",
           tokens: 123,
           durationMs: 40,
+          lastProgressAt: 3_040,
         },
         { type: "workflow_agent", index: -1, label: "Invalid" },
       ],
@@ -147,6 +148,7 @@ it("retains workflow snapshots, orders phases, and keeps terminal members monoto
   assert.equal(delayed?.agents[0]?.label, "Auditor");
   assert.equal(delayed?.agents[0]?.totalTokens, 123);
   assert.equal(delayed?.agents[0]?.durationMs, 40);
+  assert.equal(delayed?.agents[0]?.completedAt, 3_040);
   assert.equal(delayed?.agents[0]?.result, "Report");
   assert.equal(delayed?.agents[0]?.toolCalls, 1);
   const restarted = mergeClaudeWorkflowProgress({
@@ -159,6 +161,7 @@ it("retains workflow snapshots, orders phases, and keeps terminal members monoto
   });
   assert.equal(restarted?.agents[0]?.state, "running");
   assert.isUndefined(restarted?.agents[0]?.result);
+  assert.isUndefined(restarted?.agents[0]?.completedAt);
   const delayedQueue = mergeClaudeWorkflowProgress({
     previous: restarted,
     message: {
@@ -176,6 +179,33 @@ it("retains workflow snapshots, orders phases, and keeps terminal members monoto
     parseClaudeWorkflowRunHandles({ taskType: "local_agent", runId: "unrelated" }),
   );
 });
+
+it.each(["done", "error", "start", "progress", "queued"])(
+  "uses terminal wall-clock progress for a %s workflow member",
+  (state) => {
+    const workflow = mergeClaudeWorkflowProgress({
+      previous: undefined,
+      message: {
+        workflow_progress: [
+          {
+            type: "workflow_agent",
+            index: 0,
+            label: "Reviewer",
+            state,
+            startedAt: 1_000,
+            durationMs: 500,
+            lastProgressAt: 4_432,
+          },
+        ],
+      },
+    });
+    assert.equal(
+      workflow?.agents[0]?.completedAt,
+      state === "done" || state === "error" ? 4_432 : undefined,
+    );
+    assert.equal(workflow?.agents[0]?.durationMs, 500);
+  },
+);
 
 const isWorkflow = Schema.is(OrchestrationV2SubagentWorkflow);
 
@@ -6637,6 +6667,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   attempt: 1,
                   startedAt: memberStartedAt,
                   durationMs: 500,
+                  lastProgressAt: memberStartedAt + 3_432,
                 },
                 {
                   type: "workflow_agent",
@@ -6692,6 +6723,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.equal(coordinator?.workflow?.totalTokens, 350);
           const member = coordinator?.workflow?.agents[0];
           assert.equal(member?.state, "completed");
+          assert.equal(member?.durationMs, 500);
+          assert.equal(member?.completedAt, memberStartedAt + 3_432);
           assert.equal(member?.lastToolName, "Bash");
           assert.equal(member?.result, "Code reviewed");
           assert.isDefined(member?.childThreadId);
@@ -6726,7 +6759,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           );
           assert.equal(
             projectedMember?.completedAt && DateTime.toEpochMillis(projectedMember.completedAt),
-            memberStartedAt + 500,
+            memberStartedAt + 3_432,
           );
           // A retry can already be terminal when its first snapshot arrives.
           // Identical text/status must not keep the previous attempt's timestamps.
@@ -6743,8 +6776,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   label: "Reviewer",
                   state: "done",
                   attempt: 2,
-                  startedAt: memberStartedAt + 1_000,
+                  startedAt: memberStartedAt + 5_000,
                   durationMs: 250,
+                  lastProgressAt: memberStartedAt + 8_250,
                   promptPreview: "Review the code",
                   resultPreview: "Code reviewed",
                 },
@@ -6759,14 +6793,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 (event) =>
                   event.subagent.childThreadId === member?.childThreadId &&
                   event.subagent.completedAt !== null &&
-                  DateTime.toEpochMillis(event.subagent.completedAt) === memberStartedAt + 1_250,
+                  DateTime.toEpochMillis(event.subagent.completedAt) === memberStartedAt + 8_250,
               ),
               Stream.runHead,
             ),
           ).subagent;
           assert.equal(
             retry.startedAt && DateTime.toEpochMillis(retry.startedAt),
-            memberStartedAt + 1_000,
+            memberStartedAt + 5_000,
           );
           const retriedWorkflow = harness.events
             .flatMap((event) =>
@@ -6798,7 +6832,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   label: "Reviewer",
                   state: "start",
                   attempt: 3,
-                  startedAt: memberStartedAt + 2_000,
+                  startedAt: memberStartedAt + 9_000,
                 },
                 { type: "workflow_agent", index: 1, label: "Queued", state: "queued" },
               ],
@@ -6818,7 +6852,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ).subagent;
           assert.equal(
             running.startedAt && DateTime.toEpochMillis(running.startedAt),
-            memberStartedAt + 2_000,
+            memberStartedAt + 9_000,
           );
           assert.isNull(running.completedAt);
           assert.isNull(running.result);
@@ -6879,6 +6913,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   state: "done",
                   attempt: 3,
                   durationMs: 900,
+                  lastProgressAt: memberStartedAt + 12_900,
                   promptPreview: " Review attempt three\n",
                   ...(outcome === "completed" ? {} : { resultPreview: "Final review" }),
                 },
@@ -6927,7 +6962,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             assert.equal(root?.status, expectedStatus);
             const expectedCompletedAt =
               finalMember.index === 0
-                ? memberStartedAt + 2_900
+                ? memberStartedAt + 12_900
                 : finalMember.index >= 3
                   ? null
                   : settled?.completedAt && DateTime.toEpochMillis(settled.completedAt);

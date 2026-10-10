@@ -39,10 +39,11 @@ function parseAgent(entry: ReturnType<typeof record>): OrchestrationV2WorkflowAg
   const index = count(entry.index);
   const label = text(entry.label);
   if (index === undefined || label === undefined) return undefined;
+  const state = agentStates[text(entry.state) ?? ""] ?? "running";
   return {
     index,
     label,
-    state: agentStates[text(entry.state) ?? ""] ?? "running",
+    state,
     ...optional("agentId", text(entry.agentId)),
     ...optional("phaseIndex", count(entry.phaseIndex)),
     ...optional("phaseTitle", text(entry.phaseTitle)),
@@ -54,6 +55,11 @@ function parseAgent(entry: ReturnType<typeof record>): OrchestrationV2WorkflowAg
     ...optional("durationMs", count(entry.durationMs)),
     ...optional("queuedAt", count(entry.queuedAt)),
     ...optional("startedAt", count(entry.startedAt)),
+    // Execution duration excludes startup waits. Only terminal progress gives wall-clock completion.
+    ...optional(
+      "completedAt",
+      state === "completed" || state === "failed" ? count(entry.lastProgressAt) : undefined,
+    ),
     ...optional("prompt", excerpt(entry.promptPreview)),
     ...optional("result", excerpt(entry.resultPreview)),
   };

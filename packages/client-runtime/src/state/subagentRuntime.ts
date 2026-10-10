@@ -125,9 +125,7 @@ function workflowMemberRows(
           : member.state;
     const startedAt = iso(member.startedAt);
     const completedAt = isTerminalSubagentStatus(status)
-      ? ((member.startedAt !== undefined && member.durationMs !== undefined
-          ? iso(member.startedAt + member.durationMs)
-          : null) ??
+      ? (iso(member.completedAt) ??
         (member.state === "queued" || member.state === "running" ? coordinator.completedAt : null))
       : null;
     return {
