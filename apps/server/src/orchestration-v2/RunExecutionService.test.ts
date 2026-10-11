@@ -3868,7 +3868,7 @@ it.effect.each(["stream", "ingestion"] as const)(
               providerTurn: childTurn,
             },
             backgroundTurnItemEvent(ids, "command_execution", "running", 101),
-          ] satisfies ReadonlyArray<ProviderAdapterV2Event>);
+          ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>);
           return failureSource === "stream"
             ? events.pipe(
                 Stream.concat(
@@ -3951,7 +3951,7 @@ it.effect.each([
                   },
                 ]
               : []),
-          ] satisfies ReadonlyArray<ProviderAdapterV2Event>);
+          ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>);
         },
       });
       const turns = finalEvents.filter((event) => event.type === "provider-turn.updated");
@@ -3983,7 +3983,7 @@ it.effect.each(["completed", "failed", "interrupted", "cancelled"] as const)(
               },
             },
             rootTerminalEvent(ids, status),
-          ] satisfies ReadonlyArray<ProviderAdapterV2Event>),
+          ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>),
       });
       assert.isTrue(finalEvents.some((event) => event.type === "run.updated"));
       assert.isFalse(finalEvents.some((event) => event.type === "provider-turn.updated"));
@@ -4001,7 +4001,7 @@ it.effect("does not terminalize a provider turn after its attempt loses ownershi
           type: "provider_turn.updated",
           driver,
           providerTurn: rootProviderTurnFixture(ids),
-        } satisfies ProviderAdapterV2Event).pipe(
+        } satisfies ProviderAdapter.ProviderAdapterV2Event).pipe(
           Stream.concat(
             Stream.fail(
               new ProviderAdapter.ProviderAdapterEventStreamError({
