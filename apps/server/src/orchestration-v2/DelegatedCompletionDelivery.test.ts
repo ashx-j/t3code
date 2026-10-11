@@ -923,16 +923,16 @@ it.layer(layerTest)("delegated background work", (it) => {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const eventSink = yield* EventSink.EventSinkV2;
         const now = yield* DateTime.now;
-        const threadId = ThreadId.make(`thread:background-parent-${status}`);
-        const projectId = ProjectId.make(`project:background-parent-${status}`);
-        const runId = RunId.make(`run:background-parent-${status}`);
-        const rootNodeId = NodeId.make(`node:background-parent-${status}`);
+        const threadId = ThreadId.make(`thread:background-parent-${status}-${taskScoped}`);
+        const projectId = ProjectId.make(`project:background-parent-${status}-${taskScoped}`);
+        const runId = RunId.make(`run:background-parent-${status}-${taskScoped}`);
+        const rootNodeId = NodeId.make(`node:background-parent-${status}-${taskScoped}`);
         yield* seedParentWithTerminalTask({
           threadId,
           projectId,
           runId,
           rootNodeId,
-          taskId: NodeId.make(`node:background-settled-${status}`),
+          taskId: NodeId.make(`node:background-settled-${status}-${taskScoped}`),
           deliveryState: "delivered",
           now,
         });
@@ -941,7 +941,7 @@ it.layer(layerTest)("delegated background work", (it) => {
           projectId,
           parentRunId: runId,
           rootNodeId,
-          name: `background-child-${status}`,
+          name: `background-child-${status}-${taskScoped}`,
           completionWake: "always",
           continuationPending: false,
           runStatus: "completed",
@@ -951,19 +951,21 @@ it.layer(layerTest)("delegated background work", (it) => {
           const childProjection = yield* orchestrator.getThreadProjection(child.childThreadId);
           const childRun = childProjection.runs.find((run) => run.id === child.childRunId)!;
           yield* eventSink.write({
-            commandId: reconcileCommandId(`background-task-scope-${status}`),
-            events: [{
-              id: EventId.make(`event:background-task-scope-${status}`),
-              type: "run.updated",
-              threadId: child.childThreadId,
-              runId: child.childRunId,
-              occurredAt: now,
-              payload: { ...childRun, delegatedTaskId: child.taskId },
-            }],
+            commandId: reconcileCommandId(`background-task-scope-${status}-${taskScoped}`),
+            events: [
+              {
+                id: EventId.make(`event:background-task-scope-${status}-${taskScoped}`),
+                type: "run.updated",
+                threadId: child.childThreadId,
+                runId: child.childRunId,
+                occurredAt: now,
+                payload: { ...childRun, delegatedTaskId: child.taskId },
+              },
+            ],
           });
         }
         const command: OrchestrationV2TurnItem = {
-          id: TurnItemId.make(`background-command-${status}`),
+          id: TurnItemId.make(`background-command-${status}-${taskScoped}`),
           threadId: child.childThreadId,
           runId: child.childRunId,
           nodeId: null,
@@ -982,11 +984,11 @@ it.layer(layerTest)("delegated background work", (it) => {
         };
         const lastCommand = {
           ...command,
-          id: TurnItemId.make(`last-command-${status}`),
+          id: TurnItemId.make(`last-command-${status}-${taskScoped}`),
           ordinal: 2,
         };
         yield* eventSink.write({
-          commandId: CommandId.make(`command:background-start-${status}`),
+          commandId: CommandId.make(`command:background-start-${status}-${taskScoped}`),
           events: [command, lastCommand].map((payload) => ({
             id: EventId.make(`event:start-${payload.id}`),
             type: "turn-item.updated" as const,
@@ -998,7 +1000,12 @@ it.layer(layerTest)("delegated background work", (it) => {
         // Use the same finalization path synchronously so the negative assertion
         // cannot pass merely because the terminal-run listener has not run yet.
         yield* orchestrator.recoverDelegatedTask(child.childThreadId, child.childRunId);
-        assert.isTrue(yield* orchestrator.delegatedTaskResultPending(child.childThreadId, taskScoped ? child.taskId : undefined));
+        assert.isTrue(
+          yield* orchestrator.delegatedTaskResultPending(
+            child.childThreadId,
+            taskScoped ? child.taskId : undefined,
+          ),
+        );
         const pending = yield* orchestrator.getThreadProjection(threadId);
         const task = pending.subagents.find((row) => row.id === child.taskId);
         assert.equal(task?.status, "running");
@@ -1012,9 +1019,9 @@ it.layer(layerTest)("delegated background work", (it) => {
 
         // Repeated completion signals may coalesce, but the other command still holds the result.
         yield* eventSink.write({
-          commandId: CommandId.make(`command:background-repeat-${status}`),
+          commandId: CommandId.make(`command:background-repeat-${status}-${taskScoped}`),
           events: Array.from({ length: 20 }, (_, index) => ({
-            id: EventId.make(`event:background-repeat-${status}-${index}`),
+            id: EventId.make(`event:background-repeat-${status}-${taskScoped}-${index}`),
             type: "turn-item.updated" as const,
             threadId: child.childThreadId,
             occurredAt: now,
@@ -1022,7 +1029,12 @@ it.layer(layerTest)("delegated background work", (it) => {
           })),
         });
         yield* orchestrator.recoverDelegatedTask(child.childThreadId, child.childRunId);
-        assert.isTrue(yield* orchestrator.delegatedTaskResultPending(child.childThreadId, taskScoped ? child.taskId : undefined));
+        assert.isTrue(
+          yield* orchestrator.delegatedTaskResultPending(
+            child.childThreadId,
+            taskScoped ? child.taskId : undefined,
+          ),
+        );
         const stillPending = yield* orchestrator.getThreadProjection(threadId);
         assert.isNull(stillPending.subagents.find((row) => row.id === child.taskId)?.result);
 
@@ -1042,17 +1054,17 @@ it.layer(layerTest)("delegated background work", (it) => {
         yield* Effect.addFinalizer(() => Effect.sync(() => readSpy.mockRestore()));
         const ordinaryCompletion = {
           ...command,
-          id: TurnItemId.make(`ordinary-command-${status}`),
+          id: TurnItemId.make(`ordinary-command-${status}-${taskScoped}`),
           threadId,
           runId,
           status: "completed" as const,
           completedAt: now,
         };
         yield* eventSink.write({
-          commandId: CommandId.make(`command:ordinary-first-${status}`),
+          commandId: CommandId.make(`command:ordinary-first-${status}-${taskScoped}`),
           events: [
             {
-              id: EventId.make(`event:ordinary-first-${status}`),
+              id: EventId.make(`event:ordinary-first-${status}-${taskScoped}`),
               type: "turn-item.updated",
               threadId,
               occurredAt: now,
@@ -1066,17 +1078,17 @@ it.layer(layerTest)("delegated background work", (it) => {
         const afterSequence = yield* eventSink.latestSequence();
         // No new run event follows this update. The item ending must trigger delivery.
         yield* eventSink.write({
-          commandId: CommandId.make(`command:background-end-${status}`),
+          commandId: CommandId.make(`command:background-end-${status}-${taskScoped}`),
           events: [
             {
-              id: EventId.make(`event:ordinary-second-${status}`),
+              id: EventId.make(`event:ordinary-second-${status}-${taskScoped}`),
               type: "turn-item.updated",
               threadId,
               occurredAt: now,
               payload: ordinaryCompletion,
             },
             {
-              id: EventId.make(`event:background-end-${status}`),
+              id: EventId.make(`event:background-end-${status}-${taskScoped}`),
               type: "turn-item.updated",
               threadId: child.childThreadId,
               occurredAt: now,
@@ -1100,7 +1112,12 @@ it.layer(layerTest)("delegated background work", (it) => {
         assert.equal(result?.status, "completed");
         assert.equal(result?.result, "Child task completed without an assistant result.");
         assert.equal(result?.completionDelivery?.state, "claimed");
-        assert.isFalse(yield* orchestrator.delegatedTaskResultPending(child.childThreadId, taskScoped ? child.taskId : undefined));
+        assert.isFalse(
+          yield* orchestrator.delegatedTaskResultPending(
+            child.childThreadId,
+            taskScoped ? child.taskId : undefined,
+          ),
+        );
         assert.equal(
           finished.contextTransfers.filter(
             (transfer) =>

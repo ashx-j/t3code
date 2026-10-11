@@ -1325,7 +1325,11 @@ const make = Effect.gen(function* () {
         childRun?.delegatedTaskId === task.id
           ? isTerminalTaskStatus(taskStatusForRun(taskResultRun))
             ? pendingBackgroundTurnItems(childControls).some(
-                (item) => item.runId === null || childControls.runs.some((run) => run.delegatedTaskId === task.id && run.id === item.runId),
+                (item) =>
+                  item.runId === null ||
+                  childControls.runs.some(
+                    (run) => run.delegatedTaskId === task.id && run.id === item.runId,
+                  ),
               )
               ? "waiting_for_children"
               : "result_available"

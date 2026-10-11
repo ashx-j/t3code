@@ -9973,7 +9973,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
    */
   const finalizeAppOwnedSubagentTask = (
     childControls: ProjectionRecords<
-      "runs" | "messages" | "subagents" | "providerThreads" | "providerTurns" | "attempts" | "turnItems"
+      | "runs"
+      | "messages"
+      | "subagents"
+      | "providerThreads"
+      | "providerTurns"
+      | "attempts"
+      | "turnItems"
     >,
     options: {
       readonly settledContinuationOf?: RunId;
@@ -10001,9 +10007,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (childRun === undefined) return;
       if (
         pendingBackgroundTurnItems(childControls).some(
-          (item) => item.runId === null || item.runId === childRun.id || taskRuns.some((run) => run.id === item.runId),
+          (item) =>
+            item.runId === null ||
+            item.runId === childRun.id ||
+            taskRuns.some((run) => run.id === item.runId),
         )
-      ) return;
+      )
+        return;
       const terminalStatus = delegatedTaskTerminalStatus(childRun.status);
       if (terminalStatus === null) {
         return;
@@ -10283,7 +10293,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     Effect.gen(function* () {
       const childControls = yield* projectionStore.getThreadRecords(
         childThreadId,
-        ["runs", "messages", "subagents", "providerThreads", "providerTurns", "attempts", "turnItems"],
+        [
+          "runs",
+          "messages",
+          "subagents",
+          "providerThreads",
+          "providerTurns",
+          "attempts",
+          "turnItems",
+        ],
         {
           messageRoles: ["user"],
           turnItemTypes: ["command_execution", "dynamic_tool", "subagent"],
@@ -11340,7 +11358,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const runs = child.runs.filter((run) => run.delegatedTaskId === taskId);
         const run = runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
         if (run === undefined || delegatedTaskTerminalStatus(run.status) === null) return true;
-        if (pendingBackgroundTurnItems(child).some((item) => item.runId === null || runs.some((run) => run.id === item.runId))) return true;
+        if (
+          pendingBackgroundTurnItems(child).some(
+            (item) => item.runId === null || runs.some((run) => run.id === item.runId),
+          )
+        )
+          return true;
         return yield* childAwaitsRestartContinuation(runs, run);
       }
       const progress = delegatedTaskProgress(child);
