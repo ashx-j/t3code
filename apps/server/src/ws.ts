@@ -1,3 +1,4 @@
+import * as ThreadDiscussionService from "./orchestration-v2/ThreadDiscussionService.ts";
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
@@ -1226,6 +1227,7 @@ const layerWsRpc = (
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const secretRequests = yield* SecretRequests.SecretRequests;
+      const discussions = yield* ThreadDiscussionService.ThreadDiscussionService;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
@@ -2478,6 +2480,13 @@ const layerWsRpc = (
                   ),
             ),
           ),
+        [WS_METHODS.discussionsMetadataOptions]: (input) => discussions.metadataOptions(input),
+        [WS_METHODS.discussionsSetLabel]: (input) => discussions.setLabel(input),
+        [WS_METHODS.discussionsSetCategory]: (input) => discussions.setCategory(input),
+        [WS_METHODS.discussionsDetail]: (input) => discussions.detail(input),
+        [WS_METHODS.discussionsComment]: (input) => discussions.comment(input),
+        [WS_METHODS.discussionsSetReaction]: (input) => discussions.setReaction(input),
+        [WS_METHODS.discussionsSetUpvote]: (input) => discussions.setUpvote(input),
         [WS_METHODS.pullRequestsDetail]: (input) =>
           withPullRequestViewer(input, pullRequests.detail(input)),
         [WS_METHODS.pullRequestsPreview]: (input) =>
@@ -3131,6 +3140,7 @@ export const layer = Layer.unwrap(
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
     const serverBrowser = yield* ServerBrowser.ServerBrowser;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
+    const discussions = yield* ThreadDiscussionService.ThreadDiscussionService;
     const pullRequests = yield* PullRequestService.PullRequestService;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
@@ -3198,6 +3208,9 @@ export const layer = Layer.unwrap(
               // One server-lifetime service means clients share the same PR caches, and a WS
               // mutation invalidates the HTTP diff cache that every client reads from.
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
+              Layer.provide(
+                Layer.succeed(ThreadDiscussionService.ThreadDiscussionService, discussions),
+              ),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(

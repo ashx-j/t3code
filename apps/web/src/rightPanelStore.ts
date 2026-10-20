@@ -29,6 +29,7 @@ const RIGHT_PANEL_KINDS = [
   "device",
   "terminal",
   "pull-request",
+  "discussion",
   "pull-requests",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
@@ -84,6 +85,7 @@ export type RightPanelSurface =
       number: number;
       url?: string;
     }
+  | { id: `discussion:${string}`; kind: "discussion"; url: string; number: number }
   /** The thread's linked pull requests, one singleton tab beside any number of `pull-request` tabs. */
   | { id: "pull-requests"; kind: "pull-requests" };
 
@@ -137,7 +139,7 @@ interface RightPanelStoreState {
   ) => boolean;
   open: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "discussion">,
   ) => void;
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
@@ -155,6 +157,7 @@ interface RightPanelStoreState {
       url?: string;
     },
   ) => void;
+  openDiscussion: (ref: ScopedThreadRef, url: string, number: number) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
   splitTerminal: (
     ref: ScopedThreadRef,
@@ -180,7 +183,7 @@ interface RightPanelStoreState {
   toggleVisibility: (ref: ScopedThreadRef) => void;
   toggle: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "discussion">,
   ) => void;
   setThreadPanelOpen: (
     ref: ScopedThreadRef,
@@ -203,7 +206,7 @@ const DEFAULT_THREAD_PANEL_VISIBILITY: ThreadPanelVisibility = {
 };
 
 const singletonSurface = (
-  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request">,
+  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request" | "discussion">,
 ): RightPanelSurface => {
   switch (kind) {
     case "diff":
@@ -685,6 +688,22 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                   ),
                 }
               : next;
+          }),
+        ),
+      openDiscussion: (ref, url, number) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
+            const surface = {
+              id: `discussion:${url.split("#")[0]}` as const,
+              kind: "discussion" as const,
+              url,
+              number,
+            };
+            const next = upsertSurface(current, surface);
+            return {
+              ...next,
+              surfaces: next.surfaces.map((entry) => (entry.id === surface.id ? surface : entry)),
+            };
           }),
         ),
       openFile: (ref, requestedPath, line) =>

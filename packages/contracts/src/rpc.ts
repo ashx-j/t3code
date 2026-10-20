@@ -3,6 +3,23 @@ import {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
 } from "./orchestrationV2.ts";
+import {
+  GitHubDiscussionMetadataOptionsInput,
+  GitHubDiscussionMetadataOptions,
+  GitHubDiscussionSetLabelInput,
+  GitHubDiscussionSetLabelResult,
+  GitHubDiscussionSetCategoryInput,
+  GitHubDiscussionSetCategoryResult,
+  GitHubDiscussionDetailInput,
+  GitHubDiscussionDetail,
+  DiscussionOperationError,
+  GitHubDiscussionCommentInput,
+  GitHubDiscussionCommentResult,
+  GitHubDiscussionReactionInput,
+  GitHubDiscussionReactionResult,
+  GitHubDiscussionUpvoteInput,
+  GitHubDiscussionUpvoteResult,
+} from "./threadDiscussion.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import {
   McpAppCallToolInput,
@@ -520,6 +537,13 @@ export const WS_METHODS = {
   pullRequestsStack: "pullRequests.stack",
   pullRequestsLinkedThreads: "pullRequests.linkedThreads",
   pullRequestsDetail: "pullRequests.detail",
+  discussionsMetadataOptions: "discussions.metadataOptions",
+  discussionsSetLabel: "discussions.setLabel",
+  discussionsSetCategory: "discussions.setCategory",
+  discussionsDetail: "discussions.detail",
+  discussionsComment: "discussions.comment",
+  discussionsSetReaction: "discussions.setReaction",
+  discussionsSetUpvote: "discussions.setUpvote",
   pullRequestsPreview: "pullRequests.preview",
   pullRequestsChecks: "pullRequests.checks",
   pullRequestsActivity: "pullRequests.activity",
@@ -964,6 +988,48 @@ const WsPullRequestsLinkedThreadsRpc = Rpc.make(WS_METHODS.pullRequestsLinkedThr
   payload: PullRequestRef,
   success: PullRequestLinkedThreadsResult,
   error: PullRequestRpcError,
+});
+
+const WsDiscussionsMetadataOptionsRpc = Rpc.make(WS_METHODS.discussionsMetadataOptions, {
+  payload: GitHubDiscussionMetadataOptionsInput,
+  success: GitHubDiscussionMetadataOptions,
+  error: DiscussionOperationError,
+});
+
+const WsDiscussionsSetLabelRpc = Rpc.make(WS_METHODS.discussionsSetLabel, {
+  payload: GitHubDiscussionSetLabelInput,
+  success: GitHubDiscussionSetLabelResult,
+  error: DiscussionOperationError,
+});
+
+const WsDiscussionsSetCategoryRpc = Rpc.make(WS_METHODS.discussionsSetCategory, {
+  payload: GitHubDiscussionSetCategoryInput,
+  success: GitHubDiscussionSetCategoryResult,
+  error: DiscussionOperationError,
+});
+
+const WsDiscussionsDetailRpc = Rpc.make(WS_METHODS.discussionsDetail, {
+  payload: GitHubDiscussionDetailInput,
+  success: GitHubDiscussionDetail,
+  error: DiscussionOperationError,
+});
+
+const WsDiscussionsCommentRpc = Rpc.make(WS_METHODS.discussionsComment, {
+  payload: GitHubDiscussionCommentInput,
+  success: GitHubDiscussionCommentResult,
+  error: DiscussionOperationError,
+});
+
+const WsDiscussionsSetReactionRpc = Rpc.make(WS_METHODS.discussionsSetReaction, {
+  payload: GitHubDiscussionReactionInput,
+  success: GitHubDiscussionReactionResult,
+  error: DiscussionOperationError,
+});
+
+const WsDiscussionsSetUpvoteRpc = Rpc.make(WS_METHODS.discussionsSetUpvote, {
+  payload: GitHubDiscussionUpvoteInput,
+  success: GitHubDiscussionUpvoteResult,
+  error: DiscussionOperationError,
 });
 
 const WsPullRequestsDetailRpc = Rpc.make(WS_METHODS.pullRequestsDetail, {
@@ -1879,6 +1945,13 @@ export const WsRpcGroup = RpcGroup.make(
   WsPullRequestsStackRpc,
   WsPullRequestsLinkedThreadsRpc,
   WsPullRequestsDetailRpc,
+  WsDiscussionsMetadataOptionsRpc,
+  WsDiscussionsSetLabelRpc,
+  WsDiscussionsSetCategoryRpc,
+  WsDiscussionsDetailRpc,
+  WsDiscussionsCommentRpc,
+  WsDiscussionsSetReactionRpc,
+  WsDiscussionsSetUpvoteRpc,
   WsPullRequestsPreviewRpc,
   WsPullRequestsChecksRpc,
   WsPullRequestsActivityRpc,

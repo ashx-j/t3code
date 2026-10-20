@@ -2,11 +2,14 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 import {
   GitHubDiscussionUrl,
+  GitHubDiscussionDetail,
+  GitHubDiscussionCommentInput,
   ThreadDiscussionKey,
   ThreadDiscussionLink,
 } from "./threadDiscussion.ts";
 
 const decodeLink = Schema.decodeUnknownSync(ThreadDiscussionLink);
+const decodeDetail = Schema.decodeUnknownSync(GitHubDiscussionDetail);
 
 describe("discussion contracts", () => {
   it("accepts whole discussions and explicit comment scopes", () => {
@@ -41,5 +44,34 @@ describe("discussion contracts", () => {
       linkedAt: "2026-10-07T12:00:00Z",
     };
     expect(decodeLink(link)).toEqual(link);
+  });
+
+  it("reads detail responses from environments without discussion interactions", () => {
+    const oldDetail = {
+      number: 1,
+      url: "https://github.com/team/repo/discussions/1",
+      title: "Discussion",
+      body: "Text",
+      author: null,
+      createdAt: "2026-10-01T12:00:00Z",
+      updatedAt: "2026-10-01T12:00:00Z",
+      closed: false,
+      isAnswered: false,
+      category: null,
+      comments: [],
+    };
+    expect(decodeDetail(oldDetail)).toEqual(oldDetail);
+  });
+
+  it("validates comment text without removing markdown indentation", () => {
+    const decode = Schema.decodeUnknownSync(GitHubDiscussionCommentInput);
+    const input = {
+      threadId: "thread",
+      url: "https://github.com/team/repo/discussions/1",
+      body: "    indented code\n",
+    };
+    expect(decode(input).body).toBe(input.body);
+    for (const body of [" \n\t", "a".repeat(65_537)])
+      expect(() => decode({ ...input, body })).toThrow();
   });
 });
