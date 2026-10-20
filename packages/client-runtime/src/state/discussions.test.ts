@@ -35,8 +35,8 @@ vi.mock("./session.ts", () => ({
   createEnvironmentSessionAtoms: () => ({ sessionStateAtom: sessions }),
 }));
 const sessions = Atom.family((_id: EnvironmentId) =>
-  Atom.make<AsyncResult.AsyncResult<AuthSessionState>>(
-    AsyncResult.success({
+  Atom.make(
+    AsyncResult.success<AuthSessionState>({
       authenticated: true,
       auth: {
         policy: "remote-reachable",
