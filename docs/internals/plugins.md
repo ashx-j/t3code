@@ -2,7 +2,8 @@
 
 A plugin is a directory with a `t3-plugin.json` manifest
 ([schema](../../packages/contracts/src/plugins.ts)), an optional CommonJS server entry, and an
-optional ESM web bundle, typed with [`@t3tools/plugin-sdk`](../../packages/plugin-sdk).
+optional ESM web bundle, typed with [`@t3tools/plugin-sdk`](../../packages/plugin-sdk). The server
+side is [`PluginHost`](../../apps/server/src/plugins/PluginHost.ts).
 
 ## Trust and failure
 
@@ -10,7 +11,8 @@ Plugins are code the user installed on purpose. Server entries run in the server
 bundles run as React code in the page, with no sandbox; manifest `permissions` are shown, not
 enforced. Do not shape the API around a future sandbox. The host isolates failure instead: a plugin
 that throws while loading or activating is marked failed, one that throws in a handler fails that
-call, and neither stops the server.
+call, a hung cleanup is abandoned after a deadline, and none of them stops the server. A newly found
+plugin starts disabled; the user enables it.
 
 ## The plugin API is plain JavaScript
 
@@ -19,18 +21,20 @@ instances. They get Promises, `AsyncIterable` streams and `AbortSignal` cancella
 
 ## Server entries are CommonJS
 
-The packaged server is a Node single executable, which cannot `import()` a file from disk, so it
-loads plugins with `module.createRequire(process.execPath)`. Desktop and dev servers use `import()`.
-Only a `.cjs` file loads the same way on both paths, so the manifest rejects other extensions.
-Reload clears the `require.cache` entry or changes the `import()` URL; Node keeps the old module
-instance in memory until the server restarts.
+The packaged server is a Node single executable, which cannot `import()` a file from disk. A
+`require` made with `module.createRequire(process.execPath)` loads files in both the executable and
+plain Node, so the host uses that one path, and the manifest accepts only `.cjs` entries. Reload
+drops the plugin's entries from `require.cache`; Node keeps the old module instances in memory until
+the server restarts.
 
 ## State lives beside T3's
 
-Settings go in `<stateDir>/plugins/<id>/settings.json`, storage in `<stateDir>/plugins.sqlite`,
-enabled flags in `<stateDir>/plugins.json`. Not in `settings.json`, whose writer re-encodes its
-decoded struct and drops unknown keys. Not a migration in `statev2.sqlite`, whose numbered list
-refuses to start when a fork migration id collides with an upstream one.
+Enabled flags and dev paths go in `<stateDir>/plugins.json`, settings in
+`<stateDir>/plugin-data/<id>/settings.json`, storage in `<stateDir>/plugins.sqlite`, opened on first
+use. Not in `settings.json`, whose writer re-encodes its decoded struct and drops unknown keys. Not a
+migration in `statev2.sqlite`, whose numbered list refuses to start when a fork migration id
+collides with an upstream one. Settings stay out of `plugins/<id>/` so replacing a plugin's files
+cannot lose them and a dev plugin's settings never look like an installed plugin.
 
 ## Ids and manifests
 
@@ -38,12 +42,16 @@ Ids are lowercase because they name directories on case-insensitive filesystems,
 underscores so the `plg_<id>_` prefix on plugin MCP tool names belongs to one plugin. Entry paths are
 checked lexically; code that reads or serves them must still resolve symlinks. `contributes` rejects
 unknown keys, so a plugin written for a newer T3 fails with a reason instead of losing one silently.
+Settings are validated by Effect's JSON Schema 2020-12 importer; a schema it cannot import rejects
+saves with the importer's reason.
 
 ## Clients
 
-Desktop and hosted web authenticate `/api` with bearer tokens, which a bare `import(url)` cannot
-send. The loader fetches a web bundle with the authenticated fetch and imports a `blob:` URL, so the
-desktop CSP allows `blob:` scripts. Bundles reach React and the UI kit through
+Plugin state reaches clients through `plugins.subscribeStates`, not the server config stream: a
+settings page that opted into the shared stream would need a second subscription that resends the
+whole config. Desktop and hosted web authenticate `/api` with bearer tokens, which a bare
+`import(url)` cannot send, so web bundles are fetched with the authenticated fetch and imported from
+a `blob:` URL; the desktop CSP allows `blob:` scripts. Bundles reach React and the UI kit through
 `globalThis.__t3PluginHost`, not an import map. Mobile release builds cannot load code at all, so
 mobile renders settings from the manifest's JSON Schema and declarative contributions only.
 
@@ -55,5 +63,6 @@ on one list-level version, never a per-row subscription.
 
 ## Nothing installed costs nothing
 
-Clients show plugin UI only when the environment advertises `plugins`, and receive plugin state only
-when they opt in. Plugins activate after the server is listening.
+Plugins activate after the server is listening, each in its own fiber. Clients show plugin UI only
+when the environment advertises `plugins`. Plugin MCP tools are registered only while a plugin is
+installed, because every agent turn pays for the advertised tool list.
