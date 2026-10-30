@@ -11,6 +11,8 @@ const MAX_TOOL_NAME_CHARS = 64;
 const TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const MAX_REASON_CHARS = 500;
 const PLUGINS_LIST_TOOL = "t3_plugins_list";
+const PLUGINS_INVOKE_TOOL = "t3_plugins_invoke";
+const PLUGINS_SET_ENABLED_TOOL = "t3_plugins_set_enabled";
 
 const isJson = Schema.is(Schema.Json);
 
@@ -43,6 +45,39 @@ export class PluginMcpToolDisabledError extends Schema.TaggedError<PluginMcpTool
   }
 }
 
+export class PluginMcpManagementError extends Schema.TaggedError<PluginMcpManagementError>()(
+  "PluginMcpManagementError",
+  { reason: Schema.String },
+) {
+  override get message(): string {
+    return this.reason;
+  }
+}
+
+/** What the management tools do. The plugin host supplies them, since it depends on this service. */
+export interface PluginMcpHostActions {
+  readonly invoke: (
+    pluginId: PluginId,
+    method: string,
+    input: Schema.Json | undefined,
+  ) => Effect.Effect<Schema.Json, { readonly message: string }>;
+  readonly setEnabled: (
+    pluginId: PluginId,
+    enabled: boolean,
+  ) => Effect.Effect<PluginState, { readonly message: string }>;
+}
+
+const decodeInvokeInput = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    pluginId: PluginId,
+    method: Schema.String,
+    input: Schema.optional(Schema.Json),
+  }),
+);
+const decodeSetEnabledInput = Schema.decodeUnknownEffect(
+  Schema.Struct({ pluginId: PluginId, enabled: Schema.Boolean }),
+);
+
 /** One tool as `/mcp` advertises it. `call` runs it; McpHttpServer checks `access` first. */
 export interface PluginMcpToolEntry {
   readonly name: string;
@@ -51,7 +86,10 @@ export interface PluginMcpToolEntry {
   readonly access: PluginRpcAccess;
   readonly call: (
     input: Schema.JsonObject,
-  ) => Effect.Effect<Schema.Json, PluginMcpToolError | PluginMcpToolDisabledError>;
+  ) => Effect.Effect<
+    Schema.Json,
+    PluginMcpToolError | PluginMcpToolDisabledError | PluginMcpManagementError
+  >;
 }
 
 export class PluginMcpTools extends Context.Service<
@@ -66,8 +104,13 @@ export class PluginMcpTools extends Context.Service<
     }) => Effect.Effect<void, PluginMcpToolNameError>;
     /** MCP has no tool removal, so each of the plugin's tools answers "disabled" instead. */
     readonly unregisterPlugin: (pluginId: PluginId) => Effect.Effect<void>;
-    /** Offers `t3_plugins_list` once a plugin is installed; agents without plugins never pay for it. */
+    /**
+     * Offers `t3_plugins_list`, `t3_plugins_invoke` and `t3_plugins_set_enabled` once a plugin is
+     * installed; agents without plugins never pay for them.
+     */
     readonly setInstalledPlugins: (plugins: ReadonlyArray<PluginState>) => Effect.Effect<void>;
+    /** Connects the management tools to the plugin host. */
+    readonly setHostActions: (actions: PluginMcpHostActions) => Effect.Effect<void>;
     /** Hands `publish` every tool now and each change until the scope closes. */
     readonly attach: (
       publish: (tool: PluginMcpToolEntry) => Effect.Effect<void>,
@@ -92,6 +135,17 @@ const make = () => {
   const toolsByPlugin = new Map<PluginId, Set<string>>();
   const publishers = new Set<(tool: PluginMcpToolEntry) => Effect.Effect<void>>();
   let installed: ReadonlyArray<PluginState> = [];
+  let hostActions: PluginMcpHostActions | undefined;
+  const withHost = <A>(
+    run: (actions: PluginMcpHostActions) => Effect.Effect<A, { readonly message: string }>,
+  ) =>
+    hostActions === undefined
+      ? Effect.fail(new PluginMcpManagementError({ reason: "Plugins are still starting." }))
+      : run(hostActions).pipe(
+          Effect.mapError((error) => new PluginMcpManagementError({ reason: error.message })),
+        );
+  const invalidInput = (cause: { readonly message: string }) =>
+    new PluginMcpManagementError({ reason: `Invalid input: ${cause.message}` });
 
   const publish = Effect.fnUntraced(function* (entry: PluginMcpToolEntry) {
     tools.set(entry.name, entry);
@@ -114,6 +168,50 @@ const make = () => {
           enabled: plugin.enabled,
         })),
       })),
+  };
+
+  const pluginsInvoke: PluginMcpToolEntry = {
+    name: PLUGINS_INVOKE_TOOL,
+    description:
+      "Call a method an installed plugin registered, with optional JSON input, and return its result. Use t3_plugins_list to see plugins.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        pluginId: { type: "string" },
+        method: { type: "string" },
+        input: { description: "JSON passed to the method." },
+      },
+      required: ["pluginId", "method"],
+      additionalProperties: false,
+    },
+    access: "write",
+    call: (input) =>
+      decodeInvokeInput(input).pipe(
+        Effect.mapError(invalidInput),
+        Effect.flatMap((request) =>
+          withHost((actions) => actions.invoke(request.pluginId, request.method, request.input)),
+        ),
+      ),
+  };
+
+  const pluginsSetEnabled: PluginMcpToolEntry = {
+    name: PLUGINS_SET_ENABLED_TOOL,
+    description: "Turn an installed plugin on or off and return its new status.",
+    inputSchema: {
+      type: "object",
+      properties: { pluginId: { type: "string" }, enabled: { type: "boolean" } },
+      required: ["pluginId", "enabled"],
+      additionalProperties: false,
+    },
+    access: "write",
+    call: (input) =>
+      decodeSetEnabledInput(input).pipe(
+        Effect.mapError(invalidInput),
+        Effect.flatMap((request) =>
+          withHost((actions) => actions.setEnabled(request.pluginId, request.enabled)),
+        ),
+        Effect.map((state) => ({ id: state.id, status: state.status, enabled: state.enabled })),
+      ),
   };
 
   return PluginMcpTools.of({
@@ -160,7 +258,12 @@ const make = () => {
     setInstalledPlugins: Effect.fn("PluginMcpTools.setInstalledPlugins")(function* (plugins) {
       installed = plugins;
       // Once advertised it stays: the list then reads empty when the last plugin is removed.
-      if (plugins.length > 0 && !tools.has(PLUGINS_LIST_TOOL)) yield* publish(pluginsList);
+      if (plugins.length > 0 && !tools.has(PLUGINS_LIST_TOOL)) {
+        for (const entry of [pluginsList, pluginsInvoke, pluginsSetEnabled]) yield* publish(entry);
+      }
+    }),
+    setHostActions: Effect.fn("PluginMcpTools.setHostActions")(function* (actions) {
+      hostActions = actions;
     }),
     attach: Effect.fn("PluginMcpTools.attach")((publisher) =>
       Effect.acquireRelease(

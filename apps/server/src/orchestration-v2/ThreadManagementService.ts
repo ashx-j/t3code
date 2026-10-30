@@ -743,8 +743,23 @@ const make = Effect.gen(function* () {
       ? pluginHooks
           .beforeDispatch({
             threadId: command.threadId,
+            messageId: command.messageId,
             text: command.text,
             createdBy: command.createdBy,
+            attachments: command.attachments.map((attachment) => ({
+              type: attachment.type,
+              name: attachment.name,
+              mimeType: attachment.mimeType,
+              sizeBytes: attachment.sizeBytes,
+            })),
+            ...(command.modelSelection === undefined
+              ? {}
+              : {
+                  model: {
+                    instanceId: command.modelSelection.instanceId,
+                    model: command.modelSelection.model,
+                  },
+                }),
           })
           .pipe(Effect.map((text) => (text === command.text ? command : { ...command, text })))
       : Effect.succeed(command);

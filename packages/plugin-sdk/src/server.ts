@@ -63,8 +63,27 @@ export type PluginHttpHandler = (
 
 export interface PluginOutgoingMessage {
   readonly threadId: string;
+  readonly messageId: string;
   readonly text: string;
   readonly createdBy: "user" | "agent";
+  /** What is attached; the files themselves stay with the server. */
+  readonly attachments: ReadonlyArray<{
+    readonly type: string;
+    readonly name: string;
+    readonly mimeType: string;
+    readonly sizeBytes: number;
+  }>;
+  /** The model the message asked for; absent when the thread keeps its current one. */
+  readonly model?: { readonly instanceId: string; readonly model: string };
+}
+
+export interface PluginCompletedRun {
+  readonly runId: string;
+  readonly threadId: string;
+  /** `completed`, `interrupted`, `failed`, `cancelled` or `rolled_back`. */
+  readonly status: string;
+  /** The run as the server encodes it on the wire. */
+  readonly run: JsonObject;
 }
 
 /** Nothing leaves the message as it is; `appendText` adds a paragraph after it. */
@@ -145,6 +164,14 @@ export interface PluginApi {
     readonly every: (everyMs: number, handler: () => void | Promise<void>) => () => void;
   };
   readonly turns: {
+    /**
+     * Runs once for each run that ends, in order. The plugin's storage keeps the position, so runs
+     * that end while the plugin is off are delivered when it starts again. The first registration
+     * starts from now. Register handlers in the same order on every activation.
+     */
+    readonly afterRunCompleted: (
+      handler: (run: PluginCompletedRun) => void | Promise<void>,
+    ) => void;
     /** Sees each user or agent message before it is sent, except slash commands; a hook slower than 2 seconds or one that throws is skipped. */
     readonly beforeDispatch: (
       hook: (

@@ -6,8 +6,17 @@ import * as Ref from "effect/Ref";
 
 export interface PluginOutgoingMessage {
   readonly threadId: ThreadId;
+  readonly messageId: string;
   readonly text: string;
   readonly createdBy: "user" | "agent";
+  readonly attachments: ReadonlyArray<{
+    readonly type: string;
+    readonly name: string;
+    readonly mimeType: string;
+    readonly sizeBytes: number;
+  }>;
+  /** The model the message asked for; absent when the thread keeps its current one. */
+  readonly model?: { readonly instanceId: string; readonly model: string };
 }
 
 /** Returns a paragraph to append, or nothing. The host makes hooks safe: bounded and fail-open. */

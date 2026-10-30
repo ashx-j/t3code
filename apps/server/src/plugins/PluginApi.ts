@@ -108,6 +108,17 @@ export const makePluginApi = (input: {
       );
     };
 
+  const storage: PluginApi["storage"] = {
+    get: (key) => call(services.storage.get(id, key)).then(Option.getOrUndefined),
+    set: (key, value) => {
+      if (!isJson(value)) return Promise.reject(new TypeError("Storage values must be JSON."));
+      return call(services.storage.set(id, key, value));
+    },
+    delete: (key) => call(services.storage.remove(id, key)),
+    list: (prefix) => call(services.storage.list(id, prefix)),
+  };
+  const events = makeEventsApi(facade, services);
+
   return {
     version: 1,
     id,
@@ -117,15 +128,7 @@ export const makePluginApi = (input: {
       get: () => call(services.settings.get(id, input.settingsSchema)),
       changes: () => facade.iterate(services.settings.changes(id)),
     },
-    storage: {
-      get: (key) => call(services.storage.get(id, key)).then(Option.getOrUndefined),
-      set: (key, value) => {
-        if (!isJson(value)) return Promise.reject(new TypeError("Storage values must be JSON."));
-        return call(services.storage.set(id, key, value));
-      },
-      delete: (key) => call(services.storage.remove(id, key)),
-      list: (prefix) => call(services.storage.list(id, prefix)),
-    },
+    storage,
     rpc: {
       register: (method, handler, options) => {
         assertActive(activation);
@@ -159,11 +162,11 @@ export const makePluginApi = (input: {
       }
       activation.cleanups.push(cleanup);
     },
-    events: makeEventsApi(facade, services),
+    events,
     threads: makeThreadsApi(facade, services),
     projects: makeProjectsApi(facade, services),
     schedule: makeScheduleApi(facade),
-    turns: makeTurnsApi(facade, services),
+    turns: makeTurnsApi(facade, services, { events, storage }),
     mcp: makeMcpApi(facade, services),
     http: makeHttpApi(facade, services),
     server: makeServerApi(facade, {
