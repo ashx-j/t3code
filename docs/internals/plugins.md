@@ -63,6 +63,17 @@ already has a server-supplied open variant (provider slash commands, dynamic too
 plugins use it. Hot paths such as timeline and sidebar rows read a module-level `Map` and re-render
 on one list-level version, never a per-row subscription.
 
+## Reaching into orchestration
+
+The orchestrator stays pure: `turns.beforeDispatch` hooks run in `ThreadManagementService.dispatch`,
+before the command reaches it, with a 2-second deadline each and fail-open, and skip notifications
+and guest messages. The hook registry is a `PluginHooks` reference with an inert default, so
+orchestration code and its tests need no plugin wiring; the server provides one registry to the
+dispatch path and the host. `events.stored` opens one stored-event stream per requested type, so the
+event sink filters before anything is decoded for the plugin, behind a sliding buffer that a slow
+plugin overflows rather than stalls; plugins resume by `sequence`. A plugin notification that does
+not start a run needs a new orchestration command, which is why the API has none yet.
+
 ## Nothing installed costs nothing
 
 Plugins activate after the server is listening, each in its own fiber. Clients show plugin UI only

@@ -17,6 +17,7 @@ import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -33,14 +34,24 @@ import * as Stream from "effect/Stream";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { forkParked } from "../serverActivation.ts";
 import {
   makePluginActivation,
   makePluginApi,
   type PluginActivation,
+  type PluginApiServices,
   type PluginPublication,
 } from "./PluginApi.ts";
 import { discoverPlugins, type DiscoveredPlugin } from "./pluginDiscovery.ts";
+import * as PluginHooks from "./PluginHooks.ts";
+import * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
+import * as PluginMcpTools from "./PluginMcpTools.ts";
 import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
 
@@ -245,9 +256,23 @@ const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const settingsStore = yield* PluginSettingsStore.PluginSettingsStore;
-  const storage = yield* PluginStorage.PluginStorage;
   const context = yield* Effect.context<never>();
+  const services: PluginApiServices = {
+    version: packageJson.version,
+    settings: yield* PluginSettingsStore.PluginSettingsStore,
+    storage: yield* PluginStorage.PluginStorage,
+    orchestrator: yield* Orchestrator.OrchestratorV2,
+    eventStore: yield* OrchestrationEventStore.OrchestrationEventStore,
+    threads: yield* ThreadManagementService.ThreadManagementService,
+    projects: yield* ProjectStore.ProjectStoreV2,
+    hooks: yield* PluginHooks.PluginHooks,
+    mcpTools: yield* PluginMcpTools.PluginMcpTools,
+    httpRoutes: yield* PluginHttpRoutes.PluginHttpRoutes,
+    environment: yield* ServerEnvironment.ServerEnvironment,
+    serverSettings: yield* ServerSettings.ServerSettingsService,
+    crypto: yield* Crypto.Crypto,
+  };
+  const settingsStore = services.settings;
 
   const pluginsDir = path.join(config.stateDir, "plugins");
   const configPath = path.join(config.stateDir, "plugins.json");
@@ -269,6 +294,7 @@ const make = Effect.gen(function* () {
   // Reading and publishing under one lock, so a slower fiber cannot publish an older list last.
   const publishStates = publishLock.withPermits(1)(
     currentStates.pipe(
+      Effect.tap((states) => services.mcpTools.setInstalledPlugins(states)),
       Effect.flatMap((states) => PubSub.publish(changes, states)),
       Effect.asVoid,
     ),
@@ -401,8 +427,7 @@ const make = Effect.gen(function* () {
       settingsSchema: manifest.settingsSchema,
       activation,
       context,
-      settings: settingsStore,
-      storage,
+      services,
     });
     const activated = yield* Effect.tryPromise({
       try: () => Promise.resolve().then(() => definition.value.activate(api)),

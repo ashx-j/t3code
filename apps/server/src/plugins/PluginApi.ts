@@ -1,14 +1,29 @@
 import { PluginRpcName, type PluginId } from "@t3tools/contracts";
 import type { PluginApi, PluginRpcAccess, PluginRpcHandler } from "@t3tools/plugin-sdk/server";
-import * as Cause from "effect/Cause";
 import type * as Context from "effect/Context";
+import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
 
+import type * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import type * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import type * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import type * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import type * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
+import type * as ServerSettings from "../serverSettings.ts";
+import { makeEventsApi } from "./api/events.ts";
+import { makeFacadeContext } from "./api/facade.ts";
+import { makeHttpApi } from "./api/http.ts";
+import { makeMcpApi } from "./api/mcp.ts";
+import { makeScheduleApi } from "./api/schedule.ts";
+import { makeServerApi } from "./api/server.ts";
+import { makeProjectsApi, makeThreadsApi } from "./api/threads.ts";
+import { makeTurnsApi } from "./api/turns.ts";
+import type * as PluginHooks from "./PluginHooks.ts";
+import type * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
+import type * as PluginMcpTools from "./PluginMcpTools.ts";
 import type * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import type * as PluginStorage from "./PluginStorage.ts";
 
@@ -48,6 +63,23 @@ const assertActive = (activation: PluginActivation) => {
   }
 };
 
+/** The host services the facade reaches. The host builds this once and shares it. */
+export interface PluginApiServices {
+  readonly version: string;
+  readonly settings: PluginSettingsStore.PluginSettingsStore["Service"];
+  readonly storage: PluginStorage.PluginStorage["Service"];
+  readonly orchestrator: Orchestrator.OrchestratorV2["Service"];
+  readonly eventStore: OrchestrationEventStore.OrchestrationEventStore["Service"];
+  readonly threads: ThreadManagementService.ThreadManagementService["Service"];
+  readonly projects: ProjectStore.ProjectStoreV2["Service"];
+  readonly hooks: PluginHooks.PluginHooksRegistry;
+  readonly mcpTools: PluginMcpTools.PluginMcpTools["Service"];
+  readonly httpRoutes: PluginHttpRoutes.PluginHttpRoutes["Service"];
+  readonly environment: ServerEnvironment.ServerEnvironment["Service"];
+  readonly serverSettings: ServerSettings.ServerSettingsService["Service"];
+  readonly crypto: Crypto.Crypto;
+}
+
 /**
  * Builds the object a plugin's `activate` receives. Effect stays on this side: every call runs
  * with the host's services and settles as a plain Promise that rejects with an `Error`.
@@ -58,17 +90,11 @@ export const makePluginApi = (input: {
   readonly settingsSchema: Schema.JsonObject | undefined;
   readonly activation: PluginActivation;
   readonly context: Context.Context<never>;
-  readonly settings: PluginSettingsStore.PluginSettingsStore["Service"];
-  readonly storage: PluginStorage.PluginStorage["Service"];
+  readonly services: PluginApiServices;
 }): PluginApi => {
-  const { id, activation, context } = input;
-  const runExit = Effect.runPromiseExitWith(context);
-  const call = <A, E>(effect: Effect.Effect<A, E>): Promise<A> =>
-    runExit(effect).then((exit) => {
-      if (Exit.isSuccess(exit)) return exit.value;
-      const error = Cause.squash(exit.cause);
-      throw new Error(error instanceof Error ? error.message : "Plugin API call failed.");
-    });
+  const { id, activation, context, services } = input;
+  const facade = makeFacadeContext({ pluginId: id, activation, context });
+  const { call } = facade;
   const log =
     (level: "Debug" | "Info" | "Warn" | "Error") =>
     (message: string, fields?: Schema.JsonObject) => {
@@ -85,32 +111,17 @@ export const makePluginApi = (input: {
     rootDir: input.rootDir,
     log: { debug: log("Debug"), info: log("Info"), warn: log("Warn"), error: log("Error") },
     settings: {
-      get: () => call(input.settings.get(id, input.settingsSchema)),
-      changes: () =>
-        Stream.toAsyncIterableWith(
-          input.settings.changes(id).pipe(
-            Stream.interruptWhen(
-              Effect.callback<void>((resume) => {
-                const onAbort = () => resume(Effect.void);
-                if (activation.controller.signal.aborted) return onAbort();
-                activation.controller.signal.addEventListener("abort", onAbort, { once: true });
-                return Effect.sync(() =>
-                  activation.controller.signal.removeEventListener("abort", onAbort),
-                );
-              }),
-            ),
-          ),
-          context,
-        ),
+      get: () => call(services.settings.get(id, input.settingsSchema)),
+      changes: () => facade.iterate(services.settings.changes(id)),
     },
     storage: {
-      get: (key) => call(input.storage.get(id, key)).then(Option.getOrUndefined),
+      get: (key) => call(services.storage.get(id, key)).then(Option.getOrUndefined),
       set: (key, value) => {
         if (!isJson(value)) return Promise.reject(new TypeError("Storage values must be JSON."));
-        return call(input.storage.set(id, key, value));
+        return call(services.storage.set(id, key, value));
       },
-      delete: (key) => call(input.storage.remove(id, key)),
-      list: (prefix) => call(input.storage.list(id, prefix)),
+      delete: (key) => call(services.storage.remove(id, key)),
+      list: (prefix) => call(services.storage.list(id, prefix)),
     },
     rpc: {
       register: (method, handler, options) => {
@@ -145,5 +156,17 @@ export const makePluginApi = (input: {
       }
       activation.cleanups.push(cleanup);
     },
+    events: makeEventsApi(facade, services),
+    threads: makeThreadsApi(facade, services),
+    projects: makeProjectsApi(facade, services),
+    schedule: makeScheduleApi(facade),
+    turns: makeTurnsApi(facade, services),
+    mcp: makeMcpApi(facade, services),
+    http: makeHttpApi(facade, services),
+    server: makeServerApi(facade, {
+      version: services.version,
+      environment: services.environment,
+      settings: services.serverSettings,
+    }),
   };
 };

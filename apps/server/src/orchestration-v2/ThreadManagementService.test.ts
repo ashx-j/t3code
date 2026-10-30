@@ -4,7 +4,9 @@ import {
   EnvironmentId,
   MessageId,
   type OrchestrationV2Command,
+  type OrchestrationV2Notification,
   type OrchestrationV2Run,
+  type OrchestrationV2ServerCommand,
   type OrchestrationV2ProviderThread,
   ProviderThreadId,
   ProviderDriverKind,
@@ -29,6 +31,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { AgentScope } from "@t3tools/shared/AgentScope";
 
+import * as PluginHooks from "../plugins/PluginHooks.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -81,7 +84,8 @@ const layerReceiptsTest = CommandReceiptStore.layer.pipe(
 );
 
 const layerDispatchChokepointTest =
-  (settingsLayer: ReturnType<typeof ServerSettings.layerTest>) => (dispatched: Array<string>) =>
+  (settingsLayer: ReturnType<typeof ServerSettings.layerTest>) =>
+  (dispatched: Array<string>, texts: Array<string> = []) =>
     ThreadManagementService.layer.pipe(
       Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
       Layer.provide(
@@ -101,6 +105,7 @@ const layerDispatchChokepointTest =
           dispatch: (command) =>
             Effect.sync(() => {
               dispatched.push(command.type);
+              if (command.type === "message.dispatch") texts.push(command.text);
               return { sequence: 1, storedEvents: [] } as never;
             }),
         }),
@@ -150,6 +155,49 @@ it.effect(
     }).pipe(Effect.provide(layerTest));
   },
 );
+
+it.effect("plugin hooks append to user and agent messages but not to notifications", () => {
+  const threadId = ThreadId.make("thread:thread-management:chokepoint");
+  const dispatched: Array<string> = [];
+  const texts: Array<string> = [];
+  const instanceId = ProviderInstanceId.make("codex_work");
+  const layerTest = layerDispatchChokepointTest(
+    ServerSettings.layerTest({
+      providerInstances: { [instanceId]: { driver: "codex", enabled: true } },
+    }),
+  )(dispatched, texts).pipe(Layer.provideMerge(PluginHooks.layer));
+  const message = (
+    id: string,
+    notification?: OrchestrationV2Notification,
+  ): OrchestrationV2ServerCommand => ({
+    type: "message.dispatch",
+    commandId: CommandId.make(`command:thread-management:hooks-${id}`),
+    threadId,
+    messageId: MessageId.make(`message:thread-management:hooks-${id}`),
+    text: "Fix the build.",
+    attachments: [],
+    dispatchMode: { type: "queue_after_active" },
+    createdBy: "user",
+    creationSource: "web",
+    ...(notification === undefined ? {} : { notification }),
+  });
+
+  return Effect.gen(function* () {
+    const hooks = yield* PluginHooks.PluginHooks;
+    yield* hooks.addBeforeDispatch(() => Effect.succeed("Project uses pnpm.")).pipe(Effect.asVoid);
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    yield* threads.dispatch(message("user"));
+    yield* threads.dispatch(
+      message("notification", {
+        source: { kind: "system" },
+        outcome: "updated",
+        summary: "Restarted",
+      }),
+    );
+
+    expect(texts).toEqual(["Fix the build.\n\nProject uses pnpm.", "Fix the build."]);
+  }).pipe(Effect.provide(layerTest));
+});
 
 it.effect(
   "a replay of an already-accepted command id dispatches despite the instance now being disabled",
