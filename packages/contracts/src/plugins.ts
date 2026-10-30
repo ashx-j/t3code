@@ -144,7 +144,31 @@ export const PluginReloadInput = Schema.Struct({
 });
 export type PluginReloadInput = typeof PluginReloadInput.Type;
 
-/** Result of `plugins.setEnabled` and `plugins.reload`. */
+/** Where `plugins.install` gets a plugin: a folder on the server, or a git repository. */
+export const PluginInstallSource = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("path"), path: TrimmedNonEmptyString }),
+  Schema.Struct({
+    type: Schema.Literal("git"),
+    url: TrimmedNonEmptyString,
+    ref: Schema.optionalKey(TrimmedNonEmptyString),
+  }),
+]);
+export type PluginInstallSource = typeof PluginInstallSource.Type;
+
+export const PluginInstallInput = Schema.Struct({ source: PluginInstallSource });
+export type PluginInstallInput = typeof PluginInstallInput.Type;
+
+export const PluginUninstallInput = Schema.Struct({
+  pluginId: PluginId,
+  /** Also delete the plugin's settings, secrets and storage. */
+  removeData: Schema.optionalKey(Schema.Boolean),
+});
+export type PluginUninstallInput = typeof PluginUninstallInput.Type;
+
+export const PluginUninstallResult = Schema.Struct({ pluginId: PluginId });
+export type PluginUninstallResult = typeof PluginUninstallResult.Type;
+
+/** Result of `plugins.setEnabled`, `plugins.reload` and `plugins.install`. */
 export const PluginMutationResult = Schema.Struct({
   plugin: PluginState,
 });

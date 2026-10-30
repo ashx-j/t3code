@@ -95,6 +95,11 @@ export class PluginSettingsStore extends Context.Service<
     >;
     /** The plugin view after each successful `update` of that plugin. */
     readonly changes: (pluginId: PluginId) => Stream.Stream<Schema.JsonObject>;
+    /** Deletes the plugin's settings file and the secrets its schema declares. */
+    readonly clear: (
+      pluginId: PluginId,
+      settingsSchema: Schema.JsonObject | undefined,
+    ) => Effect.Effect<void, PluginSettingsPersistenceError>;
   }
 >()("t3/plugins/PluginSettingsStore") {}
 
@@ -331,7 +336,29 @@ const make = Effect.gen(function* () {
       Stream.map((change) => change.settings),
     );
 
-  return PluginSettingsStore.of({ get, getForClient, update, changes });
+  const clear: PluginSettingsStore["Service"]["clear"] = Effect.fn("PluginSettingsStore.clear")(
+    function* (pluginId, settingsSchema) {
+      for (const field of secretFields(settingsSchema)) {
+        yield* secretStore
+          .remove(secretName(pluginId, field))
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new PluginSettingsPersistenceError({ pluginId, operation: "writeSecret", cause }),
+            ),
+          );
+      }
+      yield* fileSystem
+        .remove(path.dirname(settingsPath(pluginId)), { recursive: true, force: true })
+        .pipe(
+          Effect.mapError(
+            (cause) => new PluginSettingsPersistenceError({ pluginId, operation: "write", cause }),
+          ),
+        );
+    },
+  );
+
+  return PluginSettingsStore.of({ get, getForClient, update, changes, clear });
 });
 
 export const layer = Layer.effect(PluginSettingsStore, make);

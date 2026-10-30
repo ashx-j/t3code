@@ -190,6 +190,8 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
           return "pong";
         }),
       setEnabled: (pluginId, enabled) => Effect.succeed({ ...installed, id: pluginId, enabled }),
+      install: () => Effect.succeed(installed),
+      uninstall: () => Effect.void,
     });
     yield* tools.setInstalledPlugins([]);
     assert.notInclude(yield* toolNames, "t3_plugins_list");
@@ -199,6 +201,8 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
       "t3_plugins_list",
       "t3_plugins_invoke",
       "t3_plugins_set_enabled",
+      "t3_plugins_install",
+      "t3_plugins_uninstall",
     ]);
     assert.deepStrictEqual(yield* call("t3_plugins_list", readOnlyClient), {
       isError: false,

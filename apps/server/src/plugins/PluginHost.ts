@@ -8,7 +8,8 @@ import {
   AuthOrchestrationReadScope,
   type PluginFailure,
   PluginId,
-  type PluginManifest,
+  PluginManifest,
+  type PluginInstallSource,
   type PluginState,
   type PluginStatus,
 } from "@t3tools/contracts";
@@ -42,6 +43,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import { forkParked } from "../serverActivation.ts";
 import {
   makePluginActivation,
@@ -143,6 +145,16 @@ export class PluginConfigError extends Schema.TaggedError<PluginConfigError>()(
   }
 }
 
+// `reason` is shown to the user as is, so it says what to fix.
+export class PluginInstallError extends Schema.TaggedError<PluginInstallError>()(
+  "PluginInstallError",
+  { reason: Schema.String, cause: Schema.optional(Schema.Defect()) },
+) {
+  override get message(): string {
+    return this.reason;
+  }
+}
+
 export class PluginHost extends Context.Service<
   PluginHost,
   {
@@ -172,6 +184,18 @@ export class PluginHost extends Context.Service<
       PluginNotFoundError | PluginNotActiveError | PluginSettingsError
     >;
     /** `scopes` are the caller's; methods the plugin registered as writes need the operate scope. */
+    /**
+     * Copies or clones a plugin into the plugins folder, enables it and starts it. It is staged
+     * first and swapped in with a rename, so a failed install leaves the previous version.
+     */
+    readonly install: (
+      source: PluginInstallSource,
+    ) => Effect.Effect<PluginState, PluginInstallError | PluginNotFoundError | PluginConfigError>;
+    /** Stops an installed plugin and deletes its folder; `removeData` also deletes its settings. */
+    readonly uninstall: (
+      pluginId: PluginId,
+      removeData: boolean,
+    ) => Effect.Effect<void, PluginInstallError | PluginNotFoundError | PluginConfigError>;
     readonly invoke: (input: {
       readonly pluginId: PluginId;
       readonly method: string;
@@ -289,6 +313,7 @@ const make = Effect.gen(function* () {
   };
   const settingsStore = services.settings;
   const environmentThemes = yield* EnvironmentTheme.EnvironmentThemeService;
+  const processRunner = yield* ProcessRunner.ProcessRunner;
 
   const pluginsDir = path.join(config.stateDir, "plugins");
   const configPath = path.join(config.stateDir, "plugins.json");
@@ -352,12 +377,10 @@ const make = Effect.gen(function* () {
     return yield* decodeConfig(raw);
   }).pipe(Effect.mapError((cause) => new PluginConfigError({ path: configPath, cause })));
 
-  const writeEnabled = Effect.fnUntraced(function* (pluginId: PluginId, enabled: boolean) {
-    const current = yield* readConfig;
-    const next: PluginsConfigFile = {
-      ...current,
-      enabled: { ...current.enabled, [pluginId]: enabled },
-    };
+  const writeConfig = Effect.fnUntraced(function* (
+    update: (current: PluginsConfigFile) => PluginsConfigFile,
+  ) {
+    const next = update(yield* readConfig);
     const contents = yield* encodeConfig(next).pipe(
       Effect.mapError((cause) => new PluginConfigError({ path: configPath, cause })),
     );
@@ -368,6 +391,18 @@ const make = Effect.gen(function* () {
     );
     yield* Ref.set(pluginsConfig, next);
   });
+
+  const writeEnabled = (pluginId: PluginId, enabled: boolean) =>
+    writeConfig((current) => ({
+      ...current,
+      enabled: { ...current.enabled, [pluginId]: enabled },
+    }));
+
+  const removeFromConfig = (pluginId: PluginId) =>
+    writeConfig((current) => {
+      const { [pluginId]: _removed, ...enabled } = current.enabled ?? {};
+      return { ...current, enabled };
+    });
 
   const runCleanup = (pluginId: PluginId, cleanup: () => void | Promise<void>) =>
     Effect.tryPromise({
@@ -655,6 +690,157 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const stagingRoot = path.join(config.stateDir, "plugin-staging");
+  const decodeManifestJson = Schema.decodeUnknownEffect(Schema.fromJsonString(PluginManifest));
+  const installFailed = (reason: string) => (cause: unknown) =>
+    new PluginInstallError({ reason, cause });
+
+  // Plugins run with T3's own access, so install takes code only from the sources the user named.
+  const fetchSource = Effect.fnUntraced(function* (source: PluginInstallSource, into: string) {
+    if (source.type === "path") {
+      const from = path.resolve(source.path);
+      const info = yield* fs
+        .stat(from)
+        .pipe(Effect.mapError(installFailed(`${source.path} does not exist on the server.`)));
+      if (info.type !== "Directory") {
+        return yield* new PluginInstallError({ reason: `${source.path} is not a folder.` });
+      }
+      // Copied rather than linked: the installed plugin never changes when the source does.
+      return yield* fs
+        .copy(from, into)
+        .pipe(Effect.mapError(installFailed(`Could not copy ${source.path}.`)));
+    }
+    const result = yield* processRunner
+      .run({
+        command: "git",
+        args: [
+          "clone",
+          "--depth",
+          "1",
+          ...(source.ref === undefined ? [] : ["--branch", source.ref]),
+          "--",
+          source.url,
+          into,
+        ],
+        timeout: "2 minutes",
+        env: {
+          ...process.env,
+          GIT_TERMINAL_PROMPT: "0",
+          GIT_ALLOW_PROTOCOL: "https:http:ssh:git:file",
+        },
+      })
+      .pipe(Effect.mapError(installFailed("Could not run git.")));
+    if (result.code !== 0) {
+      return yield* new PluginInstallError({
+        reason: `git clone failed: ${result.stderr.trim().slice(-300) || `exit ${result.code}`}`,
+      });
+    }
+    yield* fs.remove(path.join(into, ".git"), { recursive: true, force: true }).pipe(Effect.ignore);
+  });
+
+  const install: PluginHost["Service"]["install"] = Effect.fn("PluginHost.install")(
+    function* (source) {
+      const id = yield* services.crypto.randomUUIDv4().pipe(Effect.orDie);
+      const stagingDir = path.join(stagingRoot, id);
+      const staged = path.join(stagingDir, "plugin");
+      yield* fs
+        .makeDirectory(stagingDir, { recursive: true })
+        .pipe(Effect.mapError(installFailed("Could not create the staging folder.")));
+      const manifest = yield* Effect.gen(function* () {
+        yield* fetchSource(source, staged);
+        const raw = yield* fs
+          .readFileString(path.join(staged, "t3-plugin.json"))
+          .pipe(Effect.mapError(installFailed("The source has no t3-plugin.json.")));
+        return yield* decodeManifestJson(raw).pipe(
+          Effect.mapError(installFailed("The source's t3-plugin.json is not a valid manifest.")),
+        );
+      }).pipe(
+        Effect.tapError(() =>
+          fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore),
+        ),
+      );
+      const existing = yield* findRecord(manifest.id);
+      if (existing?.plugin.source === "dev") {
+        yield* fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore);
+        return yield* new PluginInstallError({
+          reason: `A dev folder already provides ${manifest.id}. Remove it from plugins.json first.`,
+        });
+      }
+      const target = path.join(pluginsDir, manifest.id);
+      const previous = path.join(stagingDir, "previous");
+      yield* runLifecycle(
+        Effect.gen(function* () {
+          yield* stopPlugin(manifest.id);
+          yield* fs
+            .makeDirectory(pluginsDir, { recursive: true })
+            .pipe(Effect.mapError(installFailed("Could not create the plugins folder.")));
+          const hadPrevious = yield* fs.exists(target).pipe(Effect.orElseSucceed(() => false));
+          if (hadPrevious) {
+            yield* fs
+              .rename(target, previous)
+              .pipe(Effect.mapError(installFailed("Could not move the installed version aside.")));
+          }
+          yield* fs.rename(staged, target).pipe(
+            Effect.mapError(installFailed("Could not move the new version into place.")),
+            Effect.tapError(() =>
+              hadPrevious ? fs.rename(previous, target).pipe(Effect.ignore) : Effect.void,
+            ),
+          );
+          yield* writeEnabled(manifest.id, true);
+        }),
+      ).pipe(
+        Effect.ensuring(
+          fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore),
+        ),
+        // Whatever happened, the plugin folder now holds one version; start it again.
+        Effect.ensuring(reload(manifest.id).pipe(Effect.ignore)),
+      );
+      return yield* stateOf(manifest.id);
+    },
+  );
+
+  const uninstall: PluginHost["Service"]["uninstall"] = Effect.fn("PluginHost.uninstall")(
+    function* (pluginId, removeData) {
+      const record = yield* findRecord(pluginId);
+      if (record === undefined) return yield* new PluginNotFoundError({ pluginId });
+      if (record.plugin.source === "dev") {
+        return yield* new PluginInstallError({
+          reason: `${pluginId} is loaded from a dev folder. Remove it from plugins.json instead.`,
+        });
+      }
+      const settingsSchema = manifestOf(record.plugin)?.settingsSchema;
+      yield* runLifecycle(
+        Effect.gen(function* () {
+          yield* stopPlugin(pluginId);
+          yield* fs
+            .remove(record.plugin.rootDir, { recursive: true, force: true })
+            .pipe(Effect.mapError(installFailed(`Could not delete ${record.plugin.rootDir}.`)));
+          yield* removeFromConfig(pluginId);
+          // Stopping replaces the record, so match it by id and source rather than identity.
+          yield* Ref.update(records, (all) =>
+            all.filter(
+              (entry) => entry.plugin.id !== pluginId || entry.plugin.source !== "installed",
+            ),
+          );
+          yield* publishStates;
+        }),
+      );
+      if (removeData) {
+        yield* settingsStore
+          .clear(pluginId, settingsSchema)
+          .pipe(Effect.mapError(installFailed("The plugin is removed, but its settings are not.")));
+        const keys = yield* services.storage
+          .list(pluginId)
+          .pipe(Effect.mapError(installFailed("The plugin is removed, but its storage is not.")));
+        for (const key of keys) {
+          yield* services.storage
+            .remove(pluginId, key)
+            .pipe(Effect.mapError(installFailed("The plugin is removed, but its storage is not.")));
+        }
+      }
+    },
+  );
+
   const manifestFor = Effect.fnUntraced(function* (pluginId: PluginId) {
     const record = yield* findRecord(pluginId);
     if (record === undefined) return yield* new PluginNotFoundError({ pluginId });
@@ -698,6 +884,8 @@ const make = Effect.gen(function* () {
     ),
     setEnabled,
     reload,
+    install,
+    uninstall,
     getSettings: Effect.fn("PluginHost.getSettings")(function* (pluginId) {
       const manifest = yield* manifestFor(pluginId);
       return yield* settingsStore.getForClient(pluginId, manifest.settingsSchema);
@@ -778,8 +966,8 @@ const make = Effect.gen(function* () {
         ),
       ),
   });
-  // Agents reach these through `t3_plugins_invoke` and `t3_plugins_set_enabled`, which MCP
-  // already gates as writes, so the call carries operate access.
+  // Agents reach these through the `t3_plugins_*` tools, which MCP already gates as writes, so
+  // the call carries operate access.
   yield* services.mcpTools.setHostActions({
     invoke: (pluginId, method, input) =>
       service.invoke({
@@ -789,6 +977,8 @@ const make = Effect.gen(function* () {
         scopes: [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
       }),
     setEnabled: service.setEnabled,
+    install: service.install,
+    uninstall: service.uninstall,
   });
   return service;
 });

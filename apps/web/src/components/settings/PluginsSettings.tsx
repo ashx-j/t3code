@@ -7,7 +7,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import type { EnvironmentId, PluginState } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { PuzzleIcon, RotateCwIcon, SlidersHorizontalIcon } from "lucide-react";
+import { PuzzleIcon, RotateCwIcon, SlidersHorizontalIcon, Trash2Icon } from "lucide-react";
 import { type ComponentType, useState } from "react";
 
 import type { EnvironmentPresentation } from "../../state/environments";
@@ -21,6 +21,7 @@ import { RenderErrorBoundary } from "../RenderErrorBoundary";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Badge } from "../ui/badge";
+import { Checkbox } from "../ui/checkbox";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { Input } from "../ui/input";
@@ -99,22 +100,147 @@ function EnvironmentPlugins({ environment }: { readonly environment: Environment
   if (query.error) return <SettingsRow title="Could not load plugins" description={query.error} />;
   const plugins = query.data?.plugins;
   if (!plugins) return <SettingsRow title="Loading plugins…" role="status" />;
-  if (plugins.length === 0) {
+  return (
+    <>
+      <AddPlugin environmentId={environment.environmentId} />
+      {plugins.length === 0 ? (
+        <SettingsRow
+          title="No plugins installed"
+          description="Plugins you add, and plugins in the plugins folder of this environment's T3 Code data directory, appear here."
+        />
+      ) : (
+        // A shadowed copy of a plugin shares its id and is listed as failed during discovery.
+        plugins.map((plugin) => (
+          <PluginRow
+            key={`${plugin.id}:${plugin.source}:${plugin.failure?.stage ?? "ok"}`}
+            environmentId={environment.environmentId}
+            plugin={plugin}
+          />
+        ))
+      )}
+    </>
+  );
+}
+
+const INSTALL_SOURCES = {
+  path: { label: "Folder on the server", placeholder: "/home/me/my-plugin" },
+  git: { label: "Git repository", placeholder: "https://github.com/me/my-plugin.git" },
+} as const;
+
+/** Installs a plugin into this environment; it runs with the same access as T3 Code itself. */
+function AddPlugin({ environmentId }: { readonly environmentId: EnvironmentId }) {
+  const canInstall = useAtomValue(pluginEnvironment.installPlugin.permissionAtom(environmentId));
+  const install = useAtomCommand(pluginEnvironment.installPlugin, {
+    label: "plugin install",
+    reportFailure: false,
+  });
+  const [open, setOpen] = useState(false);
+  const [kind, setKind] = useState<keyof typeof INSTALL_SOURCES>("path");
+  const [location, setLocation] = useState("");
+  const [ref, setRef] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  if (!open) {
     return (
       <SettingsRow
-        title="No plugins installed"
-        description="Plugins in the plugins folder of this environment's T3 Code data directory appear here after the server starts."
+        title="Add a plugin"
+        description="Plugins run with the same access as T3 Code, so install only code you trust."
+        control={
+          <Button size="sm" variant="outline" disabled={!canInstall} onClick={() => setOpen(true)}>
+            Add plugin
+          </Button>
+        }
       />
     );
   }
-  // A shadowed copy of a plugin shares its id and is listed as failed during discovery.
-  return plugins.map((plugin) => (
-    <PluginRow
-      key={`${plugin.id}:${plugin.source}:${plugin.failure?.stage ?? "ok"}`}
-      environmentId={environment.environmentId}
-      plugin={plugin}
-    />
-  ));
+  const submit = async () => {
+    setBusy(true);
+    setProblem(null);
+    const source =
+      kind === "path"
+        ? { type: "path" as const, path: location.trim() }
+        : {
+            type: "git" as const,
+            url: location.trim(),
+            ...(ref.trim() === "" ? {} : { ref: ref.trim() }),
+          };
+    const result = await install({ environmentId, input: { source } });
+    setBusy(false);
+    if (result._tag === "Failure") {
+      const error = squashAtomCommandFailure(result);
+      setProblem(error instanceof Error ? error.message : "Could not install the plugin.");
+      return;
+    }
+    setOpen(false);
+    setLocation("");
+    setRef("");
+  };
+  return (
+    <SettingsRow
+      title="Add a plugin"
+      description="Plugins run with the same access as T3 Code, so install only code you trust."
+    >
+      <form
+        className="mt-3 space-y-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void submit();
+        }}
+      >
+        <div className="space-y-1.5">
+          <Label htmlFor="plugin-install-source">Source</Label>
+          <Select value={kind} onValueChange={(value) => setKind(value === "git" ? "git" : "path")}>
+            <SelectTrigger id="plugin-install-source">
+              <SelectValue>{INSTALL_SOURCES[kind].label}</SelectValue>
+            </SelectTrigger>
+            <SelectPopup>
+              <SelectItem value="path">{INSTALL_SOURCES.path.label}</SelectItem>
+              <SelectItem value="git">{INSTALL_SOURCES.git.label}</SelectItem>
+            </SelectPopup>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="plugin-install-location">
+            {kind === "path" ? "Folder path" : "Repository URL"}
+          </Label>
+          <Input
+            id="plugin-install-location"
+            value={location}
+            placeholder={INSTALL_SOURCES[kind].placeholder}
+            onChange={(event) => setLocation(event.target.value)}
+          />
+        </div>
+        {kind === "git" ? (
+          <div className="space-y-1.5">
+            <Label htmlFor="plugin-install-ref">Branch or tag (optional)</Label>
+            <Input
+              id="plugin-install-ref"
+              value={ref}
+              onChange={(event) => setRef(event.target.value)}
+            />
+          </div>
+        ) : null}
+        {problem === null ? null : <p className="text-destructive text-xs">{problem}</p>}
+        <div className="flex gap-2">
+          <Button type="submit" size="sm" disabled={busy || location.trim() === ""}>
+            {busy ? "Installing…" : "Install"}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={busy}
+            onClick={() => {
+              setOpen(false);
+              setProblem(null);
+            }}
+          >
+            Cancel
+          </Button>
+        </div>
+      </form>
+    </SettingsRow>
+  );
 }
 
 function PluginRow({
@@ -127,8 +253,11 @@ function PluginRow({
   const canManage = useAtomValue(pluginEnvironment.setPluginEnabled.permissionAtom(environmentId));
   const setEnabled = useAtomCommand(pluginEnvironment.setPluginEnabled, "plugin enabled");
   const reload = useAtomCommand(pluginEnvironment.reloadPlugin, "plugin reload");
+  const uninstall = useAtomCommand(pluginEnvironment.uninstallPlugin, "plugin removal");
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [removeData, setRemoveData] = useState(false);
   const contributionKey = pluginContributionKey(environmentId, plugin.id);
   const customSettings = useAtomValue(pluginSettingsPanelAtom(contributionKey));
   const webFailure = useAtomValue(pluginWebFailureAtom(contributionKey));
@@ -192,6 +321,18 @@ function PluginRow({
           >
             <RotateCwIcon className="size-4" />
           </Button>
+          {plugin.source === "installed" ? (
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              disabled={busy || !canManage}
+              aria-label={`Remove ${plugin.name}`}
+              aria-expanded={removing}
+              onClick={() => setRemoving((open) => !open)}
+            >
+              <Trash2Icon className="size-4" />
+            </Button>
+          ) : null}
           <Switch
             checked={plugin.enabled}
             disabled={busy || !canManage}
@@ -203,6 +344,35 @@ function PluginRow({
         </>
       }
     >
+      {removing ? (
+        <div className="mt-3 flex flex-wrap items-center gap-3 border-t pt-3">
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id={`plugin-remove-data-${plugin.id}`}
+              checked={removeData}
+              onCheckedChange={(checked) => setRemoveData(checked === true)}
+            />
+            <Label htmlFor={`plugin-remove-data-${plugin.id}`}>
+              Also delete its settings and stored data
+            </Label>
+          </div>
+          <Button
+            size="sm"
+            variant="destructive"
+            disabled={busy}
+            onClick={() =>
+              void run(() =>
+                uninstall({ environmentId, input: { pluginId: plugin.id, removeData } }),
+              )
+            }
+          >
+            Remove {plugin.name}
+          </Button>
+          <Button size="sm" variant="ghost" disabled={busy} onClick={() => setRemoving(false)}>
+            Cancel
+          </Button>
+        </div>
+      ) : null}
       {settingsOpen ? (
         customSettings === undefined ? (
           <PluginSettingsEditor environmentId={environmentId} plugin={plugin} />

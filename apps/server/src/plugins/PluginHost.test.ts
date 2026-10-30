@@ -22,6 +22,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as EnvironmentTheme from "../environmentTheme.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -71,6 +72,7 @@ const layerHost = (services: typeof layerUnusedServices = layerUnusedServices) =
       Layer.provide(ServerSecretStore.layer),
       Layer.provide(services),
       Layer.provide(layerThemes),
+      Layer.provide(ProcessRunner.layer),
       Layer.provideMerge(
         Layer.mergeAll(PluginHooks.layer, PluginMcpTools.layer, PluginHttpRoutes.layer),
       ),
@@ -498,6 +500,42 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         assert.deepStrictEqual(publishedThemeDirectories, []);
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect(
+    "installs from a folder, keeps the old version when a reinstall fails, and uninstalls",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const broken = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-plugin-broken-" });
+        yield* writeFile(`${broken}/t3-plugin.json`, JSON.stringify({ id: "hello-plugin" }));
+        yield* Effect.gen(function* () {
+          const host = yield* PluginHost.PluginHost;
+          yield* waitForStatuses(host, {});
+
+          const installed = yield* host.install({
+            type: "path",
+            path: `${fixturesDir}hello-plugin`,
+          });
+          assert.include(installed, {
+            id: hello,
+            status: "active",
+            enabled: true,
+            source: "installed",
+          });
+          assert.isTrue(yield* fs.exists(`${stateDir}/plugins/hello-plugin/server.cjs`));
+
+          const failed = yield* host.install({ type: "path", path: broken }).pipe(Effect.flip);
+          assert.strictEqual(failed._tag, "PluginInstallError");
+          assert.include(stateOf(yield* host.list, hello), { status: "active" });
+          assert.isTrue(yield* fs.exists(`${stateDir}/plugins/hello-plugin/server.cjs`));
+
+          yield* host.uninstall(hello, true);
+          assert.isUndefined(stateOf(yield* host.list, hello));
+          assert.isFalse(yield* fs.exists(`${stateDir}/plugins/hello-plugin`));
+        }).pipe(Effect.provide(layerHost()));
+      }).pipe(Effect.provide(layerConfig())),
   );
 
   it.effect("does not load a disabled plugin at startup", () =>

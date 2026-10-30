@@ -719,7 +719,9 @@ const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
 
 // The plugin host sits on top of the runtime so plugins can reach orchestration.
 const layerRuntimeDependenciesWithPlugins = PluginHost.layer.pipe(
-  Layer.provide(Layer.mergeAll(PluginSettingsStore.layer, PluginStorage.layer)),
+  Layer.provide(
+    Layer.mergeAll(PluginSettingsStore.layer, PluginStorage.layer, ProcessRunner.layer),
+  ),
   Layer.provideMerge(layerRuntimeDependencies),
 );
 

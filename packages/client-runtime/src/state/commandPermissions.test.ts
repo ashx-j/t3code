@@ -98,9 +98,11 @@ describe("command permissions", () => {
 
   it.effect.each([
     WS_METHODS.serverRunStorageCleanup,
-    // Enabling, reloading or configuring a plugin runs its code in the server.
+    // Installing, enabling, reloading or configuring a plugin runs its code in the server.
     WS_METHODS.pluginsSetEnabled,
     WS_METHODS.pluginsReload,
+    WS_METHODS.pluginsInstall,
+    WS_METHODS.pluginsUninstall,
     WS_METHODS.pluginsSettingsUpdate,
   ])("requires the destination settings grant for %s", (method) =>
     Effect.scoped(
