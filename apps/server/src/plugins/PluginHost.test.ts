@@ -534,8 +534,38 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           yield* host.uninstall(hello, true);
           assert.isUndefined(stateOf(yield* host.list, hello));
           assert.isFalse(yield* fs.exists(`${stateDir}/plugins/hello-plugin`));
+
+          // A plugin linked into the plugins folder: removing it removes the link, not its source.
+          yield* fs.symlink(`${fixturesDir}hello-plugin`, `${stateDir}/plugins/hello-plugin`);
+          yield* host.reload(hello).pipe(Effect.ignore);
+          yield* host.uninstall(hello, false);
+          assert.isFalse(yield* fs.exists(`${stateDir}/plugins/hello-plugin`));
+          assert.isTrue(yield* fs.exists(`${fixturesDir}hello-plugin/server.cjs`));
         }).pipe(Effect.provide(layerHost()));
       }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("restores a version an interrupted install left in staging", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const previous = `${stateDir}/plugin-staging/crashed/previous`;
+      yield* writeFile(
+        `${previous}/t3-plugin.json`,
+        JSON.stringify({
+          id: "stranded",
+          name: "Stranded",
+          version: "0.1.0",
+          engines: { t3: ">=0.1.0" },
+        }),
+      );
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        yield* waitForStatuses(host, { stranded: "disabled" });
+        assert.isTrue(yield* fs.exists(`${stateDir}/plugins/stranded/t3-plugin.json`));
+        assert.isFalse(yield* fs.exists(`${stateDir}/plugin-staging/crashed`));
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
   );
 
   it.effect("does not load a disabled plugin at startup", () =>

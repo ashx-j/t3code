@@ -12,12 +12,10 @@ import * as PluginHooks from "../PluginHooks.ts";
 import { makeFacadeContext } from "./facade.ts";
 import { makeTurnsApi } from "./turns.ts";
 
-const unusedEvents: PluginApi["events"] = {
-  stored: () => {
-    throw new Error("events are not used here");
-  },
-};
 const unusedStorage = {} as PluginApi["storage"];
+const unusedRunEvents = () => {
+  throw new Error("run events are not used here");
+};
 
 it.effect("skips a beforeDispatch hook that throws or misses its deadline", () =>
   Effect.gen(function* () {
@@ -30,7 +28,7 @@ it.effect("skips a beforeDispatch hook that throws or misses its deadline", () =
         context: yield* Effect.context<never>(),
       }),
       { hooks },
-      { events: unusedEvents, storage: unusedStorage },
+      { storage: unusedStorage, runEvents: unusedRunEvents },
     );
     turns.beforeDispatch(() => ({ appendText: "first" }));
     turns.beforeDispatch(() => {
@@ -63,8 +61,13 @@ it.effect("delivers each ended run once and resumes after the last one it handle
       type: "run.updated",
       event: { type: "run.updated", payload: { id: `run:${sequence}`, threadId: "t", status } },
     });
-    // Activates a plugin over `stored` and resolves once it saved its position after `lastSequence`.
-    const activate = (stored: ReadonlyArray<PluginStoredEvent>, lastSequence: number) =>
+    const runUpdateOf = (sequence: number, runId: string, status: string): PluginStoredEvent => ({
+      sequence,
+      type: "run.updated",
+      event: { type: "run.updated", payload: { id: runId, threadId: "t", status } },
+    });
+    // Activates a plugin over `stored` and resolves once it has handled every event.
+    const activate = (stored: ReadonlyArray<PluginStoredEvent>) =>
       Effect.gen(function* () {
         const hooks = yield* PluginHooks.PluginHooks;
         const activation = makePluginActivation(yield* PubSub.sliding<PluginPublication>(1));
@@ -73,40 +76,45 @@ it.effect("delivers each ended run once and resumes after the last one it handle
           activation,
           context: yield* Effect.context<never>(),
         });
-        const caughtUp = Promise.withResolvers<void>();
+        const drained = Promise.withResolvers<void>();
         const storage = {
           get: async (key: string) => saved.get(key),
           set: async (key: string, value: JsonValue) => {
             saved.set(key, value);
-            if (value === lastSequence) caughtUp.resolve();
           },
         } as PluginApi["storage"];
-        const events: PluginApi["events"] = {
-          stored: (options) => {
-            requests.push(options.afterSequence);
-            return (async function* () {
+        const runEvents = (afterSequence: number | undefined) => {
+          requests.push(afterSequence);
+          return (async function* () {
+            try {
               yield* stored;
-            })();
-          },
+            } finally {
+              drained.resolve();
+            }
+          })();
         };
         const seen: Array<string> = [];
-        makeTurnsApi(facade, { hooks }, { events, storage }).afterRunCompleted((run) => {
+        makeTurnsApi(facade, { hooks }, { storage, runEvents }).afterRunCompleted((run) => {
           seen.push(`${run.runId}:${run.status}`);
         });
-        yield* Effect.promise(() => caughtUp.promise);
+        yield* Effect.promise(() => drained.promise);
         return seen;
       });
 
     assert.deepStrictEqual(
-      yield* activate(
-        [runUpdate(10, "completed"), runUpdate(11, "running"), runUpdate(12, "failed")],
-        12,
-      ),
+      yield* activate([
+        runUpdate(10, "completed"),
+        runUpdate(11, "running"),
+        runUpdate(12, "failed"),
+      ]),
       ["run:10:completed", "run:12:failed"],
     );
-    assert.deepStrictEqual(yield* activate([runUpdate(13, "interrupted")], 13), [
-      "run:13:interrupted",
-    ]);
-    assert.deepStrictEqual(requests, [undefined, 12]);
+    // A checkpoint landing on an ended run updates it again, after a restart too.
+    assert.deepStrictEqual(
+      yield* activate([runUpdate(13, "interrupted"), runUpdateOf(14, "run:13", "interrupted")]),
+      ["run:13:interrupted"],
+    );
+    assert.deepStrictEqual(yield* activate([runUpdateOf(15, "run:12", "failed")]), []);
+    assert.deepStrictEqual(requests, [undefined, 12, 13]);
   }).pipe(Effect.provide(PluginHooks.layer)),
 );

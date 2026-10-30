@@ -16,8 +16,10 @@ Open **Settings → Plugins**, choose **Add plugin**, and pick a source:
 The plugin is enabled and started once it is installed. If installing over an existing version
 fails, the previous version keeps running.
 
-An agent can also install a plugin when you ask it to, with the `t3_plugins_install` tool. Like
-other changes to the environment, it needs a session with full access.
+Once an environment has a plugin, agents can also install, remove, turn on and off, and call
+plugins when you ask them to. Like other changes to the environment, this needs a session with
+full access. Agents in an environment with no plugins don't see these tools, so the first plugin
+comes from Settings.
 
 ## Turn a plugin on or off
 

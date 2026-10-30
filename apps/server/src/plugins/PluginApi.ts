@@ -13,7 +13,7 @@ import type * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import type * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import type * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import type * as ServerSettings from "../serverSettings.ts";
-import { makeEventsApi } from "./api/events.ts";
+import { makeEventsApi, storedEvents } from "./api/events.ts";
 import { makeFacadeContext } from "./api/facade.ts";
 import { makeHttpApi } from "./api/http.ts";
 import { makeMcpApi } from "./api/mcp.ts";
@@ -166,7 +166,16 @@ export const makePluginApi = (input: {
     threads: makeThreadsApi(facade, services),
     projects: makeProjectsApi(facade, services),
     schedule: makeScheduleApi(facade),
-    turns: makeTurnsApi(facade, services, { events, storage }),
+    turns: makeTurnsApi(facade, services, {
+      storage,
+      runEvents: (afterSequence) =>
+        storedEvents(
+          facade,
+          services,
+          { types: ["run.updated"], ...(afterSequence === undefined ? {} : { afterSequence }) },
+          "suspend",
+        ),
+    }),
     mcp: makeMcpApi(facade, services),
     http: makeHttpApi(facade, services),
     server: makeServerApi(facade, {
