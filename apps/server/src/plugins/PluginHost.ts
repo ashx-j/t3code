@@ -396,6 +396,34 @@ const make = Effect.gen(function* () {
       catch: (cause) => new PluginCodeError({ cause }),
     });
 
+  // The web bundle is served from the plugin's real folder; a symlink out of it is refused.
+  const readWebBundle = Effect.fnUntraced(function* (rootDir: string, entry: string) {
+    const file = yield* fs.realPath(path.join(rootDir, entry));
+    if (!file.startsWith(`${rootDir}${path.sep}`)) {
+      return yield* new PluginCodeError({
+        cause: "The web entry resolves outside the plugin folder.",
+      });
+    }
+    return {
+      status: 200,
+      headers: {
+        "content-type": "text/javascript; charset=utf-8",
+        "cache-control": "no-store",
+      },
+      body: yield* fs.readFile(file),
+    };
+  });
+
+  const serveWebBundle = (plugin: DiscoveredPlugin, entry: string) =>
+    services.httpRoutes
+      .register({
+        pluginId: plugin.id,
+        method: "GET",
+        path: "/web.js",
+        handler: () => Effect.runPromiseWith(context)(readWebBundle(plugin.rootDir, entry)),
+      })
+      .pipe(Effect.orDie);
+
   const activatePlugin = Effect.fnUntraced(function* (plugin: DiscoveredPlugin) {
     const manifest = manifestOf(plugin);
     if (manifest === undefined) return;
@@ -408,6 +436,7 @@ const make = Effect.gen(function* () {
         },
       });
     }
+    if (manifest.web !== undefined) yield* serveWebBundle(plugin, manifest.web);
     if (manifest.server === undefined) {
       return yield* setRecord(plugin.id, { status: "active" });
     }
@@ -461,6 +490,8 @@ const make = Effect.gen(function* () {
    */
   const stopPlugin = Effect.fnUntraced(function* (pluginId: PluginId) {
     yield* FiberMap.remove(activations, pluginId);
+    // Web-only plugins have no activation but still serve their bundle.
+    yield* services.httpRoutes.unregisterPlugin(pluginId);
     const record = yield* findRecord(pluginId);
     if (record?.activation === undefined) return;
     yield* setRecord(pluginId, { status: "disabled" });

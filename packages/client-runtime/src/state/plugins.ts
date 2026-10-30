@@ -8,7 +8,7 @@ import {
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "./runtime.ts";
 
-/** Plugin management for the Plugins settings page. Nothing here runs until a page reads it. */
+/** Plugin management and calls into plugins. Nothing here runs until something reads it. */
 export function createPluginEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
@@ -34,6 +34,15 @@ export function createPluginEnvironmentAtoms<R, E>(
     updatePluginSettings: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:plugins:update-settings",
       tag: WS_METHODS.pluginsSettingsUpdate,
+    }),
+    // Web plugins call their own server half through these.
+    invokePlugin: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:plugins:invoke",
+      tag: WS_METHODS.pluginsInvoke,
+    }),
+    pluginChannel: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:plugins:channel",
+      tag: WS_METHODS.pluginsSubscribe,
     }),
   };
 }

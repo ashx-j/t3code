@@ -8,10 +8,16 @@ import type { EnvironmentId, PluginState } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { PuzzleIcon, RotateCwIcon, SlidersHorizontalIcon } from "lucide-react";
-import { useState } from "react";
+import { type ComponentType, useState } from "react";
 
 import type { EnvironmentPresentation } from "../../state/environments";
+import {
+  pluginContributionKey,
+  pluginSettingsPanelAtom,
+  pluginWebFailureAtom,
+} from "../../plugins/pluginRegistry";
 import { pluginEnvironment } from "../../state/plugins";
+import { RenderErrorBoundary } from "../RenderErrorBoundary";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Badge } from "../ui/badge";
@@ -123,7 +129,11 @@ function PluginRow({
   const reload = useAtomCommand(pluginEnvironment.reloadPlugin, "plugin reload");
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const hasSettings = pluginSettingsForm(plugin.settingsSchema).kind !== "none";
+  const contributionKey = pluginContributionKey(environmentId, plugin.id);
+  const customSettings = useAtomValue(pluginSettingsPanelAtom(contributionKey));
+  const webFailure = useAtomValue(pluginWebFailureAtom(contributionKey));
+  const hasSettings =
+    customSettings !== undefined || pluginSettingsForm(plugin.settingsSchema).kind !== "none";
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
     await action();
@@ -153,6 +163,9 @@ function PluginRow({
               {FAILURE_STAGES[plugin.failure.stage]}: {plugin.failure.message}
             </span>
           ) : null}
+          {webFailure === undefined ? null : (
+            <span className="text-destructive">Web part failed: {webFailure}</span>
+          )}
         </div>
       }
       control={
@@ -190,8 +203,33 @@ function PluginRow({
         </>
       }
     >
-      {settingsOpen ? <PluginSettingsEditor environmentId={environmentId} plugin={plugin} /> : null}
+      {settingsOpen ? (
+        customSettings === undefined ? (
+          <PluginSettingsEditor environmentId={environmentId} plugin={plugin} />
+        ) : (
+          <PluginCustomSettings panel={customSettings} />
+        )
+      ) : null}
     </SettingsRow>
+  );
+}
+
+/** A settings panel the plugin's web bundle drew instead of the generated form. */
+function PluginCustomSettings(props: { readonly panel: ComponentType }) {
+  const Panel = props.panel;
+  return (
+    <div className="border-t py-3">
+      <RenderErrorBoundary
+        resetKeys={[Panel]}
+        fallback={
+          <p className="text-xs text-destructive">
+            This plugin's settings panel stopped with an error.
+          </p>
+        }
+      >
+        <Panel />
+      </RenderErrorBoundary>
+    </div>
   );
 }
 

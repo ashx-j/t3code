@@ -143,8 +143,8 @@
     "packages/plugin-sdk": {
       // Plugin authors outside this repository import these exports.
       "includeEntryExports": false,
-      // The plugin host loads fixture entries from their manifests.
-      "entry": ["fixtures/*/*.cjs"],
+      // The plugin host and the web loader load fixture entries from their manifests.
+      "entry": ["fixtures/*/*.cjs", "fixtures/*/web.js"],
     },
     "packages/effect-acp": {
       "includeEntryExports": true,
