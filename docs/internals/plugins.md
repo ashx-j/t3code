@@ -61,13 +61,15 @@ import map. Mobile release builds cannot load code at all, so mobile renders set
 manifest's JSON Schema and declarative contributions only.
 
 Where T3 has a closed union and a `switch` (right panel kinds, settings paths, keybinding commands,
-drivers, MCP toolkits), plugins add to a registry that built-ins register into first. Where T3
-already has a server-supplied open variant (provider slash commands, dynamic tool items, themes),
-plugins use it. Registries are module-level `Map`s behind one version atom, read through atoms
-derived from it: React Compiler would cache a plain lookup. Hot paths such as timeline and sidebar
-rows re-render on that one version, never through a per-row subscription. A plugin right panel
-stores its title on the surface so tab titles need no lookup, and renders "plugin not active" with
-a close button while its plugin is unloaded.
+drivers, MCP toolkits), plugins add an entry beside the built-ins: a `plugin` right panel kind, a
+`plugin.<pluginId>.<commandId>` keybinding command, a `plugin-slash-command` composer item. The
+provider slash command variant does not fit plugins, because it inserts text for the provider to
+read while a plugin command runs plugin code. Where T3 has a server-supplied open variant (dynamic
+tool items, themes), plugins use it. Registries are module-level `Map`s behind one version atom,
+read through atoms derived from it: React Compiler would cache a plain lookup. Hot paths such as
+timeline and sidebar rows re-render on that one version, never through a per-row subscription. A
+plugin right panel stores its title on the surface so tab titles need no lookup, and renders
+"plugin not active" with a close button while its plugin is unloaded.
 
 ## Reaching into orchestration
 

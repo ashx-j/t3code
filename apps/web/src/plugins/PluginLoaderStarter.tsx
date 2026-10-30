@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useRouter } from "@tanstack/react-router";
 import { useEffect } from "react";
 
 import { usePrimaryEnvironmentId } from "../state/environments";
@@ -23,6 +24,7 @@ const whenIdle = (run: () => void) => {
  */
 export function PluginLoaderStarter() {
   const environmentId = usePrimaryEnvironmentId();
+  const router = useRouter();
   const supported =
     useAtomValue(primaryServerConfigAtom)?.environment.capabilities.plugins === true;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts and stops a runtime that lives outside React
@@ -36,7 +38,10 @@ export function PluginLoaderStarter() {
         if (cancelled) return;
         stopWatching = watchForWebPlugins(environmentId, () => {
           void loadPluginLoader().then((module) => {
-            if (!cancelled) stopLoader = module.startPluginLoader(environmentId);
+            if (cancelled) return;
+            stopLoader = module.startPluginLoader(environmentId, (path) =>
+              router.history.push(path),
+            );
           });
         });
       });
@@ -47,6 +52,6 @@ export function PluginLoaderStarter() {
       stopWatching?.();
       stopLoader?.();
     };
-  }, [supported, environmentId]);
+  }, [supported, environmentId, router]);
   return null;
 }

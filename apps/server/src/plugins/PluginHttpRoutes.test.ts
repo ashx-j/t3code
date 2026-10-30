@@ -107,6 +107,8 @@ it.effect("serves a plugin's routes and answers 404 and 500 for the rest", () =>
     api.http.route("GET", "/fail", () => {
       throw new Error("boom");
     });
+    api.http.route("GET", "/files/*", (request) => ({ body: `any ${request.path}` }));
+    api.http.route("GET", "/files/deep/*", (request) => ({ body: `deep ${request.path}` }));
 
     assert.deepStrictEqual(
       yield* send("GET", "/api/plugins/http-plugin/hello?name=ash", { token: "Bearer read" }),
@@ -118,6 +120,15 @@ it.effect("serves a plugin's routes and answers 404 and 500 for the rest", () =>
         body: '{"ping":1}',
       }),
       { status: 201, contentType: "application/json", body: '{"ping":1}' },
+    );
+    assert.strictEqual(
+      (yield* send("GET", "/api/plugins/http-plugin/files/a/b.txt", { token: "Bearer read" })).body,
+      "any /files/a/b.txt",
+    );
+    assert.strictEqual(
+      (yield* send("GET", "/api/plugins/http-plugin/files/deep/c.txt", { token: "Bearer read" }))
+        .body,
+      "deep /files/deep/c.txt",
     );
     assert.strictEqual(
       (yield* send("GET", "/api/plugins/other-plugin/hello", { token: "Bearer read" })).status,

@@ -61,6 +61,14 @@ export type ComposerCommandItem =
     }
   | {
       id: string;
+      type: "plugin-slash-command";
+      command: { readonly name: string };
+      run: (context: { readonly threadId: string }) => void;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
       type: "skill";
       provider: ProviderDriverKind;
       skill: ServerProviderSkill;

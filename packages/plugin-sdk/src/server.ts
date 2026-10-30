@@ -157,7 +157,10 @@ export interface PluginApi {
     readonly registerTool: (tool: PluginMcpTool, handler: PluginMcpToolHandler) => void;
   };
   readonly http: {
-    /** Serves `method path` under `/api/plugins/<pluginId>` with the same sign-in as the rest of `/api`. */
+    /**
+     * Serves `method path` under `/api/plugins/<pluginId>` with the same sign-in as the rest of
+     * `/api`. A path ending in `/*` answers every path below it; the longest match wins.
+     */
     readonly route: (
       method: "GET" | "POST" | "PUT" | "DELETE",
       path: string,
