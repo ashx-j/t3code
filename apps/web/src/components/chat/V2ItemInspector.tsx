@@ -22,6 +22,8 @@ import { Button } from "../ui/button";
 import ChatMarkdown from "../ChatMarkdown";
 import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
 import { RenderErrorBoundary } from "../RenderErrorBoundary";
+import { PluginToolBody } from "../../plugins/PluginToolBody";
+import { pluginToolNameOf } from "../../plugins/pluginRegistry";
 import { CommandOutputPanel, useCommandOutputStreaming } from "./CommandOutputPanel";
 import { resolveExternalWebLinkHref } from "./externalLinkContextMenu";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
@@ -379,12 +381,30 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
       ) : null}
 
       {item.type === "dynamic_tool" ? (
-        <ToolCallBody
-          toolName={item.toolName}
-          args={item.input}
-          {...outputState}
-          onImageExpand={props.onImageExpand}
-        />
+        pluginToolNameOf(item.toolName) !== undefined && item.toolName !== null ? (
+          <PluginToolBody
+            environmentId={props.environmentId}
+            toolName={item.toolName}
+            input={item.input}
+            output={outputState.output}
+            status={item.status}
+            fallback={
+              <ToolCallBody
+                toolName={item.toolName}
+                args={item.input}
+                {...outputState}
+                onImageExpand={props.onImageExpand}
+              />
+            }
+          />
+        ) : (
+          <ToolCallBody
+            toolName={item.toolName}
+            args={item.input}
+            {...outputState}
+            onImageExpand={props.onImageExpand}
+          />
+        )
       ) : null}
 
       {item.type === "approval_request" ? <StructuredValue value={item.prompt} /> : null}
