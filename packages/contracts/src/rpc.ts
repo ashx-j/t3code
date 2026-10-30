@@ -377,6 +377,7 @@ import {
   PluginInvokeResult,
   PluginUninstallInput,
   PluginUninstallResult,
+  PluginUpdateInput,
   PluginListInput,
   PluginListResult,
   PluginMutationResult,
@@ -564,6 +565,7 @@ export const WS_METHODS = {
   pluginsReload: "plugins.reload",
   pluginsInstall: "plugins.install",
   pluginsUninstall: "plugins.uninstall",
+  pluginsUpdate: "plugins.update",
   pluginsSettingsGet: "plugins.settings.get",
   pluginsSettingsUpdate: "plugins.settings.update",
   pluginsInvoke: "plugins.invoke",
@@ -1985,6 +1987,12 @@ const WsPluginsInstallRpc = Rpc.make(WS_METHODS.pluginsInstall, {
   error: PluginRpcError,
 });
 
+const WsPluginsUpdateRpc = Rpc.make(WS_METHODS.pluginsUpdate, {
+  payload: PluginUpdateInput,
+  success: PluginMutationResult,
+  error: PluginRpcError,
+});
+
 const WsPluginsUninstallRpc = Rpc.make(WS_METHODS.pluginsUninstall, {
   payload: PluginUninstallInput,
   success: PluginUninstallResult,
@@ -2106,6 +2114,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPluginsReloadRpc,
   WsPluginsInstallRpc,
   WsPluginsUninstallRpc,
+  WsPluginsUpdateRpc,
   WsPluginsSettingsGetRpc,
   WsPluginsSettingsUpdateRpc,
   WsPluginsInvokeRpc,

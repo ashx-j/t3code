@@ -9,7 +9,7 @@ import {
   type PluginFailure,
   PluginId,
   PluginManifest,
-  type PluginInstallSource,
+  PluginInstallSource,
   type PluginState,
   type PluginStatus,
 } from "@t3tools/contracts";
@@ -191,6 +191,10 @@ export class PluginHost extends Context.Service<
     readonly install: (
       source: PluginInstallSource,
     ) => Effect.Effect<PluginState, PluginInstallError | PluginNotFoundError | PluginConfigError>;
+    /** Installs a plugin again from the source it was installed from. */
+    readonly update: (
+      pluginId: PluginId,
+    ) => Effect.Effect<PluginState, PluginInstallError | PluginNotFoundError | PluginConfigError>;
     /** Stops an installed plugin and deletes its folder; `removeData` also deletes its settings. */
     readonly uninstall: (
       pluginId: PluginId,
@@ -227,6 +231,8 @@ const PluginsConfigFile = Schema.StructWithRest(
   Schema.Struct({
     enabled: Schema.optionalKey(Schema.Record(Schema.String, Schema.Boolean)),
     devPaths: Schema.optionalKey(Schema.Array(Schema.String)),
+    /** Where each plugin installed through `install` came from, so `update` can fetch it again. */
+    sources: Schema.optionalKey(Schema.Record(Schema.String, PluginInstallSource)),
   }),
   [Schema.Record(Schema.String, Schema.Json)],
 );
@@ -257,7 +263,11 @@ const errorText = (cause: unknown) => {
 const manifestOf = (plugin: DiscoveredPlugin): PluginManifest | undefined =>
   "manifest" in plugin ? plugin.manifest : undefined;
 
-const toState = (record: PluginRecord, enabled: boolean): PluginState => {
+const toState = (
+  record: PluginRecord,
+  enabled: boolean,
+  installSource: PluginInstallSource | undefined,
+): PluginState => {
   const manifest = manifestOf(record.plugin);
   return {
     id: record.plugin.id,
@@ -278,6 +288,9 @@ const toState = (record: PluginRecord, enabled: boolean): PluginState => {
     status: record.status,
     ...(record.failure === undefined ? {} : { failure: record.failure }),
     ...(record.revision === undefined ? {} : { revision: record.revision }),
+    ...(installSource === undefined || record.plugin.source !== "installed"
+      ? {}
+      : { installSource }),
     hasServer: manifest?.server !== undefined,
     hasWeb: manifest?.web !== undefined,
   };
@@ -332,9 +345,10 @@ const make = Effect.gen(function* () {
   const hostScope = yield* Effect.scope;
 
   const currentStates = Effect.gen(function* () {
-    const enabled = (yield* Ref.get(pluginsConfig)).enabled ?? {};
+    const config = yield* Ref.get(pluginsConfig);
+    const enabled = config.enabled ?? {};
     return (yield* Ref.get(records)).map((record) =>
-      toState(record, enabled[record.plugin.id] === true),
+      toState(record, enabled[record.plugin.id] === true, config.sources?.[record.plugin.id]),
     );
   });
   // Reading and publishing under one lock, so a slower fiber cannot publish an older list last.
@@ -406,7 +420,8 @@ const make = Effect.gen(function* () {
   const removeFromConfig = (pluginId: PluginId) =>
     writeConfig((current) => {
       const { [pluginId]: _removed, ...enabled } = current.enabled ?? {};
-      return { ...current, enabled };
+      const { [pluginId]: _source, ...sources } = current.sources ?? {};
+      return { ...current, enabled, sources };
     });
 
   const runCleanup = (pluginId: PluginId, cleanup: () => void | Promise<void>) =>
@@ -815,7 +830,11 @@ const make = Effect.gen(function* () {
             hadPrevious ? fs.rename(previous, target).pipe(Effect.ignore) : Effect.void,
           ),
         );
-        yield* writeEnabled(manifest.id, true);
+        yield* writeConfig((current) => ({
+          ...current,
+          enabled: { ...current.enabled, [manifest.id]: true },
+          sources: { ...current.sources, [manifest.id]: source },
+        }));
       }),
     ).pipe(
       Effect.ensuring(fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore)),
@@ -829,6 +848,24 @@ const make = Effect.gen(function* () {
   // waiting but cannot interrupt the swap or the staging cleanup.
   const install: PluginHost["Service"]["install"] = Effect.fn("PluginHost.install")((source) =>
     installInHost(source).pipe(Effect.forkIn(hostScope), Effect.flatMap(Fiber.join)),
+  );
+
+  const update: PluginHost["Service"]["update"] = Effect.fn("PluginHost.update")(
+    function* (pluginId) {
+      const source = (yield* Ref.get(pluginsConfig)).sources?.[pluginId];
+      if (source === undefined) {
+        return yield* new PluginInstallError({
+          reason: `${pluginId} was not installed from Settings, so it has no source to update from.`,
+        });
+      }
+      const updated = yield* install(source);
+      if (updated.id !== pluginId) {
+        return yield* new PluginInstallError({
+          reason: `The source now provides ${updated.id}, not ${pluginId}.`,
+        });
+      }
+      return updated;
+    },
   );
 
   const uninstall: PluginHost["Service"]["uninstall"] = Effect.fn("PluginHost.uninstall")(
@@ -920,6 +957,7 @@ const make = Effect.gen(function* () {
     setEnabled,
     reload,
     install,
+    update,
     uninstall,
     getSettings: Effect.fn("PluginHost.getSettings")(function* (pluginId) {
       const manifest = yield* manifestFor(pluginId);
