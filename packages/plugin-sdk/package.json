@@ -1,0 +1,36 @@
+{
+  "name": "@t3tools/plugin-sdk",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./server": {
+      "types": "./src/server.ts",
+      "import": "./src/server.ts"
+    },
+    "./web": {
+      "types": "./src/web.ts",
+      "import": "./src/web.ts"
+    },
+    "./shared": {
+      "types": "./src/shared.ts",
+      "import": "./src/shared.ts"
+    },
+    "./ui": {
+      "types": "./src/ui.ts",
+      "import": "./src/ui.ts"
+    },
+    "./vite": {
+      "types": "./src/vite.ts",
+      "import": "./src/vite.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "react": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}
