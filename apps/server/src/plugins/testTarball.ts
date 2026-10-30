@@ -11,6 +11,11 @@ export const tarEntry = (name: string, contents: string, type = "0") => {
   header.set(encoder.encode(`${data.length.toString(8).padStart(11, "0")}\0`), 124);
   header.set(encoder.encode(type), 156);
   header.set(encoder.encode("ustar\0"), 257);
+  header.set(encoder.encode("00"), 263);
+  // The checksum counts its own field as spaces, then is stored as 6 octal digits, NUL, space.
+  header.fill(0x20, 148, 156);
+  const sum = header.reduce((total, byte) => total + byte, 0);
+  header.set(encoder.encode(`${sum.toString(8).padStart(6, "0")}\0 `), 148);
   const padded = new Uint8Array(Math.ceil(data.length / 512) * 512);
   padded.set(data);
   return [header, padded];

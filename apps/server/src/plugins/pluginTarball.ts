@@ -24,6 +24,18 @@ const octal = (block: Uint8Array, start: number, length: number) => {
   return value === "" ? 0 : Number.parseInt(value, 8);
 };
 
+// The header checksum treats its own 8 bytes as spaces. node-tar skips a header that fails it, so
+// accepting one here could install a file that npm's own tools never show.
+const checksumMatches = (header: Uint8Array) => {
+  let sum = 0;
+  for (let index = 0; index < BLOCK; index += 1) {
+    sum += index >= 148 && index < 156 ? 0x20 : (header[index] ?? 0);
+  }
+  return sum === octal(header, 148, 8);
+};
+
+const isUstar = (header: Uint8Array) => text(header, 257, 5) === "ustar";
+
 const isSafeRelativePath = (path: string) =>
   path.length > 0 &&
   !path.startsWith("/") &&
@@ -39,15 +51,25 @@ const isSafeRelativePath = (path: string) =>
 export function unpackNpmTarball(gzipped: Uint8Array): ReadonlyArray<TarballFile> {
   const archive = NodeZlib.gunzipSync(gzipped, { maxOutputLength: MAX_UNPACKED_BYTES });
   const files: Array<TarballFile> = [];
+  const paths = new Set<string>();
   let offset = 0;
   let longName: string | undefined;
+  let paxSize: number | undefined;
   while (offset + BLOCK <= archive.length) {
     const header = archive.subarray(offset, offset + BLOCK);
-    if (header.every((byte) => byte === 0)) break;
+    if (header.every((byte) => byte === 0)) {
+      // The archive ends with 2 zero blocks; a lone one followed by more data is malformed.
+      const next = archive.subarray(offset + BLOCK, offset + 2 * BLOCK);
+      if (next.length === 0 || next.every((byte) => byte === 0)) break;
+      throw new Error("The package archive is truncated or malformed.");
+    }
     if (files.length >= MAX_ENTRIES) throw new Error("The package has too many files.");
-    const size = octal(header, 124, 12);
+    if (!checksumMatches(header)) throw new Error("The package archive is truncated or malformed.");
+    const size = paxSize ?? octal(header, 124, 12);
+    paxSize = undefined;
     const type = String.fromCharCode(header[156] ?? 0);
-    const prefix = text(header, 345, 155);
+    // Only ustar headers have a prefix field; GNU headers keep other data there.
+    const prefix = isUstar(header) ? text(header, 345, 155) : "";
     const name =
       longName ?? (prefix === "" ? text(header, 0, 100) : `${prefix}/${text(header, 0, 100)}`);
     longName = undefined;
@@ -63,12 +85,14 @@ export function unpackNpmTarball(gzipped: Uint8Array): ReadonlyArray<TarballFile
       continue;
     }
     if (type === "x") {
-      const pathRecord = new TextDecoder()
+      const records = new TextDecoder()
         .decode(archive.subarray(dataStart, dataEnd))
         .split("\n")
-        .map((line) => line.slice(line.indexOf(" ") + 1))
-        .find((record) => record.startsWith("path="));
+        .map((line) => line.slice(line.indexOf(" ") + 1));
+      const pathRecord = records.find((record) => record.startsWith("path="));
+      const sizeRecord = records.find((record) => record.startsWith("size="));
       if (pathRecord !== undefined) longName = pathRecord.slice("path=".length);
+      if (sizeRecord !== undefined) paxSize = Number(sizeRecord.slice("size=".length));
       continue;
     }
     if (type === "g") continue;
@@ -81,6 +105,9 @@ export function unpackNpmTarball(gzipped: Uint8Array): ReadonlyArray<TarballFile
     }
     const path = name.slice(PACKAGE_PREFIX.length);
     if (!isSafeRelativePath(path)) throw new Error(`The package contains an unsafe path: ${name}.`);
+    // npm keeps the last copy of a duplicated path; refusing makes the installed file unambiguous.
+    if (paths.has(path)) throw new Error(`The package contains ${name} twice.`);
+    paths.add(path);
     files.push({ path, contents: archive.slice(dataStart, dataEnd) });
   }
   return files;

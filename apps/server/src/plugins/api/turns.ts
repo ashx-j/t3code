@@ -38,6 +38,7 @@ const isJsonObject = (value: unknown): value is Record<string, unknown> =>
 // Ended runs remembered with the cursor: a run can be updated again after it ends (a checkpoint
 // lands on an interrupted run), and those later updates must not deliver it twice.
 const REMEMBERED_RUNS = 256;
+const RESUME_DELAY_MS = 1000;
 
 interface RunCursor {
   readonly sequence: number;
@@ -73,32 +74,49 @@ export const makeTurnsApi = (
       const cursorKey = `t3.turns.afterRunCompleted.${runHandlers}`;
       void (async () => {
         const cursor = readCursor(await api.storage.get(cursorKey));
+        let sequence = cursor?.sequence;
         const handled = new Set(cursor?.runIds ?? []);
-        for await (const stored of api.runEvents(cursor?.sequence)) {
-          const run = stored.event.payload;
-          if (!isJsonObject(run) || typeof run.status !== "string") continue;
-          if (!TERMINAL_RUN_STATUSES.has(run.status)) continue;
-          const runId = String(run.id);
-          if (handled.has(runId)) continue;
+        // The stream can end with an error when the reader falls far behind; resume from the
+        // saved position instead of going quiet until the plugin restarts.
+        while (!activation.controller.signal.aborted) {
           try {
-            await handler({
-              runId,
-              threadId: String(run.threadId),
-              status: run.status,
-              run: stored.event.payload as PluginCompletedRun["run"],
-            });
+            for await (const stored of api.runEvents(sequence)) {
+              const run = stored.event.payload;
+              if (!isJsonObject(run) || typeof run.status !== "string") continue;
+              if (!TERMINAL_RUN_STATUSES.has(run.status)) continue;
+              const runId = String(run.id);
+              if (handled.has(runId)) continue;
+              try {
+                await handler({
+                  runId,
+                  threadId: String(run.threadId),
+                  status: run.status,
+                  run: stored.event.payload as PluginCompletedRun["run"],
+                });
+              } catch (error) {
+                Effect.runForkWith(facade.context)(
+                  Effect.logWarning("plugin afterRunCompleted handler failed", {
+                    pluginId,
+                    failure: String(error).slice(0, 500),
+                  }),
+                );
+              }
+              handled.add(runId);
+              const [oldest] = handled;
+              if (handled.size > REMEMBERED_RUNS && oldest !== undefined) handled.delete(oldest);
+              sequence = stored.sequence;
+              await api.storage.set(cursorKey, { sequence, runIds: [...handled] });
+            }
+            return;
           } catch (error) {
             Effect.runForkWith(facade.context)(
-              Effect.logWarning("plugin afterRunCompleted handler failed", {
+              Effect.logWarning("plugin afterRunCompleted stream failed; resuming", {
                 pluginId,
                 failure: String(error).slice(0, 500),
               }),
             );
+            await Effect.runPromiseWith(facade.context)(Effect.sleep(RESUME_DELAY_MS));
           }
-          handled.add(runId);
-          const [oldest] = handled;
-          if (handled.size > REMEMBERED_RUNS && oldest !== undefined) handled.delete(oldest);
-          await api.storage.set(cursorKey, { sequence: stored.sequence, runIds: [...handled] });
         }
       })().catch(() => undefined);
     },

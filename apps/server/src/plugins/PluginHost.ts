@@ -18,10 +18,12 @@ import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Fiber from "effect/Fiber";
 import * as FiberMap from "effect/FiberMap";
 import * as FileSystem from "effect/FileSystem";
@@ -265,6 +267,16 @@ const errorText = (cause: unknown) => {
 const manifestOf = (plugin: DiscoveredPlugin): PluginManifest | undefined =>
   "manifest" in plugin ? plugin.manifest : undefined;
 
+// Git URLs can carry credentials, and plugin state reaches read-only clients and agents.
+const shownSource = (source: PluginInstallSource): PluginInstallSource => {
+  if (source.type !== "git" || !URL.canParse(source.url)) return source;
+  const url = new URL(source.url);
+  if (url.username === "" && url.password === "") return source;
+  url.username = "***";
+  url.password = "";
+  return { ...source, url: url.toString() };
+};
+
 const toState = (
   record: PluginRecord,
   enabled: boolean,
@@ -292,7 +304,7 @@ const toState = (
     ...(record.revision === undefined ? {} : { revision: record.revision }),
     ...(installSource === undefined || record.plugin.source !== "installed"
       ? {}
-      : { installSource }),
+      : { installSource: shownSource(installSource) }),
     hasServer: manifest?.server !== undefined,
     hasWeb: manifest?.web !== undefined,
   };
@@ -338,7 +350,8 @@ const make = Effect.gen(function* () {
 
   const records = yield* Ref.make<ReadonlyArray<PluginRecord>>([]);
   // Changes on every start, so a client can tell a restarted plugin from one that kept running.
-  let revision = 0;
+  // Seeded with the clock so a restarted server never repeats a revision a client already saw.
+  let revision = yield* Clock.currentTimeMillis;
   const nextRevision = () => ++revision;
   const pluginsConfig = yield* Ref.make<PluginsConfigFile>({});
   const changes = yield* PubSub.sliding<ReadonlyArray<PluginState>>(1);
@@ -626,8 +639,13 @@ const make = Effect.gen(function* () {
 
   // An install interrupted mid-swap (a crash) can leave the old version only in staging. Put it
   // back if nothing replaced it, then drop every leftover staging folder.
+  // Listed while the layer builds, before the server serves requests, so recovery never touches
+  // the staging folder of an install that starts after that.
+  const leftoverStaging = yield* fs
+    .readDirectory(stagingRoot)
+    .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
   const recoverStaging = Effect.gen(function* () {
-    const entries = yield* fs.readDirectory(stagingRoot).pipe(Effect.orElseSucceed(() => []));
+    const entries = leftoverStaging;
     for (const entry of entries) {
       const previous = path.join(stagingRoot, entry, "previous");
       const manifest = yield* fs
@@ -802,7 +820,11 @@ const make = Effect.gen(function* () {
     yield* fs.remove(path.join(into, ".git"), { recursive: true, force: true }).pipe(Effect.ignore);
   });
 
-  const installInHost = Effect.fnUntraced(function* (source: PluginInstallSource) {
+  const installInHost = Effect.fnUntraced(function* (
+    source: PluginInstallSource,
+    /** Set by `update`: the id the source must still provide, checked before anything moves. */
+    expectedId: PluginId | undefined,
+  ) {
     const id = yield* services.crypto.randomUUIDv4().pipe(Effect.orDie);
     const stagingDir = path.join(stagingRoot, id);
     const staged = path.join(stagingDir, "plugin");
@@ -823,12 +845,24 @@ const make = Effect.gen(function* () {
       ),
     );
     const existing = yield* findRecord(manifest.id);
-    if (existing?.plugin.source === "dev") {
+    const pluginsFile = yield* Ref.get(pluginsConfig);
+    const recorded = pluginsFile.sources?.[manifest.id];
+    // A source may only replace the plugin it installed: another package claiming an installed
+    // id would take over that plugin's folder, settings, secrets and storage.
+    const refusal =
+      existing?.plugin.source === "dev"
+        ? `A dev folder already provides ${manifest.id}. Remove it from plugins.json first.`
+        : expectedId !== undefined && manifest.id !== expectedId
+          ? `The source now provides ${manifest.id}, not ${expectedId}.`
+          : existing !== undefined && (recorded === undefined || !Equal.equals(recorded, source))
+            ? `${manifest.id} is already installed from somewhere else. Remove it first to replace it.`
+            : undefined;
+    if (refusal !== undefined) {
       yield* fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore);
-      return yield* new PluginInstallError({
-        reason: `A dev folder already provides ${manifest.id}. Remove it from plugins.json first.`,
-      });
+      return yield* new PluginInstallError({ reason: refusal });
     }
+    // An update keeps a disabled plugin disabled; a new install is enabled.
+    const enabled = existing === undefined ? true : pluginsFile.enabled?.[manifest.id] === true;
     const target = path.join(pluginsDir, manifest.id);
     const previous = path.join(stagingDir, "previous");
     yield* runLifecycle(
@@ -851,7 +885,7 @@ const make = Effect.gen(function* () {
         );
         yield* writeConfig((current) => ({
           ...current,
-          enabled: { ...current.enabled, [manifest.id]: true },
+          enabled: { ...current.enabled, [manifest.id]: enabled },
           sources: { ...current.sources, [manifest.id]: source },
         }));
       }),
@@ -866,7 +900,7 @@ const make = Effect.gen(function* () {
   // Like lifecycle changes, an install runs in the host's scope: a caller that disconnects stops
   // waiting but cannot interrupt the swap or the staging cleanup.
   const install: PluginHost["Service"]["install"] = Effect.fn("PluginHost.install")((source) =>
-    installInHost(source).pipe(Effect.forkIn(hostScope), Effect.flatMap(Fiber.join)),
+    installInHost(source, undefined).pipe(Effect.forkIn(hostScope), Effect.flatMap(Fiber.join)),
   );
 
   const update: PluginHost["Service"]["update"] = Effect.fn("PluginHost.update")(
@@ -877,13 +911,10 @@ const make = Effect.gen(function* () {
           reason: `${pluginId} was not installed from Settings, so it has no source to update from.`,
         });
       }
-      const updated = yield* install(source);
-      if (updated.id !== pluginId) {
-        return yield* new PluginInstallError({
-          reason: `The source now provides ${updated.id}, not ${pluginId}.`,
-        });
-      }
-      return updated;
+      return yield* installInHost(source, pluginId).pipe(
+        Effect.forkIn(hostScope),
+        Effect.flatMap(Fiber.join),
+      );
     },
   );
 

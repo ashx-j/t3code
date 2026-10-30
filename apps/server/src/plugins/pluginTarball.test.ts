@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeZlib from "node:zlib";
+
 import { describe, expect, it } from "vite-plus/test";
 
 import { unpackNpmTarball } from "./pluginTarball.ts";
@@ -26,7 +29,15 @@ describe("unpackNpmTarball", () => {
     ["a file outside the package folder", entry("other/file.js", "x"), /outside its package/],
     ["a symlink", entry("package/link", "", "2"), /not a plain file/],
     ["a hard link", entry("package/hard", "", "1"), /not a plain file/],
+    ["a duplicate path", entry("package/ok.js", "other"), /twice/],
   ])("refuses %s", (_label, bad, message) => {
     expect(() => unpackNpmTarball(tarball(entry("package/ok.js", "ok"), bad))).toThrow(message);
+  });
+
+  it("refuses a header whose checksum does not match", () => {
+    const archive = tarball(entry("package/ok.js", "ok"));
+    const raw = new Uint8Array(NodeZlib.gunzipSync(archive));
+    raw[0] = "q".charCodeAt(0);
+    expect(() => unpackNpmTarball(NodeZlib.gzipSync(raw))).toThrow(/malformed/);
   });
 });
