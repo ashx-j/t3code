@@ -3,7 +3,11 @@ import { assert, it } from "@effect/vitest";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  EnvironmentId,
   PluginId,
+  ProjectId,
+  ThreadId,
+  type OrchestrationV2ServerCommand,
   type PluginState,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -12,11 +16,23 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import type * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import packageJson from "../../package.json" with { type: "json" };
+import * as PluginHooks from "./PluginHooks.ts";
 import * as PluginHost from "./PluginHost.ts";
+import * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
+import * as PluginMcpTools from "./PluginMcpTools.ts";
 import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
 
@@ -28,11 +44,25 @@ const operate = [AuthOrchestrationReadScope, AuthOrchestrationOperateScope] as c
 const layerConfig = () =>
   Layer.fresh(ServerConfig.layerTest(process.cwd(), { prefix: "t3code-plugin-host-test-" }));
 
-const layerHost = () =>
+// Orchestration services the lifecycle tests never reach.
+const layerUnusedServices = Layer.mergeAll(
+  Layer.mock(Orchestrator.OrchestratorV2)({}),
+  Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({}),
+  Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+  Layer.mock(ProjectStore.ProjectStoreV2)({}),
+  Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+  Layer.mock(ServerSettings.ServerSettingsService)({}),
+);
+
+const layerHost = (services: typeof layerUnusedServices = layerUnusedServices) =>
   Layer.fresh(
     PluginHost.layer.pipe(
       Layer.provideMerge(Layer.mergeAll(PluginSettingsStore.layer, PluginStorage.layer)),
       Layer.provide(ServerSecretStore.layer),
+      Layer.provide(services),
+      Layer.provideMerge(
+        Layer.mergeAll(PluginHooks.layer, PluginMcpTools.layer, PluginHttpRoutes.layer),
+      ),
     ),
   );
 
@@ -338,6 +368,83 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
       }).pipe(Effect.provide(layerHost()));
       Reflect.deleteProperty(globalThis, "__t3PluginHostCleanupStarted");
       Reflect.deleteProperty(globalThis, "__t3PluginHostCleanupGate");
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("gives a plugin threads, projects, server info, schedules and send hooks", () =>
+    Effect.gen(function* () {
+      const workbench = PluginId.make("workbench-plugin");
+      const threadId = ThreadId.make("thread:plugin-workbench");
+      const dispatched: Array<OrchestrationV2ServerCommand> = [];
+      const services = Layer.mergeAll(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          streamStoredEventsFrom: () => Stream.never,
+        }),
+        Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({
+          latestAgentSequence: () => Effect.succeed(0),
+        }),
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          listProjectThreads: () => Effect.succeed([]),
+          getThreadShell: () =>
+            Effect.succeed({
+              id: threadId,
+              projectId: ProjectId.make("project:plugin-workbench"),
+            } as never),
+          dispatch: (command) =>
+            Effect.sync(() => {
+              dispatched.push(command);
+              return { sequence: 1, storedEvents: [] } as never;
+            }),
+        }),
+        Layer.mock(ProjectStore.ProjectStoreV2)({ listShells: () => Effect.succeed([]) }),
+        Layer.mock(ServerEnvironment.ServerEnvironment)({
+          getDescriptor: Effect.succeed({
+            environmentId: EnvironmentId.make("environment:plugin-workbench"),
+            label: "Workbench host",
+            platform: { os: "linux", arch: "x64" },
+            serverVersion: packageJson.version,
+            capabilities: { repositoryIdentity: false, plugins: true },
+          }),
+        }),
+        Layer.mock(ServerSettings.ServerSettingsService)({}),
+      );
+      yield* writePluginsConfig({
+        enabled: { [workbench]: true },
+        devPaths: [`${fixturesDir}workbench-plugin`],
+      });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const hooks = yield* PluginHooks.PluginHooks;
+        yield* waitForStatuses(host, { [workbench]: "active" });
+        const call = (method: string, input?: Schema.Json) =>
+          host.invoke({ pluginId: workbench, method, input, scopes: operate });
+
+        assert.deepStrictEqual(yield* call("overview"), {
+          version: packageJson.version,
+          environment: "Workbench host",
+          threads: 0,
+          projects: 0,
+          firstThreadId: null,
+        });
+
+        yield* call("renameThread", { threadId, title: "Renamed by a plugin" });
+        assert.deepInclude(dispatched[0], {
+          type: "thread.metadata.update",
+          threadId,
+          title: "Renamed by a plugin",
+        });
+
+        assert.strictEqual(
+          yield* hooks.beforeDispatch({ threadId, text: "Ship it #context", createdBy: "user" }),
+          "Ship it #context\n\nContext from workbench-plugin.",
+        );
+
+        const tick = yield* host
+          .subscribe({ pluginId: workbench, channel: "ticks" })
+          .pipe(Stream.runHead, Effect.forkChild({ startImmediately: true }));
+        yield* TestClock.adjust("1 second");
+        assert.deepStrictEqual(yield* Fiber.join(tick), Option.some(1));
+      }).pipe(Effect.provide(layerHost(services)));
     }).pipe(Effect.provide(layerConfig())),
   );
 
