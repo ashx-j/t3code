@@ -161,16 +161,17 @@ const runReportingFailure = (label: string, run: () => void | Promise<void>) => 
 interface WebPluginApiContext {
   readonly environmentId: EnvironmentId;
   readonly plugin: PluginState;
-  readonly cleanups: Array<() => void>;
+  /** Keeps a cleanup for unload, or runs it at once when the plugin is already unloaded. */
+  readonly track: (cleanup: () => void) => void;
   /** One dispatcher scope shared by every plugin; commands add and remove their own entries. */
-  readonly shortcutHandlers: CommandHandlers;
+  readonly shortcutHandlers: () => CommandHandlers;
   readonly navigate: (path: string) => void;
 }
 
 function makeWebPluginApi({
   environmentId,
   plugin,
-  cleanups,
+  track,
   shortcutHandlers,
   navigate,
 }: WebPluginApiContext): WebPluginApi {
@@ -203,7 +204,7 @@ function makeWebPluginApi({
         const stop = appAtomRegistry.subscribe(atom, (result) => {
           if (AsyncResult.isSuccess(result)) onValue(result.value.value);
         });
-        cleanups.push(stop);
+        track(stop);
         return stop;
       },
     },
@@ -212,7 +213,7 @@ function makeWebPluginApi({
         if (!PANEL_NAME.test(panel.name)) {
           throw new TypeError(`"${panel.name}" is not a valid panel name.`);
         }
-        cleanups.push(
+        track(
           registerPluginRightPanel({
             environmentId,
             pluginId,
@@ -226,9 +227,7 @@ function makeWebPluginApi({
     },
     settings: {
       registerPanel: (component) => {
-        cleanups.push(
-          registerPluginSettingsPanel(environmentId, pluginId, component as ComponentType),
-        );
+        track(registerPluginSettingsPanel(environmentId, pluginId, component as ComponentType));
       },
     },
     commands: {
@@ -238,7 +237,7 @@ function makeWebPluginApi({
         }
         const keybindingCommand = `plugin.${pluginId}.${command.id}` as const;
         const run = () => runReportingFailure(command.title, command.run);
-        cleanups.push(
+        track(
           registerPluginCommand({
             environmentId,
             pluginId,
@@ -249,12 +248,13 @@ function makeWebPluginApi({
             run,
           }),
         );
-        shortcutHandlers[keybindingCommand] = (event) => {
+        const handlers = shortcutHandlers();
+        handlers[keybindingCommand] = (event) => {
           event.preventDefault();
           run();
         };
-        cleanups.push(() => {
-          delete shortcutHandlers[keybindingCommand];
+        track(() => {
+          delete handlers[keybindingCommand];
         });
       },
     },
@@ -270,14 +270,14 @@ function makeWebPluginApi({
           ...(banner.description === undefined ? {} : { description: banner.description }),
           dismiss: () => hide(),
         });
-        cleanups.push(hide);
+        track(hide);
         return hide;
       },
       registerSlashCommand: (command) => {
         if (!COMMAND_ID.test(command.name)) {
           throw new TypeError(`"${command.name}" is not a valid slash command name.`);
         }
-        cleanups.push(
+        track(
           registerPluginSlashCommand({
             environmentId,
             pluginId,
@@ -300,7 +300,7 @@ function makeWebPluginApi({
         .then((response) => response.blob())
         .then((blob) => {
           const objectUrl = URL.createObjectURL(blob);
-          cleanups.push(() => URL.revokeObjectURL(objectUrl));
+          track(() => URL.revokeObjectURL(objectUrl));
           return objectUrl;
         });
       assetUrls.set(name, url);
@@ -311,7 +311,7 @@ function makeWebPluginApi({
         if (!CODE_LANGUAGE.test(renderer.language) || BUILT_IN_LANGUAGES.has(renderer.language)) {
           throw new TypeError(`"${renderer.language}" is not a language plugins can draw.`);
         }
-        cleanups.push(
+        track(
           registerPluginCodeBlock(
             renderer.language,
             renderer.component as ComponentType<{ readonly code: string }>,
@@ -321,7 +321,7 @@ function makeWebPluginApi({
     },
     timeline: {
       registerToolRenderer: (renderer) => {
-        cleanups.push(
+        track(
           registerPluginToolRenderer({
             environmentId,
             toolName: `plg_${pluginId}_${renderer.tool}`,
@@ -336,7 +336,7 @@ function makeWebPluginApi({
       style.dataset.plugin = pluginId;
       style.textContent = css;
       document.head.append(style);
-      cleanups.push(() => style.remove());
+      track(() => style.remove());
     },
     navigate: (path) => {
       if (!path.startsWith("/")) throw new TypeError(`"${path}" is not an app path.`);
@@ -350,15 +350,38 @@ function makeWebPluginApi({
       });
     },
     onDeactivate: (cleanup) => {
-      cleanups.push(cleanup);
+      track(cleanup);
     },
   };
 }
 
 interface LoadedPlugin {
-  readonly version: string | undefined;
+  /** Version and start revision: a change of either loads the bundle again. */
+  readonly key: string;
   readonly cleanups: Array<() => void>;
+  disposed: boolean;
 }
+
+// The server gives `activate` 30 seconds; a bundle that never loads or settles fails the same way
+// instead of holding up every other plugin behind it.
+const WEB_PLUGIN_DEADLINE_MS = 30_000;
+
+const withDeadline = async <A>(work: Promise<A>, what: string) => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${what} took longer than 30 seconds.`)),
+      WEB_PLUGIN_DEADLINE_MS,
+    );
+  });
+  try {
+    return await Promise.race([work, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+const loadKey = (plugin: PluginState) => `${plugin.version ?? ""}:${plugin.revision ?? ""}`;
 
 const runCleanups = (cleanups: ReadonlyArray<() => void>) => {
   for (const cleanup of cleanups.toReversed()) {
@@ -380,7 +403,12 @@ export function startPluginLoader(
 ): () => void {
   installHostModules();
   const shortcutHandlers: CommandHandlers = {};
-  const stopShortcuts = registerCommands(shortcutHandlers);
+  // Registered with the first plugin command, so key presses pay nothing until one exists.
+  let stopShortcuts: (() => void) | undefined;
+  const claimShortcutHandlers = () => {
+    stopShortcuts ??= registerCommands(shortcutHandlers);
+    return shortcutHandlers;
+  };
   const loaded = new Map<PluginState["id"], LoadedPlugin>();
   let queue = Promise.resolve();
   let stopped = false;
@@ -389,22 +417,43 @@ export function startPluginLoader(
     const plugin = loaded.get(pluginId);
     if (plugin === undefined) return;
     loaded.delete(pluginId);
+    plugin.disposed = true;
     runCleanups(plugin.cleanups);
   };
 
   const load = async (plugin: PluginState) => {
-    const cleanups: Array<() => void> = [];
-    loaded.set(plugin.id, { version: plugin.version, cleanups });
+    const entry: LoadedPlugin = { key: loadKey(plugin), cleanups: [], disposed: false };
+    loaded.set(plugin.id, entry);
+    // Registrations that arrive after unload, from a slow `activate` or a later callback, are
+    // undone at once instead of outliving the plugin.
+    const track = (cleanup: () => void) => {
+      if (entry.disposed) runCleanups([cleanup]);
+      else entry.cleanups.push(cleanup);
+    };
     try {
-      const bundle = await fetchPluginFile(environmentId, plugin, "/web.js");
-      const definition = await importBundle(await bundle.text());
-      if (stopped || loaded.get(plugin.id)?.cleanups !== cleanups) return;
-      await definition.activate(
-        makeWebPluginApi({ environmentId, plugin, cleanups, shortcutHandlers, navigate }),
+      const bundle = await withDeadline(
+        fetchPluginFile(environmentId, plugin, "/web.js").then((response) => response.text()),
+        "Loading the web bundle",
+      );
+      const definition = await importBundle(bundle);
+      if (stopped || entry.disposed) return;
+      await withDeadline(
+        Promise.resolve(
+          definition.activate(
+            makeWebPluginApi({
+              environmentId,
+              plugin,
+              track,
+              shortcutHandlers: claimShortcutHandlers,
+              navigate,
+            }),
+          ),
+        ),
+        "Starting the web half",
       );
       setPluginWebFailure(environmentId, plugin.id, undefined);
     } catch (error) {
-      unload(plugin.id);
+      if (loaded.get(plugin.id) === entry) unload(plugin.id);
       setPluginWebFailure(environmentId, plugin.id, errorText(error));
     }
   };
@@ -414,7 +463,8 @@ export function startPluginLoader(
       plugins.filter(isLoadableWebPlugin).map((plugin) => [plugin.id, plugin] as const),
     );
     for (const [pluginId, plugin] of loaded) {
-      if (wanted.get(pluginId)?.version !== plugin.version) unload(pluginId);
+      const want = wanted.get(pluginId);
+      if (want === undefined || loadKey(want) !== plugin.key) unload(pluginId);
     }
     for (const plugin of plugins) {
       if (!wanted.has(plugin.id)) setPluginWebFailure(environmentId, plugin.id, undefined);
@@ -438,6 +488,6 @@ export function startPluginLoader(
     stopped = true;
     stopFollowing();
     for (const pluginId of loaded.keys()) unload(pluginId);
-    stopShortcuts();
+    stopShortcuts?.();
   };
 }

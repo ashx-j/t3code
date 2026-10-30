@@ -30,8 +30,11 @@ describe("PluginToolBody", () => {
       component: (props) => <p>Echoed {props.output}</p>,
     });
     using _renderer = { [Symbol.dispose]: unregister };
-    await using _screen = await render(body("plg_hello-web_echo"));
+    await using screen = await render(body("plg_hello-web_echo"));
 
+    await expect.element(page.getByText("Echoed hi")).toBeVisible();
+    // Claude reports MCP tools with its server prefix.
+    await screen.rerender(body("mcp__t3-code__plg_hello-web_echo"));
     await expect.element(page.getByText("Echoed hi")).toBeVisible();
     unregister();
     await expect.element(page.getByText("Generic tool view")).toBeVisible();

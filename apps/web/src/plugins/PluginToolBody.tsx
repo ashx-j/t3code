@@ -3,7 +3,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 
 import { RenderErrorBoundary } from "../components/RenderErrorBoundary";
-import { pluginToolRendererAtom, pluginToolRendererKey } from "./pluginRegistry";
+import { pluginToolNameOf, pluginToolRendererAtom, pluginToolRendererKey } from "./pluginRegistry";
 
 /**
  * A plugin MCP tool call's details, drawn by the plugin when it registered a renderer for the
@@ -17,8 +17,9 @@ export function PluginToolBody(props: {
   readonly status: string;
   readonly fallback: ReactNode;
 }) {
+  const toolName = pluginToolNameOf(props.toolName) ?? props.toolName;
   const renderer = useAtomValue(
-    pluginToolRendererAtom(pluginToolRendererKey(props.environmentId, props.toolName)),
+    pluginToolRendererAtom(pluginToolRendererKey(props.environmentId, toolName)),
   );
   if (renderer === undefined) return props.fallback;
   const Renderer = renderer.component;

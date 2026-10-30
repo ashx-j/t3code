@@ -2,6 +2,7 @@ import type {
   PluginApi,
   PluginBeforeDispatchResult,
   PluginCompletedRun,
+  PluginStoredEvent,
 } from "@t3tools/plugin-sdk/server";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -34,10 +35,32 @@ const TERMINAL_RUN_STATUSES = new Set([
 const isJsonObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+// Ended runs remembered with the cursor: a run can be updated again after it ends (a checkpoint
+// lands on an interrupted run), and those later updates must not deliver it twice.
+const REMEMBERED_RUNS = 256;
+
+interface RunCursor {
+  readonly sequence: number;
+  readonly runIds: ReadonlyArray<string>;
+}
+
+const readCursor = (saved: unknown): RunCursor | undefined => {
+  if (typeof saved === "number") return { sequence: saved, runIds: [] };
+  if (!isJsonObject(saved) || typeof saved.sequence !== "number") return undefined;
+  const runIds = Array.isArray(saved.runIds)
+    ? saved.runIds.filter((id): id is string => typeof id === "string")
+    : [];
+  return { sequence: saved.sequence, runIds };
+};
+
 export const makeTurnsApi = (
   facade: FacadeContext,
   services: { readonly hooks: PluginHooks.PluginHooksRegistry },
-  api: Pick<PluginApi, "events" | "storage">,
+  api: {
+    readonly storage: PluginApi["storage"];
+    /** Every `run.updated` event after `afterSequence`, or from now; never drops events. */
+    readonly runEvents: (afterSequence: number | undefined) => AsyncIterable<PluginStoredEvent>;
+  },
 ): PluginApi["turns"] => {
   let runHandlers = 0;
   return {
@@ -49,18 +72,17 @@ export const makeTurnsApi = (
       runHandlers += 1;
       const cursorKey = `t3.turns.afterRunCompleted.${runHandlers}`;
       void (async () => {
-        const saved = await api.storage.get(cursorKey);
-        const events = api.events.stored({
-          types: ["run.updated"],
-          ...(typeof saved === "number" ? { afterSequence: saved } : {}),
-        });
-        for await (const stored of events) {
+        const cursor = readCursor(await api.storage.get(cursorKey));
+        const handled = new Set(cursor?.runIds ?? []);
+        for await (const stored of api.runEvents(cursor?.sequence)) {
           const run = stored.event.payload;
           if (!isJsonObject(run) || typeof run.status !== "string") continue;
           if (!TERMINAL_RUN_STATUSES.has(run.status)) continue;
+          const runId = String(run.id);
+          if (handled.has(runId)) continue;
           try {
             await handler({
-              runId: String(run.id),
+              runId,
               threadId: String(run.threadId),
               status: run.status,
               run: stored.event.payload as PluginCompletedRun["run"],
@@ -73,7 +95,10 @@ export const makeTurnsApi = (
               }),
             );
           }
-          await api.storage.set(cursorKey, stored.sequence);
+          handled.add(runId);
+          const [oldest] = handled;
+          if (handled.size > REMEMBERED_RUNS && oldest !== undefined) handled.delete(oldest);
+          await api.storage.set(cursorKey, { sequence: stored.sequence, runIds: [...handled] });
         }
       })().catch(() => undefined);
     },

@@ -240,6 +240,7 @@ interface PluginRecord {
   readonly status: PluginStatus;
   readonly failure?: PluginFailure;
   readonly activation?: PluginActivation;
+  readonly revision?: number;
 }
 
 const errorText = (cause: unknown) => {
@@ -276,6 +277,7 @@ const toState = (record: PluginRecord, enabled: boolean): PluginState => {
     enabled,
     status: record.status,
     ...(record.failure === undefined ? {} : { failure: record.failure }),
+    ...(record.revision === undefined ? {} : { revision: record.revision }),
     hasServer: manifest?.server !== undefined,
     hasWeb: manifest?.web !== undefined,
   };
@@ -319,6 +321,9 @@ const make = Effect.gen(function* () {
   const configPath = path.join(config.stateDir, "plugins.json");
 
   const records = yield* Ref.make<ReadonlyArray<PluginRecord>>([]);
+  // Changes on every start, so a client can tell a restarted plugin from one that kept running.
+  let revision = 0;
+  const nextRevision = () => ++revision;
   const pluginsConfig = yield* Ref.make<PluginsConfigFile>({});
   const changes = yield* PubSub.sliding<ReadonlyArray<PluginState>>(1);
   const lifecycle = yield* Semaphore.make(1);
@@ -509,7 +514,7 @@ const make = Effect.gen(function* () {
     }
     if (manifest.web !== undefined) yield* serveWebFiles(plugin, manifest.web);
     if (manifest.server === undefined) {
-      return yield* setRecord(plugin.id, { status: "active" });
+      return yield* setRecord(plugin.id, { status: "active", revision: nextRevision() });
     }
     yield* setRecord(plugin.id, { status: "loading" });
     const definition = yield* Effect.exit(loadDefinition(plugin, manifest.server));
@@ -551,7 +556,7 @@ const make = Effect.gen(function* () {
         },
       });
     }
-    yield* setRecord(plugin.id, { status: "active", activation });
+    yield* setRecord(plugin.id, { status: "active", activation, revision: nextRevision() });
     yield* Effect.logInfo("plugin activated", { pluginId: plugin.id });
   });
 
@@ -598,8 +603,35 @@ const make = Effect.gen(function* () {
     return { plugins, enabled: current.enabled ?? {} };
   });
 
+  const stagingRoot = path.join(config.stateDir, "plugin-staging");
+  const decodeManifestJson = Schema.decodeUnknownEffect(Schema.fromJsonString(PluginManifest));
+
+  // An install interrupted mid-swap (a crash) can leave the old version only in staging. Put it
+  // back if nothing replaced it, then drop every leftover staging folder.
+  const recoverStaging = Effect.gen(function* () {
+    const entries = yield* fs.readDirectory(stagingRoot).pipe(Effect.orElseSucceed(() => []));
+    for (const entry of entries) {
+      const previous = path.join(stagingRoot, entry, "previous");
+      const manifest = yield* fs
+        .readFileString(path.join(previous, "t3-plugin.json"))
+        .pipe(Effect.flatMap(decodeManifestJson), Effect.option);
+      if (Option.isSome(manifest)) {
+        const target = path.join(pluginsDir, manifest.value.id);
+        const replaced = yield* fs.exists(target).pipe(Effect.orElseSucceed(() => true));
+        if (!replaced) {
+          yield* fs.makeDirectory(pluginsDir, { recursive: true }).pipe(Effect.ignore);
+          yield* fs.rename(previous, target).pipe(Effect.ignore);
+        }
+      }
+      yield* fs
+        .remove(path.join(stagingRoot, entry), { recursive: true, force: true })
+        .pipe(Effect.ignore);
+    }
+  });
+
   const startup = lifecycle.withPermits(1)(
     Effect.gen(function* () {
+      yield* recoverStaging;
       const { plugins, enabled } = yield* discover(true);
       yield* Ref.set(
         records,
@@ -690,8 +722,6 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const stagingRoot = path.join(config.stateDir, "plugin-staging");
-  const decodeManifestJson = Schema.decodeUnknownEffect(Schema.fromJsonString(PluginManifest));
   const installFailed = (reason: string) => (cause: unknown) =>
     new PluginInstallError({ reason, cause });
 
@@ -738,65 +768,67 @@ const make = Effect.gen(function* () {
     yield* fs.remove(path.join(into, ".git"), { recursive: true, force: true }).pipe(Effect.ignore);
   });
 
-  const install: PluginHost["Service"]["install"] = Effect.fn("PluginHost.install")(
-    function* (source) {
-      const id = yield* services.crypto.randomUUIDv4().pipe(Effect.orDie);
-      const stagingDir = path.join(stagingRoot, id);
-      const staged = path.join(stagingDir, "plugin");
-      yield* fs
-        .makeDirectory(stagingDir, { recursive: true })
-        .pipe(Effect.mapError(installFailed("Could not create the staging folder.")));
-      const manifest = yield* Effect.gen(function* () {
-        yield* fetchSource(source, staged);
-        const raw = yield* fs
-          .readFileString(path.join(staged, "t3-plugin.json"))
-          .pipe(Effect.mapError(installFailed("The source has no t3-plugin.json.")));
-        return yield* decodeManifestJson(raw).pipe(
-          Effect.mapError(installFailed("The source's t3-plugin.json is not a valid manifest.")),
-        );
-      }).pipe(
-        Effect.tapError(() =>
-          fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore),
-        ),
+  const installInHost = Effect.fnUntraced(function* (source: PluginInstallSource) {
+    const id = yield* services.crypto.randomUUIDv4().pipe(Effect.orDie);
+    const stagingDir = path.join(stagingRoot, id);
+    const staged = path.join(stagingDir, "plugin");
+    yield* fs
+      .makeDirectory(stagingDir, { recursive: true })
+      .pipe(Effect.mapError(installFailed("Could not create the staging folder.")));
+    const manifest = yield* Effect.gen(function* () {
+      yield* fetchSource(source, staged);
+      const raw = yield* fs
+        .readFileString(path.join(staged, "t3-plugin.json"))
+        .pipe(Effect.mapError(installFailed("The source has no t3-plugin.json.")));
+      return yield* decodeManifestJson(raw).pipe(
+        Effect.mapError(installFailed("The source's t3-plugin.json is not a valid manifest.")),
       );
-      const existing = yield* findRecord(manifest.id);
-      if (existing?.plugin.source === "dev") {
-        yield* fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore);
-        return yield* new PluginInstallError({
-          reason: `A dev folder already provides ${manifest.id}. Remove it from plugins.json first.`,
-        });
-      }
-      const target = path.join(pluginsDir, manifest.id);
-      const previous = path.join(stagingDir, "previous");
-      yield* runLifecycle(
-        Effect.gen(function* () {
-          yield* stopPlugin(manifest.id);
+    }).pipe(
+      Effect.tapError(() =>
+        fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore),
+      ),
+    );
+    const existing = yield* findRecord(manifest.id);
+    if (existing?.plugin.source === "dev") {
+      yield* fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore);
+      return yield* new PluginInstallError({
+        reason: `A dev folder already provides ${manifest.id}. Remove it from plugins.json first.`,
+      });
+    }
+    const target = path.join(pluginsDir, manifest.id);
+    const previous = path.join(stagingDir, "previous");
+    yield* runLifecycle(
+      Effect.gen(function* () {
+        yield* stopPlugin(manifest.id);
+        yield* fs
+          .makeDirectory(pluginsDir, { recursive: true })
+          .pipe(Effect.mapError(installFailed("Could not create the plugins folder.")));
+        const hadPrevious = yield* fs.exists(target).pipe(Effect.orElseSucceed(() => false));
+        if (hadPrevious) {
           yield* fs
-            .makeDirectory(pluginsDir, { recursive: true })
-            .pipe(Effect.mapError(installFailed("Could not create the plugins folder.")));
-          const hadPrevious = yield* fs.exists(target).pipe(Effect.orElseSucceed(() => false));
-          if (hadPrevious) {
-            yield* fs
-              .rename(target, previous)
-              .pipe(Effect.mapError(installFailed("Could not move the installed version aside.")));
-          }
-          yield* fs.rename(staged, target).pipe(
-            Effect.mapError(installFailed("Could not move the new version into place.")),
-            Effect.tapError(() =>
-              hadPrevious ? fs.rename(previous, target).pipe(Effect.ignore) : Effect.void,
-            ),
-          );
-          yield* writeEnabled(manifest.id, true);
-        }),
-      ).pipe(
-        Effect.ensuring(
-          fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore),
-        ),
-        // Whatever happened, the plugin folder now holds one version; start it again.
-        Effect.ensuring(reload(manifest.id).pipe(Effect.ignore)),
-      );
-      return yield* stateOf(manifest.id);
-    },
+            .rename(target, previous)
+            .pipe(Effect.mapError(installFailed("Could not move the installed version aside.")));
+        }
+        yield* fs.rename(staged, target).pipe(
+          Effect.mapError(installFailed("Could not move the new version into place.")),
+          Effect.tapError(() =>
+            hadPrevious ? fs.rename(previous, target).pipe(Effect.ignore) : Effect.void,
+          ),
+        );
+        yield* writeEnabled(manifest.id, true);
+      }),
+    ).pipe(
+      Effect.ensuring(fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore)),
+      // Whatever happened, the plugin folder now holds one version; start it again.
+      Effect.ensuring(reload(manifest.id).pipe(Effect.ignore)),
+    );
+    return yield* stateOf(manifest.id);
+  });
+
+  // Like lifecycle changes, an install runs in the host's scope: a caller that disconnects stops
+  // waiting but cannot interrupt the swap or the staging cleanup.
+  const install: PluginHost["Service"]["install"] = Effect.fn("PluginHost.install")((source) =>
+    installInHost(source).pipe(Effect.forkIn(hostScope), Effect.flatMap(Fiber.join)),
   );
 
   const uninstall: PluginHost["Service"]["uninstall"] = Effect.fn("PluginHost.uninstall")(
@@ -812,9 +844,12 @@ const make = Effect.gen(function* () {
       yield* runLifecycle(
         Effect.gen(function* () {
           yield* stopPlugin(pluginId);
+          // The entry in the plugins folder, not `rootDir`: that is the real path, so a symlinked
+          // plugin would delete the user's own folder behind the link.
+          const entry = path.join(pluginsDir, pluginId);
           yield* fs
-            .remove(record.plugin.rootDir, { recursive: true, force: true })
-            .pipe(Effect.mapError(installFailed(`Could not delete ${record.plugin.rootDir}.`)));
+            .remove(entry, { recursive: true, force: true })
+            .pipe(Effect.mapError(installFailed(`Could not delete ${entry}.`)));
           yield* removeFromConfig(pluginId);
           // Stopping replaces the record, so match it by id and source rather than identity.
           yield* Ref.update(records, (all) =>

@@ -111,4 +111,49 @@ describe("startPluginLoader", () => {
     expect(appAtomRegistry.get(pluginBannersAtom(environmentId))).toEqual([]);
     expect(appAtomRegistry.get(greetRenderer)).toBeUndefined();
   });
+
+  it("reloads a restarted plugin and undoes what it registers after unloading", async () => {
+    // Registers its panel only when the test releases it, after the loader may have stopped.
+    const slowSource = `export default { activate(api) {
+      return new Promise((release) => { globalThis.__releaseSlowPlugin = release; }).then(() =>
+        api.rightPanel.register({ name: "slow", title: "Slow", component: () => null }));
+    } };`;
+    using fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (input) =>
+        String(input).includes("/hello-web/")
+          ? new Response(helloWebSource)
+          : new Response(slowSource),
+      );
+    const bundleRequests = (pluginId: string) =>
+      fetchSpy.mock.calls.filter(([input]) => String(input).includes(`/${pluginId}/`)).length;
+    const environmentId = EnvironmentId.make("environment:plugin-loader-reload");
+    const stop = startPluginLoader(environmentId, vi.fn());
+    using _loader = { [Symbol.dispose]: stop };
+
+    appAtomRegistry.set(live, AsyncResult.success({ plugins: [webPlugin("hello-web")] }));
+    await vi.waitFor(() =>
+      expect(appAtomRegistry.get(pluginCommandsAtom(environmentId))).toHaveLength(1),
+    );
+    appAtomRegistry.set(
+      live,
+      AsyncResult.success({ plugins: [{ ...webPlugin("hello-web"), revision: 2 }] }),
+    );
+    await vi.waitFor(() => expect(bundleRequests("hello-web")).toBe(2));
+
+    appAtomRegistry.set(live, AsyncResult.success({ plugins: [webPlugin("slow-web")] }));
+    await vi.waitFor(() =>
+      expect(Reflect.get(globalThis, "__releaseSlowPlugin")).toBeTypeOf("function"),
+    );
+    stop();
+    const release = Reflect.get(globalThis, "__releaseSlowPlugin") as () => void;
+    Reflect.deleteProperty(globalThis, "__releaseSlowPlugin");
+    release();
+    await Promise.resolve();
+    expect(
+      appAtomRegistry.get(
+        pluginRightPanelAtom(pluginRightPanelKey(environmentId, "slow-web", "slow")),
+      ),
+    ).toBeUndefined();
+  });
 });

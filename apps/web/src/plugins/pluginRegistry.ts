@@ -209,6 +209,13 @@ export const pluginBannersAtom = Atom.family((environmentId: string) =>
   }),
 );
 
+/**
+ * The `plg_<pluginId>_<tool>` name inside a reported tool name: Codex reports it bare, Claude as
+ * `mcp__<server>__plg_…` and ACP agents as `<server>.plg_…`. Undefined for other tools.
+ */
+export const pluginToolNameOf = (toolName: string | null | undefined) =>
+  toolName?.match(/(?:^|__|\.)(plg_[a-z][a-z0-9-]*_[A-Za-z0-9_-]+)$/)?.[1];
+
 export const pluginToolRendererKey = (environmentId: EnvironmentId, toolName: string) =>
   `${environmentId}\u0000${toolName}`;
 

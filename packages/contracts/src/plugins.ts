@@ -111,6 +111,8 @@ export const PluginState = Schema.Struct({
   enabled: Schema.Boolean,
   status: PluginStatus,
   failure: Schema.optionalKey(PluginFailure),
+  /** Changes each time the plugin starts, so clients can reload its web half after a restart. */
+  revision: Schema.optionalKey(Schema.Number),
   hasServer: Schema.Boolean,
   hasWeb: Schema.Boolean,
   settingsSchema: Schema.optionalKey(Schema.JsonObject),
