@@ -1,0 +1,8 @@
+{
+  "id": "hello-plugin",
+  "name": "Hello",
+  "version": "0.1.0",
+  "description": "Test fixture that logs on activate and answers ping.",
+  "engines": { "t3": ">=0.1.0" },
+  "server": "./server.cjs"
+}

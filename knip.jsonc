@@ -140,6 +140,12 @@
       // These workspace packages are private to this monorepo.
       "includeEntryExports": true,
     },
+    "packages/plugin-sdk": {
+      // Plugin authors outside this repository import these exports.
+      "includeEntryExports": false,
+      // The plugin host loads fixture entries from their manifests.
+      "entry": ["fixtures/*/*.cjs"],
+    },
     "packages/effect-acp": {
       "includeEntryExports": true,
       "entry": ["test/fixtures/*.ts"],
