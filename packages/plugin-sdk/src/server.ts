@@ -28,7 +28,7 @@ export interface PluginApi {
   readonly log: PluginLogger;
   readonly settings: {
     readonly get: () => Promise<JsonObject>;
-    /** Yields the settings after each change until the plugin deactivates. */
+    /** Yields the settings, secret values included, after each change until deactivation. */
     readonly changes: () => AsyncIterable<JsonObject>;
   };
   readonly storage: {
@@ -44,10 +44,10 @@ export interface PluginApi {
       handler: PluginRpcHandler,
       options: { readonly access: PluginRpcAccess },
     ) => void;
-    /** Sends `value` to every `plugins.subscribe` caller on `channel`. */
+    /** Sends `value` to every `plugins.subscribe` caller on `channel`. Any session that can read this environment may subscribe, so never publish secrets. */
     readonly publish: (channel: string, value: JsonValue) => void;
   };
-  /** Runs when the plugin is disabled or reloaded, or the server stops. */
+  /** Runs when the plugin is disabled or reloaded, or the server stops; at once if that already happened. */
   readonly onDeactivate: (cleanup: () => void | Promise<void>) => void;
 }
 

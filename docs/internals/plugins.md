@@ -10,8 +10,10 @@ side is [`PluginHost`](../../apps/server/src/plugins/PluginHost.ts).
 Plugins are code the user installed on purpose. Server entries run in the server process and web
 bundles run as React code in the page, with no sandbox; manifest `permissions` are shown, not
 enforced. Do not shape the API around a future sandbox. The host isolates failure instead: a plugin
-that throws while loading or activating is marked failed, one that throws in a handler fails that
-call, a hung cleanup is abandoned after a deadline, and none of them stops the server. A newly found
+that throws or hangs while loading or activating is marked failed, one that throws in a handler fails
+that call, hung cleanups are abandoned after a deadline, and none of them stops the server. Enable,
+disable and reload run in the host's scope, so a client that disconnects mid-change never leaves a
+plugin half torn down. A newly found
 plugin starts disabled; the user enables it.
 
 ## The plugin API is plain JavaScript

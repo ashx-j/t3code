@@ -70,11 +70,13 @@ export const discoverPlugins = Effect.fn("PluginDiscovery.discover")(function* (
       : ({ _tag: "Read", raw: raw.value } as const);
   });
 
+  // Node caches modules by real path, so reload can only find a plugin's modules by its real root.
   const inspect = Effect.fnUntraced(function* (
-    rootDir: string,
+    location: string,
     source: PluginSource,
     fallbackId: PluginId | undefined,
   ) {
+    const rootDir = yield* fs.realPath(location).pipe(Effect.orElseSucceed(() => location));
     const manifest = yield* readManifest(rootDir);
     if (manifest._tag !== "Read") {
       if (fallbackId === undefined) return undefined;
