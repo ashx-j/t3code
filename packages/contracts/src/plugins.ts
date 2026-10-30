@@ -183,7 +183,6 @@ export type PluginInvokeResult = typeof PluginInvokeResult.Type;
 export const PluginSubscribeInput = Schema.Struct({
   pluginId: PluginId,
   channel: PluginRpcName,
-  input: Schema.optionalKey(Schema.Json),
 });
 export type PluginSubscribeInput = typeof PluginSubscribeInput.Type;
 
