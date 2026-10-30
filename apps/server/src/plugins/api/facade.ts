@@ -46,22 +46,27 @@ export const makeFacadeContext = (input: {
   const runExit = Effect.runPromiseExitWith(context);
   return {
     ...input,
+    // Cleanups may still save state; afterwards a disabled plugin's leftovers cannot act.
     call: (effect) =>
-      runExit(effect).then((exit) => {
-        if (Exit.isSuccess(exit)) return exit.value;
-        const error = Cause.squash(exit.cause);
-        const code =
-          typeof error === "object" &&
-          error !== null &&
-          "_tag" in error &&
-          typeof error._tag === "string"
-            ? error._tag
-            : "PluginApiFailure";
-        throw new PluginApiCallError(
-          code,
-          error instanceof Error ? error.message : "The plugin API call failed.",
-        );
-      }),
+      activation.ended.signal.aborted
+        ? Promise.reject(
+            new PluginApiCallError("PluginDeactivated", "This plugin activation has ended."),
+          )
+        : runExit(effect).then((exit) => {
+            if (Exit.isSuccess(exit)) return exit.value;
+            const error = Cause.squash(exit.cause);
+            const code =
+              typeof error === "object" &&
+              error !== null &&
+              "_tag" in error &&
+              typeof error._tag === "string"
+                ? error._tag
+                : "PluginApiFailure";
+            throw new PluginApiCallError(
+              code,
+              error instanceof Error ? error.message : "The plugin API call failed.",
+            );
+          }),
     fork: (effect) => {
       Effect.runForkWith(context)(
         effect.pipe(

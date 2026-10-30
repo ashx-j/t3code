@@ -24,8 +24,15 @@ export const makeMcpApi = (
       if (!isAccess(tool.access)) {
         throw new TypeError(`Tool "${tool.name}" needs access "read" or "write".`);
       }
-      if (typeof tool.description !== "string" || !isJsonObject(tool.inputSchema)) {
-        throw new TypeError(`Tool "${tool.name}" needs a description and a JSON Schema object.`);
+      // Model APIs reject a tool whose schema is not an object, which would fail every turn.
+      if (
+        typeof tool.description !== "string" ||
+        !isJsonObject(tool.inputSchema) ||
+        tool.inputSchema.type !== "object"
+      ) {
+        throw new TypeError(
+          `Tool "${tool.name}" needs a description and an object JSON Schema for its input.`,
+        );
       }
       const registered = Effect.runSyncExitWith(facade.context)(
         services.mcpTools.register({

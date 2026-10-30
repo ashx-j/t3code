@@ -368,6 +368,7 @@ const make = Effect.gen(function* () {
       { discard: true },
     ).pipe(Effect.interruptible, Effect.timeoutOption(CLEANUP_DEADLINE), Effect.map(Option.isNone));
     if (timedOut) yield* Effect.logWarning("plugin cleanup timed out", { pluginId });
+    activation.ended.abort();
     yield* PubSub.shutdown(activation.publications);
   });
 

@@ -156,7 +156,7 @@ it.effect(
   },
 );
 
-it.effect("plugin hooks append to user and agent messages but not to notifications", () => {
+it.effect("plugin hooks append to user messages but not to notifications or slash commands", () => {
   const threadId = ThreadId.make("thread:thread-management:chokepoint");
   const dispatched: Array<string> = [];
   const texts: Array<string> = [];
@@ -169,12 +169,13 @@ it.effect("plugin hooks append to user and agent messages but not to notificatio
   const message = (
     id: string,
     notification?: OrchestrationV2Notification,
+    text = "Fix the build.",
   ): OrchestrationV2ServerCommand => ({
     type: "message.dispatch",
     commandId: CommandId.make(`command:thread-management:hooks-${id}`),
     threadId,
     messageId: MessageId.make(`message:thread-management:hooks-${id}`),
-    text: "Fix the build.",
+    text,
     attachments: [],
     dispatchMode: { type: "queue_after_active" },
     createdBy: "user",
@@ -195,7 +196,13 @@ it.effect("plugin hooks append to user and agent messages but not to notificatio
       }),
     );
 
-    expect(texts).toEqual(["Fix the build.\n\nProject uses pnpm.", "Fix the build."]);
+    yield* threads.dispatch(message("command", undefined, "/goal clear"));
+
+    expect(texts).toEqual([
+      "Fix the build.\n\nProject uses pnpm.",
+      "Fix the build.",
+      "/goal clear",
+    ]);
   }).pipe(Effect.provide(layerTest));
 });
 

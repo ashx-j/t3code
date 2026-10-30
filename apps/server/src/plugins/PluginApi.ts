@@ -43,8 +43,10 @@ export interface PluginActivation {
     { readonly handler: PluginRpcHandler; readonly access: PluginRpcAccess }
   >;
   readonly cleanups: Array<() => void | Promise<void>>;
-  /** Aborted on deactivate; handler signals and settings iterators follow it. */
+  /** Aborted when deactivation starts; handler signals, iterators and timers follow it. */
   readonly controller: AbortController;
+  /** Aborted once the cleanups have run; API calls are refused from then on. */
+  readonly ended: AbortController;
   readonly publications: PubSub.PubSub<PluginPublication>;
 }
 
@@ -54,6 +56,7 @@ export const makePluginActivation = (
   methods: new Map(),
   cleanups: [],
   controller: new AbortController(),
+  ended: new AbortController(),
   publications,
 });
 

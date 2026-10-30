@@ -31,26 +31,32 @@ export const makeEventsApi = (
   },
 ): PluginApi["events"] => ({
   stored: (options) => {
-    // One filtered stream per type: the event sink fans out by type before anything is decoded
-    // for the plugin, so unrequested types cost the plugin nothing.
-    const types = [...new Set(options.types)];
+    if (
+      options.afterSequence !== undefined &&
+      (!Number.isSafeInteger(options.afterSequence) || options.afterSequence < 0)
+    ) {
+      throw new RangeError("afterSequence must be a whole number of 0 or more.");
+    }
+    const types = new Set(options.types);
+    const [onlyType] = types;
     const start =
       options.afterSequence === undefined
         ? services.eventStore.latestAgentSequence()
         : Effect.succeed(options.afterSequence);
+    // One type is filtered by the event sink before anything is decoded for the plugin. Several
+    // types share one unfiltered stream, so events still arrive in sequence order.
     const stream = Stream.unwrap(
       start.pipe(
         Effect.map((afterSequence) =>
-          Stream.mergeAll(
-            types.map((type) =>
-              services.orchestrator.streamStoredEventsFrom({
+          types.size === 1 && onlyType !== undefined
+            ? services.orchestrator.streamStoredEventsFrom({
                 afterSequence,
                 // An unknown type matches no stored event.
-                eventType: type as OrchestrationV2DomainEvent["type"],
-              }),
-            ),
-            { concurrency: "unbounded" },
-          ),
+                eventType: onlyType as OrchestrationV2DomainEvent["type"],
+              })
+            : services.orchestrator
+                .streamStoredEventsFrom({ afterSequence })
+                .pipe(Stream.filter((stored) => types.has(stored.event.type))),
         ),
       ),
     ).pipe(
