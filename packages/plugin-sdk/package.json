@@ -14,9 +14,23 @@
     "./shared": {
       "types": "./src/shared.ts",
       "import": "./src/shared.ts"
+    },
+    "./ui": {
+      "types": "./src/ui.ts",
+      "import": "./src/ui.ts"
+    },
+    "./vite": {
+      "types": "./src/vite.ts",
+      "import": "./src/vite.ts"
     }
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "react": "catalog:",
+    "vite-plus": "catalog:"
   }
 }

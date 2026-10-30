@@ -76,7 +76,10 @@ type PluginHttpRouteHandler = (
 export class PluginHttpRoutes extends Context.Service<
   PluginHttpRoutes,
   {
-    /** Serves `method path` under `/api/plugins/<pluginId>`, replacing a route of that method and path. */
+    /**
+     * Serves `method path` under `/api/plugins/<pluginId>`, replacing a route of that method and
+     * path. A path ending in `/*` answers every path below it; the longest match wins.
+     */
     readonly register: (input: {
       readonly pluginId: PluginId;
       readonly method: PluginHttpMethod;
@@ -110,6 +113,23 @@ const errorText = (cause: unknown) => {
 const isValidPath = (path: string) =>
   path.startsWith("/") && path.length <= MAX_PATH_CHARS && !/[?#\s]/.test(path);
 
+const findHandler = (
+  pluginRoutes: ReadonlyMap<string, PluginHttpRouteHandler> | undefined,
+  method: string,
+  path: string,
+) => {
+  if (pluginRoutes === undefined) return undefined;
+  const exact = pluginRoutes.get(`${method} ${path}`);
+  if (exact !== undefined) return exact;
+  // Paths start with "/", so the walk ends at index 0 with the `/*` catch-all.
+  for (let end = path.lastIndexOf("/"); end >= 0; end = path.lastIndexOf("/", end - 1)) {
+    const prefixed = pluginRoutes.get(`${method} ${path.slice(0, end)}/*`);
+    if (prefixed !== undefined) return prefixed;
+    if (end === 0) break;
+  }
+  return undefined;
+};
+
 const make = () => {
   // pluginId -> "METHOD /path" -> handler
   const routes = new Map<string, Map<string, PluginHttpRouteHandler>>();
@@ -132,7 +152,7 @@ const make = () => {
       }),
     ),
     handle: Effect.fn("PluginHttpRoutes.handle")(function* ({ pluginId, request }) {
-      const handler = routes.get(pluginId)?.get(`${request.method} ${request.path}`);
+      const handler = findHandler(routes.get(pluginId), request.method, request.path);
       if (handler === undefined) {
         return yield* new PluginHttpRouteNotFoundError({ pluginId });
       }

@@ -56,6 +56,19 @@ import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
 
 const MAX_FAILURE_MESSAGE_CHARS = 500;
+const WEB_CONTENT_TYPES: Readonly<Record<string, string>> = {
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".woff2": "font/woff2",
+  ".txt": "text/plain; charset=utf-8",
+};
 // Plugin code that never settles must not keep a plugin loading, or Disable and Reload waiting,
 // forever. The cleanup deadline covers all of a plugin's cleanups together.
 const ACTIVATE_DEADLINE = Duration.seconds(30);
@@ -396,33 +409,47 @@ const make = Effect.gen(function* () {
       catch: (cause) => new PluginCodeError({ cause }),
     });
 
-  // The web bundle is served from the plugin's real folder; a symlink out of it is refused.
-  const readWebBundle = Effect.fnUntraced(function* (rootDir: string, entry: string) {
-    const file = yield* fs.realPath(path.join(rootDir, entry));
-    if (!file.startsWith(`${rootDir}${path.sep}`)) {
-      return yield* new PluginCodeError({
-        cause: "The web entry resolves outside the plugin folder.",
-      });
+  // Web files are served from the plugin's real folder; a path or symlink out of `within` is refused.
+  const readWebFile = Effect.fnUntraced(function* (within: string, file: string) {
+    const resolved = yield* fs.realPath(file).pipe(Effect.option);
+    if (Option.isNone(resolved)) return { status: 404, body: "Not found." };
+    const real = resolved.value;
+    if (!real.startsWith(`${within}${path.sep}`)) {
+      return yield* new PluginCodeError({ cause: "The file resolves outside the plugin folder." });
     }
     return {
       status: 200,
       headers: {
-        "content-type": "text/javascript; charset=utf-8",
+        "content-type":
+          WEB_CONTENT_TYPES[path.extname(real).toLowerCase()] ?? "application/octet-stream",
         "cache-control": "no-store",
       },
-      body: yield* fs.readFile(file),
+      body: yield* fs.readFile(real),
     };
   });
 
-  const serveWebBundle = (plugin: DiscoveredPlugin, entry: string) =>
-    services.httpRoutes
-      .register({
-        pluginId: plugin.id,
-        method: "GET",
-        path: "/web.js",
-        handler: () => Effect.runPromiseWith(context)(readWebBundle(plugin.rootDir, entry)),
-      })
-      .pipe(Effect.orDie);
+  const serveWebFiles = Effect.fnUntraced(function* (plugin: DiscoveredPlugin, entry: string) {
+    const register = (routePath: string, read: (requestPath: string) => string, within: string) =>
+      services.httpRoutes
+        .register({
+          pluginId: plugin.id,
+          method: "GET",
+          path: routePath,
+          handler: (request) =>
+            Effect.runPromiseWith(context)(readWebFile(within, read(request.path))),
+        })
+        .pipe(Effect.orDie);
+    yield* register("/web.js", () => path.join(plugin.rootDir, entry), plugin.rootDir);
+    const assetsDir = yield* fs.realPath(path.join(plugin.rootDir, "assets")).pipe(Effect.option);
+    if (Option.isSome(assetsDir)) {
+      yield* register(
+        "/assets/*",
+        (requestPath) =>
+          path.join(assetsDir.value, decodeURIComponent(requestPath.slice("/assets/".length))),
+        assetsDir.value,
+      );
+    }
+  });
 
   const activatePlugin = Effect.fnUntraced(function* (plugin: DiscoveredPlugin) {
     const manifest = manifestOf(plugin);
@@ -436,7 +463,7 @@ const make = Effect.gen(function* () {
         },
       });
     }
-    if (manifest.web !== undefined) yield* serveWebBundle(plugin, manifest.web);
+    if (manifest.web !== undefined) yield* serveWebFiles(plugin, manifest.web);
     if (manifest.server === undefined) {
       return yield* setRecord(plugin.id, { status: "active" });
     }

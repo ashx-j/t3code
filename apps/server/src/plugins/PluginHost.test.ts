@@ -448,7 +448,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
     }).pipe(Effect.provide(layerConfig())),
   );
 
-  it.effect("serves an active plugin's web bundle and stops serving it when disabled", () =>
+  it.effect("serves an active plugin's web bundle and assets, and stops when disabled", () =>
     Effect.gen(function* () {
       const helloWeb = PluginId.make("hello-web");
       yield* writePluginsConfig({
@@ -464,6 +464,15 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         const response = yield* routes.handle({ pluginId: helloWeb, request });
         assert.strictEqual(response.status, 200);
         assert.strictEqual(response.headers["content-type"], "text/javascript; charset=utf-8");
+        const asset = yield* routes.handle({
+          pluginId: helloWeb,
+          request: { ...request, path: "/assets/hello.txt" },
+        });
+        assert.strictEqual(asset.headers["content-type"], "text/plain; charset=utf-8");
+        const escaped = yield* routes
+          .handle({ pluginId: helloWeb, request: { ...request, path: "/assets/..%2Fserver.cjs" } })
+          .pipe(Effect.flip);
+        assert.strictEqual(escaped._tag, "PluginHttpHandlerError");
 
         yield* host.setEnabled(helloWeb, false);
         const missing = yield* routes.handle({ pluginId: helloWeb, request }).pipe(Effect.flip);

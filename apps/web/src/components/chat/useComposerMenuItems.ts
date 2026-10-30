@@ -31,6 +31,7 @@ import { searchProviderSkills } from "../../providerSkillSearch";
 import { useThreadShells } from "~/state/entities";
 import { useEnvironmentIdentities, useEnvironmentMachines } from "~/state/environments";
 import { offersLinkedEnvironmentsAtom } from "~/state/peerLinks";
+import { pluginSlashCommandsAtom } from "~/plugins/pluginRegistry";
 import {
   pullRequestEnvironment,
   usePullRequestList,
@@ -110,6 +111,7 @@ export function useComposerMenuItems({
   const environmentIdentities = useEnvironmentIdentities();
   const environmentMachines = useEnvironmentMachines();
   const offersMachines = useAtomValue(offersLinkedEnvironmentsAtom(environmentId));
+  const pluginSlashCommands = useAtomValue(pluginSlashCommandsAtom(environmentId));
   const mentionableEnvironments = environmentIdentities.map((identity) => ({
     ...identity,
     machine: environmentMachines.get(identity.environmentId) ?? ("server" as const),
@@ -267,8 +269,21 @@ export function useComposerMenuItems({
       const visibleProviderSlashCommandItems = providerSlashCommandItems.filter(
         (item) => item.command.name !== "compact" || compactSlashCommandAvailable,
       );
+      const pluginSlashCommandItems = pluginSlashCommands.map((command) => ({
+        id: `plugin-slash-command:${command.pluginId}:${command.name}`,
+        type: "plugin-slash-command" as const,
+        command: { name: command.name },
+        run: command.run,
+        label: `/${command.name}`,
+        description: `${command.description} · ${command.pluginName}`,
+      }));
       const slashCommandItems = slashCommandItemsForPromptPosition(
-        [...builtInSlashCommandItems, ...visibleProviderSlashCommandItems, ...skillItems],
+        [
+          ...builtInSlashCommandItems,
+          ...visibleProviderSlashCommandItems,
+          ...pluginSlashCommandItems,
+          ...skillItems,
+        ],
         composerTrigger.rangeStart === 0,
       );
       return searchSlashCommandItems(slashCommandItems, query);
