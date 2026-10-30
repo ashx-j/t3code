@@ -11,6 +11,8 @@ import { filesystemEnvironment } from "../state/filesystem";
 import { useRightPanelStore } from "../rightPanelStore";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
 import { HostImageUrlContext } from "./chat/hostImageUrl";
+import { registerPluginCodeBlock } from "../plugins/pluginRegistry";
+import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
 
 const { workspaceSearch, filesystemMetadata } = vi.hoisted(() => ({
   workspaceSearch: vi.fn(),
@@ -207,6 +209,26 @@ describe("ChatMarkdown streaming", () => {
       await rerender(message(text));
       expect(runButtons()).toHaveLength(0);
     }
+  });
+
+  it("lets a plugin draw closed code fences of its language", async () => {
+    setup();
+    using _renderer = {
+      [Symbol.dispose]: registerPluginCodeBlock("hello-chart", (props) => (
+        <p>Chart of {props.code}</p>
+      )),
+    };
+    const message = (text: string, isStreaming = false) => (
+      <AppAtomRegistryProvider>
+        <ChatMarkdown cwd="/tmp/project" text={text} isStreaming={isStreaming} />
+      </AppAtomRegistryProvider>
+    );
+    await using screen = await render(message("```hello-chart\n1,2,3", true));
+    expect(screen.container.textContent).toContain("1,2,3");
+    expect(screen.container.textContent).not.toContain("Chart of");
+
+    await screen.rerender(message("```hello-chart\n1,2,3\n```"));
+    await expect.element(page.getByText(/Chart of 1,2,3/)).toBeVisible();
   });
 
   it("edits the current task text and marker after reusing a renderer", async () => {

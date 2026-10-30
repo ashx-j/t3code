@@ -1,0 +1,8 @@
+{
+  "id": "http-plugin",
+  "name": "HTTP routes",
+  "version": "0.1.0",
+  "description": "Test fixture that serves a greeting and echoes request bodies under /api/plugins/http-plugin.",
+  "engines": { "t3": ">=0.1.0" },
+  "server": "./server.cjs"
+}
