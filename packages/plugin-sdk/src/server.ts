@@ -67,11 +67,8 @@ export interface PluginOutgoingMessage {
   readonly createdBy: "user" | "agent";
 }
 
-/** Nothing leaves the message as it is; `appendText` adds a paragraph; `veto` stops the send. */
-export type PluginBeforeDispatchResult =
-  | void
-  | { readonly appendText: string }
-  | { readonly veto: string };
+/** Nothing leaves the message as it is; `appendText` adds a paragraph after it. */
+export type PluginBeforeDispatchResult = void | { readonly appendText: string };
 
 export interface PluginLogger {
   readonly debug: (message: string, fields?: JsonObject) => void;
@@ -111,9 +108,10 @@ export interface PluginApi {
   readonly onDeactivate: (cleanup: () => void | Promise<void>) => void;
   readonly events: {
     /**
-     * Stored orchestration events of `types`, after `afterSequence`, or from now when omitted.
-     * Ends when the plugin deactivates or `signal` aborts. A consumer more than 1024 events
-     * behind loses the oldest; compare `sequence` and resume with `afterSequence`.
+     * Stored orchestration events of `types` in sequence order, after `afterSequence`, or from now
+     * when omitted. Ends when the plugin deactivates or `signal` aborts. A consumer more than
+     * 1024 events behind loses the oldest, so handle events quickly and store the last `sequence`
+     * to resume from after a restart.
      */
     readonly stored: (options: {
       readonly types: ReadonlyArray<string>;
@@ -147,7 +145,7 @@ export interface PluginApi {
     readonly every: (everyMs: number, handler: () => void | Promise<void>) => () => void;
   };
   readonly turns: {
-    /** Sees each user or agent message before it is sent; a hook slower than 2 seconds or one that throws is skipped. */
+    /** Sees each user or agent message before it is sent, except slash commands; a hook slower than 2 seconds or one that throws is skipped. */
     readonly beforeDispatch: (
       hook: (
         message: PluginOutgoingMessage,

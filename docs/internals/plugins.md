@@ -69,9 +69,10 @@ The orchestrator stays pure: `turns.beforeDispatch` hooks run in `ThreadManageme
 before the command reaches it, with a 2-second deadline each and fail-open, and skip notifications
 and guest messages. The hook registry is a `PluginHooks` reference with an inert default, so
 orchestration code and its tests need no plugin wiring; the server provides one registry to the
-dispatch path and the host. `events.stored` opens one stored-event stream per requested type, so the
-event sink filters before anything is decoded for the plugin, behind a sliding buffer that a slow
-plugin overflows rather than stalls; plugins resume by `sequence`. A plugin notification that does
+dispatch path and the host. `events.stored` for one type lets the event sink filter before anything is
+decoded for the plugin; several types share one stream so events stay in sequence order. A sliding
+buffer means a slow plugin loses old events rather than stalling the server; plugins resume by
+`sequence`. Hooks skip slash commands, whose meaning an appended paragraph would change. A plugin notification that does
 not start a run needs a new orchestration command, which is why the API has none yet.
 
 ## Nothing installed costs nothing

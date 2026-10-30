@@ -52,6 +52,10 @@ export const makeTurnsApi = (
             ),
       ),
     );
-    activation.cleanups.push(() => Effect.runPromiseWith(facade.context)(remove));
+    activation.controller.signal.addEventListener(
+      "abort",
+      () => Effect.runForkWith(facade.context)(remove),
+      { once: true },
+    );
   },
 });

@@ -175,7 +175,8 @@ export const writesWithCapability = <P, A, E, R>(handle: (params: P) => Effect.E
 
 /**
  * For tools whose access is data, registered while the server runs (plugin tools): `read`
- * checks like `reads`, `write` like `writesWithCapability`. Returns the checked handler.
+ * checks like `reads`; `write` like `writesEnvironment`, because a plugin tool can do anything
+ * the plugin can, and its handler never sees the caller's limits. Returns the checked handler.
  */
 export const dynamic = <P, A, E, R>(
   access: "read" | "write",
@@ -183,7 +184,7 @@ export const dynamic = <P, A, E, R>(
 ) => {
   const declaration: Declaration<
     (params: P) => Effect.Effect<A, E | OrchestratorMcpFailure, R | WritingServices>
-  > = access === "read" ? reads(handle) : writesWithCapability(handle);
+  > = access === "read" ? reads(handle) : writesEnvironment((params: P) => handle(params));
   return checkedHandler(declaration);
 };
 

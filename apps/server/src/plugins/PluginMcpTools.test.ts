@@ -55,6 +55,16 @@ const threadCaller: McpInvocationContext.McpInvocationScope = {
   issuedAt: 0,
 };
 
+// Plugin write tools need what environment writes need: a full-access caller.
+const fullAccessClient: McpInvocationContext.McpInvocationScope = {
+  environmentId: EnvironmentId.make("environment"),
+  requestNamespace: "client:full",
+  thread: undefined,
+  client: { sessionId: "full", label: "Claude Code", access: "full-access" },
+  capabilities: new Set(["orchestration"]),
+  issuedAt: 0,
+};
+
 const readOnlyClient: McpInvocationContext.McpInvocationScope = {
   environmentId: EnvironmentId.make("environment"),
   requestNamespace: "client:session",
@@ -151,7 +161,7 @@ it.effect("answer under plg_ names with access checks, then answer disabled", ()
     const refused = yield* call("plg_mcp-plugin_touch", readOnlyClient);
     assert.isTrue(refused.isError);
     assert.include(refused.text, "read-only");
-    assert.deepStrictEqual(yield* call("plg_mcp-plugin_touch", threadCaller), {
+    assert.deepStrictEqual(yield* call("plg_mcp-plugin_touch", fullAccessClient), {
       isError: false,
       text: '{"touches":1}',
     });

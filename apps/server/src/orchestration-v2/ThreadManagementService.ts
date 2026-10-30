@@ -732,12 +732,14 @@ const make = Effect.gen(function* () {
   };
 
   // Plugins see user and agent messages before orchestration records them. Notifications and
-  // guest messages are not the sender's own text, so they skip the hooks.
+  // guest messages are not the sender's own text, and an appended paragraph would change what a
+  // slash command such as `/goal clear` means, so all three skip the hooks.
   const withPluginHooks = (command: OrchestrationV2ServerCommand) =>
     command.type === "message.dispatch" &&
     command.notification === undefined &&
     command.guestMessageId === undefined &&
-    command.createdBy !== "system"
+    command.createdBy !== "system" &&
+    !command.text.trimStart().startsWith("/")
       ? pluginHooks
           .beforeDispatch({
             threadId: command.threadId,

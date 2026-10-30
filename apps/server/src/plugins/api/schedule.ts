@@ -30,7 +30,8 @@ export const makeScheduleApi = (facade: FacadeContext): PluginApi["schedule"] =>
     const cancel = () => {
       Effect.runForkWith(facade.context)(Fiber.interrupt(fiber));
     };
-    facade.activation.cleanups.push(cancel);
+    // Abort runs before cleanups, so a hung cleanup cannot keep a disabled plugin's timer alive.
+    facade.activation.controller.signal.addEventListener("abort", cancel, { once: true });
     return cancel;
   },
 });
