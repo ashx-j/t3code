@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeCrypto from "node:crypto";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -22,6 +25,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as EnvironmentTheme from "../environmentTheme.ts";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -31,6 +35,7 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import packageJson from "../../package.json" with { type: "json" };
+import { gzipTarball, tarEntry } from "./testTarball.ts";
 import * as PluginHooks from "./PluginHooks.ts";
 import * as PluginHost from "./PluginHost.ts";
 import * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
@@ -65,6 +70,40 @@ const layerThemes = Layer.mock(EnvironmentTheme.EnvironmentThemeService)({
     }),
 });
 
+// A registry with one good package and one whose integrity hash does not match its tarball.
+const npmTarball = gzipTarball(
+  tarEntry(
+    "package/t3-plugin.json",
+    JSON.stringify({
+      id: "npm-hello",
+      name: "npm hello",
+      version: "1.0.0",
+      engines: { t3: ">=0.1.0" },
+      server: "./server.cjs",
+    }),
+  ),
+  tarEntry("package/server.cjs", "module.exports = { activate() {} };"),
+);
+const npmIntegrity = `sha512-${NodeCrypto.createHash("sha512").update(npmTarball).digest("base64")}`;
+const npmDocument = (name: string, integrity: string) => ({
+  "dist-tags": { latest: "1.0.0" },
+  versions: { "1.0.0": { dist: { tarball: `https://registry.test/${name}.tgz`, integrity } } },
+});
+const layerNpmRegistry = Layer.succeed(
+  HttpClient.HttpClient,
+  HttpClient.make((request) => {
+    const url = request.url;
+    const body = url.endsWith(".tgz")
+      ? new Response(npmTarball)
+      : url.endsWith("/npm-hello")
+        ? Response.json(npmDocument("npm-hello", npmIntegrity))
+        : url.endsWith("/npm-tampered")
+          ? Response.json(npmDocument("npm-tampered", "sha512-AAAA"))
+          : new Response("not found", { status: 404 });
+    return Effect.succeed(HttpClientResponse.fromWeb(request, body));
+  }),
+);
+
 const layerHost = (services: typeof layerUnusedServices = layerUnusedServices) =>
   Layer.fresh(
     PluginHost.layer.pipe(
@@ -73,6 +112,7 @@ const layerHost = (services: typeof layerUnusedServices = layerUnusedServices) =
       Layer.provide(services),
       Layer.provide(layerThemes),
       Layer.provide(ProcessRunner.layer),
+      Layer.provide(layerNpmRegistry),
       Layer.provideMerge(
         Layer.mergeAll(PluginHooks.layer, PluginMcpTools.layer, PluginHttpRoutes.layer),
       ),
@@ -543,6 +583,16 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           yield* host.uninstall(hello, false);
           assert.isFalse(yield* fs.exists(`${stateDir}/plugins/hello-plugin`));
           assert.isTrue(yield* fs.exists(`${fixturesDir}hello-plugin/server.cjs`));
+
+          const fromNpm = yield* host.install({ type: "npm", name: "npm-hello" });
+          assert.include(fromNpm, { id: PluginId.make("npm-hello"), status: "active" });
+          const tampered = yield* host
+            .install({ type: "npm", name: "npm-tampered" })
+            .pipe(Effect.flip);
+          assert.match(tampered.message, /integrity/);
+          assert.deepStrictEqual((yield* fs.readDirectory(`${stateDir}/plugins`)).toSorted(), [
+            "npm-hello",
+          ]);
         }).pipe(Effect.provide(layerHost()));
       }).pipe(Effect.provide(layerConfig())),
   );

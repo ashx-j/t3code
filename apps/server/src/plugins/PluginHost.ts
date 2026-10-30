@@ -33,6 +33,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import { HttpClient } from "effect/http";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
@@ -53,6 +54,7 @@ import {
   type PluginPublication,
 } from "./PluginApi.ts";
 import { discoverPlugins, type DiscoveredPlugin } from "./pluginDiscovery.ts";
+import { fetchNpmPackage } from "./pluginNpm.ts";
 import * as PluginHooks from "./PluginHooks.ts";
 import * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
 import * as PluginMcpTools from "./PluginMcpTools.ts";
@@ -329,6 +331,7 @@ const make = Effect.gen(function* () {
   const settingsStore = services.settings;
   const environmentThemes = yield* EnvironmentTheme.EnvironmentThemeService;
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const http = yield* HttpClient.HttpClient;
 
   const pluginsDir = path.join(config.stateDir, "plugins");
   const configPath = path.join(config.stateDir, "plugins.json");
@@ -754,6 +757,22 @@ const make = Effect.gen(function* () {
       return yield* fs
         .copy(from, into)
         .pipe(Effect.mapError(installFailed(`Could not copy ${source.path}.`)));
+    }
+    if (source.type === "npm") {
+      const files = yield* fetchNpmPackage(source.name, source.version).pipe(
+        Effect.provideService(HttpClient.HttpClient, http),
+        Effect.mapError((error) => new PluginInstallError({ reason: error.reason, cause: error })),
+      );
+      for (const file of files) {
+        const target = path.join(into, ...file.path.split("/"));
+        yield* fs
+          .makeDirectory(path.dirname(target), { recursive: true })
+          .pipe(
+            Effect.andThen(fs.writeFile(target, file.contents)),
+            Effect.mapError(installFailed(`Could not write ${file.path}.`)),
+          );
+      }
+      return;
     }
     const result = yield* processRunner
       .run({
