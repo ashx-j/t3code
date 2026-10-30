@@ -4,7 +4,7 @@ import {
   pluginSettingsForm,
 } from "@t3tools/client-runtime/plugins/settings-form";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, PluginState } from "@t3tools/contracts";
+import type { EnvironmentId, PluginInstallSource, PluginState } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import {
@@ -128,9 +128,13 @@ function EnvironmentPlugins({ environment }: { readonly environment: Environment
   );
 }
 
+const installSourceLabel = (source: PluginInstallSource) =>
+  source.type === "path" ? source.path : source.type === "git" ? source.url : `npm ${source.name}`;
+
 const INSTALL_SOURCES = {
   path: { label: "Folder on the server", placeholder: "/home/me/my-plugin" },
   git: { label: "Git repository", placeholder: "https://github.com/me/my-plugin.git" },
+  npm: { label: "npm package", placeholder: "t3-plugin-example" },
 } as const;
 
 /** Installs a plugin into this environment; it runs with the same access as T3 Code itself. */
@@ -162,14 +166,17 @@ function AddPlugin({ environmentId }: { readonly environmentId: EnvironmentId })
   const submit = async () => {
     setBusy(true);
     setProblem(null);
+    const extra = ref.trim();
     const source =
       kind === "path"
         ? { type: "path" as const, path: location.trim() }
-        : {
-            type: "git" as const,
-            url: location.trim(),
-            ...(ref.trim() === "" ? {} : { ref: ref.trim() }),
-          };
+        : kind === "git"
+          ? { type: "git" as const, url: location.trim(), ...(extra === "" ? {} : { ref: extra }) }
+          : {
+              type: "npm" as const,
+              name: location.trim(),
+              ...(extra === "" ? {} : { version: extra }),
+            };
     const result = await install({ environmentId, input: { source } });
     setBusy(false);
     if (result._tag === "Failure") {
@@ -195,19 +202,23 @@ function AddPlugin({ environmentId }: { readonly environmentId: EnvironmentId })
       >
         <div className="space-y-1.5">
           <Label htmlFor="plugin-install-source">Source</Label>
-          <Select value={kind} onValueChange={(value) => setKind(value === "git" ? "git" : "path")}>
+          <Select
+            value={kind}
+            onValueChange={(value) => setKind(value === "git" || value === "npm" ? value : "path")}
+          >
             <SelectTrigger id="plugin-install-source">
               <SelectValue>{INSTALL_SOURCES[kind].label}</SelectValue>
             </SelectTrigger>
             <SelectPopup>
               <SelectItem value="path">{INSTALL_SOURCES.path.label}</SelectItem>
               <SelectItem value="git">{INSTALL_SOURCES.git.label}</SelectItem>
+              <SelectItem value="npm">{INSTALL_SOURCES.npm.label}</SelectItem>
             </SelectPopup>
           </Select>
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="plugin-install-location">
-            {kind === "path" ? "Folder path" : "Repository URL"}
+            {kind === "path" ? "Folder path" : kind === "git" ? "Repository URL" : "Package name"}
           </Label>
           <Input
             id="plugin-install-location"
@@ -216,16 +227,20 @@ function AddPlugin({ environmentId }: { readonly environmentId: EnvironmentId })
             onChange={(event) => setLocation(event.target.value)}
           />
         </div>
-        {kind === "git" ? (
+        {kind === "path" ? null : (
           <div className="space-y-1.5">
-            <Label htmlFor="plugin-install-ref">Branch or tag (optional)</Label>
+            <Label htmlFor="plugin-install-ref">
+              {kind === "git"
+                ? "Branch or tag (optional)"
+                : "Version (optional, latest by default)"}
+            </Label>
             <Input
               id="plugin-install-ref"
               value={ref}
               onChange={(event) => setRef(event.target.value)}
             />
           </div>
-        ) : null}
+        )}
         {problem === null ? null : <p className="text-destructive text-xs">{problem}</p>}
         <div className="flex gap-2">
           <Button type="submit" size="sm" disabled={busy || location.trim() === ""}>
@@ -334,11 +349,7 @@ function PluginRow({
               variant="ghost"
               disabled={busy || !canManage}
               aria-label={`Update ${plugin.name}`}
-              title={`Update from ${
-                plugin.installSource.type === "path"
-                  ? plugin.installSource.path
-                  : plugin.installSource.url
-              }`}
+              title={`Update from ${installSourceLabel(plugin.installSource)}`}
               onClick={() =>
                 void run(() => update({ environmentId, input: { pluginId: plugin.id } }))
               }

@@ -12,6 +12,8 @@ Open **Settings → Plugins**, choose **Add plugin**, and pick a source:
   `t3-plugin.json`. T3 Code copies it, so later changes to that folder do not affect the installed
   plugin.
 - **Git repository**: a repository URL, with an optional branch or tag.
+- **npm package**: a package name, with an optional version. T3 Code checks the download against
+  the registry's integrity hash before installing it.
 
 The plugin is enabled and started once it is installed. If installing over an existing version
 fails, the previous version keeps running.
@@ -24,7 +26,8 @@ comes from Settings.
 ## Update a plugin
 
 Plugins added from Settings have **Update** on their row. It installs the plugin again from the
-same folder or repository, and keeps the current version running if that fails.
+same folder, repository or package, and keeps the current version running if that fails. An npm
+plugin without a pinned version updates to the package's latest version.
 
 ## Turn a plugin on or off
 

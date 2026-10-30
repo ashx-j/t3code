@@ -232,7 +232,7 @@ const make = () => {
   const pluginsInstall: PluginMcpToolEntry = {
     name: PLUGINS_INSTALL_TOOL,
     description:
-      "Install a plugin into this T3 Code environment from a folder on the server or a git repository, then enable it. Plugins run with T3 Code's own access, so only install what the user asked for.",
+      "Install a plugin into this T3 Code environment from a folder on the server, a git repository or npm, then enable it. Plugins run with T3 Code's own access, so only install what the user asked for.",
     inputSchema: {
       type: "object",
       properties: {
@@ -251,6 +251,15 @@ const make = () => {
                 ref: { type: "string" },
               },
               required: ["type", "url"],
+            },
+            {
+              type: "object",
+              properties: {
+                type: { const: "npm" },
+                name: { type: "string" },
+                version: { type: "string" },
+              },
+              required: ["type", "name"],
             },
           ],
         },
@@ -344,9 +353,11 @@ const make = () => {
         }
       }
     }),
-    setHostActions: Effect.fn("PluginMcpTools.setHostActions")(function* (actions) {
-      hostActions = actions;
-    }),
+    setHostActions: Effect.fn("PluginMcpTools.setHostActions")((actions) =>
+      Effect.sync(() => {
+        hostActions = actions;
+      }),
+    ),
     attach: Effect.fn("PluginMcpTools.attach")((publisher) =>
       Effect.acquireRelease(
         Effect.gen(function* () {

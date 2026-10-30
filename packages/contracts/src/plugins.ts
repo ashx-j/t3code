@@ -100,13 +100,18 @@ export const PluginFailure = Schema.Struct({
 export type PluginFailure = typeof PluginFailure.Type;
 
 /** What the server knows about one discovered plugin, including ones whose manifest failed. */
-/** Where `plugins.install` gets a plugin: a folder on the server, or a git repository. */
+/** Where `plugins.install` gets a plugin: a folder on the server, a git repository or npm. */
 export const PluginInstallSource = Schema.Union([
   Schema.Struct({ type: Schema.Literal("path"), path: TrimmedNonEmptyString }),
   Schema.Struct({
     type: Schema.Literal("git"),
     url: TrimmedNonEmptyString,
     ref: Schema.optionalKey(TrimmedNonEmptyString),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("npm"),
+    name: TrimmedNonEmptyString.check(Schema.isMaxLength(214)),
+    version: Schema.optionalKey(TrimmedNonEmptyString),
   }),
 ]);
 export type PluginInstallSource = typeof PluginInstallSource.Type;
