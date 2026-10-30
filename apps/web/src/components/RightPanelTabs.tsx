@@ -35,7 +35,9 @@ import {
   Globe2,
   Plus,
   TerminalSquare,
+  Puzzle,
 } from "lucide-react";
+import { PluginPanelLauncherItems, PluginPanelMenuItems } from "../plugins/PluginPanelMenuItems";
 import { Volume2, VolumeOff } from "lucide";
 import {
   type KeyboardEvent as ReactKeyboardEvent,
@@ -295,6 +297,7 @@ function SurfaceMenuItem(props: {
 }
 
 function RightPanelEmptyState(props: {
+  environmentId: EnvironmentId | null;
   onAddBrowser: () => void;
   onAddBrowserInProfile: (profileId: string) => void;
   browserProfiles: ReadonlyArray<{ readonly id: string; readonly name: string }>;
@@ -526,6 +529,7 @@ function RightPanelEmptyState(props: {
               />
             ),
           )}
+          <PluginPanelLauncherItems environmentId={props.environmentId} />
         </div>
       </div>
     </div>
@@ -557,6 +561,8 @@ function surfaceTitle(
       return "Pull requests";
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
+    case "plugin":
+      return surface.title;
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
@@ -653,6 +659,8 @@ function SurfaceIcon({
       ) : (
         <Smartphone className="size-3 shrink-0" />
       );
+    case "plugin":
+      return <Puzzle className="size-3 shrink-0" />;
   }
 }
 
@@ -1368,6 +1376,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                       </SurfaceMenuItem>
                     );
                   })}
+                  <PluginPanelMenuItems
+                    environmentId={props.environmentId}
+                    onOpen={() => setAddSurfaceMenuOpen(false)}
+                  />
                 </MenuPopup>
               </Menu>
             ) : null}
@@ -1431,6 +1443,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       <div className="flex min-h-0 flex-1 flex-col" data-right-panel-surface-content>
         {props.activeSurfaceId === null ? (
           <RightPanelEmptyState
+            environmentId={props.environmentId}
             onAddBrowser={props.onAddBrowser}
             onAddBrowserInProfile={props.onAddBrowserInProfile}
             browserProfiles={browserProfiles}

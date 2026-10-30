@@ -448,6 +448,30 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
     }).pipe(Effect.provide(layerConfig())),
   );
 
+  it.effect("serves an active plugin's web bundle and stops serving it when disabled", () =>
+    Effect.gen(function* () {
+      const helloWeb = PluginId.make("hello-web");
+      yield* writePluginsConfig({
+        enabled: { [helloWeb]: true },
+        devPaths: [`${fixturesDir}hello-web`],
+      });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const routes = yield* PluginHttpRoutes.PluginHttpRoutes;
+        yield* waitForStatuses(host, { [helloWeb]: "active" });
+        const request = { method: "GET", path: "/web.js", query: {}, headers: {}, body: "" };
+
+        const response = yield* routes.handle({ pluginId: helloWeb, request });
+        assert.strictEqual(response.status, 200);
+        assert.strictEqual(response.headers["content-type"], "text/javascript; charset=utf-8");
+
+        yield* host.setEnabled(helloWeb, false);
+        const missing = yield* routes.handle({ pluginId: helloWeb, request }).pipe(Effect.flip);
+        assert.strictEqual(missing._tag, "PluginHttpRouteNotFoundError");
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
   it.effect("does not load a disabled plugin at startup", () =>
     Effect.gen(function* () {
       const rootDir = yield* writeInstalledPlugin(

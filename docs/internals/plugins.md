@@ -51,17 +51,23 @@ saves with the importer's reason.
 
 Plugin state reaches clients through `plugins.subscribeStates`, not the server config stream: a
 settings page that opted into the shared stream would need a second subscription that resends the
-whole config. Desktop and hosted web authenticate `/api` with bearer tokens, which a bare
-`import(url)` cannot send, so web bundles are fetched with the authenticated fetch and imported from
-a `blob:` URL; the desktop CSP allows `blob:` scripts. Bundles reach React and the UI kit through
-`globalThis.__t3PluginHost`, not an import map. Mobile release builds cannot load code at all, so
-mobile renders settings from the manifest's JSON Schema and declarative contributions only.
+whole config. Once the app is idle, a small starter follows that stream on servers that advertise
+`plugins` and downloads the web loader, its own chunk, only when an active plugin has a web part.
+Bare `import(url)` cannot send credentials, so the loader fetches each bundle with
+the connection's bearer token or cookie and imports a `blob:` URL; the desktop CSP allows `blob:`
+scripts. A T3 Connect (DPoP) connection needs the relay signer for that fetch, so it cannot load
+web bundles yet. Bundles reach React and the UI kit through `globalThis.__t3PluginHost`, not an
+import map. Mobile release builds cannot load code at all, so mobile renders settings from the
+manifest's JSON Schema and declarative contributions only.
 
 Where T3 has a closed union and a `switch` (right panel kinds, settings paths, keybinding commands,
 drivers, MCP toolkits), plugins add to a registry that built-ins register into first. Where T3
 already has a server-supplied open variant (provider slash commands, dynamic tool items, themes),
-plugins use it. Hot paths such as timeline and sidebar rows read a module-level `Map` and re-render
-on one list-level version, never a per-row subscription.
+plugins use it. Registries are module-level `Map`s behind one version atom, read through atoms
+derived from it: React Compiler would cache a plain lookup. Hot paths such as timeline and sidebar
+rows re-render on that one version, never through a per-row subscription. A plugin right panel
+stores its title on the surface so tab titles need no lookup, and renders "plugin not active" with
+a close button while its plugin is unloaded.
 
 ## Reaching into orchestration
 
