@@ -21,6 +21,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as EnvironmentTheme from "../environmentTheme.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -54,12 +55,22 @@ const layerUnusedServices = Layer.mergeAll(
   Layer.mock(ServerSettings.ServerSettingsService)({}),
 );
 
+// The last theme folders the host published, for the web files case.
+let publishedThemeDirectories: ReadonlyArray<string> = [];
+const layerThemes = Layer.mock(EnvironmentTheme.EnvironmentThemeService)({
+  setPluginThemeDirectories: (directories) =>
+    Effect.sync(() => {
+      publishedThemeDirectories = directories;
+    }),
+});
+
 const layerHost = (services: typeof layerUnusedServices = layerUnusedServices) =>
   Layer.fresh(
     PluginHost.layer.pipe(
       Layer.provideMerge(Layer.mergeAll(PluginSettingsStore.layer, PluginStorage.layer)),
       Layer.provide(ServerSecretStore.layer),
       Layer.provide(services),
+      Layer.provide(layerThemes),
       Layer.provideMerge(
         Layer.mergeAll(PluginHooks.layer, PluginMcpTools.layer, PluginHttpRoutes.layer),
       ),
@@ -448,7 +459,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
     }).pipe(Effect.provide(layerConfig())),
   );
 
-  it.effect("serves an active plugin's web bundle and assets, and stops when disabled", () =>
+  it.effect("serves an active plugin's web files and themes, and stops when disabled", () =>
     Effect.gen(function* () {
       const helloWeb = PluginId.make("hello-web");
       yield* writePluginsConfig({
@@ -464,6 +475,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         const response = yield* routes.handle({ pluginId: helloWeb, request });
         assert.strictEqual(response.status, 200);
         assert.strictEqual(response.headers["content-type"], "text/javascript; charset=utf-8");
+        assert.deepStrictEqual(publishedThemeDirectories, [`${fixturesDir}hello-web/themes`]);
         const asset = yield* routes.handle({
           pluginId: helloWeb,
           request: { ...request, path: "/assets/hello.txt" },
@@ -477,6 +489,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         yield* host.setEnabled(helloWeb, false);
         const missing = yield* routes.handle({ pluginId: helloWeb, request }).pipe(Effect.flip);
         assert.strictEqual(missing._tag, "PluginHttpRouteNotFoundError");
+        assert.deepStrictEqual(publishedThemeDirectories, []);
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
