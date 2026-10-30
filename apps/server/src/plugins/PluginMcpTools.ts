@@ -1,4 +1,4 @@
-import { PluginId, type PluginState } from "@t3tools/contracts";
+import { PluginId, PluginInstallSource, type PluginState } from "@t3tools/contracts";
 import type { PluginMcpTool, PluginRpcAccess } from "@t3tools/plugin-sdk/server";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -13,6 +13,8 @@ const MAX_REASON_CHARS = 500;
 const PLUGINS_LIST_TOOL = "t3_plugins_list";
 const PLUGINS_INVOKE_TOOL = "t3_plugins_invoke";
 const PLUGINS_SET_ENABLED_TOOL = "t3_plugins_set_enabled";
+const PLUGINS_INSTALL_TOOL = "t3_plugins_install";
+const PLUGINS_UNINSTALL_TOOL = "t3_plugins_uninstall";
 
 const isJson = Schema.is(Schema.Json);
 
@@ -65,6 +67,13 @@ export interface PluginMcpHostActions {
     pluginId: PluginId,
     enabled: boolean,
   ) => Effect.Effect<PluginState, { readonly message: string }>;
+  readonly install: (
+    source: PluginInstallSource,
+  ) => Effect.Effect<PluginState, { readonly message: string }>;
+  readonly uninstall: (
+    pluginId: PluginId,
+    removeData: boolean,
+  ) => Effect.Effect<void, { readonly message: string }>;
 }
 
 const decodeInvokeInput = Schema.decodeUnknownEffect(
@@ -76,6 +85,12 @@ const decodeInvokeInput = Schema.decodeUnknownEffect(
 );
 const decodeSetEnabledInput = Schema.decodeUnknownEffect(
   Schema.Struct({ pluginId: PluginId, enabled: Schema.Boolean }),
+);
+const decodeInstallInput = Schema.decodeUnknownEffect(
+  Schema.Struct({ source: PluginInstallSource }),
+);
+const decodeUninstallInput = Schema.decodeUnknownEffect(
+  Schema.Struct({ pluginId: PluginId, removeData: Schema.optional(Schema.Boolean) }),
 );
 
 /** One tool as `/mcp` advertises it. `call` runs it; McpHttpServer checks `access` first. */
@@ -105,8 +120,8 @@ export class PluginMcpTools extends Context.Service<
     /** MCP has no tool removal, so each of the plugin's tools answers "disabled" instead. */
     readonly unregisterPlugin: (pluginId: PluginId) => Effect.Effect<void>;
     /**
-     * Offers `t3_plugins_list`, `t3_plugins_invoke` and `t3_plugins_set_enabled` once a plugin is
-     * installed; agents without plugins never pay for them.
+     * Offers the `t3_plugins_*` management tools once a plugin is installed; agents without
+     * plugins never pay for them.
      */
     readonly setInstalledPlugins: (plugins: ReadonlyArray<PluginState>) => Effect.Effect<void>;
     /** Connects the management tools to the plugin host. */
@@ -214,6 +229,65 @@ const make = () => {
       ),
   };
 
+  const pluginsInstall: PluginMcpToolEntry = {
+    name: PLUGINS_INSTALL_TOOL,
+    description:
+      "Install a plugin into this T3 Code environment from a folder on the server or a git repository, then enable it. Plugins run with T3 Code's own access, so only install what the user asked for.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        source: {
+          oneOf: [
+            {
+              type: "object",
+              properties: { type: { const: "path" }, path: { type: "string" } },
+              required: ["type", "path"],
+            },
+            {
+              type: "object",
+              properties: {
+                type: { const: "git" },
+                url: { type: "string" },
+                ref: { type: "string" },
+              },
+              required: ["type", "url"],
+            },
+          ],
+        },
+      },
+      required: ["source"],
+      additionalProperties: false,
+    },
+    access: "write",
+    call: (input) =>
+      decodeInstallInput(input).pipe(
+        Effect.mapError(invalidInput),
+        Effect.flatMap((request) => withHost((actions) => actions.install(request.source))),
+        Effect.map((state) => ({ id: state.id, status: state.status, enabled: state.enabled })),
+      ),
+  };
+
+  const pluginsUninstall: PluginMcpToolEntry = {
+    name: PLUGINS_UNINSTALL_TOOL,
+    description:
+      "Remove an installed plugin. Set removeData to also delete its settings and stored data.",
+    inputSchema: {
+      type: "object",
+      properties: { pluginId: { type: "string" }, removeData: { type: "boolean" } },
+      required: ["pluginId"],
+      additionalProperties: false,
+    },
+    access: "write",
+    call: (input) =>
+      decodeUninstallInput(input).pipe(
+        Effect.mapError(invalidInput),
+        Effect.flatMap((request) =>
+          withHost((actions) => actions.uninstall(request.pluginId, request.removeData === true)),
+        ),
+        Effect.as({ removed: true }),
+      ),
+  };
+
   return PluginMcpTools.of({
     register: Effect.fn("PluginMcpTools.register")(function* ({ pluginId, tool, handler }) {
       const name = `plg_${pluginId}_${tool.name}`;
@@ -259,7 +333,15 @@ const make = () => {
       installed = plugins;
       // Once advertised it stays: the list then reads empty when the last plugin is removed.
       if (plugins.length > 0 && !tools.has(PLUGINS_LIST_TOOL)) {
-        for (const entry of [pluginsList, pluginsInvoke, pluginsSetEnabled]) yield* publish(entry);
+        for (const entry of [
+          pluginsList,
+          pluginsInvoke,
+          pluginsSetEnabled,
+          pluginsInstall,
+          pluginsUninstall,
+        ]) {
+          yield* publish(entry);
+        }
       }
     }),
     setHostActions: Effect.fn("PluginMcpTools.setHostActions")(function* (actions) {

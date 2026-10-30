@@ -2,6 +2,7 @@ import {
   type AuthEnvironmentScope,
   PluginError,
   type PluginId,
+  type PluginInstallInput,
   type PluginInvokeInput,
   type PluginListInput,
   type PluginReloadInput,
@@ -9,6 +10,7 @@ import {
   type PluginSettingsGetInput,
   type PluginSettingsUpdateInput,
   type PluginSubscribeInput,
+  type PluginUninstallInput,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -41,6 +43,15 @@ export const makePluginRpcHandlers = (
       Effect.map((plugin) => ({ plugin })),
       Effect.mapError(toRpcError(input.pluginId)),
     ),
+  [WS_METHODS.pluginsInstall]: (input: PluginInstallInput) =>
+    pluginHost.install(input.source).pipe(
+      Effect.map((plugin) => ({ plugin })),
+      Effect.mapError((error) => new PluginError({ message: error.message })),
+    ),
+  [WS_METHODS.pluginsUninstall]: (input: PluginUninstallInput) =>
+    pluginHost
+      .uninstall(input.pluginId, input.removeData === true)
+      .pipe(Effect.as({ pluginId: input.pluginId }), Effect.mapError(toRpcError(input.pluginId))),
   [WS_METHODS.pluginsSettingsGet]: (input: PluginSettingsGetInput) =>
     pluginHost.getSettings(input.pluginId).pipe(
       Effect.map((settings) => ({ pluginId: input.pluginId, settings })),

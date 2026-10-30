@@ -60,6 +60,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // Enabling a plugin runs its code in the server, like pointing a provider at a binary.
   [WS_METHODS.pluginsSetEnabled]: AuthSettingsWriteScope,
   [WS_METHODS.pluginsReload]: AuthSettingsWriteScope,
+  [WS_METHODS.pluginsInstall]: AuthSettingsWriteScope,
+  [WS_METHODS.pluginsUninstall]: AuthSettingsWriteScope,
   [WS_METHODS.pluginsSettingsUpdate]: AuthSettingsWriteScope,
   [WS_METHODS.scheduledTasksRunNow]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksRotateWebhookToken]: AuthOrchestrationOperateScope,

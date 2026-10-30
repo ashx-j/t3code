@@ -31,6 +31,14 @@ export function createPluginEnvironmentAtoms<R, E>(
       label: "environment-data:plugins:reload",
       tag: WS_METHODS.pluginsReload,
     }),
+    installPlugin: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:plugins:install",
+      tag: WS_METHODS.pluginsInstall,
+    }),
+    uninstallPlugin: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:plugins:uninstall",
+      tag: WS_METHODS.pluginsUninstall,
+    }),
     updatePluginSettings: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:plugins:update-settings",
       tag: WS_METHODS.pluginsSettingsUpdate,

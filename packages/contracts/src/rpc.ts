@@ -377,8 +377,11 @@ import {
 } from "./scheduledTask.ts";
 import {
   PluginError,
+  PluginInstallInput,
   PluginInvokeInput,
   PluginInvokeResult,
+  PluginUninstallInput,
+  PluginUninstallResult,
   PluginListInput,
   PluginListResult,
   PluginMutationResult,
@@ -567,6 +570,8 @@ export const WS_METHODS = {
   pluginsSubscribeStates: "plugins.subscribeStates",
   pluginsSetEnabled: "plugins.setEnabled",
   pluginsReload: "plugins.reload",
+  pluginsInstall: "plugins.install",
+  pluginsUninstall: "plugins.uninstall",
   pluginsSettingsGet: "plugins.settings.get",
   pluginsSettingsUpdate: "plugins.settings.update",
   pluginsInvoke: "plugins.invoke",
@@ -2002,6 +2007,18 @@ const WsPluginsReloadRpc = Rpc.make(WS_METHODS.pluginsReload, {
   error: PluginRpcError,
 });
 
+const WsPluginsInstallRpc = Rpc.make(WS_METHODS.pluginsInstall, {
+  payload: PluginInstallInput,
+  success: PluginMutationResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsUninstallRpc = Rpc.make(WS_METHODS.pluginsUninstall, {
+  payload: PluginUninstallInput,
+  success: PluginUninstallResult,
+  error: PluginRpcError,
+});
+
 const WsPluginsSettingsGetRpc = Rpc.make(WS_METHODS.pluginsSettingsGet, {
   payload: PluginSettingsGetInput,
   success: PluginSettingsResult,
@@ -2116,6 +2133,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsPluginsSubscribeStatesRpc,
   WsPluginsSetEnabledRpc,
   WsPluginsReloadRpc,
+  WsPluginsInstallRpc,
+  WsPluginsUninstallRpc,
   WsPluginsSettingsGetRpc,
   WsPluginsSettingsUpdateRpc,
   WsPluginsInvokeRpc,
