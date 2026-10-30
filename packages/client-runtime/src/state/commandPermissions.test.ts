@@ -103,6 +103,7 @@ describe("command permissions", () => {
     WS_METHODS.pluginsReload,
     WS_METHODS.pluginsInstall,
     WS_METHODS.pluginsUninstall,
+    WS_METHODS.pluginsUpdate,
     WS_METHODS.pluginsSettingsUpdate,
   ])("requires the destination settings grant for %s", (method) =>
     Effect.scoped(

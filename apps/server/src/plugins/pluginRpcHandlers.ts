@@ -11,6 +11,7 @@ import {
   type PluginSettingsUpdateInput,
   type PluginSubscribeInput,
   type PluginUninstallInput,
+  type PluginUpdateInput,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -47,6 +48,11 @@ export const makePluginRpcHandlers = (
     pluginHost.install(input.source).pipe(
       Effect.map((plugin) => ({ plugin })),
       Effect.mapError((error) => new PluginError({ message: error.message })),
+    ),
+  [WS_METHODS.pluginsUpdate]: (input: PluginUpdateInput) =>
+    pluginHost.update(input.pluginId).pipe(
+      Effect.map((plugin) => ({ plugin })),
+      Effect.mapError(toRpcError(input.pluginId)),
     ),
   [WS_METHODS.pluginsUninstall]: (input: PluginUninstallInput) =>
     pluginHost

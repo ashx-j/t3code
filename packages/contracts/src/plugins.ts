@@ -100,6 +100,17 @@ export const PluginFailure = Schema.Struct({
 export type PluginFailure = typeof PluginFailure.Type;
 
 /** What the server knows about one discovered plugin, including ones whose manifest failed. */
+/** Where `plugins.install` gets a plugin: a folder on the server, or a git repository. */
+export const PluginInstallSource = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("path"), path: TrimmedNonEmptyString }),
+  Schema.Struct({
+    type: Schema.Literal("git"),
+    url: TrimmedNonEmptyString,
+    ref: Schema.optionalKey(TrimmedNonEmptyString),
+  }),
+]);
+export type PluginInstallSource = typeof PluginInstallSource.Type;
+
 export const PluginState = Schema.Struct({
   id: PluginId,
   name: TrimmedNonEmptyString,
@@ -113,6 +124,8 @@ export const PluginState = Schema.Struct({
   failure: Schema.optionalKey(PluginFailure),
   /** Changes each time the plugin starts, so clients can reload its web half after a restart. */
   revision: Schema.optionalKey(Schema.Number),
+  /** Where it was installed from, when installed through `plugins.install`; updates reuse it. */
+  installSource: Schema.optionalKey(PluginInstallSource),
   hasServer: Schema.Boolean,
   hasWeb: Schema.Boolean,
   settingsSchema: Schema.optionalKey(Schema.JsonObject),
@@ -146,19 +159,11 @@ export const PluginReloadInput = Schema.Struct({
 });
 export type PluginReloadInput = typeof PluginReloadInput.Type;
 
-/** Where `plugins.install` gets a plugin: a folder on the server, or a git repository. */
-export const PluginInstallSource = Schema.Union([
-  Schema.Struct({ type: Schema.Literal("path"), path: TrimmedNonEmptyString }),
-  Schema.Struct({
-    type: Schema.Literal("git"),
-    url: TrimmedNonEmptyString,
-    ref: Schema.optionalKey(TrimmedNonEmptyString),
-  }),
-]);
-export type PluginInstallSource = typeof PluginInstallSource.Type;
-
 export const PluginInstallInput = Schema.Struct({ source: PluginInstallSource });
 export type PluginInstallInput = typeof PluginInstallInput.Type;
+
+export const PluginUpdateInput = Schema.Struct({ pluginId: PluginId });
+export type PluginUpdateInput = typeof PluginUpdateInput.Type;
 
 export const PluginUninstallInput = Schema.Struct({
   pluginId: PluginId,
@@ -170,7 +175,7 @@ export type PluginUninstallInput = typeof PluginUninstallInput.Type;
 export const PluginUninstallResult = Schema.Struct({ pluginId: PluginId });
 export type PluginUninstallResult = typeof PluginUninstallResult.Type;
 
-/** Result of `plugins.setEnabled`, `plugins.reload` and `plugins.install`. */
+/** Result of `plugins.setEnabled`, `plugins.reload`, `plugins.install` and `plugins.update`. */
 export const PluginMutationResult = Schema.Struct({
   plugin: PluginState,
 });

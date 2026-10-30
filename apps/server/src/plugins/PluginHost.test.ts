@@ -514,10 +514,12 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           const host = yield* PluginHost.PluginHost;
           yield* waitForStatuses(host, {});
 
-          const installed = yield* host.install({
-            type: "path",
-            path: `${fixturesDir}hello-plugin`,
-          });
+          const source = { type: "path" as const, path: `${fixturesDir}hello-plugin` };
+          const installed = yield* host.install(source);
+          assert.deepStrictEqual(installed.installSource, source);
+          const updated = yield* host.update(hello);
+          assert.include(updated, { status: "active" });
+          assert.notStrictEqual(updated.revision, installed.revision);
           assert.include(installed, {
             id: hello,
             status: "active",

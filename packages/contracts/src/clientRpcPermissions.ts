@@ -62,6 +62,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.pluginsReload]: AuthSettingsWriteScope,
   [WS_METHODS.pluginsInstall]: AuthSettingsWriteScope,
   [WS_METHODS.pluginsUninstall]: AuthSettingsWriteScope,
+  [WS_METHODS.pluginsUpdate]: AuthSettingsWriteScope,
   [WS_METHODS.pluginsSettingsUpdate]: AuthSettingsWriteScope,
   [WS_METHODS.scheduledTasksRunNow]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksRotateWebhookToken]: AuthOrchestrationOperateScope,

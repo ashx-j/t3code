@@ -21,6 +21,7 @@ vi.mock(import("../../state/plugins"), () => ({
     // Install and removal share the enable permission here; the test exercises neither.
     installPlugin: { permissionAtom: () => setEnabledCommand.permissionAtom() },
     uninstallPlugin: { permissionAtom: () => setEnabledCommand.permissionAtom() },
+    updatePlugin: { permissionAtom: () => setEnabledCommand.permissionAtom() },
   } as never,
 }));
 vi.mock(import("../../state/query"), async (original) => ({

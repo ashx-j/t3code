@@ -7,7 +7,13 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import type { EnvironmentId, PluginState } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { PuzzleIcon, RotateCwIcon, SlidersHorizontalIcon, Trash2Icon } from "lucide-react";
+import {
+  DownloadIcon,
+  PuzzleIcon,
+  RotateCwIcon,
+  SlidersHorizontalIcon,
+  Trash2Icon,
+} from "lucide-react";
 import { type ComponentType, useState } from "react";
 
 import type { EnvironmentPresentation } from "../../state/environments";
@@ -254,6 +260,7 @@ function PluginRow({
   const setEnabled = useAtomCommand(pluginEnvironment.setPluginEnabled, "plugin enabled");
   const reload = useAtomCommand(pluginEnvironment.reloadPlugin, "plugin reload");
   const uninstall = useAtomCommand(pluginEnvironment.uninstallPlugin, "plugin removal");
+  const update = useAtomCommand(pluginEnvironment.updatePlugin, "plugin update");
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [removing, setRemoving] = useState(false);
@@ -321,6 +328,24 @@ function PluginRow({
           >
             <RotateCwIcon className="size-4" />
           </Button>
+          {plugin.installSource === undefined ? null : (
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              disabled={busy || !canManage}
+              aria-label={`Update ${plugin.name}`}
+              title={`Update from ${
+                plugin.installSource.type === "path"
+                  ? plugin.installSource.path
+                  : plugin.installSource.url
+              }`}
+              onClick={() =>
+                void run(() => update({ environmentId, input: { pluginId: plugin.id } }))
+              }
+            >
+              <DownloadIcon className="size-4" />
+            </Button>
+          )}
           {plugin.source === "installed" ? (
             <Button
               size="icon-sm"

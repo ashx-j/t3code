@@ -21,6 +21,11 @@ plugins when you ask them to. Like other changes to the environment, this needs 
 full access. Agents in an environment with no plugins don't see these tools, so the first plugin
 comes from Settings.
 
+## Update a plugin
+
+Plugins added from Settings have **Update** on their row. It installs the plugin again from the
+same folder or repository, and keeps the current version running if that fails.
+
 ## Turn a plugin on or off
 
 Use the switch on the plugin's row. A plugin that fails to start shows the reason on its row, for
