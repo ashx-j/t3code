@@ -31,6 +31,11 @@ const DevicePanel = lazy(() =>
   import("../device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
 const FilePreviewPanel = lazy(() => import("../files/FilePreviewPanel"));
+const PluginPanelSurface = lazy(() =>
+  import("../../plugins/PluginPanelSurface").then((module) => ({
+    default: module.PluginPanelSurface,
+  })),
+);
 
 type RightPanelTerminalProps = Omit<
   PersistentThreadTerminalPanelProps,
@@ -165,6 +170,18 @@ export function RightPanelSurfaceContent(props: {
     }
     case "pull-requests":
       return <ThreadPullRequestsPanel threadRef={threadRef} />;
+    case "plugin":
+      return (
+        <Suspense fallback={null}>
+          <PluginPanelSurface
+            environmentId={threadRef.environmentId}
+            threadId={threadRef.threadId}
+            pluginId={surface.pluginId}
+            panel={surface.panel}
+            onClose={() => props.onCloseSurface(surface)}
+          />
+        </Suspense>
+      );
     case "device":
       return (
         <Suspense fallback={null}>
