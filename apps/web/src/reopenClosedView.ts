@@ -134,6 +134,9 @@ export async function reopenClosedView(
     case "pull-request":
       panels.openPullRequest(ref, surface);
       break;
+    case "plugin":
+      panels.openPlugin(ref, surface);
+      break;
     default:
       panels.open(ref, surface.kind);
   }

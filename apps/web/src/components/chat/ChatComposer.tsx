@@ -1878,6 +1878,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       return;
     }
+    if (item.type === "plugin-slash-command") {
+      const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+        expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+        focusEditorAfterReplace: false,
+      });
+      if (applied) {
+        setComposerHighlightedItemId(null);
+        item.run({ threadId: routeThreadRef.threadId });
+      }
+      return;
+    }
     if (item.type === "provider-slash-command") {
       if (item.command.name === USAGE_LIMITS_COMMAND.name && onUsageLimitsCommand) {
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {

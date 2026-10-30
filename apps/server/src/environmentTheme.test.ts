@@ -90,6 +90,41 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
     ),
   );
 
+  it.effect("adds plugin themes after the environment's own, which win on the same id", () =>
+    withEnvironmentThemes(
+      { "nightfall.json": encodeThemeFile(NIGHTFALL_THEME) },
+      Effect.gen(function* () {
+        const environmentTheme = yield* EnvironmentTheme.EnvironmentThemeService;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const pluginThemes = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-plugin-themes-" });
+        yield* fs.writeFileString(
+          path.join(pluginThemes, "nightfall.json"),
+          encodeThemeFile({ ...NIGHTFALL_THEME, name: "Plugin Nightfall" }),
+        );
+        yield* fs.writeFileString(
+          path.join(pluginThemes, "shared-light.json"),
+          encodeThemeFile(SHARED_THEME),
+        );
+
+        yield* environmentTheme.setPluginThemeDirectories([pluginThemes]);
+        assert.deepEqual(
+          (yield* currentThemes).map((theme) => [theme.id, theme.name]),
+          [
+            ["nightfall", "Nightfall"],
+            ["shared-light", "Shared Light"],
+          ],
+        );
+
+        yield* environmentTheme.setPluginThemeDirectories([]);
+        assert.deepEqual(
+          (yield* currentThemes).map((theme) => theme.id),
+          ["nightfall"],
+        );
+      }),
+    ),
+  );
+
   it.effect("never replays a set older than the snapshot it started from", () =>
     withEnvironmentThemes(
       { "nightfall.json": encodeThemeFile(NIGHTFALL_THEME) },
