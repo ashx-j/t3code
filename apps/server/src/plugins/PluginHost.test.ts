@@ -223,6 +223,124 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
     }).pipe(Effect.provide(layerConfig())),
   );
 
+  it.effect("fails a plugin that registers a method with an unknown access level", () =>
+    Effect.gen(function* () {
+      yield* writeInstalledPlugin(
+        "typo",
+        `module.exports = { activate(api) { api.rpc.register("go", () => 1, { access: "Write" }); } };`,
+      );
+      yield* writePluginsConfig({ enabled: { typo: true } });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const states = yield* waitForStatuses(host, { typo: "failed" });
+        assert.deepStrictEqual(stateOf(states, "typo")?.failure, {
+          stage: "activate",
+          message: 'Method "go" needs access "read" or "write".',
+        });
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("reload stops a plugin whose folder was removed", () =>
+    Effect.gen(function* () {
+      const stays = yield* writeInstalledPlugin("stays", `module.exports = { activate() {} };`);
+      const goes = yield* writeInstalledPlugin(
+        "goes",
+        `const marker = require("node:path").join(__dirname, "..", "..", "goes-cleaned");
+module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").writeFileSync(marker, "")); } };`,
+      );
+      yield* writePluginsConfig({ enabled: { stays: true, goes: true } });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const fs = yield* FileSystem.FileSystem;
+        yield* waitForStatuses(host, { stays: "active", goes: "active" });
+        yield* fs.remove(goes, { recursive: true });
+
+        yield* host.reload(PluginId.make("stays"));
+
+        assert.isTrue(yield* fs.exists(`${stays}/../../goes-cleaned`));
+        assert.isUndefined(stateOf(yield* host.list, "goes"));
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("reload runs new code from a symlinked plugin folder", () =>
+    Effect.gen(function* () {
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const realDir = `${stateDir}/checkout/linked`;
+      const plugin = (version: string) =>
+        `module.exports = { activate(api) { api.rpc.register("which", () => "${version}", { access: "read" }); } };`;
+      yield* writeFile(
+        `${realDir}/t3-plugin.json`,
+        JSON.stringify({
+          id: "linked",
+          name: "Linked",
+          version: "0.1.0",
+          engines: { t3: ">=0.1.0" },
+          server: "./server.cjs",
+        }),
+      );
+      yield* writeFile(`${realDir}/server.cjs`, plugin("v1"));
+      yield* fs.makeDirectory(`${stateDir}/plugins`, { recursive: true });
+      yield* fs.symlink(realDir, `${stateDir}/plugins/linked`);
+      yield* writePluginsConfig({ enabled: { linked: true } });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const id = PluginId.make("linked");
+        const which = host.invoke({
+          pluginId: id,
+          method: "which",
+          input: undefined,
+          scopes: operate,
+        });
+        yield* waitForStatuses(host, { linked: "active" });
+        assert.strictEqual(yield* which, "v1");
+
+        yield* writeFile(`${realDir}/server.cjs`, plugin("v2"));
+        yield* host.reload(id);
+        assert.strictEqual(yield* which, "v2");
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("finishes disabling a plugin when the caller gives up during its cleanup", () =>
+    Effect.gen(function* () {
+      const started = Promise.withResolvers<void>();
+      const gate = Promise.withResolvers<void>();
+      Reflect.set(globalThis, "__t3PluginHostCleanupStarted", started.resolve);
+      Reflect.set(globalThis, "__t3PluginHostCleanupGate", gate.promise);
+      yield* writeInstalledPlugin(
+        "stubborn",
+        `module.exports = { activate(api) {
+  api.rpc.register("ping", () => "pong", { access: "read" });
+  api.onDeactivate(() => { globalThis.__t3PluginHostCleanupStarted(); return globalThis.__t3PluginHostCleanupGate; });
+} };`,
+      );
+      yield* writePluginsConfig({ enabled: { stubborn: true } });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const id = PluginId.make("stubborn");
+        yield* waitForStatuses(host, { stubborn: "active" });
+
+        const disabling = yield* host
+          .setEnabled(id, false)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.promise(() => started.promise);
+        yield* Fiber.interrupt(disabling);
+        gate.resolve();
+
+        yield* waitForStatuses(host, { stubborn: "disabled" });
+        const error = yield* host
+          .invoke({ pluginId: id, method: "ping", input: undefined, scopes: operate })
+          .pipe(Effect.flip);
+        assert.strictEqual(error._tag, "PluginNotActiveError");
+      }).pipe(Effect.provide(layerHost()));
+      Reflect.deleteProperty(globalThis, "__t3PluginHostCleanupStarted");
+      Reflect.deleteProperty(globalThis, "__t3PluginHostCleanupGate");
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
   it.effect("does not load a disabled plugin at startup", () =>
     Effect.gen(function* () {
       const rootDir = yield* writeInstalledPlugin(

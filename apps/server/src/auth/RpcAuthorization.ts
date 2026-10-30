@@ -202,8 +202,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.deviceDetail]: AuthOrchestrationReadScope,
   [WS_METHODS.deviceAction]: AuthOrchestrationOperateScope,
   [WS_METHODS.subscribeDeviceState]: AuthOrchestrationReadScope,
-  // `plugins.invoke` and `plugins.subscribe` also need the operate scope for methods a plugin
-  // registered as writes; PluginHost checks that against the plugin's own declaration.
+  // `plugins.invoke` also needs the operate scope for methods a plugin registered as writes;
+  // PluginHost checks that against the plugin's own declaration. Channels are reads.
   [WS_METHODS.pluginsList]: AuthOrchestrationReadScope,
   [WS_METHODS.pluginsSubscribeStates]: AuthOrchestrationReadScope,
   [WS_METHODS.pluginsSettingsGet]: AuthOrchestrationReadScope,

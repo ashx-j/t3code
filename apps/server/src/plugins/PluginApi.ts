@@ -14,6 +14,7 @@ import type * as PluginStorage from "./PluginStorage.ts";
 
 const isJson = Schema.is(Schema.Json);
 const isPluginRpcName = Schema.is(PluginRpcName);
+const isPluginRpcAccess = Schema.is(Schema.Literals(["read", "write"]));
 
 export interface PluginPublication {
   readonly channel: string;
@@ -116,6 +117,10 @@ export const makePluginApi = (input: {
         assertActive(activation);
         if (!isPluginRpcName(method))
           throw new TypeError(`"${method}" is not a valid method name.`);
+        // Plugins are untyped JavaScript, and a misspelled access level must not open a write.
+        if (!isPluginRpcAccess(options.access)) {
+          throw new TypeError(`Method "${method}" needs access "read" or "write".`);
+        }
         if (activation.methods.has(method)) {
           throw new Error(`Method "${method}" is already registered.`);
         }
@@ -130,8 +135,14 @@ export const makePluginApi = (input: {
         PubSub.publishUnsafe(activation.publications, { channel, value });
       },
     },
+    // Something created after deactivation has nothing left to wait for, so it cleans up now.
     onDeactivate: (cleanup) => {
-      assertActive(activation);
+      if (activation.controller.signal.aborted) {
+        void Promise.resolve()
+          .then(cleanup)
+          .catch(() => undefined);
+        return;
+      }
       activation.cleanups.push(cleanup);
     },
   };

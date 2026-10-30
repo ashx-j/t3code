@@ -26,7 +26,11 @@ module.exports = {
     );
     api.onDeactivate(() => api.storage.set("deactivated", true));
     void (async () => {
-      for await (const settings of api.settings.changes()) api.rpc.publish("settings", settings);
+      // Only the greeting: settings include secret values, and any reader can subscribe.
+      for await (const settings of api.settings.changes()) {
+        const greeting = typeof settings.greeting === "string" ? settings.greeting : null;
+        api.rpc.publish("settings", { greeting });
+      }
     })();
   },
 };
