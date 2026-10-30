@@ -12,9 +12,10 @@ bundles run as React code in the page, with no sandbox; manifest `permissions` a
 enforced. Do not shape the API around a future sandbox. The host isolates failure instead: a plugin
 that throws or hangs while loading or activating is marked failed, one that throws in a handler fails
 that call, hung cleanups are abandoned after a deadline, and none of them stops the server. Enable,
-disable and reload run in the host's scope, so a client that disconnects mid-change never leaves a
-plugin half torn down. A newly found
-plugin starts disabled; the user enables it.
+disable, reload and install run in the host's scope, so a client that disconnects mid-change never
+leaves a plugin half torn down. A newly found plugin starts disabled; the user enables it. The web
+loader gives each bundle 30 seconds to load and to activate, and undoes anything a plugin registers
+after it unloads, so one stuck or slow plugin cannot hold the others.
 
 ## The plugin API is plain JavaScript
 
@@ -31,7 +32,7 @@ the server restarts.
 
 ## State lives beside T3's
 
-Enabled flags and dev paths go in `<stateDir>/plugins.json`, settings in
+Enabled flags, dev paths and install sources go in `<stateDir>/plugins.json`, settings in
 `<stateDir>/plugin-data/<id>/settings.json`, storage in `<stateDir>/plugins.sqlite`, opened on first
 use. Not in `settings.json`, whose writer re-encodes its decoded struct and drops unknown keys. Not a
 migration in `statev2.sqlite`, whose numbered list refuses to start when a fork migration id
@@ -67,7 +68,9 @@ provider slash command variant does not fit plugins, because it inserts text for
 read while a plugin command runs plugin code. Where T3 has a server-supplied open variant (dynamic
 tool items, themes), plugins use it. Registries are module-level `Map`s behind one version atom,
 read through atoms derived from it: React Compiler would cache a plain lookup. Hot paths such as
-timeline and sidebar rows re-render on that one version, never through a per-row subscription. A
+timeline and sidebar rows re-render on that one version, never through a per-row subscription.
+Chat code blocks read their own atom of code block renderers instead, so a banner or panel change
+never re-renders them, and only `plg_` tool rows look up a tool renderer. A
 plugin right panel stores its title on the surface so tab titles need no lookup, and renders
 "plugin not active" with a close button while its plugin is unloaded.
 
@@ -80,14 +83,26 @@ orchestration code and its tests need no plugin wiring; the server provides one 
 dispatch path and the host. `events.stored` for one type lets the event sink filter before anything is
 decoded for the plugin; several types share one stream so events stay in sequence order. A sliding
 buffer means a slow plugin loses old events rather than stalling the server; plugins resume by
-`sequence`. `turns.afterRunCompleted` is built from the same stream and the plugin's own storage:
-it saves the sequence after each ended run, so runs that end while a plugin is off arrive when it
-starts. Hooks skip slash commands, whose meaning an appended paragraph would change. A plugin
-notification that does not start a run needs a new orchestration command, which is why the API
-has none yet.
+`sequence`. `turns.afterRunCompleted` reads the same events through a stream that waits instead of
+dropping, because a dropped run would be lost for good once the saved position moves past it. It
+saves the sequence and the last 256 ended runs in the plugin's storage: runs that end while a
+plugin is off arrive when it starts, and a run updated again after it ended (a checkpoint landing
+on an interrupted run) is not delivered twice. Hooks skip slash commands, whose meaning an
+appended paragraph would change. A plugin notification that does not start a run needs a new
+orchestration command, which is why the API has none yet.
 
-The management tools (`t3_plugins_invoke`, `t3_plugins_set_enabled`) live in `PluginMcpTools`, but
-the host depends on that service, so the host hands it the two actions when it starts.
+The `t3_plugins_*` management tools live in `PluginMcpTools`, but the host depends on that service,
+so the host hands it its actions when it starts.
+
+## Installing
+
+`plugins.install` fetches into `<stateDir>/plugin-staging/<uuid>`, outside `plugins/`, so discovery
+never sees a half-written plugin. Only the swap (old version aside, new version in, by rename) takes
+the lifecycle lock, so a slow clone does not block other plugins. A crash between the 2 renames
+leaves the old version in staging; startup puts it back when nothing replaced it, then clears
+staging. Uninstall deletes the entry in `plugins/`, never the plugin's resolved `rootDir`, which for
+a symlinked plugin is the author's own folder. Git clones run with prompts off and
+`GIT_ALLOW_PROTOCOL` set, which blocks transports such as `ext::` that run commands.
 
 ## Nothing installed costs nothing
 
