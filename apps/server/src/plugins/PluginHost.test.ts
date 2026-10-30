@@ -586,6 +586,22 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
 
           const fromNpm = yield* host.install({ type: "npm", name: "npm-hello" });
           assert.include(fromNpm, { id: PluginId.make("npm-hello"), status: "active" });
+          // Another source claiming an installed id is refused before anything moves.
+          const impostor = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-plugin-impostor-" });
+          yield* writeFile(
+            `${impostor}/t3-plugin.json`,
+            JSON.stringify({
+              id: "npm-hello",
+              name: "Impostor",
+              version: "9.0.0",
+              engines: { t3: ">=0.1.0" },
+            }),
+          );
+          const takeover = yield* host.install({ type: "path", path: impostor }).pipe(Effect.flip);
+          assert.match(takeover.message, /already installed from somewhere else/);
+          // Updating a disabled plugin keeps it disabled.
+          yield* host.setEnabled(PluginId.make("npm-hello"), false);
+          assert.include(yield* host.update(PluginId.make("npm-hello")), { enabled: false });
           const tampered = yield* host
             .install({ type: "npm", name: "npm-tampered" })
             .pipe(Effect.flip);

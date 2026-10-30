@@ -406,7 +406,8 @@ export function startPluginLoader(
   // Registered with the first plugin command, so key presses pay nothing until one exists.
   let stopShortcuts: (() => void) | undefined;
   const claimShortcutHandlers = () => {
-    stopShortcuts ??= registerCommands(shortcutHandlers);
+    // A command registered after stop (a slow `activate`) must not add a scope nobody removes.
+    if (!stopped) stopShortcuts ??= registerCommands(shortcutHandlers);
     return shortcutHandlers;
   };
   const loaded = new Map<PluginState["id"], LoadedPlugin>();
@@ -435,7 +436,8 @@ export function startPluginLoader(
         fetchPluginFile(environmentId, plugin, "/web.js").then((response) => response.text()),
         "Loading the web bundle",
       );
-      const definition = await importBundle(bundle);
+      // A bundle's top-level `await` can hang too.
+      const definition = await withDeadline(importBundle(bundle), "Loading the web bundle");
       if (stopped || entry.disposed) return;
       await withDeadline(
         Promise.resolve(

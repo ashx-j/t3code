@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - npm integrity is a sha512 digest of the raw tarball.
 import * as NodeCrypto from "node:crypto";
 
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
@@ -9,6 +10,8 @@ import { type TarballFile, unpackNpmTarball } from "./pluginTarball.ts";
 
 const REGISTRY = "https://registry.npmjs.org";
 const MAX_TARBALL_BYTES = 32 * 1024 * 1024;
+// Install runs in the host's scope where no client can cancel it, so every request has a limit.
+const REQUEST_TIMEOUT = Duration.seconds(60);
 
 export class PluginNpmError extends Schema.TaggedError<PluginNpmError>()("PluginNpmError", {
   reason: Schema.String,
@@ -43,7 +46,12 @@ export const fetchNpmPackage = Effect.fn("PluginNpm.fetch")(function* (
   const http = yield* HttpClient.HttpClient;
   // Scoped names keep their `@`; only the slash is encoded, as the registry expects.
   const metadataUrl = `${REGISTRY}/${name.replace("/", "%2F")}`;
-  const document = yield* http.execute(HttpClientRequest.get(metadataUrl)).pipe(
+  // The abbreviated document lists only what installing needs, a fraction of the full one.
+  const metadataRequest = HttpClientRequest.get(metadataUrl).pipe(
+    HttpClientRequest.setHeader("accept", "application/vnd.npm.install-v1+json"),
+  );
+  const document = yield* http.execute(metadataRequest).pipe(
+    Effect.timeout(REQUEST_TIMEOUT),
     Effect.flatMap(HttpClientResponse.filterStatusOk),
     Effect.flatMap((response) => response.json),
     Effect.flatMap(decodePackageDocument),
@@ -60,9 +68,18 @@ export const fetchNpmPackage = Effect.fn("PluginNpm.fetch")(function* (
       reason: `${name}@${wanted} has no sha512 integrity hash to check it against.`,
     });
   }
-  const tarball = yield* http.execute(HttpClientRequest.get(release.dist.tarball)).pipe(
-    Effect.flatMap(HttpClientResponse.filterStatusOk),
-    Effect.flatMap((response) => response.arrayBuffer),
+  const response = yield* http
+    .execute(HttpClientRequest.get(release.dist.tarball))
+    .pipe(
+      Effect.timeout(REQUEST_TIMEOUT),
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.mapError(failed(`Could not download ${name}@${wanted}.`)),
+    );
+  if (Number(response.headers["content-length"] ?? 0) > MAX_TARBALL_BYTES) {
+    return yield* new PluginNpmError({ reason: `${name}@${wanted} is larger than 32 MiB.` });
+  }
+  const tarball = yield* response.arrayBuffer.pipe(
+    Effect.timeout(REQUEST_TIMEOUT),
     Effect.map((buffer) => new Uint8Array(buffer)),
     Effect.mapError(failed(`Could not download ${name}@${wanted}.`)),
   );
