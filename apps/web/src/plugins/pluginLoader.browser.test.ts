@@ -26,11 +26,14 @@ vi.mock(import("../state/plugins"), () => ({
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { startPluginLoader } from "./pluginLoader";
 import {
+  pluginBannersAtom,
   pluginCommandsAtom,
   pluginContributionKey,
   pluginRightPanelAtom,
   pluginRightPanelKey,
   pluginSlashCommandsAtom,
+  pluginToolRendererAtom,
+  pluginToolRendererKey,
   pluginWebFailureAtom,
 } from "./pluginRegistry";
 
@@ -47,7 +50,7 @@ const webPlugin = (id: string): PluginState => ({
 });
 
 describe("startPluginLoader", () => {
-  it("loads active web plugins, runs their commands, records one that fails, and unloads them when stopped", async () => {
+  it("loads active web plugins, runs their commands, records one that fails, and unloads everything when stopped", async () => {
     const navigate = vi.fn();
     using fetchSpy = vi
       .spyOn(globalThis, "fetch")
@@ -85,13 +88,27 @@ describe("startPluginLoader", () => {
     expect(command?.command).toBe("plugin.hello-web.open-settings");
     command?.run();
     await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith("/settings/plugins"));
-    expect(
-      appAtomRegistry.get(pluginSlashCommandsAtom(environmentId)).map((entry) => entry.name),
-    ).toEqual(["hello"]);
+    const [slashCommand] = appAtomRegistry.get(pluginSlashCommandsAtom(environmentId));
+    expect(slashCommand?.name).toBe("hello");
+    slashCommand?.run({ threadId: "thread-1" });
+    await vi.waitFor(() =>
+      expect(appAtomRegistry.get(pluginBannersAtom(environmentId))[0]?.description).toBe(
+        "Thread thread-1",
+      ),
+    );
+
+    expect(document.querySelectorAll('style[data-plugin="hello-web"]')).toHaveLength(1);
+    const greetRenderer = pluginToolRendererAtom(
+      pluginToolRendererKey(environmentId, "plg_hello-web_greet"),
+    );
+    expect(appAtomRegistry.get(greetRenderer)).toBeDefined();
 
     stop();
+    expect(document.querySelectorAll('style[data-plugin="hello-web"]')).toHaveLength(0);
     expect(appAtomRegistry.get(helloPanel)).toBeUndefined();
     expect(appAtomRegistry.get(pluginCommandsAtom(environmentId))).toEqual([]);
     expect(appAtomRegistry.get(pluginSlashCommandsAtom(environmentId))).toEqual([]);
+    expect(appAtomRegistry.get(pluginBannersAtom(environmentId))).toEqual([]);
+    expect(appAtomRegistry.get(greetRenderer)).toBeUndefined();
   });
 });

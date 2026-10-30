@@ -35,6 +35,7 @@ import * as Stream from "effect/Stream";
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as EnvironmentTheme from "../environmentTheme.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -286,6 +287,7 @@ const make = Effect.gen(function* () {
     crypto: yield* Crypto.Crypto,
   };
   const settingsStore = services.settings;
+  const environmentThemes = yield* EnvironmentTheme.EnvironmentThemeService;
 
   const pluginsDir = path.join(config.stateDir, "plugins");
   const configPath = path.join(config.stateDir, "plugins.json");
@@ -306,11 +308,17 @@ const make = Effect.gen(function* () {
   });
   // Reading and publishing under one lock, so a slower fiber cannot publish an older list last.
   const publishStates = publishLock.withPermits(1)(
-    currentStates.pipe(
-      Effect.tap((states) => services.mcpTools.setInstalledPlugins(states)),
-      Effect.flatMap((states) => PubSub.publish(changes, states)),
-      Effect.asVoid,
-    ),
+    Effect.gen(function* () {
+      const all = yield* Ref.get(records);
+      const states = yield* currentStates;
+      yield* services.mcpTools.setInstalledPlugins(states);
+      yield* environmentThemes.setPluginThemeDirectories(
+        all.flatMap((record, index) =>
+          states[index]?.status === "active" ? [path.join(record.plugin.rootDir, "themes")] : [],
+        ),
+      );
+      yield* PubSub.publish(changes, states);
+    }),
   );
   const findRecord = (pluginId: string) =>
     Ref.get(records).pipe(Effect.map((all) => all.find((record) => record.plugin.id === pluginId)));

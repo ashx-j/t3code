@@ -36,6 +36,30 @@ export interface WebPluginSlashCommand {
   readonly run: (context: { readonly threadId: string }) => void | Promise<void>;
 }
 
+export interface WebPluginBanner {
+  readonly title: string;
+  readonly description?: string;
+  readonly variant?: "info" | "success" | "warning" | "error";
+}
+
+export interface WebPluginToolRenderer {
+  /** The name the server half passed to `mcp.registerTool`. */
+  readonly tool: string;
+  /** Replaces the tool call's details in the timeline. `output` is the tool's text result. */
+  readonly component: WebPluginComponent<{
+    readonly input: unknown;
+    readonly output: string | null;
+    readonly status: string;
+  }>;
+}
+
+export interface WebPluginCodeBlockRenderer {
+  /** The fence language, such as `chart` for ```chart blocks. `mermaid` and `math` are T3's own. */
+  readonly language: string;
+  /** Draws a closed fence in chat messages; while the fence is still streaming, it shows as code. */
+  readonly component: WebPluginComponent<{ readonly code: string }>;
+}
+
 /** What a web plugin's `activate` receives. Everything is released when the plugin unloads. */
 export interface WebPluginApi {
   readonly version: 1;
@@ -60,6 +84,11 @@ export interface WebPluginApi {
     readonly register: (command: WebPluginCommand) => void;
   };
   readonly composer: {
+    /**
+     * Shows a banner above the composer in every thread of this environment until it is hidden,
+     * the user dismisses it, or the plugin unloads. Returns the function that hides it.
+     */
+    readonly showBanner: (banner: WebPluginBanner) => () => void;
     /** Adds a command to the composer's `/` menu. */
     readonly registerSlashCommand: (command: WebPluginSlashCommand) => void;
   };
@@ -68,6 +97,15 @@ export interface WebPluginApi {
    * `href`. It stays valid until the plugin unloads.
    */
   readonly assetUrl: (name: string) => Promise<string>;
+  readonly markdown: {
+    readonly registerCodeBlock: (renderer: WebPluginCodeBlockRenderer) => void;
+  };
+  readonly timeline: {
+    /** Draws this plugin's agent tool calls in the timeline instead of the generic view. */
+    readonly registerToolRenderer: (renderer: WebPluginToolRenderer) => void;
+  };
+  /** Adds a stylesheet until the plugin unloads. Scope its selectors to the plugin's own classes. */
+  readonly injectStyles: (css: string) => void;
   /** Opens a path in the app, such as `/settings/plugins`. */
   readonly navigate: (path: string) => void;
   readonly toast: (message: {

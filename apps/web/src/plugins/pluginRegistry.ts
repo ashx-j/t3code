@@ -31,6 +31,29 @@ export interface PluginSlashCommandEntry {
   readonly run: (context: { readonly threadId: string }) => void;
 }
 
+export interface PluginBannerEntry {
+  readonly key: string;
+  readonly environmentId: EnvironmentId;
+  readonly pluginId: string;
+  readonly variant: "info" | "success" | "warning" | "error";
+  readonly title: string;
+  readonly description?: string;
+  readonly dismiss: () => void;
+}
+
+export interface PluginToolRendererEntry {
+  readonly environmentId: EnvironmentId;
+  /** The MCP tool name agents see: `plg_<pluginId>_<tool>`. */
+  readonly toolName: string;
+  readonly component: ComponentType<PluginToolRendererProps>;
+}
+
+export interface PluginToolRendererProps {
+  readonly input: unknown;
+  readonly output: string | null;
+  readonly status: string;
+}
+
 // Plain maps with one list-level version: chat code reads them on render and re-renders on the
 // version alone, so a plugin never adds a subscription per row or per panel.
 const rightPanels = new Map<string, PluginRightPanelEntry>();
@@ -38,6 +61,8 @@ const settingsPanels = new Map<string, ComponentType>();
 const webFailures = new Map<string, string>();
 const commands = new Map<string, PluginCommandEntry>();
 const slashCommands = new Map<string, PluginSlashCommandEntry>();
+const banners = new Map<string, PluginBannerEntry>();
+const toolRenderers = new Map<string, PluginToolRendererEntry>();
 
 // Reads go through atoms derived from the version, so React Compiler cannot cache a stale lookup.
 const versionAtom = Atom.make(0).pipe(Atom.keepAlive);
@@ -164,3 +189,74 @@ export const pluginSlashCommandsAtom = Atom.family((environmentId: string) =>
     return [...slashCommands.values()].filter((entry) => entry.environmentId === environmentId);
   }),
 );
+
+/** Shows a banner above the composer; returns the function that removes it. */
+export function registerPluginBanner(entry: PluginBannerEntry): () => void {
+  const key = `${entry.environmentId}\u0000${entry.key}`;
+  banners.set(key, entry);
+  bump();
+  return () => {
+    if (banners.get(key) !== entry) return;
+    banners.delete(key);
+    bump();
+  };
+}
+
+export const pluginBannersAtom = Atom.family((environmentId: string) =>
+  Atom.make((get) => {
+    get(versionAtom);
+    return [...banners.values()].filter((entry) => entry.environmentId === environmentId);
+  }),
+);
+
+export const pluginToolRendererKey = (environmentId: EnvironmentId, toolName: string) =>
+  `${environmentId}\u0000${toolName}`;
+
+/** Draws a plugin MCP tool's calls in the timeline; returns the function that removes it. */
+export function registerPluginToolRenderer(entry: PluginToolRendererEntry): () => void {
+  const key = pluginToolRendererKey(entry.environmentId, entry.toolName);
+  if (toolRenderers.has(key)) {
+    throw new Error(`A renderer for "${entry.toolName}" is already registered.`);
+  }
+  toolRenderers.set(key, entry);
+  bump();
+  return () => {
+    if (toolRenderers.get(key) !== entry) return;
+    toolRenderers.delete(key);
+    bump();
+  };
+}
+
+export const pluginToolRendererAtom = Atom.family((key: string) =>
+  Atom.make((get) => {
+    get(versionAtom);
+    return toolRenderers.get(key);
+  }),
+);
+
+export type PluginCodeBlockComponent = ComponentType<{ readonly code: string }>;
+
+// Its own atom rather than the shared version: every chat code block reads it, so it changes only
+// when a code block renderer does.
+export const pluginCodeBlockRenderersAtom = Atom.make<
+  ReadonlyMap<string, PluginCodeBlockComponent>
+>(new Map()).pipe(Atom.keepAlive);
+
+/** Draws fenced code of `language` in chat messages; returns the function that removes it. */
+export function registerPluginCodeBlock(
+  language: string,
+  component: PluginCodeBlockComponent,
+): () => void {
+  const current = appAtomRegistry.get(pluginCodeBlockRenderersAtom);
+  if (current.has(language)) {
+    throw new Error(`A renderer for \`${language}\` code blocks is already registered.`);
+  }
+  appAtomRegistry.set(pluginCodeBlockRenderersAtom, new Map(current).set(language, component));
+  return () => {
+    const latest = appAtomRegistry.get(pluginCodeBlockRenderersAtom);
+    if (latest.get(language) !== component) return;
+    const next = new Map(latest);
+    next.delete(language);
+    appAtomRegistry.set(pluginCodeBlockRenderersAtom, next);
+  };
+}

@@ -8,7 +8,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { WifiOffIcon } from "lucide-react";
+import { PuzzleIcon, WifiOffIcon } from "lucide-react";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { environmentCatalog } from "../../connection/catalog";
 import { ConnectionDiagnosisHeadline } from "../settings/ConnectionDiagnosisDetails";
@@ -25,6 +25,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { ServerUpdateAction, serverUpdateStageLabel } from "../ServerUpdateAction";
 import { useAutoBalanceUpdateBanner } from "./useAutoBalanceUpdateBanner";
+import { pluginBannersAtom } from "../../plugins/pluginRegistry";
 import { ComposerServerUpdateIcon } from "./ComposerServerUpdateStatus";
 import {
   dismissServerUpdateFailure,
@@ -56,6 +57,7 @@ interface SystemComposerBannersInput {
  * a server update, and auto-balanced machines that need one.
  */
 export function useSystemComposerBanners(input: SystemComposerBannersInput) {
+  const pluginBanners = useAtomValue(pluginBannersAtom(input.activeThreadEnvironmentId ?? ""));
   const {
     activeEnvironment,
     activeEnvironmentUnavailable,
@@ -260,6 +262,16 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
       });
     }
     if (autoBalanceUpdateBanner) items.push(autoBalanceUpdateBanner);
+    for (const banner of pluginBanners) {
+      items.push({
+        id: `plugin:${banner.key}`,
+        variant: banner.variant,
+        icon: <PuzzleIcon />,
+        title: banner.title,
+        ...(banner.description === undefined ? {} : { description: banner.description }),
+        onDismiss: banner.dismiss,
+      });
+    }
     return items;
   })() as ComposerBannerStackItem[];
 }

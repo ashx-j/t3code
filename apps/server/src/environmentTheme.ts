@@ -50,6 +50,12 @@ export class EnvironmentThemeService extends Context.Service<
 
     /** Subscribes before reading to retain changes during connection. */
     readonly streamChanges: Stream.Stream<ReadonlyArray<EnvironmentTheme>>;
+
+    /**
+     * Theme folders of active plugins, read after the environment's own folder. The first theme
+     * with an id wins, so a plugin cannot replace a theme the user published.
+     */
+    readonly setPluginThemeDirectories: (directories: ReadonlyArray<string>) => Effect.Effect<void>;
   }
 >()("t3/environmentTheme/EnvironmentThemeService") {}
 
@@ -158,6 +164,7 @@ const make = Effect.gen(function* () {
   // Sequence numbers let subscribers drop queued events older than their initial snapshot.
   const changes = yield* PubSub.sliding<PublishedThemes>(1);
   const published = yield* Ref.make<PublishedThemes>({ seq: 0, themes: [] });
+  const pluginDirectories = yield* Ref.make<ReadonlyArray<string>>([]);
   // Serialize read/compare/publish so slow older reads cannot publish with newer sequence numbers.
   const refreshSemaphore = yield* Semaphore.make(1);
   const watcherScope = yield* Scope.make("sequential");
@@ -165,9 +172,18 @@ const make = Effect.gen(function* () {
 
   const refresh = refreshSemaphore.withPermits(1)(
     Effect.gen(function* () {
-      const themes = yield* readPublishedThemes(environmentThemesDir).pipe(
-        Effect.provideService(FileSystem.FileSystem, fs),
-      );
+      const themes: Array<EnvironmentTheme> = [];
+      const ids = new Set<string>();
+      for (const directory of [environmentThemesDir, ...(yield* Ref.get(pluginDirectories))]) {
+        const found = yield* readPublishedThemes(directory).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+        );
+        for (const theme of found) {
+          if (ids.has(theme.id)) continue;
+          ids.add(theme.id);
+          themes.push(theme);
+        }
+      }
       // Compare the whole value so new fields cannot silently miss republishes.
       const [changed, next] = yield* Ref.modify(
         published,
@@ -198,6 +214,13 @@ const make = Effect.gen(function* () {
 
   return {
     current: Effect.map(refresh, (state) => state.themes),
+    setPluginThemeDirectories: Effect.fn("EnvironmentThemeService.setPluginThemeDirectories")(
+      function* (directories) {
+        const previous = yield* Ref.getAndSet(pluginDirectories, directories);
+        if (Equal.equals(previous, directories)) return;
+        yield* refresh;
+      },
+    ),
     get streamChanges() {
       return Stream.unwrap(
         Effect.gen(function* () {

@@ -30,7 +30,7 @@ var web_default = defineWebPlugin({
           .then(setNote);
       }, []);
       return /* @__PURE__ */ jsxs("div", {
-        className: "space-y-1 p-4 text-sm",
+        className: "hello-web-panel space-y-1 p-4 text-sm",
         children: [
           /* @__PURE__ */ jsx("p", { children: greeting }),
           /* @__PURE__ */ jsx("p", { children: note }),
@@ -41,6 +41,39 @@ var web_default = defineWebPlugin({
         ],
       });
     }
+    api.markdown.registerCodeBlock({
+      language: "hello-chart",
+      component: (props) => {
+        return /* @__PURE__ */ jsx("div", {
+          className: "flex h-16 items-end gap-1",
+          children: props.code
+            .split(",")
+            .map((value, position) => ({
+              id: `bar-${position}`,
+              height: Number(value) * 10,
+            }))
+            .map((bar) =>
+              /* @__PURE__ */ jsx(
+                "div",
+                {
+                  className: "w-3 bg-primary",
+                  style: { height: `${bar.height}%` },
+                },
+                bar.id,
+              ),
+            ),
+        });
+      },
+    });
+    api.timeline.registerToolRenderer({
+      tool: "greet",
+      component: (props) =>
+        /* @__PURE__ */ jsxs("p", {
+          className: "text-sm",
+          children: ["👋 ", props.output ?? "Greeting…"],
+        }),
+    });
+    api.injectStyles(".hello-web-panel { border-top: 2px solid var(--color-primary); }");
     api.rightPanel.register({
       name: "hello",
       title: "Hello panel",
@@ -49,11 +82,12 @@ var web_default = defineWebPlugin({
     api.composer.registerSlashCommand({
       name: "hello",
       description: "Say hello from hello-web",
-      run: ({ threadId }) =>
-        api.toast({
-          title: "Hello",
-          description: `From thread ${threadId}`,
-        }),
+      run: ({ threadId }) => {
+        api.composer.showBanner({
+          title: "Hello from hello-web",
+          description: `Thread ${threadId}`,
+        });
+      },
     });
     api.commands.register({
       id: "open-settings",

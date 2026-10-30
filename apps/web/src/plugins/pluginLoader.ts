@@ -41,16 +41,23 @@ import { registerCommands, type CommandHandlers } from "../shortcuts/dispatcher"
 import { pluginEnvironment } from "../state/plugins";
 import { readPreparedConnection } from "../state/session";
 import {
+  registerPluginBanner,
+  registerPluginCodeBlock,
   registerPluginCommand,
   registerPluginRightPanel,
   registerPluginSlashCommand,
+  registerPluginToolRenderer,
   registerPluginSettingsPanel,
   setPluginWebFailure,
+  type PluginToolRendererProps,
 } from "./pluginRegistry";
 import { isLoadableWebPlugin } from "./pluginWatch";
 
 const PANEL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
 const COMMAND_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
+const CODE_LANGUAGE = /^[a-z0-9][a-z0-9+#.-]{0,31}$/;
+// Languages the app already draws itself.
+const BUILT_IN_LANGUAGES = new Set(["mermaid", "math"]);
 
 /**
  * Bundles import React and the UI kit from here instead of shipping their own copies; the SDK's
@@ -169,6 +176,7 @@ function makeWebPluginApi({
 }: WebPluginApiContext): WebPluginApi {
   const pluginId = plugin.id;
   const assetUrls = new Map<string, Promise<string>>();
+  let bannerCount = 0;
   return {
     version: 1,
     id: pluginId,
@@ -251,6 +259,20 @@ function makeWebPluginApi({
       },
     },
     composer: {
+      showBanner: (banner) => {
+        bannerCount += 1;
+        const hide: () => void = registerPluginBanner({
+          key: `${pluginId}:${bannerCount}`,
+          environmentId,
+          pluginId,
+          variant: banner.variant ?? "info",
+          title: banner.title,
+          ...(banner.description === undefined ? {} : { description: banner.description }),
+          dismiss: () => hide(),
+        });
+        cleanups.push(hide);
+        return hide;
+      },
       registerSlashCommand: (command) => {
         if (!COMMAND_ID.test(command.name)) {
           throw new TypeError(`"${command.name}" is not a valid slash command name.`);
@@ -283,6 +305,38 @@ function makeWebPluginApi({
         });
       assetUrls.set(name, url);
       return url;
+    },
+    markdown: {
+      registerCodeBlock: (renderer) => {
+        if (!CODE_LANGUAGE.test(renderer.language) || BUILT_IN_LANGUAGES.has(renderer.language)) {
+          throw new TypeError(`"${renderer.language}" is not a language plugins can draw.`);
+        }
+        cleanups.push(
+          registerPluginCodeBlock(
+            renderer.language,
+            renderer.component as ComponentType<{ readonly code: string }>,
+          ),
+        );
+      },
+    },
+    timeline: {
+      registerToolRenderer: (renderer) => {
+        cleanups.push(
+          registerPluginToolRenderer({
+            environmentId,
+            toolName: `plg_${pluginId}_${renderer.tool}`,
+            // The SDK types components without React; they are React function components.
+            component: renderer.component as ComponentType<PluginToolRendererProps>,
+          }),
+        );
+      },
+    },
+    injectStyles: (css) => {
+      const style = document.createElement("style");
+      style.dataset.plugin = pluginId;
+      style.textContent = css;
+      document.head.append(style);
+      cleanups.push(() => style.remove());
     },
     navigate: (path) => {
       if (!path.startsWith("/")) throw new TypeError(`"${path}" is not an app path.`);
