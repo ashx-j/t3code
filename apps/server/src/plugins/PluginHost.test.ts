@@ -446,7 +446,13 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         });
 
         assert.strictEqual(
-          yield* hooks.beforeDispatch({ threadId, text: "Ship it #context", createdBy: "user" }),
+          yield* hooks.beforeDispatch({
+            threadId,
+            messageId: "message:context",
+            text: "Ship it #context",
+            createdBy: "user",
+            attachments: [],
+          }),
           "Ship it #context\n\nContext from workbench-plugin.",
         );
 

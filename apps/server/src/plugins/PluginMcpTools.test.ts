@@ -179,17 +179,44 @@ it.effect("answer under plg_ names with access checks, then answer disabled", ()
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("offers t3_plugins_list only once a plugin is installed", () =>
+it.effect("offers the plugin management tools only once a plugin is installed", () =>
   Effect.gen(function* () {
     const tools = yield* PluginMcpTools.PluginMcpTools;
+    const invoked: Array<unknown> = [];
+    yield* tools.setHostActions({
+      invoke: (pluginId, method, input) =>
+        Effect.sync(() => {
+          invoked.push({ pluginId, method, input });
+          return "pong";
+        }),
+      setEnabled: (pluginId, enabled) => Effect.succeed({ ...installed, id: pluginId, enabled }),
+    });
     yield* tools.setInstalledPlugins([]);
     assert.notInclude(yield* toolNames, "t3_plugins_list");
 
     yield* tools.setInstalledPlugins([installed]);
-    assert.include(yield* toolNames, "t3_plugins_list");
+    assert.includeMembers(yield* toolNames, [
+      "t3_plugins_list",
+      "t3_plugins_invoke",
+      "t3_plugins_set_enabled",
+    ]);
     assert.deepStrictEqual(yield* call("t3_plugins_list", readOnlyClient), {
       isError: false,
       text: '{"plugins":[{"id":"mcp-plugin","name":"MCP tools","version":"0.1.0","status":"active","enabled":true}]}',
     });
+    const ping = { pluginId: "mcp-plugin", method: "ping", input: { n: 1 } };
+    assert.isTrue((yield* call("t3_plugins_invoke", readOnlyClient, ping)).isError);
+    assert.deepStrictEqual(yield* call("t3_plugins_invoke", fullAccessClient, ping), {
+      isError: false,
+      text: '"pong"',
+    });
+    assert.deepStrictEqual(invoked, [ping]);
+    assert.deepStrictEqual(
+      yield* call("t3_plugins_set_enabled", fullAccessClient, {
+        pluginId: "mcp-plugin",
+        enabled: false,
+      }),
+      { isError: false, text: '{"id":"mcp-plugin","status":"active","enabled":false}' },
+    );
   }).pipe(Effect.provide(layerTest)),
 );

@@ -5,6 +5,7 @@ import * as NodeModule from "node:module";
 import {
   AuthEnvironmentScope,
   AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
   type PluginFailure,
   PluginId,
   type PluginManifest,
@@ -686,7 +687,7 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  return PluginHost.of({
+  const service = PluginHost.of({
     list: currentStates,
     streamStates: Stream.unwrap(
       Effect.gen(function* () {
@@ -777,6 +778,19 @@ const make = Effect.gen(function* () {
         ),
       ),
   });
+  // Agents reach these through `t3_plugins_invoke` and `t3_plugins_set_enabled`, which MCP
+  // already gates as writes, so the call carries operate access.
+  yield* services.mcpTools.setHostActions({
+    invoke: (pluginId, method, input) =>
+      service.invoke({
+        pluginId,
+        method,
+        input,
+        scopes: [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
+      }),
+    setEnabled: service.setEnabled,
+  });
+  return service;
 });
 
 export const layer = Layer.effect(PluginHost, make);

@@ -80,8 +80,14 @@ orchestration code and its tests need no plugin wiring; the server provides one 
 dispatch path and the host. `events.stored` for one type lets the event sink filter before anything is
 decoded for the plugin; several types share one stream so events stay in sequence order. A sliding
 buffer means a slow plugin loses old events rather than stalling the server; plugins resume by
-`sequence`. Hooks skip slash commands, whose meaning an appended paragraph would change. A plugin notification that does
-not start a run needs a new orchestration command, which is why the API has none yet.
+`sequence`. `turns.afterRunCompleted` is built from the same stream and the plugin's own storage:
+it saves the sequence after each ended run, so runs that end while a plugin is off arrive when it
+starts. Hooks skip slash commands, whose meaning an appended paragraph would change. A plugin
+notification that does not start a run needs a new orchestration command, which is why the API
+has none yet.
+
+The management tools (`t3_plugins_invoke`, `t3_plugins_set_enabled`) live in `PluginMcpTools`, but
+the host depends on that service, so the host hands it the two actions when it starts.
 
 ## Nothing installed costs nothing
 
