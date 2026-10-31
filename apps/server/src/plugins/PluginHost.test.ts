@@ -529,6 +529,19 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           }),
           "Ship it #context\n\nContext from workbench-plugin.",
         );
+        const outgoing = (text: string) =>
+          hooks.beforeDispatch({
+            threadId,
+            messageId: "message:workbench",
+            text,
+            createdBy: "user",
+            attachments: [],
+          });
+        assert.strictEqual(yield* outgoing("#shout ship it"), "SHIP IT");
+        assert.strictEqual(
+          (yield* Effect.flip(outgoing("Deploy with #secret"))).message,
+          "Workbench: Remove the secret first.",
+        );
 
         const request = (id: string, kind: string) => ({
           id,

@@ -171,6 +171,7 @@ export const makePluginApi = (input: {
     schedule: makeScheduleApi(facade),
     turns: makeTurnsApi(facade, services, {
       storage,
+      pluginName: input.name,
       runEvents: (afterSequence) =>
         storedEvents(
           facade,

@@ -55,6 +55,9 @@ A plugin can answer an agent's approval requests and questions for you, for exam
 commands you always allow. The request still appears in the thread, and you can answer it yourself
 while the plugin decides. If no plugin answers within a few seconds, it waits for you as usual.
 
+A plugin can also change a message before it is sent, or stop it and say why. A stopped message
+stays in the composer, so you can edit it and send it again.
+
 ## Where plugins live
 
 Installed plugins are in the `plugins` folder of the environment's T3 Code data directory, one

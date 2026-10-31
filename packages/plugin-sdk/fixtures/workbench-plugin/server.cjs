@@ -1,11 +1,13 @@
 /** @type {import("@t3tools/plugin-sdk/server").PluginDefinition} */
 module.exports = {
   activate(api) {
-    api.turns.beforeDispatch((message) =>
-      message.text.includes("#context")
-        ? { appendText: "Context from workbench-plugin." }
-        : undefined,
-    );
+    api.turns.beforeDispatch((message) => {
+      if (message.text.includes("#secret")) return { block: "Remove the secret first." };
+      if (message.text.startsWith("#shout ")) return { text: message.text.slice(7).toUpperCase() };
+      if (message.text.includes("#context"))
+        return { appendText: "Context from workbench-plugin." };
+      return undefined;
+    });
 
     // Allows `git status`, turns down `rm` with a reason, takes each question's first option, and
     // leaves everything else to the user.

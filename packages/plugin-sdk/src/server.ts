@@ -86,8 +86,15 @@ export interface PluginCompletedRun {
   readonly run: JsonObject;
 }
 
-/** Nothing leaves the message as it is; `appendText` adds a paragraph after it. */
-export type PluginBeforeDispatchResult = void | { readonly appendText: string };
+/**
+ * Nothing leaves the message as it is. `appendText` adds a paragraph after it, `text` replaces it,
+ * and `block` stops it: the sender gets the reason, after the plugin's name, and keeps their draft.
+ */
+export type PluginBeforeDispatchResult =
+  | void
+  | { readonly appendText: string }
+  | { readonly text: string }
+  | { readonly block: string };
 
 export type PluginApprovalDecision =
   | "accept"
@@ -238,7 +245,11 @@ export interface PluginApi {
         context: { readonly signal: AbortSignal },
       ) => PluginRuntimeRequestAnswer | Promise<PluginRuntimeRequestAnswer>,
     ) => void;
-    /** Sees each user or agent message before it is sent, except slash commands; a hook slower than 2 seconds or one that throws is skipped. */
+    /**
+     * Sees each user or agent message before it is sent, except slash commands, after hooks
+     * registered before it and with their changes. A block stops the rest. A hook slower than
+     * 2 seconds or one that throws is skipped.
+     */
     readonly beforeDispatch: (
       hook: (
         message: PluginOutgoingMessage,

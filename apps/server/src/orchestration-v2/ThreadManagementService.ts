@@ -748,9 +748,9 @@ const make = Effect.gen(function* () {
     }
   };
 
-  // Plugins see user and agent messages before orchestration records them. Notifications and
-  // guest messages are not the sender's own text, and an appended paragraph would change what a
-  // slash command such as `/goal clear` means, so all three skip the hooks.
+  // Plugins see user and agent messages before orchestration records them, and may change or
+  // block them. Notifications and guest messages are not the sender's own text, and changed text
+  // would change what a slash command such as `/goal clear` means, so all three skip the hooks.
   const withPluginHooks = (command: OrchestrationV2ServerCommand) =>
     command.type === "message.dispatch" &&
     command.notification === undefined &&
@@ -778,7 +778,19 @@ const make = Effect.gen(function* () {
                   },
                 }),
           })
-          .pipe(Effect.map((text) => (text === command.text ? command : { ...command, text })))
+          .pipe(
+            Effect.map((text) => (text === command.text ? command : { ...command, text })),
+            // A rejected command is one every caller already handles; its cause carries the
+            // plugin's reason, which is what clients show.
+            Effect.mapError(
+              (blocked) =>
+                new Orchestrator.OrchestratorCommandRejectedError({
+                  commandId: command.commandId,
+                  commandType: command.type,
+                  cause: blocked,
+                }),
+            ),
+          )
       : Effect.succeed(command);
 
   const dispatch: ThreadManagementServiceShape["dispatch"] = (command) =>

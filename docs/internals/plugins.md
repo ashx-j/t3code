@@ -83,7 +83,9 @@ stale items. Clicks and shortcuts come back through the existing menu-action cha
 
 The orchestrator stays pure: `turns.beforeDispatch` hooks run in `ThreadManagementService.dispatch`,
 before the command reaches it, with a 2-second deadline each and fail-open, and skip notifications
-and guest messages. The hook registry is a `PluginHooks` reference with an inert default, so
+and guest messages. A block fails the dispatch with `OrchestratorCommandRejectedError` caused by
+the plugin's reason: every caller already handles that error and releases claimed attachments, and
+clients show the deepest error message, so the sender sees the reason and keeps the draft. The hook registry is a `PluginHooks` reference with an inert default, so
 orchestration code and its tests need no plugin wiring; the server provides one registry to the
 dispatch path and the host. `events.stored` for one type lets the event sink filter before anything is
 decoded for the plugin; several types share one stream so events stay in sequence order. A sliding
@@ -92,8 +94,8 @@ buffer means a slow plugin loses old events rather than stalling the server; plu
 dropping, because a dropped run would be lost for good once the saved position moves past it. It
 saves the sequence and the last 256 ended runs in the plugin's storage: runs that end while a
 plugin is off arrive when it starts, and a run updated again after it ended (a checkpoint landing
-on an interrupted run) is not delivered twice. Hooks skip slash commands, whose meaning an
-appended paragraph would change.
+on an interrupted run) is not delivered twice. Hooks skip slash commands, whose meaning changed
+text would change.
 
 `turns.onRuntimeRequest` reacts to stored events too and answers through the same
 `runtime-request.respond` command a client sends, so every adapter that raises approvals or
