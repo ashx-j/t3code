@@ -395,7 +395,9 @@ const resolvePnpmGlobalLatestVersion = Effect.fn("resolvePnpmGlobalLatestVersion
   env: NodeJS.ProcessEnv,
 ) {
   // Match the updater's pnpm and environment.
-  const pnpmPath = yield* resolveCommandPath("pnpm", { env });
+  const pnpmPath = yield* resolveCommandPath("pnpm", {
+    env: { ...(yield* HostProcess.Environment), ...env },
+  });
   if (!pnpmPath) return null;
   // Silent reporting keeps project package-manager warnings out of the JSON.
   const outdated = yield* runProbe(

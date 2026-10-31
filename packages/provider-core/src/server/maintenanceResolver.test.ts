@@ -767,7 +767,8 @@ it.layer(
 
   it.effect.each([
     {
-      case: "the eligible release",
+      case: "the eligible release with an inherited PATH",
+      inheritPath: true,
       outdated: { "@example/package-tool": { current: "1.0.0", latest: "1.1.0" } },
       exitCode: 1,
       npmOutput: '"1.2.0"',
@@ -822,8 +823,11 @@ it.layer(
         let npmProbes = 0;
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
           packageToolUpdate,
-          { binaryPath: link, env: { PATH: pnpmBinDir } },
+          { binaryPath: link, env: fixture.inheritPath ? {} : { PATH: pnpmBinDir } },
         ).pipe(
+          Effect.provideService(HostProcess.Environment, {
+            PATH: fixture.inheritPath ? pnpmBinDir : "",
+          }),
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
             stdoutSpawner(
