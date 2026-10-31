@@ -405,6 +405,14 @@ export interface PluginApi {
         | Promise<PluginTextGenerationTasks[K]["output"] | void>,
     ) => void;
   };
+  readonly agents: {
+    /**
+     * Adds `text` (up to 4,000 bytes) to the instructions T3 Code gives Claude and Codex agents,
+     * from their next turn or session until the plugin deactivates. A `skills/` folder of
+     * `<name>/SKILL.md` skills beside the manifest reaches the same agents with no code.
+     */
+    readonly addInstructions: (text: string) => void;
+  };
   readonly mcp: {
     /** Offers a tool to agents in every thread until the plugin deactivates. */
     readonly registerTool: (tool: PluginMcpTool, handler: PluginMcpToolHandler) => void;

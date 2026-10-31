@@ -391,9 +391,16 @@ const make = Effect.gen(function* () {
       const all = yield* Ref.get(records);
       const states = yield* currentStates;
       yield* services.mcpTools.setInstalledPlugins(states);
+      const activeRoots = all.flatMap((record, index) =>
+        states[index]?.status === "active" ? [record.plugin.rootDir] : [],
+      );
       yield* environmentThemes.setPluginThemeDirectories(
-        all.flatMap((record, index) =>
-          states[index]?.status === "active" ? [path.join(record.plugin.rootDir, "themes")] : [],
+        activeRoots.map((rootDir) => path.join(rootDir, "themes")),
+      );
+      yield* services.hooks.setSkillFolders(
+        yield* Effect.filter(
+          activeRoots.map((rootDir) => ({ plugin: rootDir, skills: path.join(rootDir, "skills") })),
+          (folder) => fs.exists(folder.skills).pipe(Effect.orElseSucceed(() => false)),
         ),
       );
       yield* PubSub.publish(changes, states);

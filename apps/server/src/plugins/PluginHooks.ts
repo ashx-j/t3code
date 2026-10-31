@@ -69,6 +69,14 @@ export type PluginTextGenerationKind =
 /** A plugin's answer for one generation, unchecked, or nothing. The host bounds it. */
 type TextGenerator = (input: Schema.JsonObject) => Effect.Effect<unknown>;
 
+type SkillFolder = { readonly plugin: string; readonly skills: string };
+
+/** What plugins give agents: instruction texts, and the folders of plugins that ship skills. */
+export interface PluginAgentContext {
+  readonly instructions: ReadonlyArray<string>;
+  readonly skillFolders: ReadonlyArray<SkillFolder>;
+}
+
 /** Runs a plugin's slash command; `args` is the text after `/name`. The host bounds it. */
 type SlashCommandHandler = (
   message: PluginOutgoingMessage & { readonly args: string },
@@ -129,6 +137,12 @@ export interface PluginHooksRegistry {
     kind: PluginTextGenerationKind,
     generator: TextGenerator,
   ) => Effect.Effect<Effect.Effect<void>>;
+  /** Adds instructions for agents and returns the effect that removes them. */
+  readonly addAgentInstructions: (text: string) => Effect.Effect<Effect.Effect<void>>;
+  /** Replaces the folders of active plugins that ship skills. */
+  readonly setSkillFolders: (folders: ReadonlyArray<SkillFolder>) => Effect.Effect<void>;
+  /** Nothing while no plugin gives agents anything, so turns stay as they were. */
+  readonly agentContext: Effect.Effect<PluginAgentContext | undefined>;
   /** The generators for `kind`, in the order plugins added them. */
   readonly textGenerators: (
     kind: PluginTextGenerationKind,
@@ -147,6 +161,10 @@ export class PluginHooks extends Context.Reference<PluginHooksRegistry>("t3/plug
     currentSlashCommands: Effect.succeed([]),
     addTextGenerator: () => Effect.succeed(Effect.void),
     textGenerators: () => Effect.succeed([]),
+    addAgentInstructions: () => Effect.succeed(Effect.void),
+    setSkillFolders: () => Effect.void,
+    // @effect-diagnostics-next-line effectSucceedWithVoid:off - The optional context needs undefined, not void.
+    agentContext: Effect.succeed(undefined),
     // Stays open like the real registry's stream, so a stream zipped with it keeps running.
     slashCommands: Stream.concat(Stream.make([]), Stream.never),
   }),
@@ -163,6 +181,8 @@ const applyOutcome = (text: string, outcome: DispatchOutcome) =>
 
 const make = Effect.gen(function* () {
   const hooks = yield* Ref.make<ReadonlyArray<{ readonly run: BeforeDispatchHook }>>([]);
+  const instructions = yield* Ref.make<ReadonlyArray<{ readonly text: string }>>([]);
+  const skillFolders = yield* Ref.make<ReadonlyArray<SkillFolder>>([]);
   const generators = yield* Ref.make<
     ReadonlyArray<{ readonly kind: PluginTextGenerationKind; readonly run: TextGenerator }>
   >([]);
@@ -230,6 +250,21 @@ const make = Effect.gen(function* () {
           Ref.update(generators, (all) => all.filter((other) => other !== entry)),
         ),
       ),
+    addAgentInstructions: (text) =>
+      Effect.sync(() => ({ text })).pipe(
+        Effect.tap((entry) => Ref.update(instructions, (all) => [...all, entry])),
+        Effect.map((entry) =>
+          Ref.update(instructions, (all) => all.filter((other) => other !== entry)),
+        ),
+      ),
+    setSkillFolders: (folders) => Ref.set(skillFolders, folders),
+    agentContext: Effect.all([Ref.get(instructions), Ref.get(skillFolders)]).pipe(
+      Effect.map(([texts, folders]) =>
+        texts.length === 0 && folders.length === 0
+          ? undefined
+          : { instructions: texts.map((entry) => entry.text), skillFolders: folders },
+      ),
+    ),
     textGenerators: (kind) =>
       Ref.get(generators).pipe(
         Effect.map((all) => all.filter((entry) => entry.kind === kind).map((entry) => entry.run)),

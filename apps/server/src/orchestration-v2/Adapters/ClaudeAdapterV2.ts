@@ -1483,6 +1483,8 @@ export function makeClaudeQueryOptions(input: {
   readonly appendSystemPromptFileText?: string;
   // Flag settings, because a user's settings.json env beats the process env in Claude Code.
   readonly toolSearchOverride?: "true";
+  /** T3 Code plugins' instructions, and their folders loaded as Claude Code plugins for skills. */
+  readonly plugins?: ProviderAdapter.ProviderAdapterV2TurnInput["plugins"];
 }): ClaudeAgentSdkQueryOptions {
   const compiledSelection = compileClaudeModelSelection(input.modelSelection);
   const {
@@ -1597,9 +1599,18 @@ export function makeClaudeQueryOptions(input: {
               (deviceInstructions
                 ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n`
                 : "")),
+        ...(input.plugins?.instructions ?? []),
         ...launchAppendSystemPrompt,
       ].join("\n\n"),
     },
+    ...(input.plugins === undefined || input.plugins.skillFolders.length === 0
+      ? {}
+      : {
+          plugins: input.plugins.skillFolders.map((folder) => ({
+            type: "local" as const,
+            path: folder.plugin,
+          })),
+        }),
     ...(deviceInstructions
       ? { hooks: { SubagentStart: [{ hooks: [subagentDeviceInstructions] }] } }
       : {}),
@@ -10248,6 +10259,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             onElicitation,
             supportedDialogKinds: ["resume_return"],
             ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
+            ...(turnInput.plugins === undefined ? {} : { plugins: turnInput.plugins }),
             ...(toolSearchOverride === undefined ? {} : { toolSearchOverride }),
           });
           const resolvedTurnCwd = yield* fileSystem

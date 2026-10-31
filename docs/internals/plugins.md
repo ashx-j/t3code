@@ -118,6 +118,17 @@ first, and plugin answers get the cleanup T3 gives model output. There is still 
 `text.generate`: providers only offer these tasks, and adding one means a new method in every
 text generation driver.
 
+Plugin instructions and skill folders ride on each adapter turn input, read once per turn in
+`RunExecutionService`, so adapters never look up plugins. Claude appends the instructions to T3's
+system prompt text, before the user's own launch text, and loads each plugin folder with a
+`skills/` folder as a Claude Code plugin (`--plugin-dir`), which reads `skills/` natively. Codex
+gets the instructions as `application` context entries and the `skills` folders through
+`skills/extraRoots/set`, sent only when they change. The ACP agents (Grok, Antigravity, Fx),
+OpenCode, Cursor, Pi and Muse are not wired: each puts T3's own text in its own place, so each
+needs its own change, and none takes a skill folder from T3. Claude starts a process with its
+options, so a change reaches a Claude thread when its next process starts. The composer's `$`
+picker lists what each provider discovers, which does not include plugin skills yet.
+
 `threads.notify` is the one plugin change inside `Orchestrator.ts`: the internal
 `thread.notification.record` command, because every `message.dispatch` starts a run. The note joins
 the thread's latest finished run. `TurnItemPositionStore` sorts run-less items before every run, and

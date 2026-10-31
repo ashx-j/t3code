@@ -222,35 +222,45 @@ describe("CodexAdapterV2 runtime policy", () => {
     }),
   );
 
-  it.effect("sends MCP app model context as untrusted Codex context", () =>
-    Effect.gen(function* () {
-      const policy = { runtimeMode: "full-access", interactionMode: "default", cwd: null } as const;
-      const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
-      const appContext = [{ key: "mcp_app_todos_list_todos_item-1", text: "Filtered to overdue" }];
-      const alone = yield* CodexAdapterV2.buildCodexTurnStartParams({
-        nativeThreadId: "native-app-context",
-        codexInput: [{ type: "text", text: "what's on my list?" }],
-        runtimePolicy: policy,
-        modelSelection,
-        appContext,
-      });
-      assert.deepEqual(alone.additionalContext, {
-        "mcp_app_todos_list_todos_item-1": { kind: "untrusted", value: "Filtered to overdue" },
-      });
-      const withT3 = yield* CodexAdapterV2.buildCodexTurnStartParams({
-        nativeThreadId: "native-app-context",
-        codexInput: [{ type: "text", text: "what's on my list?" }],
-        runtimePolicy: policy,
-        modelSelection,
-        hasT3Mcp: true,
-        appContext,
-      });
-      assert.deepEqual(withT3.additionalContext?.["mcp_app_todos_list_todos_item-1"], {
-        kind: "untrusted",
-        value: "Filtered to overdue",
-      });
-      assert.isDefined(withT3.additionalContext?.["t3_code_runtime"]);
-    }),
+  it.effect(
+    "sends MCP app model context as untrusted and plugin instructions as application context",
+    () =>
+      Effect.gen(function* () {
+        const policy = {
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: null,
+        } as const;
+        const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
+        const appContext = [
+          { key: "mcp_app_todos_list_todos_item-1", text: "Filtered to overdue" },
+        ];
+        const alone = yield* CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: "native-app-context",
+          codexInput: [{ type: "text", text: "what's on my list?" }],
+          runtimePolicy: policy,
+          modelSelection,
+          appContext,
+          pluginInstructions: ["Use pnpm."],
+        });
+        assert.deepEqual(alone.additionalContext, {
+          t3_code_plugin_01: { kind: "application", value: "Use pnpm." },
+          "mcp_app_todos_list_todos_item-1": { kind: "untrusted", value: "Filtered to overdue" },
+        });
+        const withT3 = yield* CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: "native-app-context",
+          codexInput: [{ type: "text", text: "what's on my list?" }],
+          runtimePolicy: policy,
+          modelSelection,
+          hasT3Mcp: true,
+          appContext,
+        });
+        assert.deepEqual(withT3.additionalContext?.["mcp_app_todos_list_todos_item-1"], {
+          kind: "untrusted",
+          value: "Filtered to overdue",
+        });
+        assert.isDefined(withT3.additionalContext?.["t3_code_runtime"]);
+      }),
   );
 });
 

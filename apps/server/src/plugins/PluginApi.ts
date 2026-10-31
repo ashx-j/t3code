@@ -16,6 +16,7 @@ import type * as ProjectService from "../project/ProjectService.ts";
 import type * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import type * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import type * as ServerSettings from "../serverSettings.ts";
+import { makeAgentsApi } from "./api/agents.ts";
 import { makeEventsApi, storedEvents } from "./api/events.ts";
 import { makeFacadeContext } from "./api/facade.ts";
 import { makeHttpApi } from "./api/http.ts";
@@ -190,6 +191,7 @@ export const makePluginApi = (input: {
     }),
     slashCommands: makeSlashCommandsApi(facade, services, input.name),
     textGeneration: makeTextGenerationApi(facade, services),
+    agents: makeAgentsApi(facade, services, input.name),
     mcp: makeMcpApi(facade, services),
     http: makeHttpApi(facade, services),
     server: makeServerApi(facade, {

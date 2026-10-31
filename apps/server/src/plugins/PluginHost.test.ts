@@ -285,6 +285,31 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
     }).pipe(Effect.provide(layerConfig())),
   );
 
+  it.effect("gives agents a plugin's skills and instructions until it is disabled", () =>
+    Effect.gen(function* () {
+      const skills = PluginId.make("skills-plugin");
+      const rootDir = `${fixturesDir}skills-plugin`;
+      yield* writePluginsConfig({ enabled: { [skills]: true }, devPaths: [rootDir] });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const hooks = yield* PluginHooks.PluginHooks;
+        yield* waitForStatuses(host, { [skills]: "active" });
+        const path = yield* Path.Path;
+        assert.deepStrictEqual(yield* hooks.agentContext, {
+          instructions: [
+            '<t3_code_plugin name="Release helper">\nWrite release notes in the past tense.\n</t3_code_plugin>',
+          ],
+          skillFolders: [
+            { plugin: path.resolve(rootDir), skills: path.resolve(rootDir, "skills") },
+          ],
+        });
+
+        yield* host.setEnabled(skills, false);
+        assert.isUndefined(yield* hooks.agentContext);
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
   it.effect("reload picks up a changed manifest and changed code", () =>
     Effect.gen(function* () {
       const rootDir = yield* writeInstalledPlugin(
