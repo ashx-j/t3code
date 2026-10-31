@@ -6,9 +6,11 @@ import helloWebSource from "../../../../packages/plugin-sdk/fixtures/hello-web/w
 
 vi.mock(import("../state/session"), async (original) => ({
   ...(await original()),
-  readPreparedConnection: (() => ({
+  readPreparedConnection: ((environmentId: string) => ({
     httpBaseUrl: "http://plugins.test/",
-    httpAuthorization: { _tag: "Bearer", token: "token" },
+    httpAuthorization: environmentId.endsWith(":relay")
+      ? { _tag: "Dpop", accessToken: "relay-token" }
+      : { _tag: "Bearer", token: "token" },
   })) as never,
 }));
 const { live, channel } = await vi.hoisted(async () => {
@@ -22,7 +24,15 @@ const { live, channel } = await vi.hoisted(async () => {
   };
 });
 vi.mock(import("../state/plugins"), () => ({
-  pluginEnvironment: { pluginsLive: () => live, pluginChannel: () => channel } as never,
+  pluginEnvironment: {
+    pluginsLive: () => live,
+    pluginChannel: () => channel,
+    pluginFileHeaders: {
+      label: "plugin-file-headers",
+      run: async (_registry: unknown, input: { readonly url: string }) =>
+        AsyncResult.success({ authorization: "DPoP relay-token", dpop: `proof for ${input.url}` }),
+    },
+  } as never,
 }));
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -174,6 +184,26 @@ describe("startPluginLoader", () => {
 
     await vi.waitFor(() =>
       expect(appAtomRegistry.get(pluginBannersAtom(environmentId))[0]?.title).toBe("first value"),
+    );
+  });
+
+  it("signs bundle requests with a DPoP proof over a T3 Connect link", async () => {
+    using fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response("export default { activate() {} };"));
+    const environmentId = EnvironmentId.make("environment:plugin-loader:relay");
+    const stop = startPluginLoader(environmentId, vi.fn());
+    using _loader = { [Symbol.dispose]: stop };
+
+    appAtomRegistry.set(live, AsyncResult.success({ plugins: [webPlugin("relay-web")] }));
+
+    await vi.waitFor(() =>
+      expect(fetchSpy.mock.calls[0]?.[1]).toEqual({
+        headers: {
+          authorization: "DPoP relay-token",
+          dpop: "proof for http://plugins.test/api/plugins/relay-web/web.js?v=0.1.0",
+        },
+      }),
     );
   });
 });

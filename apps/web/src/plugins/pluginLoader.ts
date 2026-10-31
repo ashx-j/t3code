@@ -6,6 +6,7 @@ import {
   useAtomSubscribe,
   useAtomValue,
 } from "@effect/atom-react";
+import type { PreparedHttpAuthorization } from "@t3tools/client-runtime/connection";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { ThreadId, type EnvironmentId, type PluginState } from "@t3tools/contracts";
@@ -118,6 +119,25 @@ const errorText = (error: unknown) =>
 
 // Bearer and cookie sessions can fetch plugin files directly. A DPoP proof needs the relay
 // signer, which only the client runtime holds.
+async function pluginFileRequestInit(
+  authorization: PreparedHttpAuthorization | null,
+  url: URL,
+): Promise<RequestInit> {
+  if (authorization === null) return { credentials: "include" };
+  if (authorization._tag === "Bearer") {
+    return { headers: { authorization: `Bearer ${authorization.token}` } };
+  }
+  const headers = await runAtomCommand(
+    appAtomRegistry,
+    pluginEnvironment.pluginFileHeaders,
+    { authorization, url: url.href },
+    { reportFailure: false },
+  );
+  if (headers._tag !== "Success")
+    throw new Error("Could not authorize the request over T3 Connect.");
+  return { headers: { ...headers.value } };
+}
+
 async function fetchPluginFile(
   environmentId: EnvironmentId,
   plugin: PluginState,
@@ -126,20 +146,12 @@ async function fetchPluginFile(
   const connection = readPreparedConnection(environmentId);
   if (connection === null) throw new Error("The environment is not connected.");
   const authorization = connection.httpAuthorization;
-  if (authorization?._tag === "Dpop") {
-    throw new Error("Plugin web bundles cannot load over a T3 Connect link yet.");
-  }
   const url = new URL(
     `/api/plugins/${encodeURIComponent(plugin.id)}${filePath}`,
     connection.httpBaseUrl,
   );
   url.searchParams.set("v", plugin.version ?? "0");
-  const response = await fetch(
-    url,
-    authorization === null
-      ? { credentials: "include" }
-      : { headers: { authorization: `Bearer ${authorization.token}` } },
-  );
+  const response = await fetch(url, await pluginFileRequestInit(authorization, url));
   if (!response.ok) throw new Error(`The request for ${filePath} failed with ${response.status}.`);
   return response;
 }

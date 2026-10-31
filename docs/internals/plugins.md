@@ -55,9 +55,8 @@ settings page that opted into the shared stream would need a second subscription
 whole config. Once the app is idle, a small starter follows that stream on servers that advertise
 `plugins` and downloads the web loader, its own chunk, only when an active plugin has a web part.
 Bare `import(url)` cannot send credentials, so the loader fetches each bundle with
-the connection's bearer token or cookie and imports a `blob:` URL; the desktop CSP allows `blob:`
-scripts. A T3 Connect (DPoP) connection needs the relay signer for that fetch, so it cannot load
-web bundles yet. Bundles reach React and the UI kit through `globalThis.__t3PluginHost`, not an
+the connection's bearer token, cookie or, over T3 Connect, a DPoP proof signed for that one URL,
+and imports a `blob:` URL; the desktop CSP allows `blob:` scripts. Bundles reach React and the UI kit through `globalThis.__t3PluginHost`, not an
 import map. Mobile release builds cannot load code at all, so mobile renders settings from the
 manifest's JSON Schema and declarative contributions only.
 

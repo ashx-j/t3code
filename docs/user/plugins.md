@@ -57,5 +57,4 @@ enabled.
 
 Plugins that draw web UI load in the web and desktop apps. In the desktop app a plugin can also
 add commands under **Plugins** in the menu bar or to a tray icon's menu, and shortcuts that work
-while T3 Code is in the background. The tray icon shows only while a plugin uses it. Connections through T3 Connect cannot
-load plugin UI yet. The mobile app shows plugin themes, but not plugin UI or plugin settings.
+while T3 Code is in the background. The tray icon shows only while a plugin uses it. The mobile app shows plugin themes, but not plugin UI or plugin settings.
