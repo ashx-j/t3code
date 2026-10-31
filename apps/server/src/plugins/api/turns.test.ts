@@ -3,6 +3,7 @@ import { PluginId, ThreadId } from "@t3tools/contracts";
 import type { PluginApi, PluginStoredEvent } from "@t3tools/plugin-sdk/server";
 import type { JsonValue } from "@t3tools/plugin-sdk/shared";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as PubSub from "effect/PubSub";
 import * as TestClock from "effect/testing/TestClock";
@@ -16,40 +17,64 @@ const unusedStorage = {} as PluginApi["storage"];
 const unusedRunEvents = () => {
   throw new Error("run events are not used here");
 };
+const unusedRuntimeRequests = {
+  add: () => {
+    throw new Error("runtime requests are not used here");
+  },
+};
 
-it.effect("skips a beforeDispatch hook that throws or misses its deadline", () =>
-  Effect.gen(function* () {
-    const hooks = yield* PluginHooks.PluginHooks;
-    const activation = makePluginActivation(yield* PubSub.sliding<PluginPublication>(1));
-    const turns = makeTurnsApi(
-      makeFacadeContext({
-        pluginId: PluginId.make("hooked"),
-        activation,
-        context: yield* Effect.context<never>(),
-      }),
-      { hooks },
-      { storage: unusedStorage, runEvents: unusedRunEvents },
-    );
-    turns.beforeDispatch(() => ({ appendText: "first" }));
-    turns.beforeDispatch(() => {
-      throw new Error("broken hook");
-    });
-    turns.beforeDispatch(() => new Promise(() => undefined));
-    turns.beforeDispatch(async () => ({ appendText: "last" }));
+it.effect(
+  "runs beforeDispatch hooks in order, skipping one that throws or misses its deadline",
+  () =>
+    Effect.gen(function* () {
+      const hooks = yield* PluginHooks.PluginHooks;
+      const activation = makePluginActivation(yield* PubSub.sliding<PluginPublication>(1));
+      const turns = makeTurnsApi(
+        makeFacadeContext({
+          pluginId: PluginId.make("hooked"),
+          activation,
+          context: yield* Effect.context<never>(),
+        }),
+        { hooks, runtimeRequests: unusedRuntimeRequests },
+        { storage: unusedStorage, runEvents: unusedRunEvents, pluginName: "Hooked" },
+      );
+      turns.beforeDispatch(() => ({ appendText: "first" }));
+      turns.beforeDispatch(() => {
+        throw new Error("broken hook");
+      });
+      turns.beforeDispatch(() => new Promise(() => undefined));
+      turns.beforeDispatch((message) => ({ text: message.text.toUpperCase() }));
+      turns.beforeDispatch(async () => ({ appendText: "last" }));
+      turns.beforeDispatch((message) =>
+        message.text.startsWith("HALT") ? { block: " " } : undefined,
+      );
+      const send = (text: string) =>
+        hooks
+          .beforeDispatch({
+            threadId: ThreadId.make("thread:hooks"),
+            messageId: "message:hooks",
+            text,
+            createdBy: "user",
+            attachments: [],
+          })
+          .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
 
-    const sending = yield* hooks
-      .beforeDispatch({
-        threadId: ThreadId.make("thread:hooks"),
-        messageId: "message:hooks",
-        text: "Go",
-        createdBy: "user",
-        attachments: [],
-      })
-      .pipe(Effect.forkChild({ startImmediately: true }));
-    yield* TestClock.adjust("2 seconds");
+      const sending = yield* send("Go");
+      yield* TestClock.adjust("2 seconds");
+      assert.deepStrictEqual(yield* Fiber.join(sending), Exit.succeed("GO\n\nFIRST\n\nlast"));
 
-    assert.strictEqual(yield* Fiber.join(sending), "Go\n\nfirst\n\nlast");
-  }).pipe(Effect.provide(PluginHooks.layer)),
+      const halting = yield* send("halt");
+      yield* TestClock.adjust("2 seconds");
+      assert.deepStrictEqual(
+        yield* Fiber.join(halting),
+        Exit.fail(
+          new PluginHooks.PluginMessageBlockedError({
+            pluginName: "Hooked",
+            reason: "Blocked this message.",
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(PluginHooks.layer)),
 );
 
 it.effect("delivers each ended run once and resumes after the last one it handled", () =>
@@ -94,7 +119,11 @@ it.effect("delivers each ended run once and resumes after the last one it handle
           })();
         };
         const seen: Array<string> = [];
-        makeTurnsApi(facade, { hooks }, { storage, runEvents }).afterRunCompleted((run) => {
+        makeTurnsApi(
+          facade,
+          { hooks, runtimeRequests: unusedRuntimeRequests },
+          { storage, runEvents, pluginName: "Runs" },
+        ).afterRunCompleted((run) => {
           seen.push(`${run.runId}:${run.status}`);
         });
         yield* Effect.promise(() => drained.promise);

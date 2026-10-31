@@ -35,6 +35,9 @@ Vite preset below.
   `"format": "t3-secret"` are stored in the server's secret store and never shown again.
 - A `themes/` folder of theme JSON files is published while the plugin is active, and an `assets/`
   folder is served to the web half when the plugin has one.
+- A `skills/` folder of `<name>/SKILL.md` skills reaches Claude and Codex agents while the plugin
+  is active. Claude loads the plugin folder as a Claude Code plugin, so keep other Claude plugin
+  folders such as `commands/` out of it unless you mean them for Claude.
 
 ## Server half
 
@@ -48,9 +51,17 @@ module.exports = {
 };
 ```
 
-`activate` receives the [`PluginApi`](./src/server.ts): settings, storage, RPC methods and
-channels for the web half, stored orchestration events, threads and projects, notes in threads,
-send hooks and run-completed hooks, MCP tools for agents, HTTP routes, schedules and server info.
+`activate` receives the [`PluginApi`](./src/server.ts):
+
+- settings, storage, and RPC methods and channels for the web half;
+- stored orchestration events, run-completed hooks and notes in threads;
+- threads and projects: read, start, archive, snooze, settle and delete threads, add and change
+  projects;
+- send hooks that add to, replace or block a message, and slash commands that run on the server;
+- answers to agents' approvals and questions, instructions for agents, and MCP tools for agents;
+- the text T3 Code generates, such as thread titles and commit messages;
+- HTTP routes, schedules and server info.
+
 Everything a plugin registers is released when it is disabled, reloaded or uninstalled; add your
 own cleanup with `api.onDeactivate`.
 

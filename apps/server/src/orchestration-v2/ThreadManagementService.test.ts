@@ -32,6 +32,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 
 import * as PluginHooks from "../plugins/PluginHooks.ts";
+import { userFacingDispatchErrorMessage } from "./UserFacingErrors.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -156,55 +157,79 @@ it.effect(
   },
 );
 
-it.effect("plugin hooks append to user messages but not to notifications or slash commands", () => {
-  const threadId = ThreadId.make("thread:thread-management:chokepoint");
-  const dispatched: Array<string> = [];
-  const texts: Array<string> = [];
-  const instanceId = ProviderInstanceId.make("codex_work");
-  const layerTest = layerDispatchChokepointTest(
-    ServerSettings.layerTest({
-      providerInstances: { [instanceId]: { driver: "codex", enabled: true } },
-    }),
-  )(dispatched, texts).pipe(Layer.provideMerge(PluginHooks.layer));
-  const message = (
-    id: string,
-    notification?: OrchestrationV2Notification,
-    text = "Fix the build.",
-  ): OrchestrationV2ServerCommand => ({
-    type: "message.dispatch",
-    commandId: CommandId.make(`command:thread-management:hooks-${id}`),
-    threadId,
-    messageId: MessageId.make(`message:thread-management:hooks-${id}`),
-    text,
-    attachments: [],
-    dispatchMode: { type: "queue_after_active" },
-    createdBy: "user",
-    creationSource: "web",
-    ...(notification === undefined ? {} : { notification }),
-  });
-
-  return Effect.gen(function* () {
-    const hooks = yield* PluginHooks.PluginHooks;
-    yield* hooks.addBeforeDispatch(() => Effect.succeed("Project uses pnpm.")).pipe(Effect.asVoid);
-    const threads = yield* ThreadManagementService.ThreadManagementService;
-    yield* threads.dispatch(message("user"));
-    yield* threads.dispatch(
-      message("notification", {
-        source: { kind: "system" },
-        outcome: "updated",
-        summary: "Restarted",
+it.effect(
+  "plugins change, block or handle user messages but not notifications or other slash commands",
+  () => {
+    const threadId = ThreadId.make("thread:thread-management:chokepoint");
+    const dispatched: Array<string> = [];
+    const texts: Array<string> = [];
+    const instanceId = ProviderInstanceId.make("codex_work");
+    const layerTest = layerDispatchChokepointTest(
+      ServerSettings.layerTest({
+        providerInstances: { [instanceId]: { driver: "codex", enabled: true } },
       }),
-    );
+    )(dispatched, texts).pipe(Layer.provideMerge(PluginHooks.layer));
+    const message = (
+      id: string,
+      notification?: OrchestrationV2Notification,
+      text = "Fix the build.",
+    ): OrchestrationV2ServerCommand => ({
+      type: "message.dispatch",
+      commandId: CommandId.make(`command:thread-management:hooks-${id}`),
+      threadId,
+      messageId: MessageId.make(`message:thread-management:hooks-${id}`),
+      text,
+      attachments: [],
+      dispatchMode: { type: "queue_after_active" },
+      createdBy: "user",
+      creationSource: "web",
+      ...(notification === undefined ? {} : { notification }),
+    });
 
-    yield* threads.dispatch(message("command", undefined, "/goal clear"));
+    return Effect.gen(function* () {
+      const hooks = yield* PluginHooks.PluginHooks;
+      yield* hooks
+        .addBeforeDispatch((outgoing) =>
+          Effect.succeed(
+            outgoing.text.includes("token")
+              ? { block: "Remove the token first.", pluginName: "Guard" }
+              : { text: `${outgoing.text}\n\nProject uses pnpm.` },
+          ),
+        )
+        .pipe(Effect.asVoid);
+      yield* hooks
+        .addSlashCommand(
+          { pluginId: "deployer", pluginName: "Deployer", name: "deploy" },
+          (outgoing) => Effect.succeed({ text: `Deploy ${outgoing.args} now.` }),
+        )
+        .pipe(Effect.asVoid);
+      const threads = yield* ThreadManagementService.ThreadManagementService;
+      yield* threads.dispatch(message("user"));
+      yield* threads.dispatch(message("plugin-command", undefined, "/deploy staging"));
+      const blocked = yield* Effect.flip(
+        threads.dispatch(message("blocked", undefined, "Use token abc.")),
+      );
+      expect(blocked._tag).toBe("OrchestratorCommandRejectedError");
+      expect(userFacingDispatchErrorMessage(blocked)).toBe("Guard: Remove the token first.");
+      yield* threads.dispatch(
+        message("notification", {
+          source: { kind: "system" },
+          outcome: "updated",
+          summary: "Restarted",
+        }),
+      );
 
-    expect(texts).toEqual([
-      "Fix the build.\n\nProject uses pnpm.",
-      "Fix the build.",
-      "/goal clear",
-    ]);
-  }).pipe(Effect.provide(layerTest));
-});
+      yield* threads.dispatch(message("command", undefined, "/goal clear"));
+
+      expect(texts).toEqual([
+        "Fix the build.\n\nProject uses pnpm.",
+        "Deploy staging now.",
+        "Fix the build.",
+        "/goal clear",
+      ]);
+    }).pipe(Effect.provide(layerTest));
+  },
+);
 
 it.effect(
   "a replay of an already-accepted command id dispatches despite the instance now being disabled",

@@ -9,16 +9,23 @@ import {
   EnvironmentId,
   PluginId,
   ProjectId,
+  RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ServerCommand,
+  type OrchestrationV2StoredEvent,
   type PluginState,
+  type Project,
+  ProviderInstanceId,
+  type ServerProvider,
 } from "@t3tools/contracts";
+import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import type * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -31,7 +38,10 @@ import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import packageJson from "../../package.json" with { type: "json" };
@@ -42,6 +52,7 @@ import * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
 import * as PluginMcpTools from "./PluginMcpTools.ts";
 import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
+import { withPluginTextGeneration } from "./pluginTextGeneration.ts";
 
 const fixturesDir = new URL("../../../../packages/plugin-sdk/fixtures/", import.meta.url).pathname;
 const hello = PluginId.make("hello-plugin");
@@ -51,8 +62,16 @@ const operate = [AuthOrchestrationReadScope, AuthOrchestrationOperateScope] as c
 const layerConfig = () =>
   Layer.fresh(ServerConfig.layerTest(process.cwd(), { prefix: "t3code-plugin-host-test-" }));
 
+// Services the plugins in these tests never reach.
+const layerUnusedLaunchServices = Layer.mergeAll(
+  Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+  Layer.mock(ProjectService.ProjectService)({}),
+  Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+);
+
 // Orchestration services the lifecycle tests never reach.
 const layerUnusedServices = Layer.mergeAll(
+  layerUnusedLaunchServices,
   Layer.mock(Orchestrator.OrchestratorV2)({}),
   Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({}),
   Layer.mock(ThreadManagementService.ThreadManagementService)({}),
@@ -85,14 +104,21 @@ const npmTarball = gzipTarball(
   tarEntry("package/server.cjs", "module.exports = { activate() {} };"),
 );
 const npmIntegrity = `sha512-${NodeCrypto.createHash("sha512").update(npmTarball).digest("base64")}`;
-const npmDocument = (name: string, integrity: string) => ({
-  "dist-tags": { latest: "1.0.0" },
-  versions: { "1.0.0": { dist: { tarball: `https://registry.test/${name}.tgz`, integrity } } },
-});
+// The registry's `latest` tag, which update checks compare with what was installed.
+let npmLatest = "1.0.0";
+let npmMetadataRequests = 0;
+const npmDocument = (name: string, integrity: string) => {
+  const release = { dist: { tarball: `https://registry.test/${name}.tgz`, integrity } };
+  return {
+    "dist-tags": { latest: npmLatest },
+    versions: { "1.0.0": release, "1.1.0": release },
+  };
+};
 const layerNpmRegistry = Layer.succeed(
   HttpClient.HttpClient,
   HttpClient.make((request) => {
     const url = request.url;
+    if (!url.endsWith(".tgz")) npmMetadataRequests += 1;
     const body = url.endsWith(".tgz")
       ? new Response(npmTarball)
       : url.endsWith("/npm-hello")
@@ -266,6 +292,31 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
     }).pipe(Effect.provide(layerConfig())),
   );
 
+  it.effect("gives agents a plugin's skills and instructions until it is disabled", () =>
+    Effect.gen(function* () {
+      const skills = PluginId.make("skills-plugin");
+      const rootDir = `${fixturesDir}skills-plugin`;
+      yield* writePluginsConfig({ enabled: { [skills]: true }, devPaths: [rootDir] });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const hooks = yield* PluginHooks.PluginHooks;
+        yield* waitForStatuses(host, { [skills]: "active" });
+        const path = yield* Path.Path;
+        assert.deepStrictEqual(yield* hooks.agentContext, {
+          instructions: [
+            '<t3_code_plugin name="Release helper">\nWrite release notes in the past tense.\n</t3_code_plugin>',
+          ],
+          skillFolders: [
+            { plugin: path.resolve(rootDir), skills: path.resolve(rootDir, "skills") },
+          ],
+        });
+
+        yield* host.setEnabled(skills, false);
+        assert.isUndefined(yield* hooks.agentContext);
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
   it.effect("reload picks up a changed manifest and changed code", () =>
     Effect.gen(function* () {
       const rootDir = yield* writeInstalledPlugin(
@@ -424,30 +475,82 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
     }).pipe(Effect.provide(layerConfig())),
   );
 
-  it.effect("gives a plugin threads, projects, server info, schedules and send hooks", () =>
+  it.effect("gives a plugin threads, projects, server info, schedules, hooks and commands", () =>
     Effect.gen(function* () {
       const workbench = PluginId.make("workbench-plugin");
       const threadId = ThreadId.make("thread:plugin-workbench");
       const dispatched: Array<OrchestrationV2ServerCommand> = [];
+      const responded = yield* Queue.unbounded<OrchestrationV2ServerCommand>();
+      // Approval and question events reach the plugin's runtime request hook; the records are
+      // what the projection holds when each event is read.
+      const runtimeEvents = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+      const itemEvents = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+      let records = { runtimeRequests: [] as Array<unknown>, turnItems: [] as Array<unknown> };
+      const projectId = ProjectId.make("project:plugin-workbench");
+      const defaultModel = {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.5",
+      };
+      const project: Project = {
+        id: projectId,
+        title: "Workbench project",
+        workspaceRoot: "/repo",
+        defaultModelSelection: defaultModel,
+        scripts: [],
+        createdAt: "2026-10-31T00:00:00.000Z",
+        updatedAt: "2026-10-31T00:00:00.000Z",
+        deletedAt: null,
+      };
+      const launched: Array<ThreadLaunchService.ThreadLaunchInput> = [];
+      const projectUpdates: Array<unknown> = [];
       const services = Layer.mergeAll(
+        Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+          launch: (input) =>
+            Effect.sync(() => {
+              launched.push(input);
+              return { threadId: input.threadId } as never;
+            }),
+        }),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () => Effect.succeedSome(project),
+          update: (input) =>
+            Effect.sync(() => {
+              projectUpdates.push(input);
+              return { ...project, pinnedAt: "2026-10-31T00:00:00.000Z" };
+            }),
+        }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
         Layer.mock(Orchestrator.OrchestratorV2)({
-          streamStoredEventsFrom: () => Stream.never,
+          streamStoredEventsFrom: (input) =>
+            input?.eventType === "runtime-request.updated"
+              ? Stream.fromQueue(runtimeEvents)
+              : input?.eventType === "turn-item.updated"
+                ? Stream.fromQueue(itemEvents)
+                : Stream.never,
+          getThreadRecords: () => Effect.sync(() => records as never),
         }),
         Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({
           latestAgentSequence: () => Effect.succeed(0),
         }),
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           listProjectThreads: () => Effect.succeed([]),
-          getThreadShell: () =>
-            Effect.succeed({
-              id: threadId,
-              projectId: ProjectId.make("project:plugin-workbench"),
-            } as never),
+          getThreadShell: () => Effect.succeed({ id: threadId, projectId } as never),
+          settleThread: (input) =>
+            Effect.sync(() => {
+              dispatched.push({ type: "thread.settle", ...input } as never);
+              return { sequence: 1 };
+            }),
           dispatch: (command) =>
             Effect.sync(() => {
               dispatched.push(command);
               return { sequence: 1, storedEvents: [] } as never;
-            }),
+            }).pipe(
+              Effect.tap(() =>
+                command.type === "runtime-request.respond"
+                  ? Queue.offer(responded, command)
+                  : Effect.void,
+              ),
+            ),
         }),
         Layer.mock(ProjectStore.ProjectStoreV2)({ listShells: () => Effect.succeed([]) }),
         Layer.mock(ServerEnvironment.ServerEnvironment)({
@@ -459,7 +562,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
             capabilities: { repositoryIdentity: false, plugins: true },
           }),
         }),
-        Layer.mock(ServerSettings.ServerSettingsService)({}),
+        ServerSettings.layerTest().pipe(Layer.orDie),
       );
       yield* writePluginsConfig({
         enabled: { [workbench]: true },
@@ -508,6 +611,178 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           }),
           "Ship it #context\n\nContext from workbench-plugin.",
         );
+        const outgoing = (text: string) =>
+          hooks.beforeDispatch({
+            threadId,
+            messageId: "message:workbench",
+            text,
+            createdBy: "user",
+            attachments: [],
+          });
+        assert.strictEqual(yield* outgoing("#shout ship it"), "SHIP IT");
+        assert.strictEqual(
+          (yield* Effect.flip(outgoing("Deploy with #secret"))).message,
+          "Workbench: Remove the secret first.",
+        );
+
+        // The plugin's command runs instead of the send hooks, and lists with every provider's.
+        assert.strictEqual(
+          yield* outgoing("/deploy staging"),
+          "Deploy to staging and report back.",
+        );
+        assert.strictEqual(
+          (yield* Effect.flip(outgoing("/deploy"))).message,
+          "Workbench: Name an environment, for example /deploy staging.",
+        );
+        const [provider] = PluginHooks.withPluginSlashCommands(
+          [
+            {
+              slashCommands: [
+                { name: "deploy", description: "Provider deploy" },
+                { name: "review" },
+              ],
+              workspaceSnapshots: [{ cwd: "/repo", slashCommands: [] }],
+            } as unknown as ServerProvider,
+          ],
+          yield* hooks.currentSlashCommands,
+        );
+        const listed = {
+          name: "deploy",
+          description: "Deploy to an environment",
+          input: { hint: "environment" },
+        };
+        assert.deepStrictEqual(provider?.slashCommands, [{ name: "review" }, listed]);
+        assert.deepStrictEqual(provider?.workspaceSnapshots?.[0]?.slashCommands, [listed]);
+
+        const request = (id: string, kind: string) => ({
+          id,
+          nodeId: `node:${id}`,
+          kind,
+          status: "pending",
+          responseCapability: {
+            type: "live",
+            providerSessionId: "session:workbench",
+            supportsFeedback: true,
+          },
+        });
+        const item = (requestId: string, fields: object) => ({
+          id: `item:${requestId}`,
+          threadId,
+          runId: "run:workbench",
+          requestId,
+          status: "waiting",
+          ...fields,
+        });
+        const stored = (sequence: number, type: string, payload: object) =>
+          ({ sequence, event: { type, threadId, payload } }) as never;
+        const gitStatus = item("request:git", {
+          type: "approval_request",
+          requestKind: "command",
+          prompt: "git status --short",
+        });
+        const remove = item("request:rm", {
+          type: "approval_request",
+          requestKind: "command",
+          prompt: "rm -rf build",
+        });
+        const question = item("request:ask", {
+          type: "user_input_request",
+          questions: [
+            {
+              id: "scope",
+              header: "Scope",
+              question: "Which files?",
+              options: [
+                { label: "Only src", description: "Leave tests alone" },
+                { label: "Everything", description: "Touch all files" },
+              ],
+            },
+          ],
+        });
+
+        // Claude records the request before its item, so the plugin is asked once the item lands.
+        records = { runtimeRequests: [request("request:git", "command")], turnItems: [] };
+        yield* Queue.offer(
+          runtimeEvents,
+          stored(2, "runtime-request.updated", records.runtimeRequests[0]!),
+        );
+        records = { ...records, turnItems: [gitStatus] };
+        yield* Queue.offer(itemEvents, stored(3, "turn-item.updated", gitStatus));
+        assert.deepInclude(yield* Queue.take(responded), {
+          requestId: RuntimeRequestId.make("request:git"),
+          decision: "accept",
+        });
+
+        // Codex records the item first.
+        records = { runtimeRequests: [], turnItems: [remove] };
+        yield* Queue.offer(itemEvents, stored(4, "turn-item.updated", remove));
+        records = { ...records, runtimeRequests: [request("request:rm", "command")] };
+        yield* Queue.offer(
+          runtimeEvents,
+          stored(5, "runtime-request.updated", records.runtimeRequests[0]!),
+        );
+        assert.deepInclude(yield* Queue.take(responded), {
+          requestId: RuntimeRequestId.make("request:rm"),
+          decision: "decline",
+          feedback: "Workbench does not allow rm.",
+        });
+
+        records = {
+          runtimeRequests: [request("request:ask", "user_input")],
+          turnItems: [question],
+        };
+        yield* Queue.offer(itemEvents, stored(6, "turn-item.updated", question));
+        assert.deepInclude(yield* Queue.take(responded), {
+          requestId: RuntimeRequestId.make("request:ask"),
+          answers: { scope: "Only src" },
+        });
+
+        // The plugin titles the threads it recognises and leaves the rest to T3.
+        const titles = withPluginTextGeneration(hooks, {
+          generateThreadTitle: () => Effect.succeed({ title: "T3 title" }),
+        } as unknown as ProviderTextGeneration);
+        const title = (message: string) =>
+          titles.generateThreadTitle({
+            cwd: "/repo",
+            message,
+            modelSelection: defaultModel,
+          });
+        assert.deepStrictEqual(yield* title("#titled Release prep"), {
+          title: "Workbench: Release prep",
+        });
+        assert.deepStrictEqual(yield* title("Release prep"), { title: "T3 title" });
+
+        // Thread and project management go through the commands and services clients use.
+        dispatched.length = 0;
+        const tidied = yield* call("tidyThread", { threadId, projectId });
+        assert.deepStrictEqual(
+          dispatched.map((command) => command.type),
+          [
+            "thread.archive",
+            "thread.unarchive",
+            "thread.snooze",
+            "thread.unsnooze",
+            "thread.settle",
+            "thread.unsettle",
+            "thread.delete",
+          ],
+        );
+        assert.deepInclude(dispatched[2], { snoozedUntil: "2026-11-01T09:00:00.000Z" });
+        assert.deepInclude(launched[0], {
+          projectId,
+          title: "Follow-up",
+          modelSelection: defaultModel,
+          interactionMode: "default",
+          workspaceStrategy: { type: "root" },
+          createdBy: "agent",
+          creationSource: "server",
+        });
+        assert.strictEqual(launched[0]?.initialMessage?.text, "Check the deploy.");
+        assert.deepInclude(projectUpdates[0], { projectId, pinned: true });
+        assert.deepStrictEqual(tidied, {
+          threadId: launched[0]?.threadId ?? null,
+          project: "Workbench project",
+        });
 
         const tick = yield* host
           .subscribe({ pluginId: workbench, channel: "ticks" })
@@ -595,8 +870,14 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           assert.isFalse(yield* fs.exists(`${stateDir}/plugins/hello-plugin`));
           assert.isTrue(yield* fs.exists(`${fixturesDir}hello-plugin/server.cjs`));
 
+          npmLatest = "1.0.0";
           const fromNpm = yield* host.install({ type: "npm", name: "npm-hello" });
           assert.include(fromNpm, { id: PluginId.make("npm-hello"), status: "active" });
+          assert.isUndefined(stateOf(yield* host.checkUpdates, "npm-hello")?.availableUpdate);
+          npmLatest = "1.1.0";
+          assert.deepStrictEqual(stateOf(yield* host.checkUpdates, "npm-hello")?.availableUpdate, {
+            version: "1.1.0",
+          });
           // Another source claiming an installed id is refused before anything moves.
           const impostor = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-plugin-impostor-" });
           yield* writeFile(
@@ -612,7 +893,9 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           assert.match(takeover.message, /already installed from somewhere else/);
           // Updating a disabled plugin keeps it disabled.
           yield* host.setEnabled(PluginId.make("npm-hello"), false);
-          assert.include(yield* host.update(PluginId.make("npm-hello")), { enabled: false });
+          const npmUpdated = yield* host.update(PluginId.make("npm-hello"));
+          assert.include(npmUpdated, { enabled: false });
+          assert.isUndefined(npmUpdated.availableUpdate);
           const tampered = yield* host
             .install({ type: "npm", name: "npm-tampered" })
             .pipe(Effect.flip);
@@ -622,6 +905,41 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           ]);
         }).pipe(Effect.provide(layerHost()));
       }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("checks installed plugins for updates once a day, not at startup", () =>
+    Effect.gen(function* () {
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      yield* writeInstalledPlugin("npm-hello", "module.exports = { activate() {} };");
+      yield* writeFile(
+        `${stateDir}/plugins.json`,
+        JSON.stringify({
+          enabled: { "npm-hello": true },
+          sources: { "npm-hello": { type: "npm", name: "npm-hello" } },
+          installed: { "npm-hello": "1.0.0" },
+          updates: { checkedAt: 0, available: {} },
+        }),
+      );
+      npmLatest = "1.1.0";
+      npmMetadataRequests = 0;
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        yield* waitForStatuses(host, { "npm-hello": "active" });
+        assert.strictEqual(npmMetadataRequests, 0);
+
+        const found = yield* host.streamStates.pipe(
+          Stream.filter((states) => stateOf(states, "npm-hello")?.availableUpdate !== undefined),
+          Stream.runHead,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* TestClock.adjust("24 hours");
+        assert.deepStrictEqual(
+          stateOf(Option.getOrThrow(yield* Fiber.join(found)), "npm-hello")?.availableUpdate,
+          { version: "1.1.0" },
+        );
+        assert.strictEqual(npmMetadataRequests, 1);
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
   );
 
   it.effect("restores a version an interrupted install left in staging", () =>

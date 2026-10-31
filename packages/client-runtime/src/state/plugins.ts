@@ -44,6 +44,10 @@ export function createPluginEnvironmentAtoms<R, E>(
       label: "environment-data:plugins:update",
       tag: WS_METHODS.pluginsUpdate,
     }),
+    checkPluginUpdates: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:plugins:check-updates",
+      tag: WS_METHODS.pluginsCheckUpdates,
+    }),
     uninstallPlugin: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:plugins:uninstall",
       tag: WS_METHODS.pluginsUninstall,

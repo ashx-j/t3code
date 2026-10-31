@@ -29,6 +29,10 @@ Plugins added from Settings have **Update** on their row. It installs the plugin
 same folder, repository or package, and keeps the current version running if that fails. An npm
 plugin without a pinned version updates to the package's latest version.
 
+T3 Code checks plugins added from a git repository or npm once a day and marks the ones with a
+newer version as **Update available**. **Check for updates** on the Plugins page checks now.
+Plugins installed before this check existed show updates only after their next update.
+
 ## Turn a plugin on or off
 
 Use the switch on the plugin's row. A plugin that fails to start shows the reason on its row, for
@@ -48,6 +52,26 @@ up where it left off.
 
 Plugins loaded from a development folder listed in `plugins.json` cannot be removed from Settings.
 Remove the folder from `plugins.json` instead.
+
+## Plugins in your threads
+
+A plugin can answer an agent's approval requests and questions for you, for example to allow
+commands you always allow. The request still appears in the thread, and you can answer it yourself
+while the plugin decides. If no plugin answers within a few seconds, it waits for you as usual.
+
+A plugin can also change a message before it is sent, or stop it and say why. A stopped message
+stays in the composer, so you can edit it and send it again.
+
+Plugins can add slash commands. They appear in the composer's `/` menu with the agent's own
+commands, in every app. A plugin's command runs on the server and sends the agent a message the
+plugin prepares, or stops with a reason.
+
+A plugin can give Claude and Codex agents extra instructions and skills, from their next turn or
+session while the plugin is on. Other agents don't get them yet.
+
+A plugin can also write the text T3 Code usually generates with a model: thread titles, commit
+messages, pull request titles and descriptions, branch names and review guides. When it has
+nothing to offer, T3 Code generates the text as usual.
 
 ## Where plugins live
 

@@ -269,6 +269,24 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.isUndefined(options.extraArgs?.["dangerously-skip-permissions"]);
   });
 
+  it("loads plugin skill folders as Claude Code plugins and appends plugin instructions", () => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "native-plugins",
+      resume: false,
+      cwd: "/workspace",
+      settings: { ...AUTO_COMPACT_CLAUDE_SETTINGS, launchArgs: "--append-system-prompt Mine" },
+      plugins: {
+        instructions: ["Use pnpm."],
+        skillFolders: [{ plugin: "/plugins/notes", skills: "/plugins/notes/skills" }],
+      },
+    });
+    assert.deepEqual(options.plugins, [{ type: "local", path: "/plugins/notes" }]);
+    const append = (options.systemPrompt as { readonly append?: string }).append ?? "";
+    // The user's own launch text stays last.
+    assert.isTrue(append.endsWith("Use pnpm.\n\nMine"));
+  });
+
   it("passes every --add-dir launch directory to Claude", () => {
     const options = ClaudeAdapterV2.makeClaudeQueryOptions({
       modelSelection: CLAUDE_TEST_MODEL_SELECTION,

@@ -1,21 +1,38 @@
 import {
   CommandId,
+  IsoDateTime,
   MessageId,
+  ModelSelection,
   OrchestrationProjectShell,
   OrchestrationV2Notification,
+  type OrchestrationV2ServerCommand,
+  OrchestrationV2ThreadLaunchWorkspaceStrategy,
   OrchestrationV2ThreadShell,
+  Project,
+  ProjectCreatePayload,
   ProjectId,
+  ProjectUpdatePayload,
+  ProviderInteractionMode,
+  RuntimeMode,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
 import type { PluginApi } from "@t3tools/plugin-sdk/server";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import type * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { resolveRuntimeMode } from "../../mcp/delegatedTaskModes.ts";
 import type * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
+import type * as ThreadLaunchService from "../../orchestration-v2/ThreadLaunchService.ts";
 import type * as ThreadManagementService from "../../orchestration-v2/ThreadManagementService.ts";
+import type * as ProjectService from "../../project/ProjectService.ts";
+import type * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
+import type * as ServerSettings from "../../serverSettings.ts";
 import type { FacadeContext } from "./facade.ts";
 
 const encodeThreadShell = Schema.encodeUnknownEffect(
@@ -27,6 +44,21 @@ const encodeProjectShell = Schema.encodeUnknownEffect(
 const decodeThreadId = Schema.decodeUnknownEffect(ThreadId);
 const decodeNotification = Schema.decodeUnknownEffect(OrchestrationV2Notification);
 const decodeProjectId = Schema.decodeUnknownEffect(ProjectId);
+const decodeLaunch = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    projectId: ProjectId,
+    title: Schema.String.check(Schema.isNonEmpty()),
+    message: Schema.optional(Schema.String),
+    model: Schema.optional(ModelSelection),
+    runtimeMode: Schema.optional(RuntimeMode),
+    interactionMode: Schema.optional(ProviderInteractionMode),
+    workspace: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+  }),
+);
+const decodeSnoozedUntil = Schema.decodeUnknownEffect(IsoDateTime);
+const decodeProjectCreate = Schema.decodeUnknownEffect(Schema.toCodecJson(ProjectCreatePayload));
+const decodeProjectUpdate = Schema.decodeUnknownEffect(Schema.toCodecJson(ProjectUpdatePayload));
+const encodeProject = Schema.encodeUnknownEffect(Schema.toCodecJson(Project));
 const isJsonObject = Schema.is(Schema.JsonObject);
 
 const asJsonObject = (value: unknown): Schema.JsonObject => (isJsonObject(value) ? value : {});
@@ -40,16 +72,57 @@ export class PluginThreadNotFoundError extends Schema.TaggedError<PluginThreadNo
   }
 }
 
+export class PluginProjectNotFoundError extends Schema.TaggedError<PluginProjectNotFoundError>()(
+  "PluginProjectNotFoundError",
+  { projectId: Schema.String },
+) {
+  override get message(): string {
+    return `Project ${this.projectId} does not exist.`;
+  }
+}
+
+export class PluginThreadModelMissingError extends Schema.TaggedError<PluginThreadModelMissingError>()(
+  "PluginThreadModelMissingError",
+  { projectId: Schema.String },
+) {
+  override get message(): string {
+    return `Project ${this.projectId} has no default model; pass one.`;
+  }
+}
+
 export const makeThreadsApi = (
   facade: FacadeContext,
   services: {
     readonly threads: ThreadManagementService.ThreadManagementService["Service"];
+    readonly launches: ThreadLaunchService.ThreadLaunchService["Service"];
+    readonly projectService: ProjectService.ProjectService["Service"];
+    readonly providers: ProviderRegistry.ProviderRegistry["Service"];
+    readonly serverSettings: ServerSettings.ServerSettingsService["Service"];
     readonly crypto: Crypto.Crypto;
   },
   pluginName: string,
 ): PluginApi["threads"] => {
   const { threads, crypto } = services;
   const newId = crypto.randomUUIDv4().pipe(Effect.orDie);
+  const newCommandId = newId.pipe(
+    Effect.map((id) => CommandId.make(`command:plugin:${facade.pluginId}:${id}`)),
+  );
+  /** Dispatches the command clients send for the same change, after checking the thread exists. */
+  const organize = (
+    threadId: string,
+    command: (common: {
+      readonly commandId: CommandId;
+      readonly threadId: ThreadId;
+    }) => Effect.Effect<OrchestrationV2ServerCommand, Schema.SchemaError>,
+  ) =>
+    facade.call(
+      Effect.gen(function* () {
+        const shell = yield* shellOf(threadId);
+        yield* threads.dispatch(
+          yield* command({ commandId: yield* newCommandId, threadId: shell.id }),
+        );
+      }),
+    );
   const shellOf = Effect.fnUntraced(function* (threadId: string) {
     const id = yield* decodeThreadId(threadId);
     const shell = yield* threads.getThreadShell(id);
@@ -121,6 +194,101 @@ export const makeThreadsApi = (
           });
         }),
       ),
+    create: (input) =>
+      facade.call(
+        Effect.gen(function* () {
+          const launch = yield* decodeLaunch(input);
+          const project = yield* services.projectService.getById(launch.projectId);
+          if (Option.isNone(project)) {
+            return yield* new PluginProjectNotFoundError({ projectId: launch.projectId });
+          }
+          // The project's defaults, as the composer and an agent outside a thread start with.
+          const defaults = resolveProjectSettings(
+            yield* services.serverSettings.getSettings,
+            launch.projectId,
+            project.value,
+          ).settings;
+          const providers = yield* services.providers.getProviders;
+          const modelSelection =
+            launch.model ??
+            resolveNewThreadModelSelection({
+              defaultSelection: defaults.defaultModelSelection,
+              fallbackSelection: defaults.fallbackModelSelection,
+              providers,
+              settings: defaults,
+              projectId: launch.projectId,
+              now: DateTime.toEpochMillis(yield* DateTime.now),
+            }).selection;
+          if (modelSelection == null) {
+            return yield* new PluginThreadModelMissingError({ projectId: launch.projectId });
+          }
+          // A mode the provider does not offer steps down to the broadest one it does.
+          const runtimeMode = yield* resolveRuntimeMode(
+            launch.runtimeMode ?? defaults.defaultRuntimeMode,
+            undefined,
+            {
+              modelSelection,
+              supportedRuntimeModes: providers.find(
+                (provider) => provider.instanceId === modelSelection.instanceId,
+              )?.supportedRuntimeModes,
+            },
+          );
+          const commandId = yield* newCommandId;
+          const result = yield* services.launches.launch({
+            commandId,
+            threadId: ThreadId.make(commandId),
+            projectId: launch.projectId,
+            title: launch.title,
+            modelSelection,
+            runtimeMode,
+            interactionMode: launch.interactionMode ?? "default",
+            workspaceStrategy: launch.workspace ?? { type: "root" },
+            ...(launch.message === undefined || launch.message.trim().length === 0
+              ? {}
+              : {
+                  initialMessage: {
+                    messageId: MessageId.make(yield* newId),
+                    text: launch.message,
+                    attachments: [],
+                  },
+                }),
+            createdBy: "agent",
+            creationSource: "server",
+          });
+          return { threadId: result.threadId };
+        }),
+      ),
+    archive: (threadId) =>
+      organize(threadId, (common) => Effect.succeed({ ...common, type: "thread.archive" })),
+    unarchive: (threadId) =>
+      organize(threadId, (common) => Effect.succeed({ ...common, type: "thread.unarchive" })),
+    delete: (threadId) =>
+      organize(threadId, (common) => Effect.succeed({ ...common, type: "thread.delete" })),
+    settle: (threadId) =>
+      facade.call(
+        Effect.gen(function* () {
+          const shell = yield* shellOf(threadId);
+          yield* threads.settleThread({
+            commandId: yield* newCommandId,
+            threadId: shell.id,
+            byOwnAgent: false,
+          });
+        }),
+      ),
+    unsettle: (threadId) =>
+      organize(threadId, (common) =>
+        Effect.succeed({ ...common, type: "thread.unsettle", reason: "user" }),
+      ),
+    snooze: (threadId, until) =>
+      organize(threadId, (common) =>
+        decodeSnoozedUntil(until instanceof Date ? until.toISOString() : until).pipe(
+          Effect.map((snoozedUntil) => ({ ...common, type: "thread.snooze", snoozedUntil })),
+        ),
+      ),
+    unsnooze: (threadId) =>
+      organize(threadId, (common) =>
+        Effect.succeed({ ...common, type: "thread.unsnooze", reason: "user" }),
+      ),
     rename: (threadId, title) =>
       facade.call(
         Effect.gen(function* () {
@@ -138,8 +306,41 @@ export const makeThreadsApi = (
 
 export const makeProjectsApi = (
   facade: FacadeContext,
-  services: { readonly projects: ProjectStore.ProjectStoreV2["Service"] },
+  services: {
+    readonly projects: ProjectStore.ProjectStoreV2["Service"];
+    readonly projectService: ProjectService.ProjectService["Service"];
+    readonly crypto: Crypto.Crypto;
+  },
 ): PluginApi["projects"] => ({
+  create: (input) =>
+    facade.call(
+      Effect.gen(function* () {
+        const payload = yield* decodeProjectCreate(input);
+        const commandId = CommandId.make(
+          `command:plugin:${facade.pluginId}:${yield* services.crypto.randomUUIDv4().pipe(Effect.orDie)}`,
+        );
+        const project = yield* services.projectService.create({
+          ...payload,
+          commandId,
+          projectId: ProjectId.make(commandId),
+        });
+        return asJsonObject(yield* encodeProject(project));
+      }),
+    ),
+  update: (projectId, patch) =>
+    facade.call(
+      Effect.gen(function* () {
+        const payload = yield* decodeProjectUpdate(patch);
+        const project = yield* services.projectService.update({
+          ...payload,
+          projectId: yield* decodeProjectId(projectId),
+          commandId: CommandId.make(
+            `command:plugin:${facade.pluginId}:${yield* services.crypto.randomUUIDv4().pipe(Effect.orDie)}`,
+          ),
+        });
+        return asJsonObject(yield* encodeProject(project));
+      }),
+    ),
   list: () =>
     facade.call(
       services.projects

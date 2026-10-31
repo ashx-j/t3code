@@ -10,19 +10,34 @@ import * as Option from "effect/Option";
 
 import type * as PluginHooks from "../PluginHooks.ts";
 import type { FacadeContext } from "./facade.ts";
+import type { RuntimeRequestHooks } from "./runtimeRequests.ts";
 
 // A hook sits on the send path of every message, so it gets a short deadline and fails open.
 const BEFORE_DISPATCH_DEADLINE = Duration.seconds(2);
 const MAX_APPENDED_CHARS = 20_000;
+const MAX_BLOCK_REASON_CHARS = 500;
 
-const appendedText = (result: PluginBeforeDispatchResult) =>
-  typeof result === "object" &&
-  result !== null &&
-  "appendText" in result &&
-  typeof result.appendText === "string" &&
-  result.appendText.trim().length > 0
-    ? result.appendText.slice(0, MAX_APPENDED_CHARS)
-    : undefined;
+/** What a hook's result does to `text`; anything unrecognised leaves it alone. */
+const dispatchOutcome = (text: string, result: PluginBeforeDispatchResult, pluginName: string) => {
+  if (typeof result !== "object" || result === null) return undefined;
+  if ("block" in result && typeof result.block === "string") {
+    return {
+      block: result.block.trim().slice(0, MAX_BLOCK_REASON_CHARS) || "Blocked this message.",
+      pluginName,
+    };
+  }
+  if ("text" in result && typeof result.text === "string" && result.text.trim().length > 0) {
+    return { text: result.text };
+  }
+  if (
+    "appendText" in result &&
+    typeof result.appendText === "string" &&
+    result.appendText.trim().length > 0
+  ) {
+    return { text: `${text}\n\n${result.appendText.slice(0, MAX_APPENDED_CHARS)}` };
+  }
+  return undefined;
+};
 
 const TERMINAL_RUN_STATUSES = new Set([
   "completed",
@@ -56,11 +71,16 @@ const readCursor = (saved: unknown): RunCursor | undefined => {
 
 export const makeTurnsApi = (
   facade: FacadeContext,
-  services: { readonly hooks: PluginHooks.PluginHooksRegistry },
+  services: {
+    readonly hooks: PluginHooks.PluginHooksRegistry;
+    readonly runtimeRequests: RuntimeRequestHooks;
+  },
   api: {
     readonly storage: PluginApi["storage"];
     /** Every `run.updated` event after `afterSequence`, or from now; never drops events. */
     readonly runEvents: (afterSequence: number | undefined) => AsyncIterable<PluginStoredEvent>;
+    /** Shown with a block reason, so the sender knows which plugin stopped the message. */
+    readonly pluginName: string;
   },
 ): PluginApi["turns"] => {
   let runHandlers = 0;
@@ -120,6 +140,21 @@ export const makeTurnsApi = (
         }
       })().catch(() => undefined);
     },
+    onRuntimeRequest: (handler) => {
+      const { activation, pluginId } = facade;
+      const deactivated = activation.controller.signal;
+      if (deactivated.aborted) throw new Error("This plugin activation has ended.");
+      const remove = services.runtimeRequests.add({
+        pluginId,
+        answer: (request, signal) =>
+          deactivated.aborted
+            ? Promise.resolve(undefined)
+            : Promise.resolve().then(() =>
+                handler(request, { signal: AbortSignal.any([signal, deactivated]) }),
+              ),
+      });
+      deactivated.addEventListener("abort", remove, { once: true });
+    },
     beforeDispatch: (hook) => {
       const { activation, pluginId } = facade;
       if (activation.controller.signal.aborted) {
@@ -142,7 +177,12 @@ export const makeTurnsApi = (
                 ),
               ).pipe(
                 Effect.timeoutOption(BEFORE_DISPATCH_DEADLINE),
-                Effect.map(Option.match({ onNone: () => undefined, onSome: appendedText })),
+                Effect.map(
+                  Option.match({
+                    onNone: () => undefined,
+                    onSome: (result) => dispatchOutcome(message.text, result, api.pluginName),
+                  }),
+                ),
                 Effect.catchCause((cause) =>
                   Effect.logWarning("plugin beforeDispatch hook failed", {
                     pluginId,

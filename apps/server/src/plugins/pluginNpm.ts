@@ -35,14 +35,8 @@ const decodePackageDocument = Schema.decodeUnknownEffect(PackageDocument);
 
 const failed = (reason: string) => (cause: unknown) => new PluginNpmError({ reason, cause });
 
-/**
- * Downloads `name@version` (the `latest` tag when no version is given) from the npm registry,
- * checks the tarball against the registry's sha512 integrity, and returns its files.
- */
-export const fetchNpmPackage = Effect.fn("PluginNpm.fetch")(function* (
-  name: string,
-  version: string | undefined,
-) {
+/** The version `version` names, or the `latest` tag's, and its release from the registry. */
+const readRelease = Effect.fnUntraced(function* (name: string, version: string | undefined) {
   const http = yield* HttpClient.HttpClient;
   // Scoped names keep their `@`; only the slash is encoded, as the registry expects.
   const metadataUrl = `${REGISTRY}/${name.replace("/", "%2F")}`;
@@ -62,6 +56,27 @@ export const fetchNpmPackage = Effect.fn("PluginNpm.fetch")(function* (
   if (wanted === undefined || release === undefined) {
     return yield* new PluginNpmError({ reason: `${name}@${version ?? "latest"} does not exist.` });
   }
+  return { version: wanted, release };
+});
+
+/** The version installing `name@version` would fetch now. */
+export const resolveNpmVersion = Effect.fn("PluginNpm.resolveVersion")(function* (
+  name: string,
+  version: string | undefined,
+) {
+  return (yield* readRelease(name, version)).version;
+});
+
+/**
+ * Downloads `name@version` (the `latest` tag when no version is given) from the npm registry,
+ * checks the tarball against the registry's sha512 integrity, and returns the version and its files.
+ */
+export const fetchNpmPackage = Effect.fn("PluginNpm.fetch")(function* (
+  name: string,
+  version: string | undefined,
+) {
+  const http = yield* HttpClient.HttpClient;
+  const { version: wanted, release } = yield* readRelease(name, version);
   const integrity = release.dist.integrity;
   if (integrity?.startsWith("sha512-") !== true) {
     return yield* new PluginNpmError({
@@ -92,7 +107,7 @@ export const fetchNpmPackage = Effect.fn("PluginNpm.fetch")(function* (
       reason: `${name}@${wanted} does not match the registry's integrity hash.`,
     });
   }
-  return yield* Effect.try({
+  const files = yield* Effect.try({
     try: (): ReadonlyArray<TarballFile> => unpackNpmTarball(tarball),
     catch: (cause) =>
       new PluginNpmError({
@@ -100,4 +115,5 @@ export const fetchNpmPackage = Effect.fn("PluginNpm.fetch")(function* (
         cause,
       }),
   });
+  return { version: wanted, files };
 });

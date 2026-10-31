@@ -86,8 +86,134 @@ export interface PluginCompletedRun {
   readonly run: JsonObject;
 }
 
-/** Nothing leaves the message as it is; `appendText` adds a paragraph after it. */
-export type PluginBeforeDispatchResult = void | { readonly appendText: string };
+/**
+ * Nothing leaves the message as it is. `appendText` adds a paragraph after it, `text` replaces it,
+ * and `block` stops it: the sender gets the reason, after the plugin's name, and keeps their draft.
+ */
+export type PluginBeforeDispatchResult =
+  | void
+  | { readonly appendText: string }
+  | { readonly text: string }
+  | { readonly block: string };
+
+export type PluginApprovalDecision =
+  | "accept"
+  | "acceptForSession"
+  | "acceptAlways"
+  | "decline"
+  | "cancel";
+
+/** An approval or a question an agent is waiting on. */
+export interface PluginRuntimeRequest {
+  readonly threadId: string;
+  readonly requestId: string;
+  readonly runId: string | null;
+  /** `command`, `file-read`, `file-change`, `mcp-elicitation` and `permission` are approvals; `user_input` is a question. */
+  readonly kind: string;
+  /** Approvals: what the agent wants to do, such as the command line. */
+  readonly prompt?: string;
+  readonly reason?: string;
+  /** Approvals for an MCP server: its name. */
+  readonly appName?: string;
+  /** Approvals: the decisions this request offers. Empty for questions. */
+  readonly decisions: ReadonlyArray<PluginApprovalDecision>;
+  /** Approvals: whether a `decline` can carry `feedback` for the agent. */
+  readonly canDeclineWithFeedback: boolean;
+  /** Questions: answer each by its `id`. Empty for approvals. */
+  readonly questions: ReadonlyArray<{
+    readonly id: string;
+    readonly header: string;
+    readonly question: string;
+    readonly options: ReadonlyArray<{ readonly label: string; readonly description: string }>;
+    readonly multiSelect: boolean;
+    readonly allowCustomAnswer: boolean;
+  }>;
+}
+
+/**
+ * Nothing leaves the request to the user. An approval takes one of the request's `decisions`;
+ * `feedback` is sent only with `decline` where `canDeclineWithFeedback`. A question takes
+ * `answers` keyed by question id: an option's label, custom text, or several labels.
+ */
+export type PluginRuntimeRequestAnswer =
+  | void
+  | { readonly decision: PluginApprovalDecision; readonly feedback?: string }
+  | { readonly answers: Readonly<Record<string, string | ReadonlyArray<string>>> };
+
+export interface PluginSlashCommandInvocation {
+  readonly threadId: string;
+  readonly messageId: string;
+  readonly name: string;
+  /** The text after `/name`, trimmed. */
+  readonly args: string;
+  readonly createdBy: "user" | "agent";
+  readonly attachments: PluginOutgoingMessage["attachments"];
+}
+
+/**
+ * `text` is sent to the agent in place of the command, `block` stops the message with a reason the
+ * sender sees, and nothing sends the command as typed.
+ */
+export type PluginSlashCommandResult =
+  | void
+  | { readonly text: string }
+  | { readonly block: string };
+
+/** What each kind of generated text receives and returns. */
+export interface PluginTextGenerationTasks {
+  readonly threadTitle: {
+    readonly input: {
+      readonly cwd: string;
+      /** The message the title is for. */
+      readonly message: string;
+      readonly previousTitle?: string;
+      readonly instructions?: string;
+    };
+    readonly output: { readonly title: string };
+  };
+  readonly commitMessage: {
+    readonly input: {
+      readonly cwd: string;
+      readonly branch: string | null;
+      readonly stagedSummary: string;
+      readonly stagedPatch: string;
+      /** Whether T3 also wants a branch name for the commit. */
+      readonly includeBranch: boolean;
+    };
+    readonly output: { readonly subject: string; readonly body: string; readonly branch?: string };
+  };
+  readonly prContent: {
+    readonly input: {
+      readonly cwd: string;
+      readonly baseBranch: string;
+      readonly headBranch: string;
+      readonly commitSummary: string;
+      readonly diffSummary: string;
+      readonly diffPatch: string;
+      /** The repository's pull request template, if it has one. */
+      readonly template?: string;
+      readonly threadContext?: string;
+    };
+    readonly output: { readonly title: string; readonly body: string };
+  };
+  readonly branchName: {
+    readonly input: { readonly cwd: string; readonly message: string };
+    readonly output: { readonly branch: string };
+  };
+  readonly reviewGuide: {
+    readonly input: {
+      readonly cwd: string;
+      readonly number: number;
+      readonly title: string;
+      readonly description: string;
+      readonly baseBranch: string;
+      readonly baseCommit: string;
+      readonly instructions?: string;
+    };
+    /** Each stop as the review guide's contract defines it. */
+    readonly output: { readonly stops: ReadonlyArray<JsonObject> };
+  };
+}
 
 export interface PluginLogger {
   readonly debug: (message: string, fields?: JsonObject) => void;
@@ -161,10 +287,48 @@ export interface PluginApi {
     }) => Promise<void>;
     readonly interrupt: (threadId: string) => Promise<void>;
     readonly rename: (threadId: string, title: string) => Promise<void>;
+    /**
+     * Starts a thread in a project, with `message` as its first message if given. The model and
+     * runtime mode default to the project's, as in the composer; a runtime mode the provider does
+     * not offer steps down. `workspace` defaults to the project folder.
+     */
+    readonly create: (input: {
+      readonly projectId: string;
+      readonly title: string;
+      readonly message?: string;
+      readonly model?: { readonly instanceId: string; readonly model: string };
+      readonly runtimeMode?: "approval-required" | "auto-accept-edits" | "auto" | "full-access";
+      readonly interactionMode?: "default" | "plan";
+      readonly workspace?:
+        | { readonly type: "root"; readonly branch?: string }
+        | { readonly type: "worktree"; readonly baseRef: string; readonly branch?: string }
+        | { readonly type: "existing_worktree"; readonly worktreePath: string };
+    }) => Promise<{ readonly threadId: string }>;
+    readonly archive: (threadId: string) => Promise<void>;
+    readonly unarchive: (threadId: string) => Promise<void>;
+    /** Deletes the thread as the client's delete does. */
+    readonly delete: (threadId: string) => Promise<void>;
+    /** Marks the thread done; a running turn settles it when it ends. */
+    readonly settle: (threadId: string) => Promise<void>;
+    readonly unsettle: (threadId: string) => Promise<void>;
+    /** Hides the thread until `until`, a `Date` or an ISO date-time string. */
+    readonly snooze: (threadId: string, until: Date | string) => Promise<void>;
+    readonly unsnooze: (threadId: string) => Promise<void>;
   };
   readonly projects: {
     readonly list: () => Promise<ReadonlyArray<JsonObject>>;
     readonly read: (projectId: string) => Promise<JsonObject | undefined>;
+    /** Adds a project for a folder on the server; resolves with the project. */
+    readonly create: (input: {
+      readonly title: string;
+      readonly workspaceRoot: string;
+      readonly createWorkspaceRootIfMissing?: boolean;
+    }) => Promise<JsonObject>;
+    /**
+     * Changes a project's fields, such as `title`, `archived`, `pinned` or `scripts`, as the
+     * project settings do; resolves with the project.
+     */
+    readonly update: (projectId: string, patch: JsonObject) => Promise<JsonObject>;
   };
   readonly schedule: {
     /**
@@ -182,12 +346,72 @@ export interface PluginApi {
     readonly afterRunCompleted: (
       handler: (run: PluginCompletedRun) => void | Promise<void>,
     ) => void;
-    /** Sees each user or agent message before it is sent, except slash commands; a hook slower than 2 seconds or one that throws is skipped. */
+    /**
+     * Asked about each approval or question an agent raises while the plugin is active, after
+     * hooks registered before it, until one answers. The user sees the request meanwhile and may
+     * answer first, which aborts `signal`. A hook slower than 10 seconds, one that throws or one
+     * whose answer does not fit the request is skipped, and with no answer the user decides.
+     */
+    readonly onRuntimeRequest: (
+      handler: (
+        request: PluginRuntimeRequest,
+        context: { readonly signal: AbortSignal },
+      ) => PluginRuntimeRequestAnswer | Promise<PluginRuntimeRequestAnswer>,
+    ) => void;
+    /**
+     * Sees each user or agent message before it is sent, except slash commands, after hooks
+     * registered before it and with their changes. A block stops the rest. A hook slower than
+     * 2 seconds or one that throws is skipped.
+     */
     readonly beforeDispatch: (
       hook: (
         message: PluginOutgoingMessage,
       ) => PluginBeforeDispatchResult | Promise<PluginBeforeDispatchResult>,
     ) => void;
+  };
+  readonly slashCommands: {
+    /**
+     * Lists `/name` with every provider's commands; user and agent messages starting with it run
+     * `handler` on the server instead of being sent. Throwing or taking over 10 seconds blocks the
+     * message. Names are lowercase letters, digits and `-`, not T3 Code's or another plugin's.
+     */
+    readonly register: (
+      command: {
+        readonly name: string;
+        readonly description?: string;
+        /** Shown after the name while the user types arguments. */
+        readonly inputHint?: string;
+      },
+      handler: (
+        invocation: PluginSlashCommandInvocation,
+        context: { readonly signal: AbortSignal },
+      ) => PluginSlashCommandResult | Promise<PluginSlashCommandResult>,
+    ) => void;
+  };
+  readonly textGeneration: {
+    /**
+     * Supplies `kind` of text before T3 Code generates it, until the plugin deactivates. T3 cleans
+     * up the answer as it does model output. Nothing, a wrong shape, an error or 30 seconds
+     * without an answer leaves it to the next plugin, then to T3 Code's own generator.
+     */
+    readonly register: <K extends keyof PluginTextGenerationTasks>(
+      kind: K,
+      generate: (
+        input: PluginTextGenerationTasks[K]["input"],
+        context: { readonly signal: AbortSignal },
+      ) =>
+        | PluginTextGenerationTasks[K]["output"]
+        | void
+        | Promise<PluginTextGenerationTasks[K]["output"] | void>,
+    ) => void;
+  };
+  readonly agents: {
+    /**
+     * Adds `text` (up to 4,000 bytes) to the instructions T3 Code gives Claude and Codex agents,
+     * from their next turn or session until the plugin deactivates. A `skills/` folder of
+     * `<name>/SKILL.md` skills beside the manifest reaches the same agents with no code.
+     */
+    readonly addInstructions: (text: string) => void;
   };
   readonly mcp: {
     /** Offers a tool to agents in every thread until the plugin deactivates. */

@@ -62,10 +62,9 @@ manifest's JSON Schema and declarative contributions only.
 
 Where T3 has a closed union and a `switch` (right panel kinds, settings paths, keybinding commands,
 drivers, MCP toolkits), plugins add an entry beside the built-ins: a `plugin` right panel kind, a
-`plugin.<pluginId>.<commandId>` keybinding command, a `plugin-slash-command` composer item. The
-provider slash command variant does not fit plugins, because it inserts text for the provider to
-read while a plugin command runs plugin code. Where T3 has a server-supplied open variant (dynamic
-tool items, themes), plugins use it. Registries are module-level `Map`s behind one version atom,
+`plugin.<pluginId>.<commandId>` keybinding command, a `plugin-slash-command` composer item for a
+web plugin's command, which runs in the page. Where T3 has a server-supplied open variant (dynamic
+tool items, themes, provider slash commands), plugins use it. Registries are module-level `Map`s behind one version atom,
 read through atoms derived from it: React Compiler would cache a plain lookup. Hot paths such as
 timeline and sidebar rows re-render on that one version, never through a per-row subscription.
 Chat code blocks read their own atom of code block renderers instead, so a banner or panel change
@@ -90,7 +89,9 @@ stale items. Clicks and shortcuts come back through the existing menu-action cha
 
 The orchestrator stays pure: `turns.beforeDispatch` hooks run in `ThreadManagementService.dispatch`,
 before the command reaches it, with a 2-second deadline each and fail-open, and skip notifications
-and guest messages. The hook registry is a `PluginHooks` reference with an inert default, so
+and guest messages. A block fails the dispatch with `OrchestratorCommandRejectedError` caused by
+the plugin's reason: every caller already handles that error and releases claimed attachments, and
+clients show the deepest error message, so the sender sees the reason and keeps the draft. The hook registry is a `PluginHooks` reference with an inert default, so
 orchestration code and its tests need no plugin wiring; the server provides one registry to the
 dispatch path and the host. `events.stored` for one type lets the event sink filter before anything is
 decoded for the plugin; several types share one stream so events stay in sequence order. A sliding
@@ -99,8 +100,41 @@ buffer means a slow plugin loses old events rather than stalling the server; plu
 dropping, because a dropped run would be lost for good once the saved position moves past it. It
 saves the sequence and the last 256 ended runs in the plugin's storage: runs that end while a
 plugin is off arrive when it starts, and a run updated again after it ended (a checkpoint landing
-on an interrupted run) is not delivered twice. Hooks skip slash commands, whose meaning an
-appended paragraph would change.
+on an interrupted run) is not delivered twice. Hooks skip slash commands, whose meaning changed
+text would change.
+
+`turns.onRuntimeRequest` reacts to stored events too and answers through the same
+`runtime-request.respond` command a client sends, so every adapter that raises approvals or
+questions (Claude, Codex, ACP agents such as Grok and Antigravity, OpenCode, Pi) is covered, and
+Cursor raises none. Adapters record a request and its turn item in either order, so the reactor
+watches both event types and asks plugins once both exist. Requests that cannot be answered
+(`not_resumable`) are skipped, and plugins choose only from the decisions the request offers,
+because adapters map the rest differently (`acceptAlways` is a deny in Claude). The user sees the
+request while plugins decide: holding it back would need a change at every adapter.
+
+A server plugin's slash commands are provider slash commands: the server adds them to every
+provider's lists where it adds `/usage-limits`, so every client lists them with no plugin code, and
+the `beforeDispatch` path runs the plugin's handler instead of the hooks. A command ends in a sent
+or a blocked message and cannot answer on its own: clients keep a sent message on screen until
+the server records a user message with its id, and recording one without starting a run would need
+a new orchestrator command.
+
+Text generation hooks wrap the `TextGeneration` router, which every caller goes through, so thread
+titles, commit messages, pull request content, branch names and review guides all ask plugins
+first, and plugin answers get the cleanup T3 gives model output. There is still no free-form
+`text.generate`: providers only offer these tasks, and adding one means a new method in every
+text generation driver.
+
+Plugin instructions and skill folders ride on each adapter turn input, read once per turn in
+`RunExecutionService`, so adapters never look up plugins. Claude appends the instructions to T3's
+system prompt text, before the user's own launch text, and loads each plugin folder with a
+`skills/` folder as a Claude Code plugin (`--plugin-dir`), which reads `skills/` natively. Codex
+gets the instructions as `application` context entries and the `skills` folders through
+`skills/extraRoots/set`, sent only when they change. The ACP agents (Grok, Antigravity, Fx),
+OpenCode, Cursor, Pi and Muse are not wired: each puts T3's own text in its own place, so each
+needs its own change, and none takes a skill folder from T3. Claude starts a process with its
+options, so a change reaches a Claude thread when its next process starts. The composer's `$`
+picker lists what each provider discovers, which does not include plugin skills yet.
 
 `threads.notify` is the one plugin change inside `Orchestrator.ts`: the internal
 `thread.notification.record` command, because every `message.dispatch` starts a run. The note joins
@@ -119,6 +153,10 @@ leaves the old version in staging; startup puts it back when nothing replaced it
 staging. Uninstall deletes the entry in `plugins/`, never the plugin's resolved `rootDir`, which for
 a symlinked plugin is the author's own folder. Git clones run with prompts off and
 `GIT_ALLOW_PROTOCOL` set, which blocks transports such as `ext::` that run commands.
+
+Install records the npm version or git commit it fetched in `plugins.json`. Update checks compare
+it with the registry's tag or `git ls-remote` and keep what they found there with the time of the
+check, so a restart before the next check is due starts no network request.
 
 ## Nothing installed costs nothing
 

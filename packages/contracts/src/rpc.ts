@@ -384,6 +384,7 @@ import {
   PluginUninstallResult,
   PluginUpdateInput,
   PluginListInput,
+  PluginCheckUpdatesInput,
   PluginListResult,
   PluginMutationResult,
   PluginReloadInput,
@@ -574,6 +575,7 @@ export const WS_METHODS = {
   pluginsInstall: "plugins.install",
   pluginsUninstall: "plugins.uninstall",
   pluginsUpdate: "plugins.update",
+  pluginsCheckUpdates: "plugins.checkUpdates",
   pluginsSettingsGet: "plugins.settings.get",
   pluginsSettingsUpdate: "plugins.settings.update",
   pluginsInvoke: "plugins.invoke",
@@ -2021,6 +2023,13 @@ const WsPluginsUpdateRpc = Rpc.make(WS_METHODS.pluginsUpdate, {
   error: PluginRpcError,
 });
 
+/** Checks every plugin installed from git or npm for a newer version now. */
+const WsPluginsCheckUpdatesRpc = Rpc.make(WS_METHODS.pluginsCheckUpdates, {
+  payload: PluginCheckUpdatesInput,
+  success: PluginListResult,
+  error: PluginRpcError,
+});
+
 const WsPluginsUninstallRpc = Rpc.make(WS_METHODS.pluginsUninstall, {
   payload: PluginUninstallInput,
   success: PluginUninstallResult,
@@ -2144,6 +2153,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPluginsInstallRpc,
   WsPluginsUninstallRpc,
   WsPluginsUpdateRpc,
+  WsPluginsCheckUpdatesRpc,
   WsPluginsSettingsGetRpc,
   WsPluginsSettingsUpdateRpc,
   WsPluginsInvokeRpc,

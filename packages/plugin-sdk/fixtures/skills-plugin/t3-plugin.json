@@ -1,0 +1,8 @@
+{
+  "id": "skills-plugin",
+  "name": "Release helper",
+  "version": "0.1.0",
+  "description": "Test fixture that gives agents a skill and instructions.",
+  "engines": { "t3": ">=0.1.0" },
+  "server": "./server.cjs"
+}

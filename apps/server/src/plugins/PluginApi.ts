@@ -10,15 +10,22 @@ import * as Schema from "effect/Schema";
 import type * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import type * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import type * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import type * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import type * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import type * as ProjectService from "../project/ProjectService.ts";
+import type * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import type * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import type * as ServerSettings from "../serverSettings.ts";
+import { makeAgentsApi } from "./api/agents.ts";
 import { makeEventsApi, storedEvents } from "./api/events.ts";
 import { makeFacadeContext } from "./api/facade.ts";
 import { makeHttpApi } from "./api/http.ts";
 import { makeMcpApi } from "./api/mcp.ts";
+import type { RuntimeRequestHooks } from "./api/runtimeRequests.ts";
 import { makeScheduleApi } from "./api/schedule.ts";
 import { makeServerApi } from "./api/server.ts";
+import { makeSlashCommandsApi } from "./api/slashCommands.ts";
+import { makeTextGenerationApi } from "./api/textGeneration.ts";
 import { makeProjectsApi, makeThreadsApi } from "./api/threads.ts";
 import { makeTurnsApi } from "./api/turns.ts";
 import type * as PluginHooks from "./PluginHooks.ts";
@@ -75,7 +82,11 @@ export interface PluginApiServices {
   readonly eventStore: OrchestrationEventStore.OrchestrationEventStore["Service"];
   readonly threads: ThreadManagementService.ThreadManagementService["Service"];
   readonly projects: ProjectStore.ProjectStoreV2["Service"];
+  readonly launches: ThreadLaunchService.ThreadLaunchService["Service"];
+  readonly projectService: ProjectService.ProjectService["Service"];
+  readonly providers: ProviderRegistry.ProviderRegistry["Service"];
   readonly hooks: PluginHooks.PluginHooksRegistry;
+  readonly runtimeRequests: RuntimeRequestHooks;
   readonly mcpTools: PluginMcpTools.PluginMcpTools["Service"];
   readonly httpRoutes: PluginHttpRoutes.PluginHttpRoutes["Service"];
   readonly environment: ServerEnvironment.ServerEnvironment["Service"];
@@ -169,6 +180,7 @@ export const makePluginApi = (input: {
     schedule: makeScheduleApi(facade),
     turns: makeTurnsApi(facade, services, {
       storage,
+      pluginName: input.name,
       runEvents: (afterSequence) =>
         storedEvents(
           facade,
@@ -177,6 +189,9 @@ export const makePluginApi = (input: {
           "suspend",
         ),
     }),
+    slashCommands: makeSlashCommandsApi(facade, services, input.name),
+    textGeneration: makeTextGenerationApi(facade, services),
+    agents: makeAgentsApi(facade, services, input.name),
     mcp: makeMcpApi(facade, services),
     http: makeHttpApi(facade, services),
     server: makeServerApi(facade, {

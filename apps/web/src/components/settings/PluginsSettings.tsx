@@ -109,6 +109,11 @@ function EnvironmentPlugins({ environment }: { readonly environment: Environment
   return (
     <>
       <AddPlugin environmentId={environment.environmentId} />
+      {plugins.some(
+        (plugin) => plugin.installSource !== undefined && plugin.installSource.type !== "path",
+      ) ? (
+        <CheckPluginUpdates environmentId={environment.environmentId} plugins={plugins} />
+      ) : null}
       {plugins.length === 0 ? (
         <SettingsRow
           title="No plugins installed"
@@ -127,6 +132,52 @@ function EnvironmentPlugins({ environment }: { readonly environment: Environment
     </>
   );
 }
+
+/** Checks plugins installed from git or npm now; the server also checks once a day. */
+function CheckPluginUpdates({
+  environmentId,
+  plugins,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly plugins: ReadonlyArray<PluginState>;
+}) {
+  const canCheck = useAtomValue(pluginEnvironment.checkPluginUpdates.permissionAtom(environmentId));
+  const check = useAtomCommand(pluginEnvironment.checkPluginUpdates, "plugin update check");
+  const [busy, setBusy] = useState(false);
+  const [checked, setChecked] = useState(false);
+  const updates = plugins.filter((plugin) => plugin.availableUpdate !== undefined).length;
+  return (
+    <SettingsRow
+      title="Updates"
+      description={
+        updates > 0
+          ? `${updates === 1 ? "1 plugin has" : `${updates} plugins have`} an update.`
+          : checked
+            ? "Plugins installed from git or npm are up to date."
+            : "T3 Code checks plugins installed from git or npm once a day."
+      }
+      control={
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={busy || !canCheck}
+          onClick={async () => {
+            setBusy(true);
+            const result = await check({ environmentId, input: {} });
+            setBusy(false);
+            setChecked(result._tag === "Success");
+          }}
+        >
+          {busy ? "Checking…" : "Check for updates"}
+        </Button>
+      }
+    />
+  );
+}
+
+/** A git commit is shown short, an npm version as it is. */
+const updateLabel = (version: string) =>
+  /^[0-9a-f]{40,64}$/.test(version) ? version.slice(0, 7) : version;
 
 const installSourceLabel = (source: PluginInstallSource) =>
   source.type === "path" ? source.path : source.type === "git" ? source.url : `npm ${source.name}`;
@@ -305,6 +356,11 @@ function PluginRow({
       status={
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant={badge.variant}>{badge.label}</Badge>
+          {plugin.availableUpdate === undefined ? null : (
+            <Badge variant="info">
+              Update available: {updateLabel(plugin.availableUpdate.version)}
+            </Badge>
+          )}
           <span>
             {plugin.version === undefined ? plugin.id : `${plugin.id} ${plugin.version}`}
             {plugin.source === "dev" ? " · dev folder" : ""}
@@ -349,7 +405,11 @@ function PluginRow({
               variant="ghost"
               disabled={busy || !canManage}
               aria-label={`Update ${plugin.name}`}
-              title={`Update from ${installSourceLabel(plugin.installSource)}`}
+              title={
+                plugin.availableUpdate === undefined
+                  ? `Update from ${installSourceLabel(plugin.installSource)}`
+                  : `Update to ${updateLabel(plugin.availableUpdate.version)} from ${installSourceLabel(plugin.installSource)}`
+              }
               onClick={() =>
                 void run(() => update({ environmentId, input: { pluginId: plugin.id } }))
               }
