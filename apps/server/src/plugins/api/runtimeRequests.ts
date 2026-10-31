@@ -1,8 +1,8 @@
 import {
   CommandId,
   ProviderApprovalDecision,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2RuntimeRequest,
-  type OrchestrationV2StoredEvent,
   type OrchestrationV2TurnItem,
   type PluginId,
   type RuntimeRequestId,
@@ -24,7 +24,6 @@ import * as Stream from "effect/Stream";
 
 import type * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import type * as ThreadManagementService from "../../orchestration-v2/ThreadManagementService.ts";
-import type * as OrchestrationEventStore from "../../persistence/OrchestrationEventStore.ts";
 
 // The user sees the request the whole time and may answer first, so a plugin gets a short window.
 const RUNTIME_REQUEST_DEADLINE = Duration.seconds(10);
@@ -131,12 +130,16 @@ const responseFor = (
     : { decision: answer.decision, feedback };
 };
 
+// Fewer requests than this are ever waiting at once; a backlog drops the oldest, not the server.
+const CANDIDATE_BUFFER = 1024;
+// The live event stream has no budget to overflow, so a failure is rare; this spaces out retries.
+const RESTART_DELAY = Duration.seconds(1);
+
 const candidateOf = (
-  stored: OrchestrationV2StoredEvent,
+  event: OrchestrationV2DomainEvent,
 ):
   | { readonly threadId: ThreadId; readonly requestId: RuntimeRequestId; readonly open: boolean }
   | undefined => {
-  const { event } = stored;
   if (event.type === "runtime-request.updated") {
     return {
       threadId: event.threadId,
@@ -166,7 +169,6 @@ const candidateOf = (
 export const makeRuntimeRequestHooks = (input: {
   readonly context: Context.Context<never>;
   readonly orchestrator: Orchestrator.OrchestratorV2["Service"];
-  readonly eventStore: OrchestrationEventStore.OrchestrationEventStore["Service"];
   readonly threads: ThreadManagementService.ThreadManagementService["Service"];
   readonly crypto: Crypto.Crypto;
 }): RuntimeRequestHooks => {
@@ -181,6 +183,19 @@ export const makeRuntimeRequestHooks = (input: {
     tracked.delete(requestId);
     return asking === undefined ? Effect.void : Fiber.interrupt(asking);
   };
+
+  const stillPending = (target: {
+    readonly threadId: ThreadId;
+    readonly requestId: RuntimeRequestId;
+  }) =>
+    orchestrator.getThreadRecords(target.threadId, ["runtimeRequests"]).pipe(
+      Effect.map(
+        (records) =>
+          records.runtimeRequests.find((candidate) => candidate.id === target.requestId)?.status ===
+          "pending",
+      ),
+      Effect.orElseSucceed(() => false),
+    );
 
   const ask = Effect.fnUntraced(function* (
     target: { readonly threadId: ThreadId; readonly requestId: RuntimeRequestId },
@@ -209,8 +224,7 @@ export const makeRuntimeRequestHooks = (input: {
       const commandId = CommandId.make(
         `command:plugin:${hook.pluginId}:${yield* input.crypto.randomUUIDv4().pipe(Effect.orDie)}`,
       );
-      // The user may have answered meanwhile, so a refused response is expected, not a failure.
-      yield* threads
+      const refusal = yield* threads
         .dispatch({
           type: "runtime-request.respond",
           commandId,
@@ -218,22 +232,25 @@ export const makeRuntimeRequestHooks = (input: {
           ...response,
         })
         .pipe(
-          Effect.tap(() =>
-            Effect.logInfo("plugin answered a runtime request", {
-              pluginId: hook.pluginId,
-              requestId: request.requestId,
-              kind: request.kind,
-            }),
-          ),
-          Effect.catchCause((cause) =>
-            Effect.logDebug("plugin runtime request answer was not accepted", {
-              pluginId: hook.pluginId,
-              requestId: request.requestId,
-              cause: String(cause).slice(0, 500),
-            }),
-          ),
+          Effect.as(undefined),
+          Effect.catchCause((cause) => Effect.succeed(String(cause).slice(0, 500))),
         );
-      return;
+      if (refusal === undefined) {
+        yield* Effect.logInfo("plugin answered a runtime request", {
+          pluginId: hook.pluginId,
+          requestId: request.requestId,
+          kind: request.kind,
+        });
+        return;
+      }
+      // The user may have answered meanwhile. Otherwise the server refused this answer, such as
+      // one that skips a required question, and a later plugin may still have one that fits.
+      if (!(yield* stillPending(target))) return;
+      yield* Effect.logWarning("the server refused a plugin's answer to a runtime request", {
+        pluginId: hook.pluginId,
+        requestId: request.requestId,
+        cause: refusal,
+      });
     }
   });
 
@@ -268,38 +285,33 @@ export const makeRuntimeRequestHooks = (input: {
     );
   });
 
-  const react = Effect.gen(function* () {
-    const afterSequence = yield* input.eventStore.latestAgentSequence();
-    // Each stream is filtered by type in the event sink, before anything reaches this reactor.
-    const requests = orchestrator.streamStoredEventsFrom({
-      afterSequence,
-      eventType: "runtime-request.updated",
-    });
-    const items = orchestrator.streamStoredEventsFrom({
-      afterSequence,
-      eventType: "turn-item.updated",
-    });
-    yield* Stream.merge(requests, items).pipe(
-      Stream.runForEach((stored) => {
-        const candidate = candidateOf(stored);
-        if (candidate === undefined) return Effect.void;
-        if (!candidate.open) return forget(candidate.requestId);
-        return consider(candidate.threadId, candidate.requestId).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("reading a runtime request for plugins failed", {
-              requestId: candidate.requestId,
-              cause: String(cause).slice(0, 500),
-            }),
-          ),
-        );
-      }),
-    );
-  }).pipe(
+  // The in-memory event stream other reactors use: nothing is serialized or budgeted per event,
+  // and the type check runs before anything else. The buffer keeps projection reads for one
+  // request from holding back the events behind it.
+  const react = orchestrator.streamDomainEvents.pipe(
+    Stream.map(candidateOf),
+    Stream.filter((candidate) => candidate !== undefined),
+    Stream.buffer({ capacity: CANDIDATE_BUFFER, strategy: "sliding" }),
+    Stream.runForEach((candidate) =>
+      candidate.open
+        ? consider(candidate.threadId, candidate.requestId).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("reading a runtime request for plugins failed", {
+                requestId: candidate.requestId,
+                cause: String(cause).slice(0, 500),
+              }),
+            ),
+          )
+        : forget(candidate.requestId),
+    ),
+    // Started again while any hook is registered, so one failure cannot silence every plugin.
     Effect.catchCause((cause) =>
-      Effect.logWarning("plugin runtime request reactor stopped", {
+      Effect.logWarning("plugin runtime request reactor stopped; restarting", {
         cause: String(cause).slice(0, 500),
       }),
     ),
+    Effect.andThen(Effect.sleep(RESTART_DELAY)),
+    Effect.forever,
   );
 
   return {

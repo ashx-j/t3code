@@ -12,7 +12,7 @@ import {
   RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ServerCommand,
-  type OrchestrationV2StoredEvent,
+  type OrchestrationV2DomainEvent,
   type PluginState,
   type Project,
   ProviderInstanceId,
@@ -54,6 +54,8 @@ import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
 import { withPluginTextGeneration } from "./pluginTextGeneration.ts";
 
+// None of these messages replays an accepted command.
+const notAccepted = Effect.succeed(false);
 const fixturesDir = new URL("../../../../packages/plugin-sdk/fixtures/", import.meta.url).pathname;
 const hello = PluginId.make("hello-plugin");
 const broken = PluginId.make("broken-plugin");
@@ -301,18 +303,29 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
         const host = yield* PluginHost.PluginHost;
         const hooks = yield* PluginHooks.PluginHooks;
         yield* waitForStatuses(host, { [skills]: "active" });
-        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        // Claude loads a whole folder as a plugin, so it gets one holding only the skills.
+        const agentFolder = `${stateDir}/plugin-agents/skills-plugin`;
         assert.deepStrictEqual(yield* hooks.agentContext, {
           instructions: [
             '<t3_code_plugin name="Release helper">\nWrite release notes in the past tense.\n</t3_code_plugin>',
           ],
-          skillFolders: [
-            { plugin: path.resolve(rootDir), skills: path.resolve(rootDir, "skills") },
-          ],
+          skillFolders: [{ plugin: agentFolder, skills: `${agentFolder}/skills` }],
         });
+        assert.deepStrictEqual((yield* fs.readDirectory(agentFolder)).toSorted(), [
+          ".claude-plugin",
+          "skills",
+        ]);
+        assert.include(
+          JSON.parse(yield* fs.readFileString(`${agentFolder}/.claude-plugin/plugin.json`)),
+          { name: "skills-plugin" },
+        );
+        assert.isTrue(yield* fs.exists(`${agentFolder}/skills/release-notes/SKILL.md`));
 
         yield* host.setEnabled(skills, false);
         assert.isUndefined(yield* hooks.agentContext);
+        assert.isFalse(yield* fs.exists(agentFolder));
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
@@ -483,8 +496,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
       const responded = yield* Queue.unbounded<OrchestrationV2ServerCommand>();
       // Approval and question events reach the plugin's runtime request hook; the records are
       // what the projection holds when each event is read.
-      const runtimeEvents = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
-      const itemEvents = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+      const domainEvents = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
       let records = { runtimeRequests: [] as Array<unknown>, turnItems: [] as Array<unknown> };
       const projectId = ProjectId.make("project:plugin-workbench");
       const defaultModel = {
@@ -521,12 +533,8 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         }),
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
         Layer.mock(Orchestrator.OrchestratorV2)({
-          streamStoredEventsFrom: (input) =>
-            input?.eventType === "runtime-request.updated"
-              ? Stream.fromQueue(runtimeEvents)
-              : input?.eventType === "turn-item.updated"
-                ? Stream.fromQueue(itemEvents)
-                : Stream.never,
+          streamStoredEventsFrom: () => Stream.never,
+          streamDomainEvents: Stream.fromQueue(domainEvents),
           getThreadRecords: () => Effect.sync(() => records as never),
         }),
         Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({
@@ -602,23 +610,29 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         });
 
         assert.strictEqual(
-          yield* hooks.beforeDispatch({
-            threadId,
-            messageId: "message:context",
-            text: "Ship it #context",
-            createdBy: "user",
-            attachments: [],
-          }),
+          yield* hooks.beforeDispatch(
+            {
+              threadId,
+              messageId: "message:context",
+              text: "Ship it #context",
+              createdBy: "user",
+              attachments: [],
+            },
+            notAccepted,
+          ),
           "Ship it #context\n\nContext from workbench-plugin.",
         );
         const outgoing = (text: string) =>
-          hooks.beforeDispatch({
-            threadId,
-            messageId: "message:workbench",
-            text,
-            createdBy: "user",
-            attachments: [],
-          });
+          hooks.beforeDispatch(
+            {
+              threadId,
+              messageId: "message:workbench",
+              text,
+              createdBy: "user",
+              attachments: [],
+            },
+            notAccepted,
+          );
         assert.strictEqual(yield* outgoing("#shout ship it"), "SHIP IT");
         assert.strictEqual(
           (yield* Effect.flip(outgoing("Deploy with #secret"))).message,
@@ -673,8 +687,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           status: "waiting",
           ...fields,
         });
-        const stored = (sequence: number, type: string, payload: object) =>
-          ({ sequence, event: { type, threadId, payload } }) as never;
+        const event = (type: string, payload: object) => ({ type, threadId, payload }) as never;
         const gitStatus = item("request:git", {
           type: "approval_request",
           requestKind: "command",
@@ -703,11 +716,11 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         // Claude records the request before its item, so the plugin is asked once the item lands.
         records = { runtimeRequests: [request("request:git", "command")], turnItems: [] };
         yield* Queue.offer(
-          runtimeEvents,
-          stored(2, "runtime-request.updated", records.runtimeRequests[0]!),
+          domainEvents,
+          event("runtime-request.updated", records.runtimeRequests[0]!),
         );
         records = { ...records, turnItems: [gitStatus] };
-        yield* Queue.offer(itemEvents, stored(3, "turn-item.updated", gitStatus));
+        yield* Queue.offer(domainEvents, event("turn-item.updated", gitStatus));
         assert.deepInclude(yield* Queue.take(responded), {
           requestId: RuntimeRequestId.make("request:git"),
           decision: "accept",
@@ -715,11 +728,11 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
 
         // Codex records the item first.
         records = { runtimeRequests: [], turnItems: [remove] };
-        yield* Queue.offer(itemEvents, stored(4, "turn-item.updated", remove));
+        yield* Queue.offer(domainEvents, event("turn-item.updated", remove));
         records = { ...records, runtimeRequests: [request("request:rm", "command")] };
         yield* Queue.offer(
-          runtimeEvents,
-          stored(5, "runtime-request.updated", records.runtimeRequests[0]!),
+          domainEvents,
+          event("runtime-request.updated", records.runtimeRequests[0]!),
         );
         assert.deepInclude(yield* Queue.take(responded), {
           requestId: RuntimeRequestId.make("request:rm"),
@@ -731,7 +744,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           runtimeRequests: [request("request:ask", "user_input")],
           turnItems: [question],
         };
-        yield* Queue.offer(itemEvents, stored(6, "turn-item.updated", question));
+        yield* Queue.offer(domainEvents, event("turn-item.updated", question));
         assert.deepInclude(yield* Queue.take(responded), {
           requestId: RuntimeRequestId.make("request:ask"),
           answers: { scope: "Only src" },

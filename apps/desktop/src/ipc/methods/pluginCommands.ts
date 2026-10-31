@@ -64,7 +64,11 @@ export const installPluginCommands = Effect.fn("desktop.ipc.installPluginCommand
             const iconPaths = yield* assets.iconPaths;
             const icon = platform === "win32" ? iconPaths.ico : iconPaths.png;
             if (Option.isSome(icon)) {
-              tray = new Electron.Tray(icon.value);
+              const image = Electron.nativeImage.createFromPath(icon.value);
+              // The app icon is 1024px; the macOS menu bar wants about 18pt.
+              tray = new Electron.Tray(
+                platform === "darwin" ? image.resize({ width: 18, height: 18 }) : image,
+              );
               tray.setToolTip(Electron.app.getName());
             } else {
               yield* Effect.logWarning("No icon for the plugin tray icon; skipping it");

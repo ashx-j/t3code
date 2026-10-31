@@ -3,11 +3,14 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import {
+  pluginMentionItemsAtom,
   pluginPageAtom,
+  pluginSlashCommandsAtom,
   pluginPageKey,
   pluginThreadBadgesAtom,
   registerPluginAction,
   registerPluginPage,
+  setPluginMentionItems,
   runPluginThreadMenuItem,
   setPluginThreadBadge,
   withPluginThreadMenuItems,
@@ -69,5 +72,30 @@ describe("plugin pages", () => {
     expect(appAtomRegistry.get(pluginPageAtom(key))).toBe(remote);
     unregisterLocal();
     expect(appAtomRegistry.get(pluginPageAtom(key))).toBe(remote);
+  });
+});
+
+describe("plugin @ items", () => {
+  it("updates the environment's items without touching other plugin lists", () => {
+    const slashCommands = appAtomRegistry.get(pluginSlashCommandsAtom(environmentId));
+    const item = {
+      key: "plugin-mention:notes:1",
+      pluginName: "Notes",
+      label: "First note",
+      description: "",
+      text: "(Note: first)",
+    };
+    setPluginMentionItems(environmentId, "notes", [item]);
+    setPluginMentionItems(environmentId, "notes", [
+      item,
+      { ...item, key: "plugin-mention:notes:2" },
+    ]);
+
+    // The composer reads slash commands too; @ item updates must not hand it a new list.
+    expect(appAtomRegistry.get(pluginSlashCommandsAtom(environmentId))).toBe(slashCommands);
+    expect(appAtomRegistry.get(pluginMentionItemsAtom(environmentId))).toHaveLength(2);
+    expect(appAtomRegistry.get(pluginMentionItemsAtom(otherEnvironmentId))).toEqual([]);
+    setPluginMentionItems(environmentId, "notes", []);
+    expect(appAtomRegistry.get(pluginMentionItemsAtom(environmentId))).toEqual([]);
   });
 });

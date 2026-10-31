@@ -262,6 +262,9 @@ const PluginsConfigFile = Schema.StructWithRest(
 );
 type PluginsConfigFile = typeof PluginsConfigFile.Type;
 const decodeConfig = Schema.decodeUnknownEffect(Schema.fromJsonString(PluginsConfigFile));
+const encodeClaudePluginManifest = Schema.encodeEffect(
+  fromJsonStringPretty(Schema.Struct({ name: Schema.String, description: Schema.String })),
+);
 const encodeConfig = Schema.encodeEffect(fromJsonStringPretty(PluginsConfigFile));
 const isJson = Schema.is(Schema.Json);
 
@@ -367,13 +370,7 @@ const make = Effect.gen(function* () {
     projectService: yield* ProjectService.ProjectService,
     providers: yield* ProviderRegistry.ProviderRegistry,
     hooks: yield* PluginHooks.PluginHooks,
-    runtimeRequests: makeRuntimeRequestHooks({
-      context,
-      orchestrator,
-      eventStore,
-      threads,
-      crypto,
-    }),
+    runtimeRequests: makeRuntimeRequestHooks({ context, orchestrator, threads, crypto }),
     mcpTools: yield* PluginMcpTools.PluginMcpTools,
     httpRoutes: yield* PluginHttpRoutes.PluginHttpRoutes,
     environment: yield* ServerEnvironment.ServerEnvironment,
@@ -386,6 +383,11 @@ const make = Effect.gen(function* () {
   const http = yield* HttpClient.HttpClient;
 
   const pluginsDir = path.join(config.stateDir, "plugins");
+  // Claude loads a plugin folder whole, with its commands, agents, hooks and MCP servers, so
+  // agents get a generated folder holding only the plugin's skills. Copied, not linked: linking
+  // a folder needs extra rights on Windows.
+  const agentFoldersRoot = path.join(config.stateDir, "plugin-agents");
+  const agentFolderOf = (pluginId: PluginId) => path.join(agentFoldersRoot, pluginId);
   const configPath = path.join(config.stateDir, "plugins.json");
 
   const records = yield* Ref.make<ReadonlyArray<PluginRecord>>([]);
@@ -418,15 +420,18 @@ const make = Effect.gen(function* () {
       const all = yield* Ref.get(records);
       const states = yield* currentStates;
       yield* services.mcpTools.setInstalledPlugins(states);
-      const activeRoots = all.flatMap((record, index) =>
-        states[index]?.status === "active" ? [record.plugin.rootDir] : [],
+      const active = all.flatMap((record, index) =>
+        states[index]?.status === "active" ? [record.plugin] : [],
       );
       yield* environmentThemes.setPluginThemeDirectories(
-        activeRoots.map((rootDir) => path.join(rootDir, "themes")),
+        active.map((plugin) => path.join(plugin.rootDir, "themes")),
       );
       yield* services.hooks.setSkillFolders(
         yield* Effect.filter(
-          activeRoots.map((rootDir) => ({ plugin: rootDir, skills: path.join(rootDir, "skills") })),
+          active.map((plugin) => {
+            const folder = agentFolderOf(plugin.id);
+            return { plugin: folder, skills: path.join(folder, "skills") };
+          }),
           (folder) => fs.exists(folder.skills).pipe(Effect.orElseSucceed(() => false)),
         ),
       );
@@ -589,6 +594,36 @@ const make = Effect.gen(function* () {
     }
   });
 
+  const removeAgentFolder = (pluginId: PluginId) =>
+    fs.remove(agentFolderOf(pluginId), { recursive: true, force: true }).pipe(Effect.ignore);
+  const prepareAgentFolder = Effect.fn("PluginHost.prepareAgentFolder")(
+    function* (plugin: DiscoveredPlugin, name: string) {
+      yield* removeAgentFolder(plugin.id);
+      const skills = path.join(plugin.rootDir, "skills");
+      if (!(yield* fs.exists(skills))) return;
+      const target = agentFolderOf(plugin.id);
+      yield* fs.makeDirectory(path.join(target, ".claude-plugin"), { recursive: true });
+      const manifest = yield* encodeClaudePluginManifest({
+        name: plugin.id,
+        description: `Skills from the T3 Code plugin ${name}.`,
+      });
+      yield* fs.writeFileString(
+        path.join(target, ".claude-plugin", "plugin.json"),
+        `${manifest}\n`,
+      );
+      yield* fs.copy(skills, path.join(target, "skills"));
+    },
+    (effect, plugin) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("could not prepare a plugin's skills for agents", {
+            pluginId: plugin.id,
+            cause: Cause.pretty(cause).slice(0, 500),
+          }).pipe(Effect.andThen(removeAgentFolder(plugin.id))),
+        ),
+      ),
+  );
+
   const activatePlugin = Effect.fnUntraced(function* (plugin: DiscoveredPlugin) {
     const manifest = manifestOf(plugin);
     if (manifest === undefined) return;
@@ -603,6 +638,7 @@ const make = Effect.gen(function* () {
     }
     if (manifest.web !== undefined) yield* serveWebFiles(plugin, manifest.web);
     if (manifest.server === undefined) {
+      yield* prepareAgentFolder(plugin, manifest.name);
       return yield* setRecord(plugin.id, { status: "active", revision: nextRevision() });
     }
     yield* setRecord(plugin.id, { status: "loading" });
@@ -646,6 +682,7 @@ const make = Effect.gen(function* () {
         },
       });
     }
+    yield* prepareAgentFolder(plugin, manifest.name);
     yield* setRecord(plugin.id, { status: "active", activation, revision: nextRevision() });
     yield* Effect.logInfo("plugin activated", { pluginId: plugin.id });
   });
@@ -656,6 +693,7 @@ const make = Effect.gen(function* () {
    */
   const stopPlugin = Effect.fnUntraced(function* (pluginId: PluginId) {
     yield* FiberMap.remove(activations, pluginId);
+    yield* removeAgentFolder(pluginId);
     // Web-only plugins have no activation but still serve their bundle.
     yield* services.httpRoutes.unregisterPlugin(pluginId);
     const record = yield* findRecord(pluginId);
@@ -727,6 +765,8 @@ const make = Effect.gen(function* () {
   const startup = lifecycle.withPermits(1)(
     Effect.gen(function* () {
       yield* recoverStaging;
+      // Folders of plugins the last run left active; activation writes them again.
+      yield* fs.remove(agentFoldersRoot, { recursive: true, force: true }).pipe(Effect.ignore);
       const { plugins, enabled } = yield* discover(true);
       yield* Ref.set(
         records,

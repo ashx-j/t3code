@@ -74,14 +74,24 @@ plugin right panel stores its title on the surface so tab titles need no lookup,
 
 A replaceable part (`ui.replace`) hands the plugin T3's own controls as elements T3 has already
 wired, so a plugin rearranges T3's code instead of copying it and keeps working when T3 changes a
-control's internals. The pieces are built only while a plugin replaces the part. Replacements
-apply in every environment's threads, like injected styles, and stack per part: the newest wins,
-and unloading it brings back the one before. Parts have their own version atom because they sit on
-hot paths such as the composer.
+control's internals. Unused pieces are elements that never render, and `original` is the part as
+T3 draws it, also drawn when a replacement throws. Replacements apply in every environment's
+threads, like injected styles, and stack per part: the newest wins, and unloading it brings back the
+one before. Parts have their own version atom because they sit on hot paths such as the composer
+and every timeline row. The `app.pageFrame` part's `page` piece renders Settings or Usage beside
+the thread kept mounted under it; `index.css` hides that thread, and the page carries
+`data-app-modal` so focus and shortcut guards treat it as they treat the window.
+
+Plugin buttons, menu items and badges belong to the plugin's environment, since they act through
+its server half. Thread menus are built and dispatched in two places (the header hook and the
+sidebar); plugin items carry `plugin:` ids that both pass to `runPluginThreadMenuItem` before
+their own `switch`. A badge change replaces only the changed thread's array, so other sidebar rows
+keep the same value and do not re-render. Plugin `@` items insert text: a chip would need a new
+context kind carried through the draft store, its persistence and the send path, while the server
+already sends records of unknown kinds to the agent.
 
 In the desktop app, plugin commands that ask for a menu item, a tray item or a global shortcut cross
-to the main
-process as one list that replaces the previous one, so a reload or an unloaded plugin never leaves
+to the main process as one list that replaces the previous one, so a reload or an unloaded plugin never leaves
 stale items. Clicks and shortcuts come back through the existing menu-action channel as the
 `plugin.<pluginId>.<commandId>` command.
 
@@ -127,8 +137,10 @@ text generation driver.
 
 Plugin instructions and skill folders ride on each adapter turn input, read once per turn in
 `RunExecutionService`, so adapters never look up plugins. Claude appends the instructions to T3's
-system prompt text, before the user's own launch text, and loads each plugin folder with a
-`skills/` folder as a Claude Code plugin (`--plugin-dir`), which reads `skills/` natively. Codex
+system prompt text, before the user's own launch text. Claude loads a plugin folder whole
+(`--plugin-dir`), commands, agents, hooks and MCP servers included, so it gets a folder the host
+generates under `<stateDir>/plugin-agents/<id>` with only a manifest and a copy of `skills/`,
+written when the plugin starts and removed when it stops. Codex
 gets the instructions as `application` context entries and the `skills` folders through
 `skills/extraRoots/set`, sent only when they change. The ACP agents (Grok, Antigravity, Fx),
 OpenCode, Cursor, Pi and Muse are not wired: each puts T3's own text in its own place, so each

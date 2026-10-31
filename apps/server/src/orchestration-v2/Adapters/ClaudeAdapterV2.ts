@@ -1483,7 +1483,7 @@ export function makeClaudeQueryOptions(input: {
   readonly appendSystemPromptFileText?: string;
   // Flag settings, because a user's settings.json env beats the process env in Claude Code.
   readonly toolSearchOverride?: "true";
-  /** T3 Code plugins' instructions, and their folders loaded as Claude Code plugins for skills. */
+  /** T3 Code plugins' instructions, and folders holding only their skills, loaded as plugins. */
   readonly plugins?: ProviderAdapter.ProviderAdapterV2TurnInput["plugins"];
 }): ClaudeAgentSdkQueryOptions {
   const compiledSelection = compileClaudeModelSelection(input.modelSelection);

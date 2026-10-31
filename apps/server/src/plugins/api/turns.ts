@@ -146,12 +146,13 @@ export const makeTurnsApi = (
       if (deactivated.aborted) throw new Error("This plugin activation has ended.");
       const remove = services.runtimeRequests.add({
         pluginId,
+        // A plugin turned off while it decided no longer speaks for the user.
         answer: (request, signal) =>
           deactivated.aborted
             ? Promise.resolve(undefined)
-            : Promise.resolve().then(() =>
-                handler(request, { signal: AbortSignal.any([signal, deactivated]) }),
-              ),
+            : Promise.resolve()
+                .then(() => handler(request, { signal: AbortSignal.any([signal, deactivated]) }))
+                .then((answer) => (deactivated.aborted ? undefined : answer)),
       });
       deactivated.addEventListener("abort", remove, { once: true });
     },
@@ -180,7 +181,10 @@ export const makeTurnsApi = (
                 Effect.map(
                   Option.match({
                     onNone: () => undefined,
-                    onSome: (result) => dispatchOutcome(message.text, result, api.pluginName),
+                    onSome: (result) =>
+                      activation.controller.signal.aborted
+                        ? undefined
+                        : dispatchOutcome(message.text, result, api.pluginName),
                   }),
                 ),
                 Effect.catchCause((cause) =>

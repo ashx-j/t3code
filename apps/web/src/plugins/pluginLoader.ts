@@ -70,6 +70,7 @@ import { isLoadableWebPlugin } from "./pluginWatch";
 
 const PANEL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
 const COMMAND_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
+const BADGE_TONES = new Set(["info", "success", "warning", "error"]);
 const CODE_LANGUAGE = /^[a-z0-9][a-z0-9+#.-]{0,31}$/;
 // Languages the app already draws itself.
 const BUILT_IN_LANGUAGES = new Set(["mermaid", "math"]);
@@ -191,6 +192,7 @@ const pluginActionEntry = <Place extends PluginActionPlace>(
   action: WebPluginAction<PluginActionContexts[Place]>,
 ): PluginActionEntry<Place> => {
   if (!COMMAND_ID.test(action.id)) throw new TypeError(`"${action.id}" is not a valid action id.`);
+  if (typeof action.title !== "string") throw new TypeError(`"${action.id}" needs a text title.`);
   return {
     key: `plugin:${pluginId}:${action.id}`,
     environmentId,
@@ -205,7 +207,8 @@ interface WebPluginApiContext {
   readonly environmentId: EnvironmentId;
   readonly plugin: PluginState;
   /** Keeps a cleanup for unload, or runs it at once when the plugin is already unloaded. */
-  readonly track: (cleanup: () => void) => void;
+  /** Returns the function that forgets the cleanup without running it. */
+  readonly track: (cleanup: () => void) => () => void;
   /** One dispatcher scope shared by every plugin; commands add and remove their own entries. */
   readonly shortcutHandlers: () => CommandHandlers;
   readonly navigate: (path: string) => void;
@@ -221,6 +224,9 @@ function makeWebPluginApi({
   const pluginId = plugin.id;
   const assetUrls = new Map<string, Promise<string>>();
   let bannerCount = 0;
+  // One cleanup each for a plugin's badges and `@` items, however often it updates them.
+  const badgedThreads = new Set<string>();
+  let mentionCleanupTracked = false;
   return {
     version: 1,
     id: pluginId,
@@ -253,8 +259,11 @@ function makeWebPluginApi({
           },
           { immediate: true },
         );
-        track(stop);
-        return stop;
+        const untrack = track(stop);
+        return () => {
+          untrack();
+          stop();
+        };
       },
     },
     rightPanel: {
@@ -357,18 +366,29 @@ function makeWebPluginApi({
         track(registerPluginAction("composer", pluginActionEntry(environmentId, pluginId, button)));
       },
       setMentionItems: (items) => {
-        setPluginMentionItems(
-          environmentId,
-          pluginId,
-          items.slice(0, 500).map((item) => ({
+        const entries = items.slice(0, 500).map((item) => {
+          const description = item.description ?? "";
+          if (
+            typeof item.id !== "string" ||
+            typeof item.label !== "string" ||
+            typeof item.text !== "string" ||
+            typeof description !== "string"
+          ) {
+            throw new TypeError("`@` items need a text id, label and text.");
+          }
+          return {
             key: `plugin-mention:${pluginId}:${item.id}`,
             pluginName: plugin.name,
             label: item.label,
-            description: item.description ?? "",
+            description,
             text: item.text,
-          })),
-        );
-        track(() => setPluginMentionItems(environmentId, pluginId, []));
+          };
+        });
+        setPluginMentionItems(environmentId, pluginId, entries);
+        if (!mentionCleanupTracked) {
+          mentionCleanupTracked = true;
+          track(() => setPluginMentionItems(environmentId, pluginId, []));
+        }
       },
     },
     threads: {
@@ -382,18 +402,29 @@ function makeWebPluginApi({
       },
       setBadge: (threadId, badge) => {
         const threadKey = scopedThreadKey(scopeThreadRef(environmentId, ThreadId.make(threadId)));
-        setPluginThreadBadge(
-          threadKey,
-          pluginId,
-          badge === null ? null : { label: badge.label, tone: badge.tone ?? "info" },
-        );
-        if (badge !== null) track(() => setPluginThreadBadge(threadKey, pluginId, null));
+        if (badge === null) {
+          badgedThreads.delete(threadKey);
+          setPluginThreadBadge(threadKey, pluginId, null);
+          return;
+        }
+        const tone = badge.tone ?? "info";
+        if (typeof badge.label !== "string" || !BADGE_TONES.has(tone)) {
+          throw new TypeError("A badge needs a text label and a known tone.");
+        }
+        setPluginThreadBadge(threadKey, pluginId, { label: badge.label, tone });
+        if (badgedThreads.size === 0) {
+          track(() => {
+            for (const key of badgedThreads) setPluginThreadBadge(key, pluginId, null);
+            badgedThreads.clear();
+          });
+        }
+        badgedThreads.add(threadKey);
       },
     },
     pages: {
       register: (page) => {
-        if (!COMMAND_ID.test(page.name)) {
-          throw new TypeError(`"${page.name}" is not a valid page name.`);
+        if (!COMMAND_ID.test(page.name) || typeof page.title !== "string") {
+          throw new TypeError(`"${page.name}" needs a valid name and a text title.`);
         }
         track(
           registerPluginPage(pluginPageKey(pluginId, page.name), {
@@ -406,8 +437,8 @@ function makeWebPluginApi({
     },
     sidebar: {
       addSection: (section) => {
-        if (!COMMAND_ID.test(section.id)) {
-          throw new TypeError(`"${section.id}" is not a valid section id.`);
+        if (!COMMAND_ID.test(section.id) || typeof section.title !== "string") {
+          throw new TypeError(`"${section.id}" needs a valid id and a text title.`);
         }
         track(
           registerPluginSidebarSection({
@@ -500,7 +531,7 @@ function makeWebPluginApi({
 interface LoadedPlugin {
   /** Version and start revision: a change of either loads the bundle again. */
   readonly key: string;
-  readonly cleanups: Array<() => void>;
+  readonly cleanups: Set<() => void>;
   disposed: boolean;
 }
 
@@ -525,8 +556,8 @@ const withDeadline = async <A>(work: Promise<A>, what: string) => {
 
 const loadKey = (plugin: PluginState) => `${plugin.version ?? ""}:${plugin.revision ?? ""}`;
 
-const runCleanups = (cleanups: ReadonlyArray<() => void>) => {
-  for (const cleanup of cleanups.toReversed()) {
+const runCleanups = (cleanups: Iterable<() => void>) => {
+  for (const cleanup of [...cleanups].toReversed()) {
     try {
       cleanup();
     } catch {
@@ -565,13 +596,16 @@ export function startPluginLoader(
   };
 
   const load = async (plugin: PluginState) => {
-    const entry: LoadedPlugin = { key: loadKey(plugin), cleanups: [], disposed: false };
+    const entry: LoadedPlugin = { key: loadKey(plugin), cleanups: new Set(), disposed: false };
     loaded.set(plugin.id, entry);
     // Registrations that arrive after unload, from a slow `activate` or a later callback, are
     // undone at once instead of outliving the plugin.
     const track = (cleanup: () => void) => {
       if (entry.disposed) runCleanups([cleanup]);
-      else entry.cleanups.push(cleanup);
+      else entry.cleanups.add(cleanup);
+      return () => {
+        entry.cleanups.delete(cleanup);
+      };
     };
     try {
       const bundle = await withDeadline(

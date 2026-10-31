@@ -750,33 +750,39 @@ const make = Effect.gen(function* () {
 
   // Plugins see user and agent messages before orchestration records them, may change or block
   // them, and handle their own slash commands. Notifications and guest messages are not the
-  // sender's own text, so they skip plugins.
+  // sender's own text, so they skip plugins, and a replayed command id goes out as accepted.
   const withPluginHooks = (command: OrchestrationV2ServerCommand) =>
     command.type === "message.dispatch" &&
     command.notification === undefined &&
     command.guestMessageId === undefined &&
     command.createdBy !== "system"
       ? pluginHooks
-          .beforeDispatch({
-            threadId: command.threadId,
-            messageId: command.messageId,
-            text: command.text,
-            createdBy: command.createdBy,
-            attachments: command.attachments.map((attachment) => ({
-              type: attachment.type,
-              name: attachment.name,
-              mimeType: attachment.mimeType,
-              sizeBytes: attachment.sizeBytes,
-            })),
-            ...(command.modelSelection === undefined
-              ? {}
-              : {
-                  model: {
-                    instanceId: command.modelSelection.instanceId,
-                    model: command.modelSelection.model,
-                  },
-                }),
-          })
+          .beforeDispatch(
+            {
+              threadId: command.threadId,
+              messageId: command.messageId,
+              text: command.text,
+              createdBy: command.createdBy,
+              attachments: command.attachments.map((attachment) => ({
+                type: attachment.type,
+                name: attachment.name,
+                mimeType: attachment.mimeType,
+                sizeBytes: attachment.sizeBytes,
+              })),
+              ...(command.modelSelection === undefined
+                ? {}
+                : {
+                    model: {
+                      instanceId: command.modelSelection.instanceId,
+                      model: command.modelSelection.model,
+                    },
+                  }),
+            },
+            receipts.getByCommandId(command.commandId).pipe(
+              Effect.map(Option.isSome),
+              Effect.orElseSucceed(() => false),
+            ),
+          )
           .pipe(
             Effect.map((text) => (text === command.text ? command : { ...command, text })),
             // A rejected command is one every caller already handles; its cause carries the
