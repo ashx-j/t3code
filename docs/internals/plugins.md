@@ -74,6 +74,13 @@ never re-renders them, and only `plg_` tool rows look up a tool renderer. A
 plugin right panel stores its title on the surface so tab titles need no lookup, and renders
 "plugin not active" with a close button while its plugin is unloaded.
 
+A replaceable part (`ui.replace`) hands the plugin T3's own controls as elements T3 has already
+wired, so a plugin rearranges T3's code instead of copying it and keeps working when T3 changes a
+control's internals. The pieces are built only while a plugin replaces the part. Replacements
+apply in every environment's threads, like injected styles, and stack per part: the newest wins,
+and unloading it brings back the one before. Parts have their own version atom because they sit on
+hot paths such as the composer.
+
 In the desktop app, plugin commands that ask for a menu item or a global shortcut cross to the main
 process as one list that replaces the previous one, so a reload or an unloaded plugin never leaves
 stale items. Clicks and shortcuts come back through the existing menu-action channel as the

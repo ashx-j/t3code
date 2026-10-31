@@ -1,6 +1,7 @@
 import type { EnvironmentId, PLUGIN_COMMAND_PATTERN } from "@t3tools/contracts";
+import type { WebPluginParts } from "@t3tools/plugin-sdk/web";
 import { Atom } from "effect/reactivity";
-import type { ComponentType } from "react";
+import type { ComponentType, ReactNode } from "react";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
 
@@ -265,5 +266,59 @@ export function registerPluginCodeBlock(
     const next = new Map(latest);
     next.delete(language);
     appAtomRegistry.set(pluginCodeBlockRenderersAtom, next);
+  };
+}
+
+export type PluginPartName = keyof WebPluginParts;
+
+/** A replaceable part's props as React sees them: the SDK's untyped pieces are React nodes. */
+export type PluginPartProps<Part extends PluginPartName> = {
+  readonly [Key in keyof WebPluginParts[Part]]: unknown extends WebPluginParts[Part][Key]
+    ? ReactNode
+    : WebPluginParts[Part][Key];
+};
+
+export interface PluginReplacementEntry<Part extends PluginPartName> {
+  readonly component: ComponentType<PluginPartProps<Part>>;
+}
+
+// Each part keeps every replacement, so unloading the newest brings back the one before it.
+const replacements: { [Part in PluginPartName]: Array<PluginReplacementEntry<Part>> } = {
+  "composer.controls": [],
+};
+
+// Its own version: replaceable parts sit on hot paths, so other plugin changes must not
+// re-render them.
+const replacementsVersionAtom = Atom.make(0).pipe(Atom.keepAlive);
+
+const replacementAtom = <Part extends PluginPartName>(part: Part) =>
+  Atom.make((get) => {
+    get(replacementsVersionAtom);
+    return replacements[part].at(-1);
+  });
+
+export const pluginReplacementAtoms: {
+  readonly [Part in PluginPartName]: Atom.Atom<PluginReplacementEntry<Part> | undefined>;
+} = {
+  "composer.controls": replacementAtom("composer.controls"),
+};
+
+/** Draws `part` with a plugin's component; returns the function that removes it. */
+export function registerPluginReplacement<Part extends PluginPartName>(
+  part: Part,
+  component: ComponentType<PluginPartProps<Part>>,
+): () => void {
+  if (!Object.hasOwn(replacements, part)) {
+    throw new TypeError(`"${part}" is not a part plugins can replace.`);
+  }
+  const list = replacements[part];
+  const entry = { component };
+  list.push(entry);
+  appAtomRegistry.set(replacementsVersionAtom, appAtomRegistry.get(replacementsVersionAtom) + 1);
+  return () => {
+    const index = list.indexOf(entry);
+    if (index === -1) return;
+    list.splice(index, 1);
+    appAtomRegistry.set(replacementsVersionAtom, appAtomRegistry.get(replacementsVersionAtom) + 1);
   };
 }

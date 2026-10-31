@@ -81,6 +81,12 @@ a settings panel, palette commands (which the desktop app can also list in its m
 global shortcut), composer slash commands and banners, timeline renderers for the plugin's agent
 tools, renderers for fenced code languages, styles, assets, navigation and toasts.
 
+`api.ui.replace(part, component)` draws one of T3's own parts your way. The component receives
+T3's own controls as ready-made pieces to arrange, plus `original`, T3's own drawing of the part.
+The parts and their pieces are listed in `WebPluginParts`. If your component throws, T3 draws its
+own part. [`examples/classic-composer`](./examples/classic-composer) moves the composer's controls
+back to their layout from before T3's redesign.
+
 Build it with the Vite preset, which makes the bundle use T3 Code's own React, atom hooks and UI
 components instead of shipping copies:
 

@@ -52,6 +52,7 @@ import { splitTransferredFiles } from "./workspaceFileDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
+  cloneElement,
   memo,
   use,
   useEffect,
@@ -278,6 +279,7 @@ import {
   usePreparingComposerImages,
 } from "./preparingComposerImages";
 import { ComposerControlsBar } from "./ComposerControlsBar";
+import { PluginReplaceable } from "../../plugins/PluginReplaceable";
 import { composerCommandKeyHandler } from "./composerCommandKey";
 
 function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
@@ -3094,12 +3096,80 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         onRemoveFile={removeComposerFileFromDraft}
       />
     ) : null;
+  const composerPrimaryActions = (
+    <ComposerFooterPrimaryActions
+      compact={isComposerPrimaryActionsCompact}
+      canOperateThread={canOperateThread}
+      activeContextWindow={settings.contextWindowMeterEnabled ? activeContextWindow : null}
+      reserveContextWindowMeter={reserveContextWindowMeter}
+      activeThreadModelDisplayName={activeThreadModelDisplayName}
+      pendingAction={pendingPrimaryAction}
+      isRunning={phase === "running"}
+      canInterrupt={canInterrupt}
+      followUpBehavior={followUpBehavior}
+      canSteer={!isCompacting}
+      alternateShortcutLabel={shortcutLabelForCommand(keybindings, "composer.sendAlternate", {
+        context: {
+          composerFocus: true,
+          draftThreadRoute: routeKind === "draft",
+          turnRunning: true,
+          composerRequiresModifier: composerRequiresModifier(settings.sendShortcut, prompt),
+        },
+      })}
+      showPlanFollowUpPrompt={pendingUserInputs.length === 0 && showPlanFollowUpPrompt}
+      promptHasText={prompt.trim().length > 0}
+      isSendBusy={isSendBusy}
+      sendDisabledReason={sendDisabledReason}
+      isEnvironmentUnavailable={
+        environmentUnavailable !== null || noProviderAvailable || projectSelectionRequired
+      }
+      isPreparingWorktree={isPreparingWorktree}
+      hasSendableContent={composerSendState.hasSendableContent}
+      canResume={showResumeAction}
+      preserveComposerFocusOnPointerDown={isMobileViewport}
+      isEditingQueuedMessage={isEditingQueuedMessage}
+      onSubmitMessage={handleSubmitMessageStable}
+      onResume={onResume}
+      onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
+      onInterrupt={handleInterruptPrimaryActionStable}
+      onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryActionStable}
+      compactBeforeSendTokens={props.resumeCompactionTokens}
+      keepFullHistory={props.keepFullHistory}
+      onToggleKeepFullHistory={props.onToggleKeepFullHistory}
+      compactDisabled={compactDisabled || noProviderAvailable || isSendBusy}
+      compactDisabledReason={resolvedCompactDisabledReason}
+      {...(compactCommandAvailable ? { onCompactContext: compactThreadContextStable } : {})}
+    />
+  );
   const composerAttachButton = showComposerAttachAction ? (
     <ComposerAttachButton
       addComposerAttachments={addComposerAttachments}
       focusComposer={focusComposer}
     />
   ) : null;
+  const defaultComposerFooter = (
+    <>
+      {composerAttachButton ? <div className="me-2">{composerAttachButton}</div> : null}
+      <div
+        data-chat-composer-actions="right"
+        data-chat-composer-transition-actions="true"
+        data-chat-composer-primary-actions-compact={
+          isComposerPrimaryActionsCompact ? "true" : "false"
+        }
+        className="flex min-w-0 flex-1 flex-nowrap items-center justify-end gap-2"
+      >
+        <div
+          ref={attachExpandedComposerControls}
+          data-chat-composer-controls="footer"
+          data-chat-composer-footer-controls="true"
+          className="relative flex min-w-0 flex-1 items-center justify-end gap-0.5"
+        >
+          {composerControls}
+        </div>
+        {composerPrimaryActions}
+      </div>
+    </>
+  );
   return (
     <form
       ref={composerFormRef}
@@ -3444,82 +3514,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   showMobilePendingAnswerActions && "hidden sm:flex",
                 )}
               >
-                {composerAttachButton ? <div className="me-2">{composerAttachButton}</div> : null}
-                <div
-                  data-chat-composer-actions="right"
-                  data-chat-composer-transition-actions="true"
-                  data-chat-composer-primary-actions-compact={
-                    isComposerPrimaryActionsCompact ? "true" : "false"
-                  }
-                  className="flex min-w-0 flex-1 flex-nowrap items-center justify-end gap-2"
-                >
-                  <div
-                    ref={attachExpandedComposerControls}
-                    data-chat-composer-controls="footer"
-                    data-chat-composer-footer-controls="true"
-                    className="relative flex min-w-0 flex-1 items-center justify-end gap-0.5"
-                  >
-                    {composerControls}
-                  </div>
-                  <ComposerFooterPrimaryActions
-                    compact={isComposerPrimaryActionsCompact}
-                    canOperateThread={canOperateThread}
-                    activeContextWindow={
-                      settings.contextWindowMeterEnabled ? activeContextWindow : null
-                    }
-                    reserveContextWindowMeter={reserveContextWindowMeter}
-                    activeThreadModelDisplayName={activeThreadModelDisplayName}
-                    pendingAction={pendingPrimaryAction}
-                    isRunning={phase === "running"}
-                    canInterrupt={canInterrupt}
-                    followUpBehavior={followUpBehavior}
-                    canSteer={!isCompacting}
-                    alternateShortcutLabel={shortcutLabelForCommand(
-                      keybindings,
-                      "composer.sendAlternate",
-                      {
-                        context: {
-                          composerFocus: true,
-                          draftThreadRoute: routeKind === "draft",
-                          turnRunning: true,
-                          composerRequiresModifier: composerRequiresModifier(
-                            settings.sendShortcut,
-                            prompt,
-                          ),
-                        },
-                      },
-                    )}
-                    showPlanFollowUpPrompt={
-                      pendingUserInputs.length === 0 && showPlanFollowUpPrompt
-                    }
-                    promptHasText={prompt.trim().length > 0}
-                    isSendBusy={isSendBusy}
-                    sendDisabledReason={sendDisabledReason}
-                    isEnvironmentUnavailable={
-                      environmentUnavailable !== null ||
-                      noProviderAvailable ||
-                      projectSelectionRequired
-                    }
-                    isPreparingWorktree={isPreparingWorktree}
-                    hasSendableContent={composerSendState.hasSendableContent}
-                    canResume={showResumeAction}
-                    preserveComposerFocusOnPointerDown={isMobileViewport}
-                    isEditingQueuedMessage={isEditingQueuedMessage}
-                    onSubmitMessage={handleSubmitMessageStable}
-                    onResume={onResume}
-                    onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
-                    onInterrupt={handleInterruptPrimaryActionStable}
-                    onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryActionStable}
-                    compactBeforeSendTokens={props.resumeCompactionTokens}
-                    keepFullHistory={props.keepFullHistory}
-                    onToggleKeepFullHistory={props.onToggleKeepFullHistory}
-                    compactDisabled={compactDisabled || noProviderAvailable || isSendBusy}
-                    compactDisabledReason={resolvedCompactDisabledReason}
-                    {...(compactCommandAvailable
-                      ? { onCompactContext: compactThreadContextStable }
-                      : {})}
-                  />
-                </div>
+                <PluginReplaceable
+                  part="composer.controls"
+                  original={defaultComposerFooter}
+                  pieces={() => ({
+                    original: defaultComposerFooter,
+                    attach: composerAttachButton,
+                    controls: composerControls,
+                    model: cloneElement(composerControls, { piece: "model" }),
+                    effort: cloneElement(composerControls, { piece: "effort" }),
+                    access: cloneElement(composerControls, { piece: "access" }),
+                    actions: composerPrimaryActions,
+                  })}
+                />
               </div>
             )}
             {showInlineRestingControls ? (

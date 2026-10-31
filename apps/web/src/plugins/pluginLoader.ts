@@ -45,11 +45,13 @@ import {
   registerPluginBanner,
   registerPluginCodeBlock,
   registerPluginCommand,
+  registerPluginReplacement,
   registerPluginRightPanel,
   registerPluginSlashCommand,
   registerPluginToolRenderer,
   registerPluginSettingsPanel,
   setPluginWebFailure,
+  type PluginPartProps,
   type PluginToolRendererProps,
 } from "./pluginRegistry";
 import { isLoadableWebPlugin } from "./pluginWatch";
@@ -344,6 +346,14 @@ function makeWebPluginApi({
             // The SDK types components without React; they are React function components.
             component: renderer.component as ComponentType<PluginToolRendererProps>,
           }),
+        );
+      },
+    },
+    ui: {
+      replace: (part, component) => {
+        // The SDK types components without React; they are React function components.
+        track(
+          registerPluginReplacement(part, component as ComponentType<PluginPartProps<typeof part>>),
         );
       },
     },

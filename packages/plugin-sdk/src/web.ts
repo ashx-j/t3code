@@ -70,6 +70,29 @@ export interface WebPluginCodeBlockRenderer {
   readonly component: WebPluginComponent<{ readonly code: string }>;
 }
 
+/**
+ * T3's own parts a plugin can draw its own way with `ui.replace`. Each piece is a React element T3
+ * has already wired up: place it, wrap it or leave it out. `original` is T3's own drawing.
+ */
+export interface WebPluginParts {
+  /** The row under the composer's text box. */
+  readonly "composer.controls": {
+    readonly original: unknown;
+    /** The attach button, or null where the composer offers no attachments. */
+    readonly attach: unknown;
+    /** T3's grouped model, effort and permissions controls. */
+    readonly controls: unknown;
+    /** A picker that only chooses the model. */
+    readonly model: unknown;
+    /** The reasoning effort picker, or null when the model has no options. */
+    readonly effort: unknown;
+    /** The permissions picker, always labelled, and the plan toggle when plan mode is on. */
+    readonly access: unknown;
+    /** Send, stop and the other primary actions. */
+    readonly actions: unknown;
+  };
+}
+
 /** What a web plugin's `activate` receives. Everything is released when the plugin unloads. */
 export interface WebPluginApi {
   readonly version: 1;
@@ -113,6 +136,16 @@ export interface WebPluginApi {
   readonly timeline: {
     /** Draws this plugin's agent tool calls in the timeline instead of the generic view. */
     readonly registerToolRenderer: (renderer: WebPluginToolRenderer) => void;
+  };
+  readonly ui: {
+    /**
+     * Draws one of T3's parts until the plugin unloads. When several plugins replace the same
+     * part, the one loaded last wins. If the component throws, T3 draws its own part.
+     */
+    readonly replace: <Part extends keyof WebPluginParts>(
+      part: Part,
+      component: WebPluginComponent<WebPluginParts[Part]>,
+    ) => void;
   };
   /**
    * Adds a stylesheet until the plugin unloads. Rules that reach T3's own elements restyle the app
