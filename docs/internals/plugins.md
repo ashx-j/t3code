@@ -95,6 +95,15 @@ plugin is off arrive when it starts, and a run updated again after it ended (a c
 on an interrupted run) is not delivered twice. Hooks skip slash commands, whose meaning an
 appended paragraph would change.
 
+`turns.onRuntimeRequest` reacts to stored events too and answers through the same
+`runtime-request.respond` command a client sends, so every adapter that raises approvals or
+questions (Claude, Codex, ACP agents such as Grok and Antigravity, OpenCode, Pi) is covered, and
+Cursor raises none. Adapters record a request and its turn item in either order, so the reactor
+watches both event types and asks plugins once both exist. Requests that cannot be answered
+(`not_resumable`) are skipped, and plugins choose only from the decisions the request offers,
+because adapters map the rest differently (`acceptAlways` is a deny in Claude). The user sees the
+request while plugins decide: holding it back would need a change at every adapter.
+
 `threads.notify` is the one plugin change inside `Orchestrator.ts`: the internal
 `thread.notification.record` command, because every `message.dispatch` starts a run. The note joins
 the thread's latest finished run. `TurnItemPositionStore` sorts run-less items before every run, and

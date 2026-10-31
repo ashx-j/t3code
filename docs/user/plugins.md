@@ -49,6 +49,12 @@ up where it left off.
 Plugins loaded from a development folder listed in `plugins.json` cannot be removed from Settings.
 Remove the folder from `plugins.json` instead.
 
+## Plugins in your threads
+
+A plugin can answer an agent's approval requests and questions for you, for example to allow
+commands you always allow. The request still appears in the thread, and you can answer it yourself
+while the plugin decides. If no plugin answers within a few seconds, it waits for you as usual.
+
 ## Where plugins live
 
 Installed plugins are in the `plugins` folder of the environment's T3 Code data directory, one

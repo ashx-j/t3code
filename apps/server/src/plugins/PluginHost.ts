@@ -55,6 +55,7 @@ import {
   type PluginApiServices,
   type PluginPublication,
 } from "./PluginApi.ts";
+import { makeRuntimeRequestHooks } from "./api/runtimeRequests.ts";
 import { discoverPlugins, type DiscoveredPlugin } from "./pluginDiscovery.ts";
 import { fetchNpmPackage } from "./pluginNpm.ts";
 import * as PluginHooks from "./PluginHooks.ts";
@@ -325,20 +326,31 @@ const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const context = yield* Effect.context<never>();
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const eventStore = yield* OrchestrationEventStore.OrchestrationEventStore;
+  const threads = yield* ThreadManagementService.ThreadManagementService;
+  const crypto = yield* Crypto.Crypto;
   const services: PluginApiServices = {
     version: packageJson.version,
     settings: yield* PluginSettingsStore.PluginSettingsStore,
     storage: yield* PluginStorage.PluginStorage,
-    orchestrator: yield* Orchestrator.OrchestratorV2,
-    eventStore: yield* OrchestrationEventStore.OrchestrationEventStore,
-    threads: yield* ThreadManagementService.ThreadManagementService,
+    orchestrator,
+    eventStore,
+    threads,
     projects: yield* ProjectStore.ProjectStoreV2,
     hooks: yield* PluginHooks.PluginHooks,
+    runtimeRequests: makeRuntimeRequestHooks({
+      context,
+      orchestrator,
+      eventStore,
+      threads,
+      crypto,
+    }),
     mcpTools: yield* PluginMcpTools.PluginMcpTools,
     httpRoutes: yield* PluginHttpRoutes.PluginHttpRoutes,
     environment: yield* ServerEnvironment.ServerEnvironment,
     serverSettings: yield* ServerSettings.ServerSettingsService,
-    crypto: yield* Crypto.Crypto,
+    crypto,
   };
   const settingsStore = services.settings;
   const environmentThemes = yield* EnvironmentTheme.EnvironmentThemeService;

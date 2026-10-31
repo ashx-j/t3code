@@ -9,8 +9,10 @@ import {
   EnvironmentId,
   PluginId,
   ProjectId,
+  RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ServerCommand,
+  type OrchestrationV2StoredEvent,
   type PluginState,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -19,6 +21,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import type * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -429,9 +432,21 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
       const workbench = PluginId.make("workbench-plugin");
       const threadId = ThreadId.make("thread:plugin-workbench");
       const dispatched: Array<OrchestrationV2ServerCommand> = [];
+      const responded = yield* Queue.unbounded<OrchestrationV2ServerCommand>();
+      // Approval and question events reach the plugin's runtime request hook; the records are
+      // what the projection holds when each event is read.
+      const runtimeEvents = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+      const itemEvents = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+      let records = { runtimeRequests: [] as Array<unknown>, turnItems: [] as Array<unknown> };
       const services = Layer.mergeAll(
         Layer.mock(Orchestrator.OrchestratorV2)({
-          streamStoredEventsFrom: () => Stream.never,
+          streamStoredEventsFrom: (input) =>
+            input?.eventType === "runtime-request.updated"
+              ? Stream.fromQueue(runtimeEvents)
+              : input?.eventType === "turn-item.updated"
+                ? Stream.fromQueue(itemEvents)
+                : Stream.never,
+          getThreadRecords: () => Effect.sync(() => records as never),
         }),
         Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({
           latestAgentSequence: () => Effect.succeed(0),
@@ -447,7 +462,13 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
             Effect.sync(() => {
               dispatched.push(command);
               return { sequence: 1, storedEvents: [] } as never;
-            }),
+            }).pipe(
+              Effect.tap(() =>
+                command.type === "runtime-request.respond"
+                  ? Queue.offer(responded, command)
+                  : Effect.void,
+              ),
+            ),
         }),
         Layer.mock(ProjectStore.ProjectStoreV2)({ listShells: () => Effect.succeed([]) }),
         Layer.mock(ServerEnvironment.ServerEnvironment)({
@@ -508,6 +529,89 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           }),
           "Ship it #context\n\nContext from workbench-plugin.",
         );
+
+        const request = (id: string, kind: string) => ({
+          id,
+          nodeId: `node:${id}`,
+          kind,
+          status: "pending",
+          responseCapability: {
+            type: "live",
+            providerSessionId: "session:workbench",
+            supportsFeedback: true,
+          },
+        });
+        const item = (requestId: string, fields: object) => ({
+          id: `item:${requestId}`,
+          threadId,
+          runId: "run:workbench",
+          requestId,
+          status: "waiting",
+          ...fields,
+        });
+        const stored = (sequence: number, type: string, payload: object) =>
+          ({ sequence, event: { type, threadId, payload } }) as never;
+        const gitStatus = item("request:git", {
+          type: "approval_request",
+          requestKind: "command",
+          prompt: "git status --short",
+        });
+        const remove = item("request:rm", {
+          type: "approval_request",
+          requestKind: "command",
+          prompt: "rm -rf build",
+        });
+        const question = item("request:ask", {
+          type: "user_input_request",
+          questions: [
+            {
+              id: "scope",
+              header: "Scope",
+              question: "Which files?",
+              options: [
+                { label: "Only src", description: "Leave tests alone" },
+                { label: "Everything", description: "Touch all files" },
+              ],
+            },
+          ],
+        });
+
+        // Claude records the request before its item, so the plugin is asked once the item lands.
+        records = { runtimeRequests: [request("request:git", "command")], turnItems: [] };
+        yield* Queue.offer(
+          runtimeEvents,
+          stored(2, "runtime-request.updated", records.runtimeRequests[0]!),
+        );
+        records = { ...records, turnItems: [gitStatus] };
+        yield* Queue.offer(itemEvents, stored(3, "turn-item.updated", gitStatus));
+        assert.deepInclude(yield* Queue.take(responded), {
+          requestId: RuntimeRequestId.make("request:git"),
+          decision: "accept",
+        });
+
+        // Codex records the item first.
+        records = { runtimeRequests: [], turnItems: [remove] };
+        yield* Queue.offer(itemEvents, stored(4, "turn-item.updated", remove));
+        records = { ...records, runtimeRequests: [request("request:rm", "command")] };
+        yield* Queue.offer(
+          runtimeEvents,
+          stored(5, "runtime-request.updated", records.runtimeRequests[0]!),
+        );
+        assert.deepInclude(yield* Queue.take(responded), {
+          requestId: RuntimeRequestId.make("request:rm"),
+          decision: "decline",
+          feedback: "Workbench does not allow rm.",
+        });
+
+        records = {
+          runtimeRequests: [request("request:ask", "user_input")],
+          turnItems: [question],
+        };
+        yield* Queue.offer(itemEvents, stored(6, "turn-item.updated", question));
+        assert.deepInclude(yield* Queue.take(responded), {
+          requestId: RuntimeRequestId.make("request:ask"),
+          answers: { scope: "Only src" },
+        });
 
         const tick = yield* host
           .subscribe({ pluginId: workbench, channel: "ticks" })

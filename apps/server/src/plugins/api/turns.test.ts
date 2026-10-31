@@ -16,6 +16,11 @@ const unusedStorage = {} as PluginApi["storage"];
 const unusedRunEvents = () => {
   throw new Error("run events are not used here");
 };
+const unusedRuntimeRequests = {
+  add: () => {
+    throw new Error("runtime requests are not used here");
+  },
+};
 
 it.effect("skips a beforeDispatch hook that throws or misses its deadline", () =>
   Effect.gen(function* () {
@@ -27,7 +32,7 @@ it.effect("skips a beforeDispatch hook that throws or misses its deadline", () =
         activation,
         context: yield* Effect.context<never>(),
       }),
-      { hooks },
+      { hooks, runtimeRequests: unusedRuntimeRequests },
       { storage: unusedStorage, runEvents: unusedRunEvents },
     );
     turns.beforeDispatch(() => ({ appendText: "first" }));
@@ -94,7 +99,11 @@ it.effect("delivers each ended run once and resumes after the last one it handle
           })();
         };
         const seen: Array<string> = [];
-        makeTurnsApi(facade, { hooks }, { storage, runEvents }).afterRunCompleted((run) => {
+        makeTurnsApi(
+          facade,
+          { hooks, runtimeRequests: unusedRuntimeRequests },
+          { storage, runEvents },
+        ).afterRunCompleted((run) => {
           seen.push(`${run.runId}:${run.status}`);
         });
         yield* Effect.promise(() => drained.promise);

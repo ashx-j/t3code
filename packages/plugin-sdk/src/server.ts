@@ -89,6 +89,50 @@ export interface PluginCompletedRun {
 /** Nothing leaves the message as it is; `appendText` adds a paragraph after it. */
 export type PluginBeforeDispatchResult = void | { readonly appendText: string };
 
+export type PluginApprovalDecision =
+  | "accept"
+  | "acceptForSession"
+  | "acceptAlways"
+  | "decline"
+  | "cancel";
+
+/** An approval or a question an agent is waiting on. */
+export interface PluginRuntimeRequest {
+  readonly threadId: string;
+  readonly requestId: string;
+  readonly runId: string | null;
+  /** `command`, `file-read`, `file-change`, `mcp-elicitation` and `permission` are approvals; `user_input` is a question. */
+  readonly kind: string;
+  /** Approvals: what the agent wants to do, such as the command line. */
+  readonly prompt?: string;
+  readonly reason?: string;
+  /** Approvals for an MCP server: its name. */
+  readonly appName?: string;
+  /** Approvals: the decisions this request offers. Empty for questions. */
+  readonly decisions: ReadonlyArray<PluginApprovalDecision>;
+  /** Approvals: whether a `decline` can carry `feedback` for the agent. */
+  readonly canDeclineWithFeedback: boolean;
+  /** Questions: answer each by its `id`. Empty for approvals. */
+  readonly questions: ReadonlyArray<{
+    readonly id: string;
+    readonly header: string;
+    readonly question: string;
+    readonly options: ReadonlyArray<{ readonly label: string; readonly description: string }>;
+    readonly multiSelect: boolean;
+    readonly allowCustomAnswer: boolean;
+  }>;
+}
+
+/**
+ * Nothing leaves the request to the user. An approval takes one of the request's `decisions`;
+ * `feedback` is sent only with `decline` where `canDeclineWithFeedback`. A question takes
+ * `answers` keyed by question id: an option's label, custom text, or several labels.
+ */
+export type PluginRuntimeRequestAnswer =
+  | void
+  | { readonly decision: PluginApprovalDecision; readonly feedback?: string }
+  | { readonly answers: Readonly<Record<string, string | ReadonlyArray<string>>> };
+
 export interface PluginLogger {
   readonly debug: (message: string, fields?: JsonObject) => void;
   readonly info: (message: string, fields?: JsonObject) => void;
@@ -181,6 +225,18 @@ export interface PluginApi {
      */
     readonly afterRunCompleted: (
       handler: (run: PluginCompletedRun) => void | Promise<void>,
+    ) => void;
+    /**
+     * Asked about each approval or question an agent raises while the plugin is active, after
+     * hooks registered before it, until one answers. The user sees the request meanwhile and may
+     * answer first, which aborts `signal`. A hook slower than 10 seconds, one that throws or one
+     * whose answer does not fit the request is skipped, and with no answer the user decides.
+     */
+    readonly onRuntimeRequest: (
+      handler: (
+        request: PluginRuntimeRequest,
+        context: { readonly signal: AbortSignal },
+      ) => PluginRuntimeRequestAnswer | Promise<PluginRuntimeRequestAnswer>,
     ) => void;
     /** Sees each user or agent message before it is sent, except slash commands; a hook slower than 2 seconds or one that throws is skipped. */
     readonly beforeDispatch: (

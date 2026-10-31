@@ -17,6 +17,7 @@ import { makeEventsApi, storedEvents } from "./api/events.ts";
 import { makeFacadeContext } from "./api/facade.ts";
 import { makeHttpApi } from "./api/http.ts";
 import { makeMcpApi } from "./api/mcp.ts";
+import type { RuntimeRequestHooks } from "./api/runtimeRequests.ts";
 import { makeScheduleApi } from "./api/schedule.ts";
 import { makeServerApi } from "./api/server.ts";
 import { makeProjectsApi, makeThreadsApi } from "./api/threads.ts";
@@ -76,6 +77,7 @@ export interface PluginApiServices {
   readonly threads: ThreadManagementService.ThreadManagementService["Service"];
   readonly projects: ProjectStore.ProjectStoreV2["Service"];
   readonly hooks: PluginHooks.PluginHooksRegistry;
+  readonly runtimeRequests: RuntimeRequestHooks;
   readonly mcpTools: PluginMcpTools.PluginMcpTools["Service"];
   readonly httpRoutes: PluginHttpRoutes.PluginHttpRoutes["Service"];
   readonly environment: ServerEnvironment.ServerEnvironment["Service"];

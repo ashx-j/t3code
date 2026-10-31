@@ -10,6 +10,7 @@ import * as Option from "effect/Option";
 
 import type * as PluginHooks from "../PluginHooks.ts";
 import type { FacadeContext } from "./facade.ts";
+import type { RuntimeRequestHooks } from "./runtimeRequests.ts";
 
 // A hook sits on the send path of every message, so it gets a short deadline and fails open.
 const BEFORE_DISPATCH_DEADLINE = Duration.seconds(2);
@@ -56,7 +57,10 @@ const readCursor = (saved: unknown): RunCursor | undefined => {
 
 export const makeTurnsApi = (
   facade: FacadeContext,
-  services: { readonly hooks: PluginHooks.PluginHooksRegistry },
+  services: {
+    readonly hooks: PluginHooks.PluginHooksRegistry;
+    readonly runtimeRequests: RuntimeRequestHooks;
+  },
   api: {
     readonly storage: PluginApi["storage"];
     /** Every `run.updated` event after `afterSequence`, or from now; never drops events. */
@@ -119,6 +123,21 @@ export const makeTurnsApi = (
           }
         }
       })().catch(() => undefined);
+    },
+    onRuntimeRequest: (handler) => {
+      const { activation, pluginId } = facade;
+      const deactivated = activation.controller.signal;
+      if (deactivated.aborted) throw new Error("This plugin activation has ended.");
+      const remove = services.runtimeRequests.add({
+        pluginId,
+        answer: (request, signal) =>
+          deactivated.aborted
+            ? Promise.resolve(undefined)
+            : Promise.resolve().then(() =>
+                handler(request, { signal: AbortSignal.any([signal, deactivated]) }),
+              ),
+      });
+      deactivated.addEventListener("abort", remove, { once: true });
     },
     beforeDispatch: (hook) => {
       const { activation, pluginId } = facade;

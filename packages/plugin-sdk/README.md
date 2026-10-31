@@ -50,7 +50,8 @@ module.exports = {
 
 `activate` receives the [`PluginApi`](./src/server.ts): settings, storage, RPC methods and
 channels for the web half, stored orchestration events, threads and projects, notes in threads,
-send hooks and run-completed hooks, MCP tools for agents, HTTP routes, schedules and server info.
+send hooks and run-completed hooks, answers to agents' approvals and questions, MCP tools for
+agents, HTTP routes, schedules and server info.
 Everything a plugin registers is released when it is disabled, reloaded or uninstalled; add your
 own cleanup with `api.onDeactivate`.
 
