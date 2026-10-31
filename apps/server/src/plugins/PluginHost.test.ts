@@ -14,6 +14,8 @@ import {
   type OrchestrationV2ServerCommand,
   type OrchestrationV2StoredEvent,
   type PluginState,
+  type Project,
+  ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -35,7 +37,10 @@ import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import packageJson from "../../package.json" with { type: "json" };
@@ -55,8 +60,16 @@ const operate = [AuthOrchestrationReadScope, AuthOrchestrationOperateScope] as c
 const layerConfig = () =>
   Layer.fresh(ServerConfig.layerTest(process.cwd(), { prefix: "t3code-plugin-host-test-" }));
 
+// Services the plugins in these tests never reach.
+const layerUnusedLaunchServices = Layer.mergeAll(
+  Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+  Layer.mock(ProjectService.ProjectService)({}),
+  Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+);
+
 // Orchestration services the lifecycle tests never reach.
 const layerUnusedServices = Layer.mergeAll(
+  layerUnusedLaunchServices,
   Layer.mock(Orchestrator.OrchestratorV2)({}),
   Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({}),
   Layer.mock(ThreadManagementService.ThreadManagementService)({}),
@@ -428,7 +441,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
     }).pipe(Effect.provide(layerConfig())),
   );
 
-  it.effect("gives a plugin threads, projects, server info, schedules and send hooks", () =>
+  it.effect("gives a plugin threads, projects, server info, schedules, hooks and commands", () =>
     Effect.gen(function* () {
       const workbench = PluginId.make("workbench-plugin");
       const threadId = ThreadId.make("thread:plugin-workbench");
@@ -439,7 +452,40 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
       const runtimeEvents = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
       const itemEvents = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
       let records = { runtimeRequests: [] as Array<unknown>, turnItems: [] as Array<unknown> };
+      const projectId = ProjectId.make("project:plugin-workbench");
+      const defaultModel = {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.5",
+      };
+      const project: Project = {
+        id: projectId,
+        title: "Workbench project",
+        workspaceRoot: "/repo",
+        defaultModelSelection: defaultModel,
+        scripts: [],
+        createdAt: "2026-10-31T00:00:00.000Z",
+        updatedAt: "2026-10-31T00:00:00.000Z",
+        deletedAt: null,
+      };
+      const launched: Array<ThreadLaunchService.ThreadLaunchInput> = [];
+      const projectUpdates: Array<unknown> = [];
       const services = Layer.mergeAll(
+        Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+          launch: (input) =>
+            Effect.sync(() => {
+              launched.push(input);
+              return { threadId: input.threadId } as never;
+            }),
+        }),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () => Effect.succeedSome(project),
+          update: (input) =>
+            Effect.sync(() => {
+              projectUpdates.push(input);
+              return { ...project, pinnedAt: "2026-10-31T00:00:00.000Z" };
+            }),
+        }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
         Layer.mock(Orchestrator.OrchestratorV2)({
           streamStoredEventsFrom: (input) =>
             input?.eventType === "runtime-request.updated"
@@ -454,11 +500,12 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         }),
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           listProjectThreads: () => Effect.succeed([]),
-          getThreadShell: () =>
-            Effect.succeed({
-              id: threadId,
-              projectId: ProjectId.make("project:plugin-workbench"),
-            } as never),
+          getThreadShell: () => Effect.succeed({ id: threadId, projectId } as never),
+          settleThread: (input) =>
+            Effect.sync(() => {
+              dispatched.push({ type: "thread.settle", ...input } as never);
+              return { sequence: 1 };
+            }),
           dispatch: (command) =>
             Effect.sync(() => {
               dispatched.push(command);
@@ -481,7 +528,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
             capabilities: { repositoryIdentity: false, plugins: true },
           }),
         }),
-        Layer.mock(ServerSettings.ServerSettingsService)({}),
+        ServerSettings.layerTest().pipe(Layer.orDie),
       );
       yield* writePluginsConfig({
         enabled: { [workbench]: true },
@@ -654,6 +701,38 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         assert.deepInclude(yield* Queue.take(responded), {
           requestId: RuntimeRequestId.make("request:ask"),
           answers: { scope: "Only src" },
+        });
+
+        // Thread and project management go through the commands and services clients use.
+        dispatched.length = 0;
+        const tidied = yield* call("tidyThread", { threadId, projectId });
+        assert.deepStrictEqual(
+          dispatched.map((command) => command.type),
+          [
+            "thread.archive",
+            "thread.unarchive",
+            "thread.snooze",
+            "thread.unsnooze",
+            "thread.settle",
+            "thread.unsettle",
+            "thread.delete",
+          ],
+        );
+        assert.deepInclude(dispatched[2], { snoozedUntil: "2026-11-01T09:00:00.000Z" });
+        assert.deepInclude(launched[0], {
+          projectId,
+          title: "Follow-up",
+          modelSelection: defaultModel,
+          interactionMode: "default",
+          workspaceStrategy: { type: "root" },
+          createdBy: "agent",
+          creationSource: "server",
+        });
+        assert.strictEqual(launched[0]?.initialMessage?.text, "Check the deploy.");
+        assert.deepInclude(projectUpdates[0], { projectId, pinned: true });
+        assert.deepStrictEqual(tidied, {
+          threadId: launched[0]?.threadId ?? null,
+          project: "Workbench project",
         });
 
         const tick = yield* host

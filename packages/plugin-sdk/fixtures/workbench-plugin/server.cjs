@@ -92,6 +92,32 @@ module.exports = {
       { access: "write" },
     );
     api.rpc.register(
+      "tidyThread",
+      async (input) => {
+        const { threadId, projectId } = /** @type {{ threadId?: unknown, projectId?: unknown }} */ (
+          input ?? {}
+        );
+        if (typeof threadId !== "string" || typeof projectId !== "string") {
+          throw new TypeError("Expected { threadId, projectId }.");
+        }
+        await api.threads.archive(threadId);
+        await api.threads.unarchive(threadId);
+        await api.threads.snooze(threadId, "2026-11-01T09:00:00.000Z");
+        await api.threads.unsnooze(threadId);
+        await api.threads.settle(threadId);
+        await api.threads.unsettle(threadId);
+        await api.threads.delete(threadId);
+        const followUp = await api.threads.create({
+          projectId,
+          title: "Follow-up",
+          message: "Check the deploy.",
+        });
+        const project = await api.projects.update(projectId, { pinned: true });
+        return { threadId: followUp.threadId, project: project.title ?? null };
+      },
+      { access: "write" },
+    );
+    api.rpc.register(
       "lastEvent",
       () => api.storage.get("lastEvent").then((value) => value ?? null),
       {

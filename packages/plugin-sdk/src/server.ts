@@ -231,10 +231,48 @@ export interface PluginApi {
     }) => Promise<void>;
     readonly interrupt: (threadId: string) => Promise<void>;
     readonly rename: (threadId: string, title: string) => Promise<void>;
+    /**
+     * Starts a thread in a project, with `message` as its first message if given. The model and
+     * runtime mode default to the project's, as in the composer; a runtime mode the provider does
+     * not offer steps down. `workspace` defaults to the project folder.
+     */
+    readonly create: (input: {
+      readonly projectId: string;
+      readonly title: string;
+      readonly message?: string;
+      readonly model?: { readonly instanceId: string; readonly model: string };
+      readonly runtimeMode?: "approval-required" | "auto-accept-edits" | "auto" | "full-access";
+      readonly interactionMode?: "default" | "plan";
+      readonly workspace?:
+        | { readonly type: "root"; readonly branch?: string }
+        | { readonly type: "worktree"; readonly baseRef: string; readonly branch?: string }
+        | { readonly type: "existing_worktree"; readonly worktreePath: string };
+    }) => Promise<{ readonly threadId: string }>;
+    readonly archive: (threadId: string) => Promise<void>;
+    readonly unarchive: (threadId: string) => Promise<void>;
+    /** Deletes the thread as the client's delete does. */
+    readonly delete: (threadId: string) => Promise<void>;
+    /** Marks the thread done; a running turn settles it when it ends. */
+    readonly settle: (threadId: string) => Promise<void>;
+    readonly unsettle: (threadId: string) => Promise<void>;
+    /** Hides the thread until `until`, a `Date` or an ISO date-time string. */
+    readonly snooze: (threadId: string, until: Date | string) => Promise<void>;
+    readonly unsnooze: (threadId: string) => Promise<void>;
   };
   readonly projects: {
     readonly list: () => Promise<ReadonlyArray<JsonObject>>;
     readonly read: (projectId: string) => Promise<JsonObject | undefined>;
+    /** Adds a project for a folder on the server; resolves with the project. */
+    readonly create: (input: {
+      readonly title: string;
+      readonly workspaceRoot: string;
+      readonly createWorkspaceRootIfMissing?: boolean;
+    }) => Promise<JsonObject>;
+    /**
+     * Changes a project's fields, such as `title`, `archived`, `pinned` or `scripts`, as the
+     * project settings do; resolves with the project.
+     */
+    readonly update: (projectId: string, patch: JsonObject) => Promise<JsonObject>;
   };
   readonly schedule: {
     /**

@@ -43,7 +43,10 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as EnvironmentTheme from "../environmentTheme.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -338,6 +341,9 @@ const make = Effect.gen(function* () {
     eventStore,
     threads,
     projects: yield* ProjectStore.ProjectStoreV2,
+    launches: yield* ThreadLaunchService.ThreadLaunchService,
+    projectService: yield* ProjectService.ProjectService,
+    providers: yield* ProviderRegistry.ProviderRegistry,
     hooks: yield* PluginHooks.PluginHooks,
     runtimeRequests: makeRuntimeRequestHooks({
       context,

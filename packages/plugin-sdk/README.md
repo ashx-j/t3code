@@ -49,7 +49,8 @@ module.exports = {
 ```
 
 `activate` receives the [`PluginApi`](./src/server.ts): settings, storage, RPC methods and
-channels for the web half, stored orchestration events, threads and projects, notes in threads,
+channels for the web half, stored orchestration events, threads and projects (start, archive,
+snooze, settle and delete threads; add and change projects), notes in threads,
 send hooks that add to, replace or block a message, slash commands that run on the server,
 run-completed hooks, answers to agents' approvals and questions, MCP tools for
 agents, HTTP routes, schedules and server info.
