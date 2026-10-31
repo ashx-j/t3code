@@ -11,16 +11,18 @@ vi.mock(import("../state/session"), async (original) => ({
     httpAuthorization: { _tag: "Bearer", token: "token" },
   })) as never,
 }));
-const { live } = await vi.hoisted(async () => {
+const { live, channel } = await vi.hoisted(async () => {
   const { Atom, AsyncResult } = await import("effect/reactivity");
   return {
     live: Atom.make<AsyncResult.AsyncResult<{ readonly plugins: ReadonlyArray<PluginState> }>>(
       AsyncResult.initial(),
     ),
+    // Computed only when something reads it, like the real subscription stream.
+    channel: Atom.make(() => AsyncResult.success({ value: "first value" })),
   };
 });
 vi.mock(import("../state/plugins"), () => ({
-  pluginEnvironment: { pluginsLive: () => live } as never,
+  pluginEnvironment: { pluginsLive: () => live, pluginChannel: () => channel } as never,
 }));
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -155,5 +157,23 @@ describe("startPluginLoader", () => {
         pluginRightPanelAtom(pluginRightPanelKey(environmentId, "slow-web", "slow")),
       ),
     ).toBeUndefined();
+  });
+
+  it("starts a channel the plugin subscribes to and hands it the values", async () => {
+    const channelSource = `export default { activate(api) {
+      api.rpc.subscribe("notes", (value) => api.composer.showBanner({ title: String(value) }));
+    } };`;
+    using _fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response(channelSource));
+    const environmentId = EnvironmentId.make("environment:plugin-loader-channel");
+    const stop = startPluginLoader(environmentId, vi.fn());
+    using _loader = { [Symbol.dispose]: stop };
+
+    appAtomRegistry.set(live, AsyncResult.success({ plugins: [webPlugin("channel-web")] }));
+
+    await vi.waitFor(() =>
+      expect(appAtomRegistry.get(pluginBannersAtom(environmentId))[0]?.title).toBe("first value"),
+    );
   });
 });

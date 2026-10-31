@@ -228,9 +228,15 @@ function makeWebPluginApi({
           environmentId,
           input: { pluginId, channel },
         });
-        const stop = appAtomRegistry.subscribe(atom, (result) => {
-          if (AsyncResult.isSuccess(result)) onValue(result.value.value);
-        });
+        // `immediate` reads the atom, which starts its stream; a bare subscribe on an atom no one
+        // has read yet waits for a change that never comes.
+        const stop = appAtomRegistry.subscribe(
+          atom,
+          (result) => {
+            if (AsyncResult.isSuccess(result)) onValue(result.value.value);
+          },
+          { immediate: true },
+        );
         track(stop);
         return stop;
       },
