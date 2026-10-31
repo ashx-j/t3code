@@ -27,6 +27,14 @@ module.exports = {
       return undefined;
     });
 
+    api.slashCommands.register(
+      { name: "deploy", description: "Deploy to an environment", inputHint: "environment" },
+      ({ args }) =>
+        args === ""
+          ? { block: "Name an environment, for example /deploy staging." }
+          : { text: `Deploy to ${args} and report back.` },
+    );
+
     api.schedule.every(1000, async () => {
       const ticks = await api.storage.get("ticks");
       const next = (typeof ticks === "number" ? ticks : 0) + 1;

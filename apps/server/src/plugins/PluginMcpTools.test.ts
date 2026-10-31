@@ -192,6 +192,7 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
       setEnabled: (pluginId, enabled) => Effect.succeed({ ...installed, id: pluginId, enabled }),
       install: () => Effect.succeed(installed),
       uninstall: () => Effect.void,
+      slashCommands: Effect.succeed([{ pluginId: "mcp-plugin", name: "deploy" }]),
     });
     yield* tools.setInstalledPlugins([]);
     assert.notInclude(yield* toolNames, "t3_plugins_list");
@@ -206,7 +207,7 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
     ]);
     assert.deepStrictEqual(yield* call("t3_plugins_list", readOnlyClient), {
       isError: false,
-      text: '{"plugins":[{"id":"mcp-plugin","name":"MCP tools","version":"0.1.0","status":"active","enabled":true}]}',
+      text: '{"plugins":[{"id":"mcp-plugin","name":"MCP tools","version":"0.1.0","status":"active","enabled":true,"slashCommands":["/deploy"]}]}',
     });
     const ping = { pluginId: "mcp-plugin", method: "ping", input: { n: 1 } };
     assert.isTrue((yield* call("t3_plugins_invoke", readOnlyClient, ping)).isError);

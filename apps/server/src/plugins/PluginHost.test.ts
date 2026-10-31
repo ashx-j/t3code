@@ -14,6 +14,7 @@ import {
   type OrchestrationV2ServerCommand,
   type OrchestrationV2StoredEvent,
   type PluginState,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -542,6 +543,35 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           (yield* Effect.flip(outgoing("Deploy with #secret"))).message,
           "Workbench: Remove the secret first.",
         );
+
+        // The plugin's command runs instead of the send hooks, and lists with every provider's.
+        assert.strictEqual(
+          yield* outgoing("/deploy staging"),
+          "Deploy to staging and report back.",
+        );
+        assert.strictEqual(
+          (yield* Effect.flip(outgoing("/deploy"))).message,
+          "Workbench: Name an environment, for example /deploy staging.",
+        );
+        const [provider] = PluginHooks.withPluginSlashCommands(
+          [
+            {
+              slashCommands: [
+                { name: "deploy", description: "Provider deploy" },
+                { name: "review" },
+              ],
+              workspaceSnapshots: [{ cwd: "/repo", slashCommands: [] }],
+            } as unknown as ServerProvider,
+          ],
+          yield* hooks.currentSlashCommands,
+        );
+        const listed = {
+          name: "deploy",
+          description: "Deploy to an environment",
+          input: { hint: "environment" },
+        };
+        assert.deepStrictEqual(provider?.slashCommands, [{ name: "review" }, listed]);
+        assert.deepStrictEqual(provider?.workspaceSnapshots?.[0]?.slashCommands, [listed]);
 
         const request = (id: string, kind: string) => ({
           id,

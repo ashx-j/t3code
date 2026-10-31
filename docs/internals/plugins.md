@@ -63,10 +63,9 @@ manifest's JSON Schema and declarative contributions only.
 
 Where T3 has a closed union and a `switch` (right panel kinds, settings paths, keybinding commands,
 drivers, MCP toolkits), plugins add an entry beside the built-ins: a `plugin` right panel kind, a
-`plugin.<pluginId>.<commandId>` keybinding command, a `plugin-slash-command` composer item. The
-provider slash command variant does not fit plugins, because it inserts text for the provider to
-read while a plugin command runs plugin code. Where T3 has a server-supplied open variant (dynamic
-tool items, themes), plugins use it. Registries are module-level `Map`s behind one version atom,
+`plugin.<pluginId>.<commandId>` keybinding command, a `plugin-slash-command` composer item for a
+web plugin's command, which runs in the page. Where T3 has a server-supplied open variant (dynamic
+tool items, themes, provider slash commands), plugins use it. Registries are module-level `Map`s behind one version atom,
 read through atoms derived from it: React Compiler would cache a plain lookup. Hot paths such as
 timeline and sidebar rows re-render on that one version, never through a per-row subscription.
 Chat code blocks read their own atom of code block renderers instead, so a banner or panel change
@@ -105,6 +104,13 @@ watches both event types and asks plugins once both exist. Requests that cannot 
 (`not_resumable`) are skipped, and plugins choose only from the decisions the request offers,
 because adapters map the rest differently (`acceptAlways` is a deny in Claude). The user sees the
 request while plugins decide: holding it back would need a change at every adapter.
+
+A server plugin's slash commands are provider slash commands: the server adds them to every
+provider's lists where it adds `/usage-limits`, so every client lists them with no plugin code, and
+the `beforeDispatch` path runs the plugin's handler instead of the hooks. A command ends in a sent
+or a blocked message and cannot answer on its own: clients keep a sent message on screen until
+the server records a user message with its id, and recording one without starting a run would need
+a new orchestrator command.
 
 `threads.notify` is the one plugin change inside `Orchestrator.ts`: the internal
 `thread.notification.record` command, because every `message.dispatch` starts a run. The note joins

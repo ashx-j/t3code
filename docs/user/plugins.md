@@ -58,6 +58,10 @@ while the plugin decides. If no plugin answers within a few seconds, it waits fo
 A plugin can also change a message before it is sent, or stop it and say why. A stopped message
 stays in the composer, so you can edit it and send it again.
 
+Plugins can add slash commands. They appear in the composer's `/` menu with the agent's own
+commands, in every app. A plugin's command runs on the server and sends the agent a message the
+plugin prepares, or stops with a reason.
+
 ## Where plugins live
 
 Installed plugins are in the `plugins` folder of the environment's T3 Code data directory, one

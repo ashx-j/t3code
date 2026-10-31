@@ -140,6 +140,25 @@ export type PluginRuntimeRequestAnswer =
   | { readonly decision: PluginApprovalDecision; readonly feedback?: string }
   | { readonly answers: Readonly<Record<string, string | ReadonlyArray<string>>> };
 
+export interface PluginSlashCommandInvocation {
+  readonly threadId: string;
+  readonly messageId: string;
+  readonly name: string;
+  /** The text after `/name`, trimmed. */
+  readonly args: string;
+  readonly createdBy: "user" | "agent";
+  readonly attachments: PluginOutgoingMessage["attachments"];
+}
+
+/**
+ * `text` is sent to the agent in place of the command, `block` stops the message with a reason the
+ * sender sees, and nothing sends the command as typed.
+ */
+export type PluginSlashCommandResult =
+  | void
+  | { readonly text: string }
+  | { readonly block: string };
+
 export interface PluginLogger {
   readonly debug: (message: string, fields?: JsonObject) => void;
   readonly info: (message: string, fields?: JsonObject) => void;
@@ -254,6 +273,25 @@ export interface PluginApi {
       hook: (
         message: PluginOutgoingMessage,
       ) => PluginBeforeDispatchResult | Promise<PluginBeforeDispatchResult>,
+    ) => void;
+  };
+  readonly slashCommands: {
+    /**
+     * Lists `/name` with every provider's commands; user and agent messages starting with it run
+     * `handler` on the server instead of being sent. Throwing or taking over 10 seconds blocks the
+     * message. Names are lowercase letters, digits and `-`, not T3 Code's or another plugin's.
+     */
+    readonly register: (
+      command: {
+        readonly name: string;
+        readonly description?: string;
+        /** Shown after the name while the user types arguments. */
+        readonly inputHint?: string;
+      },
+      handler: (
+        invocation: PluginSlashCommandInvocation,
+        context: { readonly signal: AbortSignal },
+      ) => PluginSlashCommandResult | Promise<PluginSlashCommandResult>,
     ) => void;
   };
   readonly mcp: {

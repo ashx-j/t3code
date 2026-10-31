@@ -1115,6 +1115,7 @@ const make = Effect.gen(function* () {
     setEnabled: service.setEnabled,
     install: service.install,
     uninstall: service.uninstall,
+    slashCommands: services.hooks.currentSlashCommands,
   });
   return service;
 });

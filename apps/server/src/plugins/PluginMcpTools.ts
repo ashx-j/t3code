@@ -74,6 +74,10 @@ export interface PluginMcpHostActions {
     pluginId: PluginId,
     removeData: boolean,
   ) => Effect.Effect<void, { readonly message: string }>;
+  /** Slash command names with each plugin's id, so agents can send `/name` to a thread. */
+  readonly slashCommands: Effect.Effect<
+    ReadonlyArray<{ readonly pluginId: string; readonly name: string }>
+  >;
 }
 
 const decodeInvokeInput = Schema.decodeUnknownEffect(
@@ -174,15 +178,20 @@ const make = () => {
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     access: "read",
     call: () =>
-      Effect.sync(() => ({
-        plugins: installed.map((plugin) => ({
-          id: plugin.id,
-          name: plugin.name,
-          version: plugin.version ?? null,
-          status: plugin.status,
-          enabled: plugin.enabled,
+      (hostActions?.slashCommands ?? Effect.succeed([])).pipe(
+        Effect.map((commands) => ({
+          plugins: installed.map((plugin) => ({
+            id: plugin.id,
+            name: plugin.name,
+            version: plugin.version ?? null,
+            status: plugin.status,
+            enabled: plugin.enabled,
+            slashCommands: commands
+              .filter((command) => command.pluginId === plugin.id)
+              .map((command) => `/${command.name}`),
+          })),
         })),
-      })),
+      ),
   };
 
   const pluginsInvoke: PluginMcpToolEntry = {

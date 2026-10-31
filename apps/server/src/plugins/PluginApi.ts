@@ -20,6 +20,7 @@ import { makeMcpApi } from "./api/mcp.ts";
 import type { RuntimeRequestHooks } from "./api/runtimeRequests.ts";
 import { makeScheduleApi } from "./api/schedule.ts";
 import { makeServerApi } from "./api/server.ts";
+import { makeSlashCommandsApi } from "./api/slashCommands.ts";
 import { makeProjectsApi, makeThreadsApi } from "./api/threads.ts";
 import { makeTurnsApi } from "./api/turns.ts";
 import type * as PluginHooks from "./PluginHooks.ts";
@@ -180,6 +181,7 @@ export const makePluginApi = (input: {
           "suspend",
         ),
     }),
+    slashCommands: makeSlashCommandsApi(facade, services, input.name),
     mcp: makeMcpApi(facade, services),
     http: makeHttpApi(facade, services),
     server: makeServerApi(facade, {

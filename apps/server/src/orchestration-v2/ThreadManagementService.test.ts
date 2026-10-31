@@ -158,7 +158,7 @@ it.effect(
 );
 
 it.effect(
-  "plugin hooks change or block user messages but not notifications or slash commands",
+  "plugins change, block or handle user messages but not notifications or other slash commands",
   () => {
     const threadId = ThreadId.make("thread:thread-management:chokepoint");
     const dispatched: Array<string> = [];
@@ -197,8 +197,15 @@ it.effect(
           ),
         )
         .pipe(Effect.asVoid);
+      yield* hooks
+        .addSlashCommand(
+          { pluginId: "deployer", pluginName: "Deployer", name: "deploy" },
+          (outgoing) => Effect.succeed({ text: `Deploy ${outgoing.args} now.` }),
+        )
+        .pipe(Effect.asVoid);
       const threads = yield* ThreadManagementService.ThreadManagementService;
       yield* threads.dispatch(message("user"));
+      yield* threads.dispatch(message("plugin-command", undefined, "/deploy staging"));
       const blocked = yield* Effect.flip(
         threads.dispatch(message("blocked", undefined, "Use token abc.")),
       );
@@ -216,6 +223,7 @@ it.effect(
 
       expect(texts).toEqual([
         "Fix the build.\n\nProject uses pnpm.",
+        "Deploy staging now.",
         "Fix the build.",
         "/goal clear",
       ]);
