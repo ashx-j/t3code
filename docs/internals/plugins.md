@@ -74,6 +74,11 @@ never re-renders them, and only `plg_` tool rows look up a tool renderer. A
 plugin right panel stores its title on the surface so tab titles need no lookup, and renders
 "plugin not active" with a close button while its plugin is unloaded.
 
+In the desktop app, plugin commands that ask for a menu item or a global shortcut cross to the main
+process as one list that replaces the previous one, so a reload or an unloaded plugin never leaves
+stale items. Clicks and shortcuts come back through the existing menu-action channel as the
+`plugin.<pluginId>.<commandId>` command.
+
 ## Reaching into orchestration
 
 The orchestrator stays pure: `turns.beforeDispatch` hooks run in `ThreadManagementService.dispatch`,
