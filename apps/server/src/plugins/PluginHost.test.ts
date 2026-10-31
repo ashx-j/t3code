@@ -104,14 +104,21 @@ const npmTarball = gzipTarball(
   tarEntry("package/server.cjs", "module.exports = { activate() {} };"),
 );
 const npmIntegrity = `sha512-${NodeCrypto.createHash("sha512").update(npmTarball).digest("base64")}`;
-const npmDocument = (name: string, integrity: string) => ({
-  "dist-tags": { latest: "1.0.0" },
-  versions: { "1.0.0": { dist: { tarball: `https://registry.test/${name}.tgz`, integrity } } },
-});
+// The registry's `latest` tag, which update checks compare with what was installed.
+let npmLatest = "1.0.0";
+let npmMetadataRequests = 0;
+const npmDocument = (name: string, integrity: string) => {
+  const release = { dist: { tarball: `https://registry.test/${name}.tgz`, integrity } };
+  return {
+    "dist-tags": { latest: npmLatest },
+    versions: { "1.0.0": release, "1.1.0": release },
+  };
+};
 const layerNpmRegistry = Layer.succeed(
   HttpClient.HttpClient,
   HttpClient.make((request) => {
     const url = request.url;
+    if (!url.endsWith(".tgz")) npmMetadataRequests += 1;
     const body = url.endsWith(".tgz")
       ? new Response(npmTarball)
       : url.endsWith("/npm-hello")
@@ -863,8 +870,14 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           assert.isFalse(yield* fs.exists(`${stateDir}/plugins/hello-plugin`));
           assert.isTrue(yield* fs.exists(`${fixturesDir}hello-plugin/server.cjs`));
 
+          npmLatest = "1.0.0";
           const fromNpm = yield* host.install({ type: "npm", name: "npm-hello" });
           assert.include(fromNpm, { id: PluginId.make("npm-hello"), status: "active" });
+          assert.isUndefined(stateOf(yield* host.checkUpdates, "npm-hello")?.availableUpdate);
+          npmLatest = "1.1.0";
+          assert.deepStrictEqual(stateOf(yield* host.checkUpdates, "npm-hello")?.availableUpdate, {
+            version: "1.1.0",
+          });
           // Another source claiming an installed id is refused before anything moves.
           const impostor = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-plugin-impostor-" });
           yield* writeFile(
@@ -880,7 +893,9 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           assert.match(takeover.message, /already installed from somewhere else/);
           // Updating a disabled plugin keeps it disabled.
           yield* host.setEnabled(PluginId.make("npm-hello"), false);
-          assert.include(yield* host.update(PluginId.make("npm-hello")), { enabled: false });
+          const npmUpdated = yield* host.update(PluginId.make("npm-hello"));
+          assert.include(npmUpdated, { enabled: false });
+          assert.isUndefined(npmUpdated.availableUpdate);
           const tampered = yield* host
             .install({ type: "npm", name: "npm-tampered" })
             .pipe(Effect.flip);
@@ -890,6 +905,41 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           ]);
         }).pipe(Effect.provide(layerHost()));
       }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("checks installed plugins for updates once a day, not at startup", () =>
+    Effect.gen(function* () {
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      yield* writeInstalledPlugin("npm-hello", "module.exports = { activate() {} };");
+      yield* writeFile(
+        `${stateDir}/plugins.json`,
+        JSON.stringify({
+          enabled: { "npm-hello": true },
+          sources: { "npm-hello": { type: "npm", name: "npm-hello" } },
+          installed: { "npm-hello": "1.0.0" },
+          updates: { checkedAt: 0, available: {} },
+        }),
+      );
+      npmLatest = "1.1.0";
+      npmMetadataRequests = 0;
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        yield* waitForStatuses(host, { "npm-hello": "active" });
+        assert.strictEqual(npmMetadataRequests, 0);
+
+        const found = yield* host.streamStates.pipe(
+          Stream.filter((states) => stateOf(states, "npm-hello")?.availableUpdate !== undefined),
+          Stream.runHead,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* TestClock.adjust("24 hours");
+        assert.deepStrictEqual(
+          stateOf(Option.getOrThrow(yield* Fiber.join(found)), "npm-hello")?.availableUpdate,
+          { version: "1.1.0" },
+        );
+        assert.strictEqual(npmMetadataRequests, 1);
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
   );
 
   it.effect("restores a version an interrupted install left in staging", () =>

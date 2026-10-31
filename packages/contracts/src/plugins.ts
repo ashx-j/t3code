@@ -131,6 +131,8 @@ export const PluginState = Schema.Struct({
   revision: Schema.optionalKey(Schema.Number),
   /** Where it was installed from, when installed through `plugins.install`; updates reuse it. */
   installSource: Schema.optionalKey(PluginInstallSource),
+  /** A newer npm version or git commit at its install source, found by the last update check. */
+  availableUpdate: Schema.optionalKey(Schema.Struct({ version: Schema.String })),
   hasServer: Schema.Boolean,
   hasWeb: Schema.Boolean,
   settingsSchema: Schema.optionalKey(Schema.JsonObject),
@@ -169,6 +171,9 @@ export type PluginInstallInput = typeof PluginInstallInput.Type;
 
 export const PluginUpdateInput = Schema.Struct({ pluginId: PluginId });
 export type PluginUpdateInput = typeof PluginUpdateInput.Type;
+
+export const PluginCheckUpdatesInput = Schema.Struct({});
+export type PluginCheckUpdatesInput = typeof PluginCheckUpdatesInput.Type;
 
 export const PluginUninstallInput = Schema.Struct({
   pluginId: PluginId,

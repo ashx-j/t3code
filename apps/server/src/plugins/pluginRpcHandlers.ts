@@ -1,5 +1,6 @@
 import {
   type AuthEnvironmentScope,
+  type PluginCheckUpdatesInput,
   PluginError,
   type PluginId,
   type PluginInstallInput,
@@ -53,6 +54,11 @@ export const makePluginRpcHandlers = (
     pluginHost.update(input.pluginId).pipe(
       Effect.map((plugin) => ({ plugin })),
       Effect.mapError(toRpcError(input.pluginId)),
+    ),
+  [WS_METHODS.pluginsCheckUpdates]: (_input: PluginCheckUpdatesInput) =>
+    pluginHost.checkUpdates.pipe(
+      Effect.map((plugins) => ({ plugins })),
+      Effect.mapError((error) => new PluginError({ message: error.message })),
     ),
   [WS_METHODS.pluginsUninstall]: (input: PluginUninstallInput) =>
     pluginHost

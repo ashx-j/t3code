@@ -29,6 +29,10 @@ Plugins added from Settings have **Update** on their row. It installs the plugin
 same folder, repository or package, and keeps the current version running if that fails. An npm
 plugin without a pinned version updates to the package's latest version.
 
+T3 Code checks plugins added from a git repository or npm once a day and marks the ones with a
+newer version as **Update available**. **Check for updates** on the Plugins page checks now.
+Plugins installed before this check existed show updates only after their next update.
+
 ## Turn a plugin on or off
 
 Use the switch on the plugin's row. A plugin that fails to start shows the reason on its row, for

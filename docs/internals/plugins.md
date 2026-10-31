@@ -147,6 +147,10 @@ staging. Uninstall deletes the entry in `plugins/`, never the plugin's resolved 
 a symlinked plugin is the author's own folder. Git clones run with prompts off and
 `GIT_ALLOW_PROTOCOL` set, which blocks transports such as `ext::` that run commands.
 
+Install records the npm version or git commit it fetched in `plugins.json`. Update checks compare
+it with the registry's tag or `git ls-remote` and keep what they found there with the time of the
+check, so a restart before the next check is due starts no network request.
+
 ## Nothing installed costs nothing
 
 Plugins activate after the server is listening, each in its own fiber. Clients show plugin UI only
