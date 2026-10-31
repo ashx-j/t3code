@@ -349,8 +349,8 @@ export interface PluginApi {
     /**
      * Asked about each approval or question an agent raises while the plugin is active, after
      * hooks registered before it, until one answers. The user sees the request meanwhile and may
-     * answer first, which aborts `signal`. A hook slower than 10 seconds, one that throws or one
-     * whose answer does not fit the request is skipped, and with no answer the user decides.
+     * answer first, which aborts `signal`. A hook slower than 10 seconds, one that throws, or one
+     * whose answer does not fit or the server refuses is skipped; with no answer the user decides.
      */
     readonly onRuntimeRequest: (
       handler: (

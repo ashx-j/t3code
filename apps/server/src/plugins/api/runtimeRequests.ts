@@ -184,6 +184,19 @@ export const makeRuntimeRequestHooks = (input: {
     return asking === undefined ? Effect.void : Fiber.interrupt(asking);
   };
 
+  const stillPending = (target: {
+    readonly threadId: ThreadId;
+    readonly requestId: RuntimeRequestId;
+  }) =>
+    orchestrator.getThreadRecords(target.threadId, ["runtimeRequests"]).pipe(
+      Effect.map(
+        (records) =>
+          records.runtimeRequests.find((candidate) => candidate.id === target.requestId)?.status ===
+          "pending",
+      ),
+      Effect.orElseSucceed(() => false),
+    );
+
   const ask = Effect.fnUntraced(function* (
     target: { readonly threadId: ThreadId; readonly requestId: RuntimeRequestId },
     request: PluginRuntimeRequest,
@@ -211,8 +224,7 @@ export const makeRuntimeRequestHooks = (input: {
       const commandId = CommandId.make(
         `command:plugin:${hook.pluginId}:${yield* input.crypto.randomUUIDv4().pipe(Effect.orDie)}`,
       );
-      // The user may have answered meanwhile, so a refused response is expected, not a failure.
-      yield* threads
+      const refusal = yield* threads
         .dispatch({
           type: "runtime-request.respond",
           commandId,
@@ -220,22 +232,25 @@ export const makeRuntimeRequestHooks = (input: {
           ...response,
         })
         .pipe(
-          Effect.tap(() =>
-            Effect.logInfo("plugin answered a runtime request", {
-              pluginId: hook.pluginId,
-              requestId: request.requestId,
-              kind: request.kind,
-            }),
-          ),
-          Effect.catchCause((cause) =>
-            Effect.logDebug("plugin runtime request answer was not accepted", {
-              pluginId: hook.pluginId,
-              requestId: request.requestId,
-              cause: String(cause).slice(0, 500),
-            }),
-          ),
+          Effect.as(undefined),
+          Effect.catchCause((cause) => Effect.succeed(String(cause).slice(0, 500))),
         );
-      return;
+      if (refusal === undefined) {
+        yield* Effect.logInfo("plugin answered a runtime request", {
+          pluginId: hook.pluginId,
+          requestId: request.requestId,
+          kind: request.kind,
+        });
+        return;
+      }
+      // The user may have answered meanwhile. Otherwise the server refused this answer, such as
+      // one that skips a required question, and a later plugin may still have one that fits.
+      if (!(yield* stillPending(target))) return;
+      yield* Effect.logWarning("the server refused a plugin's answer to a runtime request", {
+        pluginId: hook.pluginId,
+        requestId: request.requestId,
+        cause: refusal,
+      });
     }
   });
 

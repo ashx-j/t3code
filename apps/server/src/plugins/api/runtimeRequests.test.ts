@@ -126,6 +126,30 @@ it.layer(NodeServices.layer)("runtime request hooks", (it) => {
     }),
   );
 
+  it.effect("asks the next hook when the server refuses an answer to a pending request", () =>
+    Effect.gen(function* () {
+      const { events, responded, asked, hook } = yield* harness({
+        subscribe: Stream.fromQueue,
+        respond: (command) =>
+          command.type === "runtime-request.respond" && command.decision === "accept"
+            ? Effect.fail(
+                new Orchestrator.OrchestratorDispatchError({
+                  commandId: command.commandId,
+                  commandType: command.type,
+                  cause: "Refused.",
+                }),
+              )
+            : Effect.void,
+      });
+      hook("refused", async () => ({ decision: "accept" }));
+      hook("declines", async () => ({ decision: "decline" }));
+
+      yield* Queue.offer(events, pending);
+      assert.deepInclude(yield* Queue.take(responded), accepted("decline"));
+      assert.deepStrictEqual(asked, ["refused", "declines"]);
+    }),
+  );
+
   it.effect("keeps answering after its event stream fails", () =>
     Effect.gen(function* () {
       let subscriptions = 0;
