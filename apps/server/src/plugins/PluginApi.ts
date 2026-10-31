@@ -89,6 +89,7 @@ export interface PluginApiServices {
  */
 export const makePluginApi = (input: {
   readonly id: PluginId;
+  readonly name: string;
   readonly rootDir: string;
   readonly settingsSchema: Schema.JsonObject | undefined;
   readonly activation: PluginActivation;
@@ -163,7 +164,7 @@ export const makePluginApi = (input: {
       activation.cleanups.push(cleanup);
     },
     events,
-    threads: makeThreadsApi(facade, services),
+    threads: makeThreadsApi(facade, services, input.name),
     projects: makeProjectsApi(facade, services),
     schedule: makeScheduleApi(facade),
     turns: makeTurnsApi(facade, services, {

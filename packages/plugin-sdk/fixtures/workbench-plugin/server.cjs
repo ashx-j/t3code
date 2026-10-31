@@ -54,6 +54,16 @@ module.exports = {
       { access: "write" },
     );
     api.rpc.register(
+      "noteThread",
+      async (input) => {
+        const { threadId } = /** @type {{ threadId?: unknown }} */ (input ?? {});
+        if (typeof threadId !== "string") throw new TypeError("Expected { threadId }.");
+        await api.threads.notify({ threadId, summary: "Checked", outcome: "completed" });
+        return null;
+      },
+      { access: "write" },
+    );
+    api.rpc.register(
       "lastEvent",
       () => api.storage.get("lastEvent").then((value) => value ?? null),
       {

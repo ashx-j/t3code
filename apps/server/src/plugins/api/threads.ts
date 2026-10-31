@@ -2,9 +2,11 @@ import {
   CommandId,
   MessageId,
   OrchestrationProjectShell,
+  OrchestrationV2Notification,
   OrchestrationV2ThreadShell,
   ProjectId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import type { PluginApi } from "@t3tools/plugin-sdk/server";
 import type * as Crypto from "effect/Crypto";
@@ -23,6 +25,7 @@ const encodeProjectShell = Schema.encodeUnknownEffect(
   Schema.toCodecJson(OrchestrationProjectShell),
 );
 const decodeThreadId = Schema.decodeUnknownEffect(ThreadId);
+const decodeNotification = Schema.decodeUnknownEffect(OrchestrationV2Notification);
 const decodeProjectId = Schema.decodeUnknownEffect(ProjectId);
 const isJsonObject = Schema.is(Schema.JsonObject);
 
@@ -43,6 +46,7 @@ export const makeThreadsApi = (
     readonly threads: ThreadManagementService.ThreadManagementService["Service"];
     readonly crypto: Crypto.Crypto;
   },
+  pluginName: string,
 ): PluginApi["threads"] => {
   const { threads, crypto } = services;
   const newId = crypto.randomUUIDv4().pipe(Effect.orDie);
@@ -84,6 +88,25 @@ export const makeThreadsApi = (
             mode: input.mode ?? "auto",
             createdBy: "agent",
             creationSource: "server",
+          });
+        }),
+      ),
+    notify: (input) =>
+      facade.call(
+        Effect.gen(function* () {
+          const shell = yield* shellOf(input.threadId);
+          const notification = yield* decodeNotification({
+            source: { kind: "system" },
+            outcome: input.outcome ?? "updated",
+            summary: input.summary,
+            ...(input.detail === undefined ? {} : { detail: input.detail }),
+          });
+          yield* threads.dispatch({
+            type: "thread.notification.record",
+            commandId: CommandId.make(`command:plugin:${facade.pluginId}:${yield* newId}`),
+            threadId: shell.id,
+            turnItemId: TurnItemId.make(`turn-item:plugin:${facade.pluginId}:${yield* newId}`),
+            notification: { ...notification, summary: `${pluginName}: ${notification.summary}` },
           });
         }),
       ),

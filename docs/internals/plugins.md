@@ -88,8 +88,12 @@ dropping, because a dropped run would be lost for good once the saved position m
 saves the sequence and the last 256 ended runs in the plugin's storage: runs that end while a
 plugin is off arrive when it starts, and a run updated again after it ended (a checkpoint landing
 on an interrupted run) is not delivered twice. Hooks skip slash commands, whose meaning an
-appended paragraph would change. A plugin notification that does not start a run needs a new
-orchestration command, which is why the API has none yet.
+appended paragraph would change.
+
+`threads.notify` is the one plugin change inside `Orchestrator.ts`: the internal
+`thread.notification.record` command, because every `message.dispatch` starts a run. The note joins
+the thread's latest finished run. `TurnItemPositionStore` sorts run-less items before every run, and
+clients drop them from paged threads, while a note inside a running turn would split its live output.
 
 The `t3_plugins_*` management tools live in `PluginMcpTools`, but the host depends on that service,
 so the host hands it its actions when it starts.

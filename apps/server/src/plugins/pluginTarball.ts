@@ -60,7 +60,7 @@ export function unpackNpmTarball(gzipped: Uint8Array): ReadonlyArray<TarballFile
     if (header.every((byte) => byte === 0)) {
       // The archive ends with 2 zero blocks; a lone one followed by more data is malformed.
       const next = archive.subarray(offset + BLOCK, offset + 2 * BLOCK);
-      if (next.length === 0 || next.every((byte) => byte === 0)) break;
+      if (next.every((byte) => byte === 0)) break;
       throw new Error("The package archive is truncated or malformed.");
     }
     if (files.length >= MAX_ENTRIES) throw new Error("The package has too many files.");

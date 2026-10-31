@@ -260,6 +260,63 @@ it.effect("marks a never-visited thread's first completion unread", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("files a plugin note under the latest finished run without starting a run", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:plugin-note");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-plugin-note"),
+      threadId,
+      projectId: ProjectId.make("project:plugin-note"),
+      title: "Plugin note",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const dispatch = (id: string) =>
+      orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(id),
+        threadId,
+        messageId: MessageId.make(id),
+        text: "Run in the background",
+        attachments: [],
+        dispatchMode: { type: "defer_start" },
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+    yield* dispatch("plugin-note-finished");
+    const finished = (yield* projections.getThreadProjection(threadId)).runs[0]!;
+    yield* orchestrator.dispatch({
+      type: "run.interrupt",
+      commandId: CommandId.make("interrupt-plugin-note"),
+      threadId,
+      runId: finished.id,
+    });
+    // A later run that hasn't finished must not receive the note.
+    yield* dispatch("plugin-note-pending");
+    yield* orchestrator.dispatch({
+      type: "thread.notification.record",
+      commandId: CommandId.make("record-plugin-note"),
+      threadId,
+      turnItemId: TurnItemId.make("plugin-note"),
+      notification: { source: { kind: "system" }, outcome: "updated", summary: "Digest: done" },
+    });
+    const projection = yield* projections.getThreadProjection(threadId);
+    assert.equal(projection.runs.length, 2);
+    const finishedItems = projection.turnItems.filter((item) => item.runId === finished.id);
+    const note = finishedItems.find((item) => item.id === "plugin-note");
+    assert.equal(note?.type, "notification");
+    assert.equal(note?.ordinal, Math.max(...finishedItems.map((item) => item.ordinal)));
+  }).pipe(Effect.provide(layerTest)),
+);
+
 const completeAndSnoozeThread = Effect.fn("test.completeAndSnoozeThread")(function* (
   name: string,
   snoozeMinutes: number,

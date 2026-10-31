@@ -560,6 +560,7 @@ const make = Effect.gen(function* () {
     );
     const api = makePluginApi({
       id: plugin.id,
+      name: manifest.name,
       rootDir: plugin.rootDir,
       settingsSchema: manifest.settingsSchema,
       activation,

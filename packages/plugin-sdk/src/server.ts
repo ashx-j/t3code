@@ -149,6 +149,16 @@ export interface PluginApi {
       readonly text: string;
       readonly mode?: "auto" | "queue" | "steer";
     }) => Promise<void>;
+    /**
+     * Shows a note in the thread, after its latest finished run, starting with the plugin's name.
+     * It starts no turn, isn't sent to the agent and doesn't mark the thread unread.
+     */
+    readonly notify: (input: {
+      readonly threadId: string;
+      readonly summary: string;
+      readonly detail?: string;
+      readonly outcome?: "completed" | "failed" | "updated";
+    }) => Promise<void>;
     readonly interrupt: (threadId: string) => Promise<void>;
     readonly rename: (threadId: string, title: string) => Promise<void>;
   };
