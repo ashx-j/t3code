@@ -25,6 +25,16 @@ export interface WebPluginCommand {
   readonly title: string;
   /** Extra words the command palette matches. */
   readonly keywords?: ReadonlyArray<string>;
+  /** Desktop app only; ignored in a browser. */
+  readonly desktop?: {
+    /** Lists the command under Plugins in the app menu. */
+    readonly menu?: boolean;
+    /**
+     * Runs the command from anywhere, even while T3 Code is in the background, as an Electron
+     * accelerator such as `CommandOrControl+Shift+Y`. Skipped when another app already holds it.
+     */
+    readonly globalShortcut?: string;
+  };
   readonly run: () => void | Promise<void>;
 }
 

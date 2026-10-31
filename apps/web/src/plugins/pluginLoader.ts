@@ -38,6 +38,7 @@ import { Textarea } from "../components/ui/textarea";
 import { toastManager } from "../components/ui/toast";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { registerCommands, type CommandHandlers } from "../shortcuts/dispatcher";
+import { isDesktopPluginCommand, registerDesktopPluginCommand } from "./desktopPluginCommands";
 import { pluginEnvironment } from "../state/plugins";
 import { readPreparedConnection } from "../state/session";
 import {
@@ -248,6 +249,21 @@ function makeWebPluginApi({
             run,
           }),
         );
+        if (command.desktop !== undefined) {
+          const desktopCommand = {
+            command: keybindingCommand,
+            title: command.title,
+            pluginName: plugin.name,
+            menu: command.desktop.menu === true,
+            ...(command.desktop.globalShortcut === undefined
+              ? {}
+              : { globalShortcut: command.desktop.globalShortcut }),
+          };
+          if (!isDesktopPluginCommand(desktopCommand)) {
+            throw new TypeError(`Command "${command.id}" has an invalid desktop shortcut.`);
+          }
+          track(registerDesktopPluginCommand(desktopCommand, run));
+        }
         const handlers = shortcutHandlers();
         handlers[keybindingCommand] = (event) => {
           event.preventDefault();

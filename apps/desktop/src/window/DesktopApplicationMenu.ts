@@ -1,7 +1,9 @@
+import type { DesktopPluginCommand } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
 import type * as Electron from "electron";
@@ -29,6 +31,10 @@ export class DesktopApplicationMenu extends Context.Service<
   DesktopApplicationMenu,
   {
     readonly configure: Effect.Effect<void>;
+    /** Rebuilds the menu with a Plugins menu for the commands that ask for one. */
+    readonly setPluginCommands: (
+      commands: ReadonlyArray<DesktopPluginCommand>,
+    ) => Effect.Effect<void>;
   }
 >()("@t3tools/desktop/window/DesktopApplicationMenu") {}
 
@@ -112,9 +118,28 @@ const handleCheckForUpdatesMenuClick = Effect.gen(function* () {
   yield* checkForUpdatesFromMenu;
 }).pipe(Effect.withSpan("desktop.menu.handleCheckForUpdatesClick"));
 
+/** One submenu per plugin, in the order its commands arrived; none when no command asks. */
+const pluginMenuTemplate = (
+  commands: ReadonlyArray<DesktopPluginCommand>,
+  run: (command: string) => void,
+): Electron.MenuItemConstructorOptions[] => {
+  const byPlugin = new Map<string, Electron.MenuItemConstructorOptions[]>();
+  for (const { command, title, pluginName, menu } of commands) {
+    if (!menu) continue;
+    const items = byPlugin.get(pluginName) ?? [];
+    items.push({ label: title, click: () => run(command) });
+    byPlugin.set(pluginName, items);
+  }
+  if (byPlugin.size === 0) return [];
+  return [
+    { label: "Plugins", submenu: [...byPlugin].map(([label, submenu]) => ({ label, submenu })) },
+  ];
+};
+
 /** @public */
 export const make = Effect.gen(function* () {
   const electronMenu = yield* ElectronMenu.ElectronMenu;
+  const pluginCommands = yield* Ref.make<ReadonlyArray<DesktopPluginCommand>>([]);
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const context = yield* Effect.context<DesktopApplicationMenuRuntimeServices>();
   const runPromise = Effect.runPromiseWith(context);
@@ -292,6 +317,9 @@ export const make = Effect.gen(function* () {
           { role: "togglefullscreen" },
         ],
       },
+      ...pluginMenuTemplate(yield* Ref.get(pluginCommands), (command) =>
+        runMenuEffect(command, dispatchMenuAction(command)),
+      ),
       {
         // Electron's default Window submenu adds a Ctrl+W close role off macOS.
         role: "windowMenu",
@@ -319,6 +347,10 @@ export const make = Effect.gen(function* () {
 
   return DesktopApplicationMenu.of({
     configure,
+    setPluginCommands: Effect.fn("DesktopApplicationMenu.setPluginCommands")(function* (commands) {
+      yield* Ref.set(pluginCommands, commands);
+      yield* configure;
+    }),
   });
 });
 

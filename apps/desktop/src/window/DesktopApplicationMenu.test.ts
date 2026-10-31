@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import type { DesktopPluginCommand } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -107,10 +108,11 @@ const configureMenu = (
   selectedAction: Deferred.Deferred<string>,
   applicationMenuTemplate: Deferred.Deferred<readonly Electron.MenuItemConstructorOptions[]>,
   environment: Partial<DesktopEnvironment.MakeDesktopEnvironmentInput> = {},
+  pluginCommands?: ReadonlyArray<DesktopPluginCommand>,
 ) =>
   Effect.gen(function* () {
     const menu = yield* DesktopApplicationMenu.DesktopApplicationMenu;
-    yield* menu.configure;
+    yield* pluginCommands === undefined ? menu.configure : menu.setPluginCommands(pluginCommands);
   }).pipe(
     Effect.provide(
       DesktopApplicationMenu.layer.pipe(
@@ -231,6 +233,50 @@ describe("DesktopApplicationMenu", () => {
           platform,
         );
       }
+    }),
+  );
+
+  it.effect("lists plugin commands that ask for a menu item under Plugins", () =>
+    Effect.gen(function* () {
+      const selectedAction = yield* Deferred.make<string>();
+      const applicationMenuTemplate =
+        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+
+      yield* configureMenu(selectedAction, applicationMenuTemplate, {}, [
+        {
+          command: "plugin.hello-web.say-hello",
+          title: "Say hello",
+          pluginName: "Hello web",
+          menu: true,
+        },
+        {
+          command: "plugin.hello-web.capture",
+          title: "Capture",
+          pluginName: "Hello web",
+          menu: false,
+          globalShortcut: "CommandOrControl+Shift+Y",
+        },
+      ]);
+
+      const template = yield* Deferred.await(applicationMenuTemplate);
+      const plugins = template.find((item) => item.label === "Plugins");
+      if (!Array.isArray(plugins?.submenu)) {
+        throw new Error("Expected a Plugins menu.");
+      }
+      const helloWeb = plugins.submenu.find((item) => item.label === "Hello web");
+      if (!Array.isArray(helloWeb?.submenu)) {
+        throw new Error("Expected a submenu for Hello web.");
+      }
+      assert.deepEqual(
+        helloWeb.submenu.map((item) => item.label),
+        ["Say hello"],
+      );
+      const sayHello = helloWeb.submenu[0];
+      if (typeof sayHello?.click !== "function") {
+        throw new Error("Expected Say hello to have a click handler.");
+      }
+      sayHello.click({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
+      assert.equal(yield* Deferred.await(selectedAction), "plugin.hello-web.say-hello");
     }),
   );
 
