@@ -70,6 +70,26 @@ export interface WebPluginCodeBlockRenderer {
   readonly component: WebPluginComponent<{ readonly code: string }>;
 }
 
+/** A button or menu item a plugin adds to one of T3's own toolbars or menus. */
+export interface WebPluginAction<Context> {
+  /** Unique within the plugin and the place it is added: lowercase letters, digits and hyphens. */
+  readonly id: string;
+  /** The menu item's label, or the button's tooltip and accessible name. */
+  readonly title: string;
+  /** The button's icon, about 16px. Buttons without one show a puzzle piece. Menus ignore it. */
+  readonly icon?: WebPluginComponent;
+  readonly run: (context: Context) => void | Promise<void>;
+}
+
+/** The message a message action was used on. */
+export interface WebPluginMessage {
+  readonly threadId: string;
+  readonly messageId: string;
+  readonly role: "user" | "assistant";
+  /** The message's text as shown, in Markdown. */
+  readonly text: string;
+}
+
 /**
  * T3's own parts a plugin can draw its own way with `ui.replace`. Each piece is a React element T3
  * has already wired up: place it, wrap it or leave it out. `original` is T3's own drawing.
@@ -90,6 +110,8 @@ export interface WebPluginParts {
     readonly access: unknown;
     /** Send, stop and the other primary actions. */
     readonly actions: unknown;
+    /** Buttons plugins added with `composer.addButton`; draws nothing when there are none. */
+    readonly buttons: unknown;
   };
   /** The frame Settings and Usage open in. T3 draws a large window over the thread. */
   readonly "app.pageFrame": {
@@ -136,6 +158,29 @@ export interface WebPluginApi {
     readonly showBanner: (banner: WebPluginBanner) => () => void;
     /** Adds a command to the composer's `/` menu. */
     readonly registerSlashCommand: (command: WebPluginSlashCommand) => void;
+    /** Adds a button beside the composer's attach button. `threadId` is null in a new thread. */
+    readonly addButton: (button: WebPluginAction<{ readonly threadId: string | null }>) => void;
+  };
+  readonly threads: {
+    /** Adds an item to the thread's actions menu, in its header and on right-click in the sidebar. */
+    readonly addMenuItem: (item: WebPluginAction<{ readonly threadId: string }>) => void;
+    /** Adds an icon button to the thread's header, after its title. */
+    readonly addHeaderButton: (button: WebPluginAction<{ readonly threadId: string }>) => void;
+    /**
+     * Shows a short badge on the thread's sidebar row and in its header, or removes it with
+     * `null`. Each plugin has one badge per thread; badges go away when the plugin unloads.
+     */
+    readonly setBadge: (
+      threadId: string,
+      badge: {
+        readonly label: string;
+        readonly tone?: "info" | "success" | "warning" | "error";
+      } | null,
+    ) => void;
+  };
+  readonly messages: {
+    /** Adds a button to the actions shown under each user and assistant message. */
+    readonly addAction: (action: WebPluginAction<WebPluginMessage>) => void;
   };
   /**
    * A URL for a file in the plugin's `assets/` folder, such as `icon.svg`, usable in `src` and

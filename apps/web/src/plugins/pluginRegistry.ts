@@ -1,4 +1,4 @@
-import type { EnvironmentId, PLUGIN_COMMAND_PATTERN } from "@t3tools/contracts";
+import type { ContextMenuItem, EnvironmentId, PLUGIN_COMMAND_PATTERN } from "@t3tools/contracts";
 import type { WebPluginParts } from "@t3tools/plugin-sdk/web";
 import { Atom } from "effect/reactivity";
 import type { ComponentType, ReactNode } from "react";
@@ -324,3 +324,143 @@ export function registerPluginReplacement<Part extends PluginPartName>(
     appAtomRegistry.set(replacementsVersionAtom, appAtomRegistry.get(replacementsVersionAtom) + 1);
   };
 }
+
+/** Where a plugin action shows, and what its `run` receives there. */
+export interface PluginActionContexts {
+  readonly threadMenu: { readonly threadId: string };
+  readonly threadHeader: { readonly threadId: string };
+  readonly message: {
+    readonly threadId: string;
+    readonly messageId: string;
+    readonly role: "user" | "assistant";
+    readonly text: string;
+  };
+  readonly composer: { readonly threadId: string | null };
+}
+
+export type PluginActionPlace = keyof PluginActionContexts;
+
+export interface PluginActionEntry<Place extends PluginActionPlace> {
+  /** Unique per environment and place. */
+  readonly key: `plugin:${string}`;
+  readonly environmentId: EnvironmentId;
+  readonly title: string;
+  readonly icon: ComponentType | undefined;
+  readonly run: (context: PluginActionContexts[Place]) => void;
+}
+
+const actions: { [Place in PluginActionPlace]: Map<string, PluginActionEntry<Place>> } = {
+  threadMenu: new Map(),
+  threadHeader: new Map(),
+  message: new Map(),
+  composer: new Map(),
+};
+
+// Message actions render in every timeline row, so actions keep their own version.
+const actionsVersionAtom = Atom.make(0).pipe(Atom.keepAlive);
+const bumpActions = () =>
+  appAtomRegistry.set(actionsVersionAtom, appAtomRegistry.get(actionsVersionAtom) + 1);
+
+/** Adds a plugin button or menu item; returns the function that removes it. */
+export function registerPluginAction<Place extends PluginActionPlace>(
+  place: Place,
+  entry: PluginActionEntry<Place>,
+): () => void {
+  const list = actions[place];
+  const key = `${entry.environmentId}\u0000${entry.key}`;
+  if (list.has(key)) throw new Error(`"${entry.key}" is already registered.`);
+  list.set(key, entry);
+  bumpActions();
+  return () => {
+    if (list.get(key) !== entry) return;
+    list.delete(key);
+    bumpActions();
+  };
+}
+
+/** The environment's plugin actions for `place`, for code that runs outside render. */
+const readPluginActions = <Place extends PluginActionPlace>(
+  place: Place,
+  environmentId: EnvironmentId,
+): ReadonlyArray<PluginActionEntry<Place>> =>
+  [...actions[place].values()].filter((entry) => entry.environmentId === environmentId);
+
+const actionsAtom = <Place extends PluginActionPlace>(place: Place) =>
+  Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => {
+      get(actionsVersionAtom);
+      return readPluginActions(place, environmentId);
+    }),
+  );
+
+export const pluginActionAtoms: {
+  readonly [Place in PluginActionPlace]: (
+    environmentId: EnvironmentId,
+  ) => Atom.Atom<ReadonlyArray<PluginActionEntry<Place>>>;
+} = {
+  threadMenu: actionsAtom("threadMenu"),
+  threadHeader: actionsAtom("threadHeader"),
+  message: actionsAtom("message"),
+  composer: actionsAtom("composer"),
+};
+
+/** Appends the environment's plugin items to a thread menu, after a separator. */
+export function withPluginThreadMenuItems<Id extends string>(
+  items: ReadonlyArray<ContextMenuItem<Id>>,
+  environmentId: EnvironmentId,
+): ReadonlyArray<ContextMenuItem<Id | `plugin:${string}`>> {
+  const pluginItems = readPluginActions("threadMenu", environmentId);
+  if (pluginItems.length === 0) return items;
+  return [
+    ...items,
+    ...pluginItems.map((entry, index) => ({
+      id: entry.key,
+      label: entry.title,
+      separatorBefore: index === 0,
+    })),
+  ];
+}
+
+/** Runs the plugin item a thread menu returned; false when `menuId` is not a plugin item. */
+export function runPluginThreadMenuItem(
+  menuId: string,
+  environmentId: EnvironmentId,
+  threadId: string,
+): boolean {
+  if (!menuId.startsWith("plugin:")) return false;
+  actions.threadMenu.get(`${environmentId}\u0000${menuId}`)?.run({ threadId });
+  return true;
+}
+
+export interface PluginThreadBadge {
+  readonly pluginId: string;
+  readonly label: string;
+  readonly tone: "info" | "success" | "warning" | "error";
+}
+
+const EMPTY_BADGES: ReadonlyArray<PluginThreadBadge> = [];
+// Keyed by scoped thread key. A thread's array is replaced only when its own badges change, so
+// sidebar rows of other threads keep the same value and do not re-render.
+const threadBadges = new Map<string, ReadonlyArray<PluginThreadBadge>>();
+const threadBadgesVersionAtom = Atom.make(0).pipe(Atom.keepAlive);
+
+/** Sets or, with `null`, removes a plugin's badge on a thread. */
+export function setPluginThreadBadge(
+  threadKey: string,
+  pluginId: string,
+  badge: Omit<PluginThreadBadge, "pluginId"> | null,
+) {
+  const current = threadBadges.get(threadKey) ?? EMPTY_BADGES;
+  const others = current.filter((entry) => entry.pluginId !== pluginId);
+  const next = badge === null ? others : [...others, { pluginId, ...badge }];
+  if (next.length === 0) threadBadges.delete(threadKey);
+  else threadBadges.set(threadKey, next);
+  appAtomRegistry.set(threadBadgesVersionAtom, appAtomRegistry.get(threadBadgesVersionAtom) + 1);
+}
+
+export const pluginThreadBadgesAtom = Atom.family((threadKey: string) =>
+  Atom.make((get) => {
+    get(threadBadgesVersionAtom);
+    return threadBadges.get(threadKey) ?? EMPTY_BADGES;
+  }),
+);

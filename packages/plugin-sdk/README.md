@@ -81,6 +81,12 @@ a settings panel, palette commands (which the desktop app can also list in its m
 global shortcut), composer slash commands and banners, timeline renderers for the plugin's agent
 tools, renderers for fenced code languages, styles, assets, navigation and toasts.
 
+Plugins can also add buttons and menu items to T3's own toolbars and menus: under each message
+(`messages.addAction`), in the thread header (`threads.addHeaderButton`), beside the composer's
+attach button (`composer.addButton`) and in the thread actions menu (`threads.addMenuItem`).
+`threads.setBadge` shows a short badge on a thread's sidebar row and header.
+[`examples/review-flags`](./examples/review-flags) uses all of them.
+
 `api.ui.replace(part, component)` draws one of T3's own parts your way. The component receives
 T3's own controls as ready-made pieces to arrange, plus `original`, T3's own drawing of the part.
 The parts and their pieces are listed in `WebPluginParts`. If your component throws, T3 draws its

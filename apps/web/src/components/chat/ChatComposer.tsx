@@ -279,6 +279,7 @@ import {
   usePreparingComposerImages,
 } from "./preparingComposerImages";
 import { ComposerControlsBar } from "./ComposerControlsBar";
+import { PluginActionButtons } from "../../plugins/PluginActions";
 import { PluginReplaceable } from "../../plugins/PluginReplaceable";
 import { composerCommandKeyHandler } from "./composerCommandKey";
 
@@ -3147,9 +3148,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       focusComposer={focusComposer}
     />
   ) : null;
+  const composerPluginButtons = (
+    <PluginActionButtons
+      place="composer"
+      environmentId={environmentId}
+      context={{ threadId: routeKind === "server" ? routeThreadRef.threadId : null }}
+      size="icon-sm"
+      className="me-2"
+    />
+  );
   const defaultComposerFooter = (
     <>
       {composerAttachButton ? <div className="me-2">{composerAttachButton}</div> : null}
+      {composerPluginButtons}
       <div
         data-chat-composer-actions="right"
         data-chat-composer-transition-actions="true"
@@ -3525,6 +3536,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     effort: cloneElement(composerControls, { piece: "effort" }),
                     access: cloneElement(composerControls, { piece: "access" }),
                     actions: composerPrimaryActions,
+                    buttons: composerPluginButtons,
                   }}
                 />
               </div>

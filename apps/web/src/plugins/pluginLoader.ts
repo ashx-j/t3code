@@ -7,11 +7,13 @@ import {
   useAtomValue,
 } from "@effect/atom-react";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, PluginState } from "@t3tools/contracts";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { ThreadId, type EnvironmentId, type PluginState } from "@t3tools/contracts";
 import {
   defineWebPlugin,
   type HOST_ATOM_REACT_EXPORTS,
   type HOST_UI_EXPORTS,
+  type WebPluginAction,
   type WebPluginApi,
   type WebPluginDefinition,
 } from "@t3tools/plugin-sdk/web";
@@ -45,12 +47,17 @@ import {
   registerPluginBanner,
   registerPluginCodeBlock,
   registerPluginCommand,
+  registerPluginAction,
   registerPluginReplacement,
   registerPluginRightPanel,
   registerPluginSlashCommand,
   registerPluginToolRenderer,
   registerPluginSettingsPanel,
+  setPluginThreadBadge,
   setPluginWebFailure,
+  type PluginActionContexts,
+  type PluginActionEntry,
+  type PluginActionPlace,
   type PluginPartProps,
   type PluginToolRendererProps,
 } from "./pluginRegistry";
@@ -159,6 +166,23 @@ const runReportingFailure = (label: string, run: () => void | Promise<void>) => 
     .catch((error: unknown) => {
       toastManager.add({ type: "error", title: `${label} failed`, description: errorText(error) });
     });
+};
+
+// Builds a toolbar or menu entry from a plugin's action; `run` reports failures as toasts.
+const pluginActionEntry = <Place extends PluginActionPlace>(
+  environmentId: EnvironmentId,
+  pluginId: string,
+  action: WebPluginAction<PluginActionContexts[Place]>,
+): PluginActionEntry<Place> => {
+  if (!COMMAND_ID.test(action.id)) throw new TypeError(`"${action.id}" is not a valid action id.`);
+  return {
+    key: `plugin:${pluginId}:${action.id}`,
+    environmentId,
+    title: action.title,
+    // The SDK types components without React; they are React function components.
+    icon: action.icon as ComponentType | undefined,
+    run: (context) => runReportingFailure(action.title, () => action.run(context)),
+  };
 };
 
 interface WebPluginApiContext {
@@ -305,6 +329,33 @@ function makeWebPluginApi({
             run: (context) => runReportingFailure(`/${command.name}`, () => command.run(context)),
           }),
         );
+      },
+      addButton: (button) => {
+        track(registerPluginAction("composer", pluginActionEntry(environmentId, pluginId, button)));
+      },
+    },
+    threads: {
+      addMenuItem: (item) => {
+        track(registerPluginAction("threadMenu", pluginActionEntry(environmentId, pluginId, item)));
+      },
+      addHeaderButton: (button) => {
+        track(
+          registerPluginAction("threadHeader", pluginActionEntry(environmentId, pluginId, button)),
+        );
+      },
+      setBadge: (threadId, badge) => {
+        const threadKey = scopedThreadKey(scopeThreadRef(environmentId, ThreadId.make(threadId)));
+        setPluginThreadBadge(
+          threadKey,
+          pluginId,
+          badge === null ? null : { label: badge.label, tone: badge.tone ?? "info" },
+        );
+        if (badge !== null) track(() => setPluginThreadBadge(threadKey, pluginId, null));
+      },
+    },
+    messages: {
+      addAction: (action) => {
+        track(registerPluginAction("message", pluginActionEntry(environmentId, pluginId, action)));
       },
     },
     assetUrl: (name) => {

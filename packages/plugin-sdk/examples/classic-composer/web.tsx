@@ -41,6 +41,7 @@ export default defineWebPlugin({
           {pieces.access}
         </div>
         <div className="classic-composer-send">
+          {pieces.buttons}
           {pieces.attach}
           {pieces.actions}
         </div>

@@ -21,6 +21,7 @@ const controls = () => (
         effort: null,
         access: null,
         actions: <span>Send</span>,
+        buttons: null,
       }}
     />
   </AppAtomRegistryProvider>

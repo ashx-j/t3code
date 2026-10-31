@@ -46,7 +46,7 @@ var web_default = defineWebPlugin({
           }),
           /* @__PURE__ */ jsxs("div", {
             className: "classic-composer-send",
-            children: [pieces.attach, pieces.actions],
+            children: [pieces.buttons, pieces.attach, pieces.actions],
           }),
         ],
       }),

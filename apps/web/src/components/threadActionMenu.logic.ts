@@ -27,7 +27,8 @@ export type ThreadActionMenuId =
   | "copy-thread"
   | "copy-thread-id"
   | "archive"
-  | "delete";
+  | "delete"
+  | `plugin:${string}`;
 
 export type DraftActionMenuId =
   | "copy"

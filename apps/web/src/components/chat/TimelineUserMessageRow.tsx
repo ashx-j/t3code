@@ -1,4 +1,5 @@
 import { InlineAudioPreview } from "../files/InlineAudioPreview";
+import { PluginActionButtons } from "../../plugins/PluginActions";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { findRevealRef } from "./markdownFindContext";
 import {
@@ -803,6 +804,18 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             variant="ghost"
           />
         )}
+        {ctx.threadRef ? (
+          <PluginActionButtons
+            place="message"
+            environmentId={ctx.threadRef.environmentId}
+            context={{
+              threadId: ctx.threadRef.threadId,
+              messageId: row.message.id,
+              role: "user",
+              text: plainText,
+            }}
+          />
+        ) : null}
       </div>
     </div>
   );

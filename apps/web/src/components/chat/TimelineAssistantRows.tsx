@@ -1,4 +1,5 @@
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
+import { PluginActionButtons } from "../../plugins/PluginActions";
 import { type RunId } from "@t3tools/contracts";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import { memo, use, useState } from "react";
@@ -187,6 +188,18 @@ function AssistantMessageMeta({
       />
       {projectedItem?.item.type === "assistant_message" ? (
         <AssistantForkButton projectedItem={projectedItem} />
+      ) : null}
+      {ctx.threadRef && !message.streaming ? (
+        <PluginActionButtons
+          place="message"
+          environmentId={ctx.threadRef.environmentId}
+          context={{
+            threadId: ctx.threadRef.threadId,
+            messageId: message.id,
+            role: "assistant",
+            text: message.text,
+          }}
+        />
       ) : null}
       {!message.streaming && (
         <Tooltip>
