@@ -285,6 +285,9 @@ export interface PluginReplacementEntry<Part extends PluginPartName> {
 // Each part keeps every replacement, so unloading the newest brings back the one before it.
 const replacements: { [Part in PluginPartName]: Array<PluginReplacementEntry<Part>> } = {
   "composer.controls": [],
+  "message.assistant": [],
+  "message.user": [],
+  "timeline.item": [],
   "app.pageFrame": [],
 };
 
@@ -302,6 +305,9 @@ export const pluginReplacementAtoms: {
   readonly [Part in PluginPartName]: Atom.Atom<PluginReplacementEntry<Part> | undefined>;
 } = {
   "composer.controls": replacementAtom("composer.controls"),
+  "message.assistant": replacementAtom("message.assistant"),
+  "message.user": replacementAtom("message.user"),
+  "timeline.item": replacementAtom("timeline.item"),
   "app.pageFrame": replacementAtom("app.pageFrame"),
 };
 

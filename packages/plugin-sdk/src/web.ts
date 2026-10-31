@@ -130,6 +130,32 @@ export interface WebPluginParts {
     /** Buttons plugins added with `composer.addButton`; draws nothing when there are none. */
     readonly buttons: unknown;
   };
+  /** An assistant message's text in the timeline, drawn as Markdown. */
+  readonly "message.assistant": {
+    readonly original: unknown;
+    /** The message's Markdown, growing while it streams. */
+    readonly text: string;
+    readonly messageId: string;
+    /** Null outside a thread, such as in a shared guest view. */
+    readonly threadId: string | null;
+    readonly streaming: boolean;
+  };
+  /** A user message's text in the timeline, drawn as Markdown. */
+  readonly "message.user": {
+    readonly original: unknown;
+    readonly text: string;
+  };
+  /** The details shown when a tool call, command or other step of an agent's work is expanded. */
+  readonly "timeline.item": {
+    readonly original: unknown;
+    /**
+     * The step as T3 sends it to clients. `type` names the kind, such as `command_execution`,
+     * `file_change`, `web_search` or `dynamic_tool`, and the other fields depend on it.
+     */
+    readonly item: Readonly<Record<string, unknown>>;
+    /** The step's text output, when it has one. */
+    readonly output: string | null;
+  };
   /** The frame Settings and Usage open in. T3 draws a large window over the thread. */
   readonly "app.pageFrame": {
     readonly original: unknown;

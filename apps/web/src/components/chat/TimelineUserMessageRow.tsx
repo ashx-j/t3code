@@ -1,4 +1,5 @@
 import { InlineAudioPreview } from "../files/InlineAudioPreview";
+import { PluginReplaceable } from "../../plugins/PluginReplaceable";
 import { PluginActionButtons } from "../../plugins/PluginActions";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { findRevealRef } from "./markdownFindContext";
@@ -1179,7 +1180,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
   if (props.text.length === 0) {
     return null;
   }
-  return (
+  const markdown = (
     <ChatMarkdown
       text={props.text}
       cwd={props.markdownCwd}
@@ -1190,6 +1191,13 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       parseRawHtml={false}
       renderContextReference={props.renderContextReference}
       headingLevelOffset={MESSAGE_HEADING_LEVEL}
+    />
+  );
+  return (
+    <PluginReplaceable
+      part="message.user"
+      original={markdown}
+      pieces={{ original: markdown, text: props.text }}
     />
   );
 });

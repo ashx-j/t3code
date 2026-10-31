@@ -1,4 +1,5 @@
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
+import { PluginReplaceable } from "../../plugins/PluginReplaceable";
 import { PluginActionButtons } from "../../plugins/PluginActions";
 import { type RunId } from "@t3tools/contracts";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
@@ -34,6 +35,20 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
   );
   const text = liveText ?? row.message.text;
   const messageText = text || (row.message.streaming ? "" : "(empty response)");
+  const markdown = (
+    <ChatMarkdown
+      text={messageText}
+      cwd={ctx.markdownCwd}
+      threadRef={ctx.threadRef ?? undefined}
+      isStreaming={Boolean(row.message.streaming)}
+      lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
+      skills={ctx.skills}
+      headingLevelOffset={MESSAGE_HEADING_LEVEL}
+      onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+      onRunShellCommand={ctx.onRunShellCommand}
+      onImageExpand={ctx.onImageExpand}
+    />
+  );
 
   return (
     <>
@@ -47,17 +62,16 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
             request={ctx.citationRequest}
             listRef={ctx.listRef}
           >
-            <ChatMarkdown
-              text={messageText}
-              cwd={ctx.markdownCwd}
-              threadRef={ctx.threadRef ?? undefined}
-              isStreaming={Boolean(row.message.streaming)}
-              lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
-              skills={ctx.skills}
-              headingLevelOffset={MESSAGE_HEADING_LEVEL}
-              onUseArtifactTemplate={ctx.onUseArtifactTemplate}
-              onRunShellCommand={ctx.onRunShellCommand}
-              onImageExpand={ctx.onImageExpand}
+            <PluginReplaceable
+              part="message.assistant"
+              original={markdown}
+              pieces={{
+                original: markdown,
+                text: messageText,
+                messageId: row.message.id,
+                threadId: ctx.threadRef?.threadId ?? null,
+                streaming: Boolean(row.message.streaming),
+              }}
             />
           </AssistantCitationSource>
         </div>
