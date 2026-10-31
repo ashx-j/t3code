@@ -32,7 +32,10 @@ export const makeTextGenerationApi = (
           ),
         ).pipe(
           Effect.timeoutOption(TEXT_GENERATION_DEADLINE),
-          Effect.map(Option.getOrUndefined),
+          // An answer from a plugin turned off meanwhile leaves the text to T3.
+          Effect.map((result) =>
+            activation.controller.signal.aborted ? undefined : Option.getOrUndefined(result),
+          ),
           Effect.catchCause((cause) =>
             Effect.logWarning("plugin text generator failed", {
               pluginId,

@@ -111,6 +111,15 @@ export const makeSlashCommandsApi = (
               PluginSlashCommandError: (error) =>
                 Effect.succeed({ block: `/${command.name} failed: ${error.reason}`, pluginName }),
             }),
+            // Whatever a plugin turned off mid-command answered no longer counts.
+            Effect.map((outcome) =>
+              activation.controller.signal.aborted
+                ? {
+                    block: `/${command.name} stopped because the plugin was turned off.`,
+                    pluginName,
+                  }
+                : outcome,
+            ),
           ),
       ),
     );
