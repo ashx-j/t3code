@@ -438,7 +438,6 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
   return (
     <PluginReplaceable
       part="timeline.item"
-      original={inspector}
       pieces={{ original: inspector, item, output: outputState.output }}
     />
   );

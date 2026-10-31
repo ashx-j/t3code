@@ -3541,7 +3541,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               >
                 <PluginReplaceable
                   part="composer.controls"
-                  original={defaultComposerFooter}
                   pieces={{
                     original: defaultComposerFooter,
                     attach: composerAttachButton,

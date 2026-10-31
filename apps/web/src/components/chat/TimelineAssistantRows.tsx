@@ -64,7 +64,6 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
           >
             <PluginReplaceable
               part="message.assistant"
-              original={markdown}
               pieces={{
                 original: markdown,
                 text: messageText,

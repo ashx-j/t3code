@@ -83,7 +83,6 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
   return (
     <PluginReplaceable
       part="app.pageFrame"
-      original={modal}
       pieces={{
         original: modal,
         content: children,

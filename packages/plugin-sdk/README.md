@@ -97,8 +97,8 @@ them in both.
 T3's own controls as ready-made pieces to arrange, plus `original`, T3's own drawing of the part.
 The parts and their pieces are listed in `WebPluginParts`. If your component throws, T3 draws its
 own part. [`examples/classic-composer`](./examples/classic-composer) moves the composer's controls
-back to their layout from before T3's redesign. [`examples/message-extras`](./examples/message-extras) adds a word count under assistant messages
-and redraws expanded commands.
+back to their layout from before T3's redesign. [`examples/message-extras`](./examples/message-extras) adds a word count under assistant messages,
+redraws expanded commands and sums up diffs.
 
 Build it with the Vite preset, which makes the bundle use T3 Code's own React, atom hooks and UI
 components instead of shipping copies:

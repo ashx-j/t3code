@@ -158,6 +158,12 @@ export interface WebPluginParts {
     /** The step's text output, when it has one. */
     readonly output: string | null;
   };
+  /** The file diffs in the diff panel. */
+  readonly "diff.view": {
+    readonly original: unknown;
+    /** The selection's unified diff, or null while T3 loads it file by file. */
+    readonly patch: string | null;
+  };
   /** The frame Settings and Usage open in. T3 draws a large window over the thread. */
   readonly "app.pageFrame": {
     readonly original: unknown;

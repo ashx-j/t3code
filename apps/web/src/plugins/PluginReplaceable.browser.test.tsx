@@ -12,7 +12,6 @@ const controls = () => (
   <AppAtomRegistryProvider>
     <PluginReplaceable
       part="composer.controls"
-      original={original}
       pieces={{
         original,
         attach: <span>Attach</span>,

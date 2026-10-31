@@ -1194,10 +1194,6 @@ const UserMessageBody = memo(function UserMessageBody(props: {
     />
   );
   return (
-    <PluginReplaceable
-      part="message.user"
-      original={markdown}
-      pieces={{ original: markdown, text: props.text }}
-    />
+    <PluginReplaceable part="message.user" pieces={{ original: markdown, text: props.text }} />
   );
 });

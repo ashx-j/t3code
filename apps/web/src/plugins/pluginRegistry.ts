@@ -273,9 +273,12 @@ export type PluginPartName = keyof WebPluginParts;
 
 /** A replaceable part's props as React sees them: the SDK's untyped pieces are React nodes. */
 export type PluginPartProps<Part extends PluginPartName> = {
-  readonly [Key in keyof WebPluginParts[Part]]: unknown extends WebPluginParts[Part][Key]
-    ? ReactNode
-    : WebPluginParts[Part][Key];
+  /** T3's own drawing of the part, also drawn when there is no replacement or it throws. */
+  readonly original: ReactNode;
+} & {
+  readonly [
+    Key in Exclude<keyof WebPluginParts[Part], "original">
+  ]: unknown extends WebPluginParts[Part][Key] ? ReactNode : WebPluginParts[Part][Key];
 };
 
 export interface PluginReplacementEntry<Part extends PluginPartName> {
@@ -288,6 +291,7 @@ const replacements: { [Part in PluginPartName]: Array<PluginReplacementEntry<Par
   "message.assistant": [],
   "message.user": [],
   "timeline.item": [],
+  "diff.view": [],
   "app.pageFrame": [],
 };
 
@@ -308,6 +312,7 @@ export const pluginReplacementAtoms: {
   "message.assistant": replacementAtom("message.assistant"),
   "message.user": replacementAtom("message.user"),
   "timeline.item": replacementAtom("timeline.item"),
+  "diff.view": replacementAtom("diff.view"),
   "app.pageFrame": replacementAtom("app.pageFrame"),
 };
 

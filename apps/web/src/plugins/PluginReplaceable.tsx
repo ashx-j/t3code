@@ -1,5 +1,4 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { ReactNode } from "react";
 
 import { RenderErrorBoundary } from "../components/RenderErrorBoundary";
 import {
@@ -9,19 +8,18 @@ import {
 } from "./pluginRegistry";
 
 /**
- * Draws a plugin's version of `part` when one is registered, and T3's `original` otherwise or
- * when the plugin's throws. Unused pieces are elements that never render.
+ * Draws a plugin's version of `part` when one is registered, and T3's `pieces.original`
+ * otherwise or when the plugin's throws. Unused pieces are elements that never render.
  */
 export function PluginReplaceable<Part extends PluginPartName>(props: {
   readonly part: Part;
-  readonly original: ReactNode;
   readonly pieces: PluginPartProps<Part>;
 }) {
   const replacement = useAtomValue(pluginReplacementAtoms[props.part]);
-  if (replacement === undefined) return props.original;
+  if (replacement === undefined) return props.pieces.original;
   const Replacement = replacement.component;
   return (
-    <RenderErrorBoundary resetKeys={[replacement]} fallback={props.original}>
+    <RenderErrorBoundary resetKeys={[replacement]} fallback={props.pieces.original}>
       <Replacement {...props.pieces} />
     </RenderErrorBoundary>
   );
