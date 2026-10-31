@@ -487,6 +487,17 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           title: "Renamed by a plugin",
         });
 
+        yield* call("noteThread", { threadId });
+        assert.deepInclude(dispatched[1], {
+          type: "thread.notification.record",
+          threadId,
+          notification: {
+            source: { kind: "system" },
+            outcome: "completed",
+            summary: "Workbench: Checked",
+          },
+        });
+
         assert.strictEqual(
           yield* hooks.beforeDispatch({
             threadId,

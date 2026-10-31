@@ -143,8 +143,13 @@
     "packages/plugin-sdk": {
       // Plugin authors outside this repository import these exports.
       "includeEntryExports": false,
-      // The plugin host and the web loader load fixture entries from their manifests.
-      "entry": ["fixtures/*/*.cjs", "fixtures/*/web.{js,tsx}", "fixtures/*/vite.config.ts"],
+      // The plugin host and the web loader load example and fixture entries from their manifests.
+      "entry": [
+        "examples/*/*.cjs",
+        "fixtures/*/*.cjs",
+        "fixtures/*/web.{js,tsx}",
+        "fixtures/*/vite.config.ts",
+      ],
     },
     "packages/effect-acp": {
       "includeEntryExports": true,
