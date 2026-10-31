@@ -375,6 +375,25 @@ import {
   ScheduledTaskUpsertInput,
   ScheduledTaskMutationResult,
 } from "./scheduledTask.ts";
+import {
+  PluginError,
+  PluginInstallInput,
+  PluginInvokeInput,
+  PluginInvokeResult,
+  PluginUninstallInput,
+  PluginUninstallResult,
+  PluginUpdateInput,
+  PluginListInput,
+  PluginListResult,
+  PluginMutationResult,
+  PluginReloadInput,
+  PluginSetEnabledInput,
+  PluginSettingsGetInput,
+  PluginSettingsResult,
+  PluginSettingsUpdateInput,
+  PluginSubscribeInput,
+  PluginSubscriptionEvent,
+} from "./plugins.ts";
 import { SecretRequestAnswerInput, SecretRequestError } from "./secretRequest.ts";
 import {
   ProjectCloneActionInput,
@@ -547,6 +566,18 @@ export const WS_METHODS = {
   guestShareCreate: "guestShare.create",
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
+
+  pluginsList: "plugins.list",
+  pluginsSubscribeStates: "plugins.subscribeStates",
+  pluginsSetEnabled: "plugins.setEnabled",
+  pluginsReload: "plugins.reload",
+  pluginsInstall: "plugins.install",
+  pluginsUninstall: "plugins.uninstall",
+  pluginsUpdate: "plugins.update",
+  pluginsSettingsGet: "plugins.settings.get",
+  pluginsSettingsUpdate: "plugins.settings.update",
+  pluginsInvoke: "plugins.invoke",
+  pluginsSubscribe: "plugins.subscribe",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -1950,6 +1981,77 @@ const WsScheduledTasksGetWebhookDeliveryRpc = Rpc.make(
   },
 );
 
+const PluginRpcError = Schema.Union([PluginError, EnvironmentAuthorizationError]);
+
+const WsPluginsListRpc = Rpc.make(WS_METHODS.pluginsList, {
+  payload: PluginListInput,
+  success: PluginListResult,
+  error: PluginRpcError,
+});
+
+/** The current list, then the whole list again after every change. */
+const WsPluginsSubscribeStatesRpc = Rpc.make(WS_METHODS.pluginsSubscribeStates, {
+  payload: PluginListInput,
+  success: PluginListResult,
+  error: PluginRpcError,
+  stream: true,
+});
+
+const WsPluginsSetEnabledRpc = Rpc.make(WS_METHODS.pluginsSetEnabled, {
+  payload: PluginSetEnabledInput,
+  success: PluginMutationResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsReloadRpc = Rpc.make(WS_METHODS.pluginsReload, {
+  payload: PluginReloadInput,
+  success: PluginMutationResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsInstallRpc = Rpc.make(WS_METHODS.pluginsInstall, {
+  payload: PluginInstallInput,
+  success: PluginMutationResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsUpdateRpc = Rpc.make(WS_METHODS.pluginsUpdate, {
+  payload: PluginUpdateInput,
+  success: PluginMutationResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsUninstallRpc = Rpc.make(WS_METHODS.pluginsUninstall, {
+  payload: PluginUninstallInput,
+  success: PluginUninstallResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsSettingsGetRpc = Rpc.make(WS_METHODS.pluginsSettingsGet, {
+  payload: PluginSettingsGetInput,
+  success: PluginSettingsResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsSettingsUpdateRpc = Rpc.make(WS_METHODS.pluginsSettingsUpdate, {
+  payload: PluginSettingsUpdateInput,
+  success: PluginSettingsResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsInvokeRpc = Rpc.make(WS_METHODS.pluginsInvoke, {
+  payload: PluginInvokeInput,
+  success: PluginInvokeResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsSubscribeRpc = Rpc.make(WS_METHODS.pluginsSubscribe, {
+  payload: PluginSubscribeInput,
+  success: PluginSubscriptionEvent,
+  error: PluginRpcError,
+  stream: true,
+});
+
 const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess, {
   payload: Schema.Struct({}),
   success: AuthAccessStreamEvent,
@@ -2035,6 +2137,17 @@ export const WsRpcGroup = RpcGroup.make(
   WsSecretsAnswerRequestRpc,
   WsScheduledTasksListWebhookDeliveriesRpc,
   WsScheduledTasksGetWebhookDeliveryRpc,
+  WsPluginsListRpc,
+  WsPluginsSubscribeStatesRpc,
+  WsPluginsSetEnabledRpc,
+  WsPluginsReloadRpc,
+  WsPluginsInstallRpc,
+  WsPluginsUninstallRpc,
+  WsPluginsUpdateRpc,
+  WsPluginsSettingsGetRpc,
+  WsPluginsSettingsUpdateRpc,
+  WsPluginsInvokeRpc,
+  WsPluginsSubscribeRpc,
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,

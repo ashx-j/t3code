@@ -559,6 +559,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
       return command.parentThreadId;
     case "secret_request.record":
     case "link_request.record":
+    case "thread.notification.record":
       return command.threadId;
     case "thread.fork":
     case "thread.merge_back":
@@ -8502,6 +8503,82 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  /**
+   * Files the note under the latest settled run so it sorts after that run's output: run-less items
+   * sort before every run, and a note inside a running turn would split its live output.
+   */
+  const dispatchThreadNotificationRecord = Effect.fn(
+    "orchestrationV2.dispatch.threadNotificationRecord",
+  )(function* (
+    command: Extract<
+      OrchestrationV2InternalCommand,
+      { readonly type: "thread.notification.record" }
+    >,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const projection = yield* projectionStore
+      .getThreadRecords(command.threadId, ["runs", "turnItems", "attempts", "providerTurns"], {
+        turnItemTypes: [],
+        messageRoles: [],
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
+    if (projection.thread.deletedAt !== null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} is deleted.`,
+      });
+    }
+    const run = projection.runs
+      .filter((candidate) =>
+        ["completed", "failed", "cancelled", "interrupted"].includes(candidate.status),
+      )
+      .reduce<OrchestrationV2Run | undefined>(
+        (latest, candidate) =>
+          latest === undefined || candidate.ordinal > latest.ordinal ? candidate : latest,
+        undefined,
+      );
+    const now = yield* DateTime.now;
+    const turnItem: OrchestrationV2TurnItem = {
+      id: command.turnItemId,
+      threadId: command.threadId,
+      runId: run?.id ?? null,
+      nodeId: run?.rootNodeId ?? null,
+      providerThreadId: run?.providerThreadId ?? null,
+      providerTurnId: run === undefined ? null : (providerTurnForRun(projection, run)?.id ?? null),
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: yield* nextTurnItemOrdinal(projection),
+      status: "completed",
+      title: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      type: "notification",
+      ...command.notification,
+    };
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "turn-item.updated",
+      threadId: command.threadId,
+      ...(run === undefined
+        ? {}
+        : {
+            runId: run.id,
+            ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
+            providerInstanceId: run.providerInstanceId,
+          }),
+      occurredAt: now,
+      payload: turnItem,
+    });
+  });
+
   const dispatchSecretRequestRecord = Effect.fn("orchestrationV2.dispatch.secretRequestRecord")(
     function* (
       command: Extract<OrchestrationV2InternalCommand, { readonly type: "secret_request.record" }>,
@@ -13225,6 +13302,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "link_request.record":
         yield* dispatchLinkRequestRecord(command, events, effects);
+        break;
+      case "thread.notification.record":
+        yield* dispatchThreadNotificationRecord(command, events);
         break;
       default:
         return yield* dispatchUnsupported(command);

@@ -58,6 +58,7 @@ import * as Stream from "effect/Stream";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import * as PluginHooks from "../plugins/PluginHooks.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { projectedRowEncodedBytes } from "./threadHistoryPaging.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -569,6 +570,7 @@ const isForceStopThreadError = Schema.is(OrchestrationV2ForceStopThreadError);
 const make = Effect.gen(function* () {
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const pluginHooks = yield* PluginHooks.PluginHooks;
   const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
   const layerScope = yield* Effect.scope;
   const agentScope = yield* AgentScope;
@@ -746,10 +748,44 @@ const make = Effect.gen(function* () {
     }
   };
 
+  // Plugins see user and agent messages before orchestration records them. Notifications and
+  // guest messages are not the sender's own text, and an appended paragraph would change what a
+  // slash command such as `/goal clear` means, so all three skip the hooks.
+  const withPluginHooks = (command: OrchestrationV2ServerCommand) =>
+    command.type === "message.dispatch" &&
+    command.notification === undefined &&
+    command.guestMessageId === undefined &&
+    command.createdBy !== "system" &&
+    !command.text.trimStart().startsWith("/")
+      ? pluginHooks
+          .beforeDispatch({
+            threadId: command.threadId,
+            messageId: command.messageId,
+            text: command.text,
+            createdBy: command.createdBy,
+            attachments: command.attachments.map((attachment) => ({
+              type: attachment.type,
+              name: attachment.name,
+              mimeType: attachment.mimeType,
+              sizeBytes: attachment.sizeBytes,
+            })),
+            ...(command.modelSelection === undefined
+              ? {}
+              : {
+                  model: {
+                    instanceId: command.modelSelection.instanceId,
+                    model: command.modelSelection.model,
+                  },
+                }),
+          })
+          .pipe(Effect.map((text) => (text === command.text ? command : { ...command, text })))
+      : Effect.succeed(command);
+
   const dispatch: ThreadManagementServiceShape["dispatch"] = (command) =>
     ensureCommandTranscripts(command).pipe(
       Effect.andThen(assertDispatchTargetEnabled(command)),
-      Effect.andThen(orchestrator.dispatch(command)),
+      Effect.andThen(withPluginHooks(command)),
+      Effect.flatMap((next) => orchestrator.dispatch(next)),
     );
 
   const getProjectThreadRecords: ThreadManagementServiceShape["getProjectThreadRecords"] = (

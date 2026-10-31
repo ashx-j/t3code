@@ -96,11 +96,20 @@ describe("command permissions", () => {
     ),
   );
 
-  it.effect("requires the destination settings grant to run storage cleanup", () =>
+  it.effect.each([
+    WS_METHODS.serverRunStorageCleanup,
+    // Installing, enabling, reloading or configuring a plugin runs its code in the server.
+    WS_METHODS.pluginsSetEnabled,
+    WS_METHODS.pluginsReload,
+    WS_METHODS.pluginsInstall,
+    WS_METHODS.pluginsUninstall,
+    WS_METHODS.pluginsUpdate,
+    WS_METHODS.pluginsSettingsUpdate,
+  ])("requires the destination settings grant for %s", (method) =>
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* setup;
-        const cleanup = createCommandPermissions(runtime, WS_METHODS.serverRunStorageCleanup);
+        const cleanup = createCommandPermissions(runtime, method);
         registry.set(sessions(env), AsyncResult.success(grant(true)));
         expect(registry.get(cleanup.permissionAtom(env))).toBe(false);
         expect((yield* cleanup.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
