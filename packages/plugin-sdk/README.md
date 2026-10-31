@@ -87,6 +87,11 @@ attach button (`composer.addButton`) and in the thread actions menu (`threads.ad
 `threads.setBadge` shows a short badge on a thread's sidebar row and header.
 [`examples/review-flags`](./examples/review-flags) uses all of them.
 
+`pages.register` adds a full page at `/plugins/<pluginId>/<name>`, shown beside the sidebar in place
+of the thread, and `sidebar.addSection` adds a titled section under the thread list.
+[`examples/quick-notes`](./examples/quick-notes) keeps notes in its server half's storage and shows
+them in both.
+
 `api.ui.replace(part, component)` draws one of T3's own parts your way. The component receives
 T3's own controls as ready-made pieces to arrange, plus `original`, T3's own drawing of the part.
 The parts and their pieces are listed in `WebPluginParts`. If your component throws, T3 draws its

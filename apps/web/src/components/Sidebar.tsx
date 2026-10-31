@@ -11,6 +11,7 @@ import { discardComposerDraft } from "../lib/discardComposerDraft";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
 import { useAtomValue } from "@effect/atom-react";
 import { runPluginThreadMenuItem, withPluginThreadMenuItems } from "../plugins/pluginRegistry";
+import { PluginSidebarSections } from "../plugins/PluginSidebarSections";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 import * as Schema from "effect/Schema";
@@ -3608,6 +3609,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           ) : null}
         </SidebarGroup>
       </SidebarContent>
+      <PluginSidebarSections />
       <SidebarChromeFooter />
     </>
   );

@@ -70,6 +70,23 @@ export interface WebPluginCodeBlockRenderer {
   readonly component: WebPluginComponent<{ readonly code: string }>;
 }
 
+export interface WebPluginPage {
+  /** Lowercase letters, digits and hyphens. The page opens at `/plugins/<pluginId>/<name>`. */
+  readonly name: string;
+  /** Shown in the page's header. */
+  readonly title: string;
+  readonly component: WebPluginComponent;
+}
+
+export interface WebPluginSidebarSection {
+  /** Unique within the plugin: lowercase letters, digits and hyphens. */
+  readonly id: string;
+  /** Shown above the section. */
+  readonly title: string;
+  /** Drawn between the thread list and the sidebar's footer buttons. Keep it short. */
+  readonly component: WebPluginComponent;
+}
+
 /** A button or menu item a plugin adds to one of T3's own toolbars or menus. */
 export interface WebPluginAction<Context> {
   /** Unique within the plugin and the place it is added: lowercase letters, digits and hyphens. */
@@ -177,6 +194,17 @@ export interface WebPluginApi {
         readonly tone?: "info" | "success" | "warning" | "error";
       } | null,
     ) => void;
+  };
+  readonly pages: {
+    /**
+     * Adds a full page beside the sidebar, in place of the thread, until the plugin unloads.
+     * Open it with `navigate("/plugins/<pluginId>/<name>")`.
+     */
+    readonly register: (page: WebPluginPage) => void;
+  };
+  readonly sidebar: {
+    /** Adds a titled section to the sidebar, under the thread list. */
+    readonly addSection: (section: WebPluginSidebarSection) => void;
   };
   readonly messages: {
     /** Adds a button to the actions shown under each user and assistant message. */

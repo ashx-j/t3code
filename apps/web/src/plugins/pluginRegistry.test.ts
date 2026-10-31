@@ -3,8 +3,11 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import {
+  pluginPageAtom,
+  pluginPageKey,
   pluginThreadBadgesAtom,
   registerPluginAction,
+  registerPluginPage,
   runPluginThreadMenuItem,
   setPluginThreadBadge,
   withPluginThreadMenuItems,
@@ -52,5 +55,19 @@ describe("plugin thread badges", () => {
     setPluginThreadBadge("thread-a", "flags", null);
     setPluginThreadBadge("thread-b", "flags", null);
     expect(appAtomRegistry.get(pluginThreadBadgesAtom("thread-a"))).toEqual([]);
+  });
+});
+
+describe("plugin pages", () => {
+  it("keeps a page while the same plugin from another environment still has it", () => {
+    const key = pluginPageKey("notes", "all");
+    const local = { title: "Notes (local)", component: () => null };
+    const remote = { title: "Notes (remote)", component: () => null };
+    const unregisterLocal = registerPluginPage(key, local);
+    using _remote = { [Symbol.dispose]: registerPluginPage(key, remote) };
+
+    expect(appAtomRegistry.get(pluginPageAtom(key))).toBe(remote);
+    unregisterLocal();
+    expect(appAtomRegistry.get(pluginPageAtom(key))).toBe(remote);
   });
 });

@@ -464,3 +464,63 @@ export const pluginThreadBadgesAtom = Atom.family((threadKey: string) =>
     return threadBadges.get(threadKey) ?? EMPTY_BADGES;
   }),
 );
+
+export interface PluginPageEntry {
+  readonly title: string;
+  readonly component: ComponentType;
+}
+
+// Keyed by plugin id and page name; a stack, so the same plugin loaded from two environments
+// keeps a page when one of them unloads.
+const pages = new Map<string, Array<PluginPageEntry>>();
+
+export const pluginPageKey = (pluginId: string, name: string) => `${pluginId}\u0000${name}`;
+
+/** Adds a plugin page; returns the function that removes it. */
+export function registerPluginPage(key: string, entry: PluginPageEntry): () => void {
+  const list = pages.get(key) ?? [];
+  list.push(entry);
+  pages.set(key, list);
+  bump();
+  return () => {
+    const index = list.indexOf(entry);
+    if (index === -1) return;
+    list.splice(index, 1);
+    if (list.length === 0) pages.delete(key);
+    bump();
+  };
+}
+
+export const pluginPageAtom = Atom.family((key: string) =>
+  Atom.make((get) => {
+    get(versionAtom);
+    return pages.get(key)?.at(-1);
+  }),
+);
+
+export interface PluginSidebarSectionEntry {
+  readonly key: string;
+  readonly title: string;
+  readonly component: ComponentType;
+}
+
+const sidebarSections = new Map<string, PluginSidebarSectionEntry>();
+
+/** Adds a sidebar section; returns the function that removes it. */
+export function registerPluginSidebarSection(entry: PluginSidebarSectionEntry): () => void {
+  if (sidebarSections.has(entry.key)) {
+    throw new Error(`Sidebar section "${entry.key}" is already registered.`);
+  }
+  sidebarSections.set(entry.key, entry);
+  bump();
+  return () => {
+    if (sidebarSections.get(entry.key) !== entry) return;
+    sidebarSections.delete(entry.key);
+    bump();
+  };
+}
+
+export const pluginSidebarSectionsAtom = Atom.make((get) => {
+  get(versionAtom);
+  return [...sidebarSections.values()];
+});

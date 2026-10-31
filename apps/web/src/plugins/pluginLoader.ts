@@ -48,8 +48,11 @@ import {
   registerPluginCodeBlock,
   registerPluginCommand,
   registerPluginAction,
+  pluginPageKey,
+  registerPluginPage,
   registerPluginReplacement,
   registerPluginRightPanel,
+  registerPluginSidebarSection,
   registerPluginSlashCommand,
   registerPluginToolRenderer,
   registerPluginSettingsPanel,
@@ -357,6 +360,34 @@ function makeWebPluginApi({
           badge === null ? null : { label: badge.label, tone: badge.tone ?? "info" },
         );
         if (badge !== null) track(() => setPluginThreadBadge(threadKey, pluginId, null));
+      },
+    },
+    pages: {
+      register: (page) => {
+        if (!COMMAND_ID.test(page.name)) {
+          throw new TypeError(`"${page.name}" is not a valid page name.`);
+        }
+        track(
+          registerPluginPage(pluginPageKey(pluginId, page.name), {
+            title: page.title,
+            // The SDK types components without React; they are React function components.
+            component: page.component as ComponentType,
+          }),
+        );
+      },
+    },
+    sidebar: {
+      addSection: (section) => {
+        if (!COMMAND_ID.test(section.id)) {
+          throw new TypeError(`"${section.id}" is not a valid section id.`);
+        }
+        track(
+          registerPluginSidebarSection({
+            key: `${environmentId}\u0000${pluginId}\u0000${section.id}`,
+            title: section.title,
+            component: section.component as ComponentType,
+          }),
+        );
       },
     },
     messages: {
