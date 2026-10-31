@@ -20,6 +20,8 @@ import { TextGenerationError } from "@t3tools/contracts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
+import * as PluginHooks from "../plugins/PluginHooks.ts";
+import { withPluginTextGeneration } from "../plugins/pluginTextGeneration.ts";
 import * as ThreadTitleLinks from "./ThreadTitleLinks.ts";
 
 export type {
@@ -126,7 +128,8 @@ export const make = Effect.gen(function* () {
       Effect.flatMap((service) => invoke(service, selection)),
     );
   });
-  return TextGeneration.of({
+  const pluginHooks = yield* PluginHooks.PluginHooks;
+  const own: ProviderTextGeneration = {
     generateCommitMessage: Effect.fn("TextGeneration.generateCommitMessage")(function (input) {
       return generate("generateCommitMessage", input.modelSelection, (service, modelSelection) =>
         service.generateCommitMessage({ ...input, modelSelection }),
@@ -169,7 +172,8 @@ export const make = Effect.gen(function* () {
           }),
       );
     }),
-  });
+  };
+  return TextGeneration.of(withPluginTextGeneration(pluginHooks, own));
 });
 
 export const layer = Layer.effect(TextGeneration, make);

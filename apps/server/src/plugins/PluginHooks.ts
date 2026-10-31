@@ -59,6 +59,16 @@ export interface PluginSlashCommand {
   readonly inputHint?: string;
 }
 
+export type PluginTextGenerationKind =
+  | "threadTitle"
+  | "commitMessage"
+  | "prContent"
+  | "branchName"
+  | "reviewGuide";
+
+/** A plugin's answer for one generation, unchecked, or nothing. The host bounds it. */
+type TextGenerator = (input: Schema.JsonObject) => Effect.Effect<unknown>;
+
 /** Runs a plugin's slash command; `args` is the text after `/name`. The host bounds it. */
 type SlashCommandHandler = (
   message: PluginOutgoingMessage & { readonly args: string },
@@ -114,6 +124,15 @@ export interface PluginHooksRegistry {
     handler: SlashCommandHandler,
   ) => Effect.Effect<Effect.Effect<void>, PluginSlashCommandTakenError>;
   readonly currentSlashCommands: Effect.Effect<ReadonlyArray<PluginSlashCommand>>;
+  /** Adds a generator that T3 asks before its own, and returns the effect that removes it. */
+  readonly addTextGenerator: (
+    kind: PluginTextGenerationKind,
+    generator: TextGenerator,
+  ) => Effect.Effect<Effect.Effect<void>>;
+  /** The generators for `kind`, in the order plugins added them. */
+  readonly textGenerators: (
+    kind: PluginTextGenerationKind,
+  ) => Effect.Effect<ReadonlyArray<TextGenerator>>;
   /** The current commands, then the list after every change. */
   readonly slashCommands: Stream.Stream<ReadonlyArray<PluginSlashCommand>>;
 }
@@ -126,6 +145,8 @@ export class PluginHooks extends Context.Reference<PluginHooksRegistry>("t3/plug
     beforeDispatch: (message) => Effect.succeed(message.text),
     addSlashCommand: () => Effect.succeed(Effect.void),
     currentSlashCommands: Effect.succeed([]),
+    addTextGenerator: () => Effect.succeed(Effect.void),
+    textGenerators: () => Effect.succeed([]),
     // Stays open like the real registry's stream, so a stream zipped with it keeps running.
     slashCommands: Stream.concat(Stream.make([]), Stream.never),
   }),
@@ -142,6 +163,9 @@ const applyOutcome = (text: string, outcome: DispatchOutcome) =>
 
 const make = Effect.gen(function* () {
   const hooks = yield* Ref.make<ReadonlyArray<{ readonly run: BeforeDispatchHook }>>([]);
+  const generators = yield* Ref.make<
+    ReadonlyArray<{ readonly kind: PluginTextGenerationKind; readonly run: TextGenerator }>
+  >([]);
   const commands = yield* SubscriptionRef.make<
     ReadonlyArray<{ readonly command: PluginSlashCommand; readonly run: SlashCommandHandler }>
   >([]);
@@ -199,6 +223,17 @@ const make = Effect.gen(function* () {
           [...all, entry],
         ] as const);
       }),
+    addTextGenerator: (kind, generator) =>
+      Effect.sync(() => ({ kind, run: generator })).pipe(
+        Effect.tap((entry) => Ref.update(generators, (all) => [...all, entry])),
+        Effect.map((entry) =>
+          Ref.update(generators, (all) => all.filter((other) => other !== entry)),
+        ),
+      ),
+    textGenerators: (kind) =>
+      Ref.get(generators).pipe(
+        Effect.map((all) => all.filter((entry) => entry.kind === kind).map((entry) => entry.run)),
+      ),
     currentSlashCommands: SubscriptionRef.get(commands).pipe(
       Effect.map((all) => all.map((entry) => entry.command)),
     ),

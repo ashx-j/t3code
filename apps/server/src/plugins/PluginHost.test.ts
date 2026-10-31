@@ -18,6 +18,7 @@ import {
   ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
+import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -51,6 +52,7 @@ import * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
 import * as PluginMcpTools from "./PluginMcpTools.ts";
 import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
+import { withPluginTextGeneration } from "./pluginTextGeneration.ts";
 
 const fixturesDir = new URL("../../../../packages/plugin-sdk/fixtures/", import.meta.url).pathname;
 const hello = PluginId.make("hello-plugin");
@@ -702,6 +704,21 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           requestId: RuntimeRequestId.make("request:ask"),
           answers: { scope: "Only src" },
         });
+
+        // The plugin titles the threads it recognises and leaves the rest to T3.
+        const titles = withPluginTextGeneration(hooks, {
+          generateThreadTitle: () => Effect.succeed({ title: "T3 title" }),
+        } as unknown as ProviderTextGeneration);
+        const title = (message: string) =>
+          titles.generateThreadTitle({
+            cwd: "/repo",
+            message,
+            modelSelection: defaultModel,
+          });
+        assert.deepStrictEqual(yield* title("#titled Release prep"), {
+          title: "Workbench: Release prep",
+        });
+        assert.deepStrictEqual(yield* title("Release prep"), { title: "T3 title" });
 
         // Thread and project management go through the commands and services clients use.
         dispatched.length = 0;

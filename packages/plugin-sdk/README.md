@@ -52,7 +52,7 @@ module.exports = {
 channels for the web half, stored orchestration events, threads and projects (start, archive,
 snooze, settle and delete threads; add and change projects), notes in threads,
 send hooks that add to, replace or block a message, slash commands that run on the server,
-run-completed hooks, answers to agents' approvals and questions, MCP tools for
+run-completed hooks, generated text such as thread titles and commit messages, answers to agents' approvals and questions, MCP tools for
 agents, HTTP routes, schedules and server info.
 Everything a plugin registers is released when it is disabled, reloaded or uninstalled; add your
 own cleanup with `api.onDeactivate`.

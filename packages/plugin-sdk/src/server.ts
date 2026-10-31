@@ -159,6 +159,62 @@ export type PluginSlashCommandResult =
   | { readonly text: string }
   | { readonly block: string };
 
+/** What each kind of generated text receives and returns. */
+export interface PluginTextGenerationTasks {
+  readonly threadTitle: {
+    readonly input: {
+      readonly cwd: string;
+      /** The message the title is for. */
+      readonly message: string;
+      readonly previousTitle?: string;
+      readonly instructions?: string;
+    };
+    readonly output: { readonly title: string };
+  };
+  readonly commitMessage: {
+    readonly input: {
+      readonly cwd: string;
+      readonly branch: string | null;
+      readonly stagedSummary: string;
+      readonly stagedPatch: string;
+      /** Whether T3 also wants a branch name for the commit. */
+      readonly includeBranch: boolean;
+    };
+    readonly output: { readonly subject: string; readonly body: string; readonly branch?: string };
+  };
+  readonly prContent: {
+    readonly input: {
+      readonly cwd: string;
+      readonly baseBranch: string;
+      readonly headBranch: string;
+      readonly commitSummary: string;
+      readonly diffSummary: string;
+      readonly diffPatch: string;
+      /** The repository's pull request template, if it has one. */
+      readonly template?: string;
+      readonly threadContext?: string;
+    };
+    readonly output: { readonly title: string; readonly body: string };
+  };
+  readonly branchName: {
+    readonly input: { readonly cwd: string; readonly message: string };
+    readonly output: { readonly branch: string };
+  };
+  readonly reviewGuide: {
+    readonly input: {
+      readonly cwd: string;
+      readonly number: number;
+      readonly title: string;
+      readonly description: string;
+      readonly baseBranch: string;
+      readonly baseCommit: string;
+      readonly instructions?: string;
+    };
+    /** Each stop as the review guide's contract defines it. */
+    readonly output: { readonly stops: ReadonlyArray<JsonObject> };
+  };
+}
+
 export interface PluginLogger {
   readonly debug: (message: string, fields?: JsonObject) => void;
   readonly info: (message: string, fields?: JsonObject) => void;
@@ -330,6 +386,23 @@ export interface PluginApi {
         invocation: PluginSlashCommandInvocation,
         context: { readonly signal: AbortSignal },
       ) => PluginSlashCommandResult | Promise<PluginSlashCommandResult>,
+    ) => void;
+  };
+  readonly textGeneration: {
+    /**
+     * Supplies `kind` of text before T3 Code generates it, until the plugin deactivates. T3 cleans
+     * up the answer as it does model output. Nothing, a wrong shape, an error or 30 seconds
+     * without an answer leaves it to the next plugin, then to T3 Code's own generator.
+     */
+    readonly register: <K extends keyof PluginTextGenerationTasks>(
+      kind: K,
+      generate: (
+        input: PluginTextGenerationTasks[K]["input"],
+        context: { readonly signal: AbortSignal },
+      ) =>
+        | PluginTextGenerationTasks[K]["output"]
+        | void
+        | Promise<PluginTextGenerationTasks[K]["output"] | void>,
     ) => void;
   };
   readonly mcp: {

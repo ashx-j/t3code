@@ -62,6 +62,10 @@ Plugins can add slash commands. They appear in the composer's `/` menu with the 
 commands, in every app. A plugin's command runs on the server and sends the agent a message the
 plugin prepares, or stops with a reason.
 
+A plugin can also write the text T3 Code usually generates with a model: thread titles, commit
+messages, pull request titles and descriptions, branch names and review guides. When it has
+nothing to offer, T3 Code generates the text as usual.
+
 ## Where plugins live
 
 Installed plugins are in the `plugins` folder of the environment's T3 Code data directory, one

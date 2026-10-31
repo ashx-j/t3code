@@ -35,6 +35,10 @@ module.exports = {
           : { text: `Deploy to ${args} and report back.` },
     );
 
+    api.textGeneration.register("threadTitle", ({ message }) =>
+      message.startsWith("#titled ") ? { title: `Workbench: ${message.slice(8)}` } : undefined,
+    );
+
     api.schedule.every(1000, async () => {
       const ticks = await api.storage.get("ticks");
       const next = (typeof ticks === "number" ? ticks : 0) + 1;

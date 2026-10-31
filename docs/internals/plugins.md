@@ -112,6 +112,12 @@ or a blocked message and cannot answer on its own: clients keep a sent message o
 the server records a user message with its id, and recording one without starting a run would need
 a new orchestrator command.
 
+Text generation hooks wrap the `TextGeneration` router, which every caller goes through, so thread
+titles, commit messages, pull request content, branch names and review guides all ask plugins
+first, and plugin answers get the cleanup T3 gives model output. There is still no free-form
+`text.generate`: providers only offer these tasks, and adding one means a new method in every
+text generation driver.
+
 `threads.notify` is the one plugin change inside `Orchestrator.ts`: the internal
 `thread.notification.record` command, because every `message.dispatch` starts a run. The note joins
 the thread's latest finished run. `TurnItemPositionStore` sorts run-less items before every run, and
