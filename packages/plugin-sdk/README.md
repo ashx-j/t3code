@@ -36,8 +36,8 @@ Vite preset below.
 - A `themes/` folder of theme JSON files is published while the plugin is active, and an `assets/`
   folder is served to the web half when the plugin has one.
 - A `skills/` folder of `<name>/SKILL.md` skills reaches Claude and Codex agents while the plugin
-  is active. Claude loads the plugin folder as a Claude Code plugin, so keep other Claude plugin
-  folders such as `commands/` out of it unless you mean them for Claude.
+  is active. Nothing else in the plugin's folder reaches them. The skills are copied when the
+  plugin starts, so **Reload** picks up changes.
 
 ## Server half
 

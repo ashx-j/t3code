@@ -120,8 +120,10 @@ text generation driver.
 
 Plugin instructions and skill folders ride on each adapter turn input, read once per turn in
 `RunExecutionService`, so adapters never look up plugins. Claude appends the instructions to T3's
-system prompt text, before the user's own launch text, and loads each plugin folder with a
-`skills/` folder as a Claude Code plugin (`--plugin-dir`), which reads `skills/` natively. Codex
+system prompt text, before the user's own launch text. Claude loads a plugin folder whole
+(`--plugin-dir`), commands, agents, hooks and MCP servers included, so it gets a folder the host
+generates under `<stateDir>/plugin-agents/<id>` with only a manifest and a copy of `skills/`,
+written when the plugin starts and removed when it stops. Codex
 gets the instructions as `application` context entries and the `skills` folders through
 `skills/extraRoots/set`, sent only when they change. The ACP agents (Grok, Antigravity, Fx),
 OpenCode, Cursor, Pi and Muse are not wired: each puts T3's own text in its own place, so each

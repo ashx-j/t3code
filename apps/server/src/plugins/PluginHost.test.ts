@@ -303,18 +303,29 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
         const host = yield* PluginHost.PluginHost;
         const hooks = yield* PluginHooks.PluginHooks;
         yield* waitForStatuses(host, { [skills]: "active" });
-        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        // Claude loads a whole folder as a plugin, so it gets one holding only the skills.
+        const agentFolder = `${stateDir}/plugin-agents/skills-plugin`;
         assert.deepStrictEqual(yield* hooks.agentContext, {
           instructions: [
             '<t3_code_plugin name="Release helper">\nWrite release notes in the past tense.\n</t3_code_plugin>',
           ],
-          skillFolders: [
-            { plugin: path.resolve(rootDir), skills: path.resolve(rootDir, "skills") },
-          ],
+          skillFolders: [{ plugin: agentFolder, skills: `${agentFolder}/skills` }],
         });
+        assert.deepStrictEqual((yield* fs.readDirectory(agentFolder)).toSorted(), [
+          ".claude-plugin",
+          "skills",
+        ]);
+        assert.include(
+          JSON.parse(yield* fs.readFileString(`${agentFolder}/.claude-plugin/plugin.json`)),
+          { name: "skills-plugin" },
+        );
+        assert.isTrue(yield* fs.exists(`${agentFolder}/skills/release-notes/SKILL.md`));
 
         yield* host.setEnabled(skills, false);
         assert.isUndefined(yield* hooks.agentContext);
+        assert.isFalse(yield* fs.exists(agentFolder));
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
