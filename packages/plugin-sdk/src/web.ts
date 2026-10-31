@@ -114,7 +114,10 @@ export interface WebPluginApi {
     /** Draws this plugin's agent tool calls in the timeline instead of the generic view. */
     readonly registerToolRenderer: (renderer: WebPluginToolRenderer) => void;
   };
-  /** Adds a stylesheet until the plugin unloads. Scope its selectors to the plugin's own classes. */
+  /**
+   * Adds a stylesheet until the plugin unloads. Rules that reach T3's own elements restyle the app
+   * and can stop matching when T3 changes its markup.
+   */
   readonly injectStyles: (css: string) => void;
   /** Opens a path in the app, such as `/settings/plugins`. */
   readonly navigate: (path: string) => void;

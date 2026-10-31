@@ -1,0 +1,8 @@
+{
+  "id": "surface",
+  "name": "Surface",
+  "version": "0.1.0",
+  "description": "A calm dark theme: neutral grays, cards, rounder corners and color only where something needs attention.",
+  "engines": { "t3": ">=0.1.5" },
+  "web": "./web.js"
+}

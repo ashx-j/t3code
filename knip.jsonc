@@ -146,6 +146,7 @@
       // The plugin host and the web loader load example and fixture entries from their manifests.
       "entry": [
         "examples/*/*.cjs",
+        "examples/*/web.js",
         "fixtures/*/*.cjs",
         "fixtures/*/web.{js,tsx}",
         "fixtures/*/vite.config.ts",
