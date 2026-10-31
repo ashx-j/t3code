@@ -91,6 +91,18 @@ export interface WebPluginParts {
     /** Send, stop and the other primary actions. */
     readonly actions: unknown;
   };
+  /** The frame Settings and Usage open in. T3 draws a large window over the thread. */
+  readonly "app.pageFrame": {
+    readonly original: unknown;
+    /** The page itself, with its header and close button. */
+    readonly content: unknown;
+    /** The page in place of the thread, beside the sidebar. Esc goes back. */
+    readonly page: unknown;
+    /** `Settings` or `Usage`. */
+    readonly label: string;
+    /** Goes back to where the page was opened. */
+    readonly close: () => void;
+  };
 }
 
 /** What a web plugin's `activate` receives. Everything is released when the plugin unloads. */

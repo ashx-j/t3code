@@ -285,6 +285,7 @@ export interface PluginReplacementEntry<Part extends PluginPartName> {
 // Each part keeps every replacement, so unloading the newest brings back the one before it.
 const replacements: { [Part in PluginPartName]: Array<PluginReplacementEntry<Part>> } = {
   "composer.controls": [],
+  "app.pageFrame": [],
 };
 
 // Its own version: replaceable parts sit on hot paths, so other plugin changes must not
@@ -301,6 +302,7 @@ export const pluginReplacementAtoms: {
   readonly [Part in PluginPartName]: Atom.Atom<PluginReplacementEntry<Part> | undefined>;
 } = {
   "composer.controls": replacementAtom("composer.controls"),
+  "app.pageFrame": replacementAtom("app.pageFrame"),
 };
 
 /** Draws `part` with a plugin's component; returns the function that removes it. */

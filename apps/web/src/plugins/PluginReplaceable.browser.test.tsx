@@ -13,7 +13,7 @@ const controls = () => (
     <PluginReplaceable
       part="composer.controls"
       original={original}
-      pieces={() => ({
+      pieces={{
         original,
         attach: <span>Attach</span>,
         controls: null,
@@ -21,7 +21,7 @@ const controls = () => (
         effort: null,
         access: null,
         actions: <span>Send</span>,
-      })}
+      }}
     />
   </AppAtomRegistryProvider>
 );
