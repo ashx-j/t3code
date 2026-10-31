@@ -1015,6 +1015,8 @@ export const DesktopPluginCommandSchema = Schema.Struct({
   title: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
   pluginName: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
   menu: Schema.Boolean,
+  /** Lists the command in the tray icon's menu. */
+  tray: Schema.optional(Schema.Boolean),
   /** An Electron accelerator, such as `CommandOrControl+Shift+Y`. */
   globalShortcut: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
 });

@@ -29,6 +29,8 @@ export interface WebPluginCommand {
   readonly desktop?: {
     /** Lists the command under Plugins in the app menu. */
     readonly menu?: boolean;
+    /** Lists the command in a tray icon's menu. The icon shows only while some command asks for it. */
+    readonly tray?: boolean;
     /**
      * Runs the command from anywhere, even while T3 Code is in the background, as an Electron
      * accelerator such as `CommandOrControl+Shift+Y`. Skipped when another app already holds it.

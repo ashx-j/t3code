@@ -290,6 +290,7 @@ function makeWebPluginApi({
             title: command.title,
             pluginName: plugin.name,
             menu: command.desktop.menu === true,
+            ...(command.desktop.tray === true ? { tray: true } : {}),
             ...(command.desktop.globalShortcut === undefined
               ? {}
               : { globalShortcut: command.desktop.globalShortcut }),

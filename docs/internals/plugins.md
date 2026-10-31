@@ -81,7 +81,8 @@ apply in every environment's threads, like injected styles, and stack per part: 
 and unloading it brings back the one before. Parts have their own version atom because they sit on
 hot paths such as the composer.
 
-In the desktop app, plugin commands that ask for a menu item or a global shortcut cross to the main
+In the desktop app, plugin commands that ask for a menu item, a tray item or a global shortcut cross
+to the main
 process as one list that replaces the previous one, so a reload or an unloaded plugin never leaves
 stale items. Clicks and shortcuts come back through the existing menu-action channel as the
 `plugin.<pluginId>.<commandId>` command.

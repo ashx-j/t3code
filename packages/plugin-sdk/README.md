@@ -77,8 +77,8 @@ export default defineWebPlugin({
 ```
 
 `activate` receives the [`WebPluginApi`](./src/web.ts): calls into the server half, right panels,
-a settings panel, palette commands (which the desktop app can also list in its menu or bind to a
-global shortcut), composer slash commands and banners, timeline renderers for the plugin's agent
+a settings panel, palette commands (which the desktop app can also list in its menu or tray, or
+bind to a global shortcut), composer slash commands and banners, timeline renderers for the plugin's agent
 tools, renderers for fenced code languages, styles, assets, navigation and toasts.
 
 Plugins can also add buttons and menu items to T3's own toolbars and menus: under each message
