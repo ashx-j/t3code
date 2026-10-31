@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "jsx": "react-jsx",
+    "lib": ["ES2023", "DOM"],
+    "allowJs": true,
+    "checkJs": true
+  },
+  "include": ["src", "fixtures"],
+  // Built from web.tsx by the Vite preset.
+  "exclude": ["fixtures/hello-web/web.js"]
+}
