@@ -61,6 +61,13 @@ export type ComposerCommandItem =
     }
   | {
       id: string;
+      type: "plugin-mention";
+      text: string;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
       type: "plugin-slash-command";
       command: { readonly name: string };
       run: (context: { readonly threadId: string }) => void;

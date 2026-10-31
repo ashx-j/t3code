@@ -203,6 +203,20 @@ export interface WebPluginApi {
     readonly showBanner: (banner: WebPluginBanner) => () => void;
     /** Adds a command to the composer's `/` menu. */
     readonly registerSlashCommand: (command: WebPluginSlashCommand) => void;
+    /**
+     * Offers items in the composer's `@` menu, matched against what the user types; picking one
+     * inserts its `text` into the message. Each call replaces the plugin's list.
+     */
+    readonly setMentionItems: (
+      items: ReadonlyArray<{
+        /** Unique within the plugin. */
+        readonly id: string;
+        readonly label: string;
+        readonly description?: string;
+        /** Inserted into the message in place of the typed `@query`. */
+        readonly text: string;
+      }>,
+    ) => void;
     /** Adds a button beside the composer's attach button. `threadId` is null in a new thread. */
     readonly addButton: (button: WebPluginAction<{ readonly threadId: string | null }>) => void;
   };

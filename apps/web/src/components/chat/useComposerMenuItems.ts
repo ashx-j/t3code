@@ -31,7 +31,11 @@ import { searchProviderSkills } from "../../providerSkillSearch";
 import { useThreadShells } from "~/state/entities";
 import { useEnvironmentIdentities, useEnvironmentMachines } from "~/state/environments";
 import { offersLinkedEnvironmentsAtom } from "~/state/peerLinks";
-import { pluginSlashCommandsAtom } from "~/plugins/pluginRegistry";
+import {
+  pluginMentionItemsAtom,
+  pluginSlashCommandsAtom,
+  type PluginMentionItem,
+} from "~/plugins/pluginRegistry";
 import {
   pullRequestEnvironment,
   usePullRequestList,
@@ -116,6 +120,7 @@ export function useComposerMenuItems({
   const environmentMachines = useEnvironmentMachines();
   const offersMachines = useAtomValue(offersLinkedEnvironmentsAtom(environmentId));
   const pluginSlashCommands = useAtomValue(pluginSlashCommandsAtom(environmentId));
+  const pluginMentionItems = useAtomValue(pluginMentionItemsAtom(environmentId));
   const mentionableEnvironments = environmentIdentities.map((identity) => ({
     ...identity,
     machine: environmentMachines.get(identity.environmentId) ?? ("server" as const),
@@ -204,6 +209,7 @@ export function useComposerMenuItems({
               query: composerTrigger.query,
             })
           : []),
+        ...matchPluginMentionItems(pluginMentionItems, composerTrigger.query),
         ...workspaceEntries.entries.map((entry) => ({
           id: `path:${entry.kind}:${entry.path}`,
           type: "path" as const,
@@ -419,4 +425,28 @@ export function useComposerMenuItems({
   })();
 
   return { items, isLoading, emptyState };
+}
+
+const PLUGIN_MENTION_LIMIT = 8;
+
+function matchPluginMentionItems(
+  items: ReadonlyArray<PluginMentionItem>,
+  query: string,
+): ComposerCommandItem[] {
+  const needle = query.trim().toLowerCase();
+  return items
+    .filter(
+      (item) =>
+        needle === "" ||
+        item.label.toLowerCase().includes(needle) ||
+        item.description.toLowerCase().includes(needle),
+    )
+    .slice(0, PLUGIN_MENTION_LIMIT)
+    .map((item) => ({
+      id: item.key,
+      type: "plugin-mention" as const,
+      text: item.text,
+      label: item.label,
+      description: item.description ? `${item.description} · ${item.pluginName}` : item.pluginName,
+    }));
 }

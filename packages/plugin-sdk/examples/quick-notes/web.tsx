@@ -33,6 +33,19 @@ export default defineWebPlugin({
       return notes;
     }
 
+    // Every note is also an `@` item that puts the note into the message.
+    const offerNotes = (value: unknown) =>
+      api.composer.setMentionItems(
+        asNotes(value).map((note) => ({
+          id: note.id,
+          label: note.text.slice(0, 60),
+          description: "Quick note",
+          text: `(Note: ${note.text})`,
+        })),
+      );
+    void api.rpc.invoke("list").then(offerNotes);
+    api.rpc.subscribe("notes", offerNotes);
+
     api.sidebar.addSection({
       id: "latest",
       title: "Quick notes",

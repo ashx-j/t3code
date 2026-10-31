@@ -84,7 +84,8 @@ tools, renderers for fenced code languages, styles, assets, navigation and toast
 Plugins can also add buttons and menu items to T3's own toolbars and menus: under each message
 (`messages.addAction`), in the thread header (`threads.addHeaderButton`), beside the composer's
 attach button (`composer.addButton`) and in the thread actions menu (`threads.addMenuItem`).
-`threads.setBadge` shows a short badge on a thread's sidebar row and header.
+`threads.setBadge` shows a short badge on a thread's sidebar row and header, and
+`composer.setMentionItems` offers items in the composer's `@` menu that put text into the message.
 [`examples/review-flags`](./examples/review-flags) uses all of them.
 
 `pages.register` adds a full page at `/plugins/<pluginId>/<name>`, shown beside the sidebar in place

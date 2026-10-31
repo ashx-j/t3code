@@ -530,3 +530,35 @@ export const pluginSidebarSectionsAtom = Atom.make((get) => {
   get(versionAtom);
   return [...sidebarSections.values()];
 });
+
+export interface PluginMentionItem {
+  readonly key: string;
+  readonly pluginName: string;
+  readonly label: string;
+  readonly description: string;
+  readonly text: string;
+}
+
+// Keyed by environment and plugin; each plugin replaces its whole list at once.
+const mentionItems = new Map<string, ReadonlyArray<PluginMentionItem>>();
+
+/** Replaces a plugin's items in the composer's `@` menu; an empty list removes them. */
+export function setPluginMentionItems(
+  environmentId: EnvironmentId,
+  pluginId: string,
+  items: ReadonlyArray<PluginMentionItem>,
+) {
+  const key = pluginContributionKey(environmentId, pluginId);
+  if (items.length === 0) mentionItems.delete(key);
+  else mentionItems.set(key, items);
+  bump();
+}
+
+export const pluginMentionItemsAtom = Atom.family((environmentId: string) =>
+  Atom.make((get) => {
+    get(versionAtom);
+    return [...mentionItems.entries()]
+      .filter(([key]) => key.startsWith(`${environmentId}\u0000`))
+      .flatMap(([, items]) => items);
+  }),
+);

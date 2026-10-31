@@ -37,6 +37,17 @@ var web_default = defineWebPlugin({
       }, []);
       return notes;
     }
+    const offerNotes = (value) =>
+      api.composer.setMentionItems(
+        asNotes(value).map((note) => ({
+          id: note.id,
+          label: note.text.slice(0, 60),
+          description: "Quick note",
+          text: `(Note: ${note.text})`,
+        })),
+      );
+    api.rpc.invoke("list").then(offerNotes);
+    api.rpc.subscribe("notes", offerNotes);
     api.sidebar.addSection({
       id: "latest",
       title: "Quick notes",

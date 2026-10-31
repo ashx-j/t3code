@@ -57,6 +57,7 @@ import {
   registerPluginSlashCommand,
   registerPluginToolRenderer,
   registerPluginSettingsPanel,
+  setPluginMentionItems,
   setPluginThreadBadge,
   setPluginWebFailure,
   type PluginActionContexts,
@@ -354,6 +355,20 @@ function makeWebPluginApi({
       },
       addButton: (button) => {
         track(registerPluginAction("composer", pluginActionEntry(environmentId, pluginId, button)));
+      },
+      setMentionItems: (items) => {
+        setPluginMentionItems(
+          environmentId,
+          pluginId,
+          items.slice(0, 500).map((item) => ({
+            key: `plugin-mention:${pluginId}:${item.id}`,
+            pluginName: plugin.name,
+            label: item.label,
+            description: item.description ?? "",
+            text: item.text,
+          })),
+        );
+        track(() => setPluginMentionItems(environmentId, pluginId, []));
       },
     },
     threads: {
