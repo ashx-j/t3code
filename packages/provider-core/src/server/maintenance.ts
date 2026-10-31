@@ -22,9 +22,6 @@ export interface ProviderMaintenanceCommandAction {
   readonly executable: string;
   readonly args: ReadonlyArray<string>;
   readonly lockKey: string;
-  /**
-   * The provider's environment, so the updater finds the same tools on `PATH`
-   * and the same custom home (e.g. `CODEX_HOME`) the provider runs with.
-   */
+  /** The provider's environment, including its PATH and custom home. */
   readonly env?: NodeJS.ProcessEnv;
 }

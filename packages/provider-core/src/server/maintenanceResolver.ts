@@ -730,7 +730,8 @@ const withConfiguredNpmVersionLookup = Effect.fn("withConfiguredNpmVersionLookup
   if (!packageName || capabilities.latestVersion !== undefined) {
     return capabilities;
   }
-  const npmPath = yield* resolveCommandPath("npm");
+  const env = { ...(yield* HostProcess.Environment), ...capabilities.update?.env };
+  const npmPath = yield* resolveCommandPath("npm", { env });
   if (!npmPath) return capabilities;
   const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
   const update = capabilities.update;
@@ -748,7 +749,7 @@ const withConfiguredNpmVersionLookup = Effect.fn("withConfiguredNpmVersionLookup
       `${packageName}@latest`,
       "version",
     ],
-    {},
+    env,
   ).pipe(
     Effect.map((stdout) => {
       const value = stdout ? Option.getOrNull(decodeNpmViewVersion(stdout.trim())) : null;

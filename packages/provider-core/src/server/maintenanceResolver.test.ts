@@ -232,7 +232,7 @@ it.layer(
         let probes = 0;
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
           fixture.install === "native" ? nativePackageToolUpdate : packageToolUpdate,
-          { binaryPath, env: { PATH: "" } },
+          { binaryPath, env: { PATH: fixture.install === "npm" ? npmBinDir : "" } },
         ).pipe(
           Effect.provideService(HostProcess.Environment, { PATH: npmBinDir }),
           Effect.provideService(

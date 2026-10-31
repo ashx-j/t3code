@@ -861,6 +861,7 @@ describe("providerMaintenanceRunner", () => {
       readonly command: string;
       readonly args: ReadonlyArray<string>;
       readonly shell: boolean | string | undefined;
+      readonly env: NodeJS.ProcessEnv | undefined;
     }> = [];
     return Effect.gen(function* () {
       const { registry } = yield* makeRegistry(baseProvider, {
@@ -892,6 +893,7 @@ describe("providerMaintenanceRunner", () => {
       );
       assert.deepEqual(call.args, []);
       assert.strictEqual(call.shell, true);
+      assert.deepStrictEqual(call.env, { PATH: "C:\\fake\\npm" });
       assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
     }).pipe(
       Effect.provide(
@@ -914,12 +916,16 @@ describe("providerMaintenanceRunner", () => {
               const childProcess = command as unknown as {
                 readonly command: string;
                 readonly args: ReadonlyArray<string>;
-                readonly options: { readonly shell?: boolean | string | undefined };
+                readonly options: {
+                  readonly shell?: boolean | string | undefined;
+                  readonly env?: NodeJS.ProcessEnv | undefined;
+                };
               };
               captured.push({
                 command: childProcess.command,
                 args: childProcess.args,
                 shell: childProcess.options.shell,
+                env: childProcess.options.env,
               });
               return Effect.succeed(mockHandle({ stdout: "updated" }));
             }),
