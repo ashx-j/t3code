@@ -226,7 +226,8 @@ export interface WebPluginApi {
   readonly pages: {
     /**
      * Adds a full page beside the sidebar, in place of the thread, until the plugin unloads.
-     * Open it with `navigate("/plugins/<pluginId>/<name>")`.
+     * Open it with `navigate("/plugins/<pluginId>/<name>")`, or from outside the app with a
+     * `t3code://plugins/<pluginId>/<name>` link, which opens the desktop app on it.
      */
     readonly register: (page: WebPluginPage) => void;
   };

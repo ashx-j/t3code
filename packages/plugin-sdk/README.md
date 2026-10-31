@@ -88,7 +88,7 @@ attach button (`composer.addButton`) and in the thread actions menu (`threads.ad
 [`examples/review-flags`](./examples/review-flags) uses all of them.
 
 `pages.register` adds a full page at `/plugins/<pluginId>/<name>`, shown beside the sidebar in place
-of the thread, and `sidebar.addSection` adds a titled section under the thread list.
+of the thread; a `t3code://plugins/<pluginId>/<name>` link opens the desktop app on it, and `sidebar.addSection` adds a titled section under the thread list.
 [`examples/quick-notes`](./examples/quick-notes) keeps notes in its server half's storage and shows
 them in both.
 
