@@ -197,15 +197,34 @@ it.effect(
           ),
         )
         .pipe(Effect.asVoid);
+      let deploys = 0;
       yield* hooks
         .addSlashCommand(
           { pluginId: "deployer", pluginName: "Deployer", name: "deploy" },
-          (outgoing) => Effect.succeed({ text: `Deploy ${outgoing.args} now.` }),
+          (outgoing) =>
+            Effect.sync(() => {
+              deploys += 1;
+              return { text: `Deploy ${outgoing.args} now.` };
+            }),
         )
         .pipe(Effect.asVoid);
       const threads = yield* ThreadManagementService.ThreadManagementService;
       yield* threads.dispatch(message("user"));
       yield* threads.dispatch(message("plugin-command", undefined, "/deploy staging"));
+      // A retry of an accepted command id replays it; plugins already saw it once.
+      const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+      const replayed = message("replayed", undefined, "/deploy staging");
+      yield* receipts.insertIfAbsent({
+        commandId: replayed.commandId,
+        threadId,
+        commandType: "message.dispatch",
+        acceptedAt: yield* DateTime.now,
+        resultSequence: 1,
+        status: "accepted",
+        error: null,
+      });
+      yield* threads.dispatch(replayed);
+      expect(deploys).toBe(1);
       const blocked = yield* Effect.flip(
         threads.dispatch(message("blocked", undefined, "Use token abc.")),
       );
@@ -224,6 +243,7 @@ it.effect(
       expect(texts).toEqual([
         "Fix the build.\n\nProject uses pnpm.",
         "Deploy staging now.",
+        "/deploy staging",
         "Fix the build.",
         "/goal clear",
       ]);

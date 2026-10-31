@@ -54,6 +54,8 @@ import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
 import { withPluginTextGeneration } from "./pluginTextGeneration.ts";
 
+// None of these messages replays an accepted command.
+const notAccepted = Effect.succeed(false);
 const fixturesDir = new URL("../../../../packages/plugin-sdk/fixtures/", import.meta.url).pathname;
 const hello = PluginId.make("hello-plugin");
 const broken = PluginId.make("broken-plugin");
@@ -602,23 +604,29 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         });
 
         assert.strictEqual(
-          yield* hooks.beforeDispatch({
-            threadId,
-            messageId: "message:context",
-            text: "Ship it #context",
-            createdBy: "user",
-            attachments: [],
-          }),
+          yield* hooks.beforeDispatch(
+            {
+              threadId,
+              messageId: "message:context",
+              text: "Ship it #context",
+              createdBy: "user",
+              attachments: [],
+            },
+            notAccepted,
+          ),
           "Ship it #context\n\nContext from workbench-plugin.",
         );
         const outgoing = (text: string) =>
-          hooks.beforeDispatch({
-            threadId,
-            messageId: "message:workbench",
-            text,
-            createdBy: "user",
-            attachments: [],
-          });
+          hooks.beforeDispatch(
+            {
+              threadId,
+              messageId: "message:workbench",
+              text,
+              createdBy: "user",
+              attachments: [],
+            },
+            notAccepted,
+          );
         assert.strictEqual(yield* outgoing("#shout ship it"), "SHIP IT");
         assert.strictEqual(
           (yield* Effect.flip(outgoing("Deploy with #secret"))).message,

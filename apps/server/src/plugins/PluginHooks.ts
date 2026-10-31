@@ -125,6 +125,8 @@ export interface PluginHooksRegistry {
    */
   readonly beforeDispatch: (
     message: PluginOutgoingMessage,
+    /** Read only when a plugin would run: a replay of an accepted command goes out unchanged. */
+    alreadyAccepted: Effect.Effect<boolean>,
   ) => Effect.Effect<string, PluginMessageBlockedError>;
   /** Adds a slash command and returns the effect that removes it. */
   readonly addSlashCommand: (
@@ -189,18 +191,28 @@ const make = Effect.gen(function* () {
   const commands = yield* SubscriptionRef.make<
     ReadonlyArray<{ readonly command: PluginSlashCommand; readonly run: SlashCommandHandler }>
   >([]);
-  const runHooks = (message: PluginOutgoingMessage) =>
+  // A plugin sees a message once: a replayed command id was handled when it was first accepted.
+  const unlessAccepted = (
+    alreadyAccepted: Effect.Effect<boolean>,
+    text: string,
+    run: Effect.Effect<string, PluginMessageBlockedError>,
+  ) => alreadyAccepted.pipe(Effect.flatMap((accepted) => (accepted ? Effect.succeed(text) : run)));
+  const runHooks = (message: PluginOutgoingMessage, alreadyAccepted: Effect.Effect<boolean>) =>
     Ref.get(hooks).pipe(
       Effect.flatMap((all) =>
         all.length === 0
           ? Effect.succeed(message.text)
-          : Effect.reduce(
-              all,
-              () => message.text,
-              (text, entry) =>
-                entry
-                  .run({ ...message, text })
-                  .pipe(Effect.flatMap((outcome) => applyOutcome(text, outcome))),
+          : unlessAccepted(
+              alreadyAccepted,
+              message.text,
+              Effect.reduce(
+                all,
+                () => message.text,
+                (text, entry) =>
+                  entry
+                    .run({ ...message, text })
+                    .pipe(Effect.flatMap((outcome) => applyOutcome(text, outcome))),
+              ),
             ),
       ),
     );
@@ -210,9 +222,9 @@ const make = Effect.gen(function* () {
         Effect.tap((entry) => Ref.update(hooks, (all) => [...all, entry])),
         Effect.map((entry) => Ref.update(hooks, (all) => all.filter((other) => other !== entry))),
       ),
-    beforeDispatch: (message) => {
+    beforeDispatch: (message, alreadyAccepted) => {
       const trimmed = message.text.trimStart();
-      if (!trimmed.startsWith("/")) return runHooks(message);
+      if (!trimmed.startsWith("/")) return runHooks(message, alreadyAccepted);
       const match = SLASH_COMMAND.exec(trimmed);
       if (match === null) return Effect.succeed(message.text);
       return SubscriptionRef.get(commands).pipe(
@@ -220,9 +232,13 @@ const make = Effect.gen(function* () {
           const entry = all.find((candidate) => candidate.command.name === match[1]);
           return entry === undefined
             ? Effect.succeed(message.text)
-            : entry
-                .run({ ...message, args: match[2]?.trim() ?? "" })
-                .pipe(Effect.flatMap((outcome) => applyOutcome(message.text, outcome)));
+            : unlessAccepted(
+                alreadyAccepted,
+                message.text,
+                entry
+                  .run({ ...message, args: match[2]?.trim() ?? "" })
+                  .pipe(Effect.flatMap((outcome) => applyOutcome(message.text, outcome))),
+              );
         }),
       );
     },

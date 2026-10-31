@@ -13,6 +13,8 @@ import * as PluginHooks from "../PluginHooks.ts";
 import { makeFacadeContext } from "./facade.ts";
 import { makeTurnsApi } from "./turns.ts";
 
+// None of these messages replays an accepted command.
+const notAccepted = Effect.succeed(false);
 const unusedStorage = {} as PluginApi["storage"];
 const unusedRunEvents = () => {
   throw new Error("run events are not used here");
@@ -50,13 +52,16 @@ it.effect(
       );
       const send = (text: string) =>
         hooks
-          .beforeDispatch({
-            threadId: ThreadId.make("thread:hooks"),
-            messageId: "message:hooks",
-            text,
-            createdBy: "user",
-            attachments: [],
-          })
+          .beforeDispatch(
+            {
+              threadId: ThreadId.make("thread:hooks"),
+              messageId: "message:hooks",
+              text,
+              createdBy: "user",
+              attachments: [],
+            },
+            notAccepted,
+          )
           .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
 
       const sending = yield* send("Go");
