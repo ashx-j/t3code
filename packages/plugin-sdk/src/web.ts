@@ -114,7 +114,10 @@ export interface WebPluginMessage {
  * has already wired up: place it, wrap it or leave it out. `original` is T3's own drawing.
  */
 export interface WebPluginParts {
-  /** The row under the composer's text box. */
+  /**
+   * The row under the composer's text box. While no provider is available, `model` offers to open
+   * provider settings and `effort` and `access` draw nothing.
+   */
   readonly "composer.controls": {
     readonly original: unknown;
     /** The attach button, or null where the composer offers no attachments. */
@@ -123,7 +126,7 @@ export interface WebPluginParts {
     readonly controls: unknown;
     /** A picker that only chooses the model. */
     readonly model: unknown;
-    /** The reasoning effort picker, or null when the model has no options. */
+    /** The reasoning effort picker; draws nothing when the model has no options. */
     readonly effort: unknown;
     /** The permissions picker, always labelled, and the plan toggle when plan mode is on. */
     readonly access: unknown;

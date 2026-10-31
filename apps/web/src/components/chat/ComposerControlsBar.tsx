@@ -287,6 +287,7 @@ export function ComposerControlsBar(props: {
             size={controlSize}
             hidden={composerControlsHidden}
             disabled={providerCatalogPending || isSendBusy}
+            triggerShortcuts="composer.effort"
           />
         ) : null;
       case "access":

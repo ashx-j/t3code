@@ -544,8 +544,10 @@ export interface PluginMentionItem {
   readonly text: string;
 }
 
-// Keyed by environment and plugin; each plugin replaces its whole list at once.
+// Keyed by environment and plugin; each plugin replaces its whole list at once. The list has its
+// own version, since plugins update it often and the composer reads it.
 const mentionItems = new Map<string, ReadonlyArray<PluginMentionItem>>();
+const mentionItemsVersionAtom = Atom.make(0).pipe(Atom.keepAlive);
 
 /** Replaces a plugin's items in the composer's `@` menu; an empty list removes them. */
 export function setPluginMentionItems(
@@ -554,14 +556,17 @@ export function setPluginMentionItems(
   items: ReadonlyArray<PluginMentionItem>,
 ) {
   const key = pluginContributionKey(environmentId, pluginId);
-  if (items.length === 0) mentionItems.delete(key);
-  else mentionItems.set(key, items);
-  bump();
+  if (items.length === 0) {
+    if (!mentionItems.delete(key)) return;
+  } else {
+    mentionItems.set(key, items);
+  }
+  appAtomRegistry.set(mentionItemsVersionAtom, appAtomRegistry.get(mentionItemsVersionAtom) + 1);
 }
 
 export const pluginMentionItemsAtom = Atom.family((environmentId: string) =>
   Atom.make((get) => {
-    get(versionAtom);
+    get(mentionItemsVersionAtom);
     return [...mentionItems.entries()]
       .filter(([key]) => key.startsWith(`${environmentId}\u0000`))
       .flatMap(([, items]) => items);
