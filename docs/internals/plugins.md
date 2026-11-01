@@ -165,6 +165,13 @@ form from the schema where it has no definition for the driver. An Effect `confi
 converted, because its JSON Schema uses `anyOf` for optional fields, which that form cannot draw.
 Mobile has no provider settings form for any driver.
 
+`registerAcpAgent` builds a whole driver from plain data, so most agent plugins need no Effect
+code. It uses the shared ACP adapter with the base ACP capabilities, like the `fx` driver, not
+the ACP Registry driver: that driver's instances carry its own kind, so clients would show the
+registry's card, and its status check opens a session, which background checks must not do. An
+ACP agent's snapshot is therefore "ready" with unknown sign-in until a turn runs, and it writes
+no text for T3 (titles and commit messages fall back to other providers).
+
 ## Installing
 
 `plugins.install` fetches into `<stateDir>/plugin-staging/<uuid>`, outside `plugins/`, so discovery

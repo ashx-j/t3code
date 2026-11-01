@@ -61,6 +61,8 @@ module.exports = {
 - answers to agents' approvals and questions, instructions for agents, and MCP tools for agents;
 - the text T3 Code generates, such as thread titles and commit messages;
 - HTTP routes, schedules and server info;
+- ACP agents T3 Code runs by their command (`api.providers.registerAcpAgent`), with no Effect
+  code; the `acp-agent-plugin` fixture is a complete one;
 - provider drivers, built with `api.providers.runtime` and typed with
   `@t3tools/plugin-sdk/server/providers`. These follow T3 Code's internal provider packages, which
   change with every nightly, so build a provider plugin against the T3 Code version it runs on.

@@ -8,6 +8,7 @@ import type {
 import {
   type AnyProviderDriver,
   defaultProviderContinuationIdentity,
+  type ProviderDriver,
   type ProviderInstance,
 } from "@t3tools/provider-core/server/driver";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
@@ -38,7 +39,9 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
+import type { BuiltInDriversEnv } from "../../provider/builtInDrivers.ts";
 import type * as ProviderDriverRegistration from "../../provider/ProviderDriverRegistration.ts";
+import { makeAcpAgentDriver } from "../acpAgentDriver.ts";
 import type { FacadeContext } from "./facade.ts";
 
 // Modules the server already uses, so handing them over grows nothing.
@@ -151,32 +154,53 @@ const guardedDriver = <Config>(
   ...(driver.usage === undefined ? {} : { usage: driver.usage }),
 });
 
+const isStringList = Schema.is(Schema.Array(Schema.String));
+const isStringRecord = Schema.is(Schema.Record(Schema.String, Schema.String));
+const isModelList = Schema.is(
+  Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.String })),
+);
+
+/** The instance settings an ACP agent offers, as the generic provider form draws them. */
+const acpAgentSettingsSchema = (command: string): Schema.JsonObject => ({
+  type: "object",
+  properties: {
+    command: {
+      type: "string",
+      title: "Command",
+      description: `Leave empty to run ${command}.`,
+    },
+    args: {
+      type: "array",
+      items: { type: "string" },
+      title: "Arguments",
+      description: "Leave empty for the plugin's arguments.",
+    },
+  },
+});
+
+/** Stamps the client description onto every instance the driver creates. */
+const withClientDriver = <Config, R>(
+  driver: AnyProviderDriver<R> & ProviderDriver<Config, R>,
+  client: PluginProviderDriver["client"],
+): ProviderDriver<Config, R> => ({
+  ...driver,
+  create: (input) =>
+    driver.create(input).pipe(Effect.map((instance) => withClient(instance, client))),
+});
+
 export const makeProvidersApi = (
   facade: FacadeContext,
   services: {
     readonly providerDrivers: ProviderDriverRegistration.ProviderDriverRegistration["Service"];
   },
-): PluginApi["providers"] => ({
-  runtime: PROVIDER_RUNTIME,
-  registerDriver: (driver) => {
-    const { activation, pluginId } = facade;
+): PluginApi["providers"] => {
+  const { activation, pluginId } = facade;
+  // Resolves once the driver's instances are built; it leaves again when the plugin turns off.
+  const register = (driver: AnyProviderDriver<BuiltInDriversEnv>) => {
     if (activation.controller.signal.aborted) {
       return Promise.reject(new Error("This plugin activation has ended."));
     }
-    if (
-      !isDriverKind(driver.driverKind) ||
-      typeof driver.metadata?.displayName !== "string" ||
-      !Schema.isSchema(driver.configSchema) ||
-      typeof driver.defaultConfig !== "function" ||
-      typeof driver.create !== "function"
-    ) {
-      return Promise.reject(
-        new TypeError(
-          "A provider driver needs a driverKind, metadata.displayName, a configSchema from runtime.Schema, defaultConfig and create.",
-        ),
-      );
-    }
-    return facade.call(services.providerDrivers.add(guardedDriver(driver))).then((remove) => {
+    return facade.call(services.providerDrivers.add(driver)).then((remove) => {
       const removeNow = () =>
         facade.fork(
           remove.pipe(
@@ -187,5 +211,48 @@ export const makeProvidersApi = (
       if (activation.controller.signal.aborted) return removeNow();
       activation.controller.signal.addEventListener("abort", removeNow, { once: true });
     });
-  },
-});
+  };
+  return {
+    runtime: PROVIDER_RUNTIME,
+    registerDriver: (driver) => {
+      if (
+        !isDriverKind(driver.driverKind) ||
+        typeof driver.metadata?.displayName !== "string" ||
+        !Schema.isSchema(driver.configSchema) ||
+        typeof driver.defaultConfig !== "function" ||
+        typeof driver.create !== "function"
+      ) {
+        return Promise.reject(
+          new TypeError(
+            "A provider driver needs a driverKind, metadata.displayName, a configSchema from runtime.Schema, defaultConfig and create.",
+          ),
+        );
+      }
+      return register(guardedDriver(driver));
+    },
+    registerAcpAgent: (agent) => {
+      const kind = agent.kind;
+      if (
+        !isDriverKind(kind) ||
+        typeof agent.label !== "string" ||
+        typeof agent.command !== "string" ||
+        agent.command.trim() === "" ||
+        (agent.args !== undefined && !isStringList(agent.args)) ||
+        (agent.env !== undefined && !isStringRecord(agent.env)) ||
+        (agent.models !== undefined && !isModelList(agent.models))
+      ) {
+        return Promise.reject(
+          new TypeError(
+            "An ACP agent needs a kind, a label and a command, with string arguments, environment and models.",
+          ),
+        );
+      }
+      return register(
+        withClientDriver(makeAcpAgentDriver({ ...agent, kind }), {
+          settingsSchema: acpAgentSettingsSchema(agent.command),
+          ...(agent.iconUrl === undefined ? {} : { iconUrl: agent.iconUrl }),
+        }),
+      );
+    },
+  };
+};

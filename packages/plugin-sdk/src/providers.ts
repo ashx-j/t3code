@@ -65,6 +65,22 @@ export type PluginProviderDriver<Config = unknown> = ProviderDriverModule.Provid
   };
 };
 
+/** An ACP agent T3 Code runs by its command, with the shared ACP adapter. */
+export interface PluginAcpAgent {
+  /** The provider driver kind: letters, digits and `-`, unique among drivers. */
+  readonly kind: string;
+  readonly label: string;
+  /** An executable on the server and its arguments; users can change both per instance. */
+  readonly command: string;
+  readonly args?: ReadonlyArray<string>;
+  /** Added to the server's environment; an instance's own variables win. */
+  readonly env?: Readonly<Record<string, string>>;
+  /** The models to offer, the first as default; without them T3 offers the agent's default. */
+  readonly models?: ReadonlyArray<{ readonly id: string; readonly name: string }>;
+  /** An https or small data URL of at most 2,048 characters. */
+  readonly iconUrl?: string;
+}
+
 /**
  * T3 Code's own Effect and provider modules. The server bundles its own copy of `effect`, so a
  * driver builds its effects, schemas and services with these, never with an `effect` it imports.

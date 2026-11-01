@@ -11,6 +11,7 @@ import {
   PluginId,
   ProjectId,
   ProviderDriverKind,
+  ProviderSessionId,
   RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ServerCommand,
@@ -21,9 +22,13 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import type { PluginProviderDriverEnv } from "@t3tools/plugin-sdk/server/providers";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -48,12 +53,14 @@ import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderDriverRegistration from "../provider/ProviderDriverRegistration.ts";
+import { makeTurnInput } from "../orchestration-v2/Adapters/AcpAdapterV2.testkit.ts";
 import { makeProviderInstanceRegistry } from "../provider/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import packageJson from "../../package.json" with { type: "json" };
 import { gzipTarball, tarEntry } from "./testTarball.ts";
+import type { AcpAgentDriverEnv } from "./acpAgentDriver.ts";
 import * as PluginHooks from "./PluginHooks.ts";
 import * as PluginHost from "./PluginHost.ts";
 import * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
@@ -1076,3 +1083,90 @@ module.exports = { activate() {} };`,
     }).pipe(Effect.provide(layerConfig())),
   );
 });
+
+it.live("runs a turn with the ACP agent a plugin registers by its command", () =>
+  Effect.gen(function* () {
+    const acpPlugin = PluginId.make("acp-agent-plugin");
+    yield* writePluginsConfig({
+      enabled: { [acpPlugin]: true },
+      devPaths: [`${fixturesDir}acp-agent-plugin`],
+    });
+    const { registry, addDriver } = yield* makeProviderInstanceRegistry<AcpAgentDriverEnv>({
+      drivers: [],
+      configMap: {},
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          TestProviderHost.layer(),
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          Layer.succeed(SecretResolver.SecretResolver, {
+            read: () => Effect.succeed([]),
+            invalidate: () => Effect.void,
+          }),
+        ),
+      ),
+    );
+    const services = Layer.mergeAll(
+      layerUnusedServices,
+      Layer.succeed(ProviderDriverRegistration.ProviderDriverRegistration, {
+        // This registry provides what the ACP agent driver uses.
+        add: addDriver as ProviderDriverRegistration.ProviderDriverRegistration["Service"]["add"],
+      }),
+    );
+    yield* Effect.gen(function* () {
+      const host = yield* PluginHost.PluginHost;
+      yield* waitForStatuses(host, { [acpPlugin]: "active" });
+      const instanceId = defaultInstanceIdForDriver(ProviderDriverKind.make("echoAcp"));
+      const instance = yield* registry.getInstance(instanceId);
+      assert.include(yield* instance!.snapshot.getSnapshot, {
+        displayName: "Echo ACP",
+        status: "ready",
+      });
+
+      const threadId = ThreadId.make("thread:echo-acp");
+      const modelSelection = { instanceId, model: "default" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const session = yield* instance!.orchestrationAdapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session:echo-acp"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* session.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const replies = yield* session.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* session.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+          messageText: "Hello there",
+        }),
+      );
+      const events = Array.from(yield* Fiber.join(replies));
+      assert.include(events.at(-1), { type: "turn.terminal", status: "completed" });
+      assert.isTrue(
+        events.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "assistant_message" &&
+            event.turnItem.text.includes("Echo: Hello there"),
+        ),
+      );
+    }).pipe(Effect.provide(layerHost(services)));
+  }).pipe(Effect.provide(layerConfig()), Effect.scoped, Effect.provide(NodeServices.layer)),
+);

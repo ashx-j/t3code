@@ -1,4 +1,4 @@
-import type { PluginProviderDriver, PluginProviderRuntime } from "./providers.ts";
+import type { PluginAcpAgent, PluginProviderDriver, PluginProviderRuntime } from "./providers.ts";
 import type { JsonObject, JsonValue } from "./shared.ts";
 
 /** `read` methods need the caller's `orchestration:read` scope, `write` methods `orchestration:operate`. */
@@ -423,6 +423,12 @@ export interface PluginApi {
      * or another plugin already provides. Types are in `@t3tools/plugin-sdk/server/providers`.
      */
     readonly registerDriver: <Config>(driver: PluginProviderDriver<Config>) => Promise<void>;
+    /**
+     * Adds an ACP agent T3 Code runs by its command, with no Effect code: the shared ACP adapter
+     * with the base capabilities, a settings form for the command and arguments, and no text
+     * generation. Agents that need vendor hooks write a driver with `registerDriver`.
+     */
+    readonly registerAcpAgent: (agent: PluginAcpAgent) => Promise<void>;
   };
   readonly mcp: {
     /** Offers a tool to agents in every thread until the plugin deactivates. */
