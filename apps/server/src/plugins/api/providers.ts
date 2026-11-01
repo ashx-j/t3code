@@ -151,7 +151,6 @@ const guardedDriver = <Config>(
         ),
       ),
     ),
-  ...(driver.usage === undefined ? {} : { usage: driver.usage }),
 });
 
 const isStringList = Schema.is(Schema.Array(Schema.String));

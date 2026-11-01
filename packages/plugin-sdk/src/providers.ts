@@ -42,6 +42,18 @@ export type {
 } from "@t3tools/provider-core/server/driver";
 export type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
 export type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
+export type {
+  ProviderAdapterV2Event,
+  ProviderAdapterV2OpenSessionInput,
+  ProviderAdapterV2SessionRuntime,
+  ProviderAdapterV2TurnInput,
+} from "@t3tools/provider-core/server/ProviderAdapter";
+export type {
+  OrchestrationV2ProviderCapabilities,
+  ServerProvider,
+  ServerProviderModel,
+  SourceControlProviderInfo,
+} from "@t3tools/contracts";
 
 /** The services a plugin's driver may use; the host provides them as it does for its own. */
 export type PluginProviderDriverEnv =
@@ -51,9 +63,13 @@ export type PluginProviderDriverEnv =
   | Path.Path
   | Crypto.Crypto;
 
-export type PluginProviderDriver<Config = unknown> = ProviderDriverModule.ProviderDriver<
-  Config,
-  PluginProviderDriverEnv
+/**
+ * A provider driver from a plugin. `usage` is left out: the Usage page reads history only from
+ * T3 Code's own drivers. Usage limits a driver reports in its snapshot do show.
+ */
+export type PluginProviderDriver<Config = unknown> = Omit<
+  ProviderDriverModule.ProviderDriver<Config, PluginProviderDriverEnv>,
+  "usage"
 > & {
   /** What clients show for this driver, since they have no built-in definition for it. */
   readonly client?: {
@@ -80,7 +96,14 @@ export type {
 } from "@t3tools/source-control-core/server/driver";
 export type { SourceControlProviderDiscoverySpec } from "@t3tools/source-control-core/server/discovery";
 export type { PullRequestProviderApi } from "@t3tools/source-control-core/server/PullRequestProvider";
-export type { SourceControlDefinition } from "@t3tools/source-control-core/shared/definition";
+export type {
+  GitRemoteHost,
+  SourceControlDefinition,
+} from "@t3tools/source-control-core/shared/definition";
+export type {
+  SourceControlProvider,
+  SourceControlProviderContext,
+} from "@t3tools/source-control-core/server/SourceControlProvider";
 
 /** Plain helpers for source control definitions. */
 export interface PluginSourceControlRuntime {
