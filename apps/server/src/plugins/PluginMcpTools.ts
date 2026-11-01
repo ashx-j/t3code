@@ -105,6 +105,7 @@ export interface PluginMcpToolEntry {
   readonly access: PluginRpcAccess;
   readonly call: (
     input: Schema.JsonObject,
+    caller: { readonly threadId: string | null },
   ) => Effect.Effect<
     Schema.Json,
     PluginMcpToolError | PluginMcpToolDisabledError | PluginMcpManagementError
@@ -119,7 +120,10 @@ export class PluginMcpTools extends Context.Service<
       readonly pluginId: PluginId;
       readonly tool: PluginMcpTool;
       /** `signal` aborts when the agent cancels the call. */
-      readonly handler: (input: Schema.JsonObject, signal: AbortSignal) => Promise<Schema.Json>;
+      readonly handler: (
+        input: Schema.JsonObject,
+        context: { readonly signal: AbortSignal; readonly threadId: string | null },
+      ) => Promise<Schema.Json>;
     }) => Effect.Effect<void, PluginMcpToolNameError>;
     /** MCP has no tool removal, so each of the plugin's tools answers "disabled" instead. */
     readonly unregisterPlugin: (pluginId: PluginId) => Effect.Effect<void>;
@@ -321,8 +325,11 @@ const make = () => {
         description: tool.description,
         inputSchema: tool.inputSchema,
         access: tool.access,
-        call: (input) =>
-          Effect.tryPromise({ try: (signal) => handler(input, signal), catch: failed }).pipe(
+        call: (input, caller) =>
+          Effect.tryPromise({
+            try: (signal) => handler(input, { signal, threadId: caller.threadId }),
+            catch: failed,
+          }).pipe(
             Effect.flatMap((output: unknown) =>
               output === undefined
                 ? Effect.succeed(null)

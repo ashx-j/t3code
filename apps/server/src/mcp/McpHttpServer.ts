@@ -1163,7 +1163,13 @@ export const layerPluginTools = Layer.effectDiscard(
     const plugins = yield* PluginMcpTools.PluginMcpTools;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     yield* plugins.attach((entry) => {
-      const call = McpToolAccess.dynamic(entry.access, entry.call);
+      const call = McpToolAccess.dynamic(entry.access, (input: Schema.JsonObject) =>
+        McpInvocationContext.McpInvocationContext.pipe(
+          Effect.flatMap((scope) =>
+            entry.call(input, { threadId: scope.thread?.threadId ?? null }),
+          ),
+        ),
+      );
       return server.addTool({
         tool: new McpSchema.Tool({
           name: entry.name,

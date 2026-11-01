@@ -52,12 +52,20 @@ export function threadErrorSummary(
   };
 }
 
+/** A plugin command's reply: recorded as an already finished run that never ran an agent. */
+export function isCommandReplyRun(
+  run: Pick<OrchestrationV2Run, "status" | "rootNodeId" | "providerThreadId">,
+): boolean {
+  return run.status === "completed" && run.rootNodeId === null && run.providerThreadId === null;
+}
+
 export function latestExecutedRun(
   runs: ReadonlyArray<OrchestrationV2Run>,
 ): OrchestrationV2Run | null {
   let latest: OrchestrationV2Run | null = null;
   for (const run of runs) {
     if (run.status === "queued") continue;
+    if (isCommandReplyRun(run)) continue;
     if (run.status === "cancelled" && run.startedAt === null) continue;
     if (latest === null || runRanAfter(run, latest)) latest = run;
   }

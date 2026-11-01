@@ -23,6 +23,7 @@ import {
 } from "../CodexProvider.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import type { TextGenerationInput } from "@t3tools/provider-core/server/textGeneration";
 import {
   type ProviderDriverCreateInput,
   type ProviderInstance,
@@ -273,6 +274,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
           }),
       ),
     );
+  const generateText = nativeGeneration.generateText;
   const textGeneration: ProviderInstance["textGeneration"] = {
     generateCommitMessage: (value) =>
       protect("generateCommitMessage", nativeGeneration.generateCommitMessage(value)),
@@ -284,6 +286,12 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
       protect("generateThreadTitle", nativeGeneration.generateThreadTitle(value)),
     generateReviewGuide: (value) =>
       protect("generateReviewGuide", nativeGeneration.generateReviewGuide(value)),
+    ...(generateText === undefined
+      ? {}
+      : {
+          generateText: (value: TextGenerationInput) =>
+            protect("generateText", generateText(value)),
+        }),
   };
   return {
     instanceId,

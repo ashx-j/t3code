@@ -5,6 +5,7 @@ import type {
   OrchestrationV2ThreadHistoryPage,
 } from "@t3tools/contracts";
 import {
+  isCommandReplyRun,
   latestExecutedRun,
   latestRootProviderFailure,
   runRanAfter,
@@ -5434,8 +5435,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection = yield* getProjectionWithPendingEvents(command.threadId, events);
     }
     const userMessages = projection.messages.filter((message) => message.role === "user");
+    // A plugin's command reply never reached the agent, so it leaves the title to be generated.
+    const replyRunIds = new Set(projection.runs.filter(isCommandReplyRun).map((run) => run.id));
     const onlyMaintenanceHistory =
-      userMessages.length > 0 && userMessages.every(isNativeMaintenanceCommand);
+      userMessages.length > 0 &&
+      userMessages.every(
+        (message) =>
+          isNativeMaintenanceCommand(message) ||
+          (message.runId !== null && replyRunIds.has(message.runId)),
+      );
     if (
       !isNativeMaintenanceCommand(command) &&
       ((command.titleSeed !== undefined &&
@@ -8605,6 +8613,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandId: command.commandId,
         commandType: command.type,
         cause: `Thread ${command.threadId} is deleted.`,
+      });
+    }
+    if (isProviderNativeSubagentThread(projection.thread)) {
+      return yield* new OrchestratorSubagentThreadReadOnlyError({
+        commandId: command.commandId,
+        threadId: command.threadId,
       });
     }
     const now = yield* DateTime.now;

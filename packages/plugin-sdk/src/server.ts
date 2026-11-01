@@ -45,7 +45,11 @@ export interface PluginMcpTool {
 
 export type PluginMcpToolHandler = (
   input: JsonObject,
-  context: { readonly signal: AbortSignal },
+  context: {
+    readonly signal: AbortSignal;
+    /** The thread whose agent called the tool, or null for an MCP client outside a thread. */
+    readonly threadId: string | null;
+  },
 ) => JsonValue | Promise<JsonValue>;
 
 export interface PluginHttpRequest {
