@@ -8,6 +8,7 @@ import type { ProviderClientDefinition } from "@t3tools/provider-core/client";
 import {
   type AcpRegistrySearchAgent,
   AuthProvidersManageScope,
+  defaultInstanceIdForDriver,
   ProviderInstanceId,
   ProviderDriverKind,
   type EnvironmentId,
@@ -196,10 +197,11 @@ export function AddProviderInstanceDialog({
   const [createdInstanceId, setCreatedInstanceId] = useState<ProviderInstanceId | null>(null);
 
   // Reserve Codex/Claude default ids because they run before configuration; other unconfigured slots are
-  // available.
+  // available. A plugin driver's default slot already has its own card, so a new copy needs a new id.
   const existingIds = new Set([
     "codex",
     "claudeAgent",
+    ...pluginDrivers.map((option) => defaultInstanceIdForDriver(option.driverKind)),
     ...Object.keys(settings.providerInstances ?? {}),
   ]);
 
