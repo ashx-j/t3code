@@ -57,6 +57,7 @@ import {
   registerPluginSlashCommand,
   registerPluginToolRenderer,
   registerPluginSettingsPanel,
+  pluginMentionContextId,
   setPluginMentionItems,
   setPluginThreadBadge,
   setPluginWebFailure,
@@ -378,6 +379,7 @@ function makeWebPluginApi({
           }
           return {
             key: `plugin-mention:${pluginId}:${item.id}`,
+            contextId: pluginMentionContextId(environmentId, pluginId, item.id),
             pluginName: plugin.name,
             label: item.label,
             description,

@@ -281,6 +281,7 @@ import {
 import { ComposerControlsBar } from "./ComposerControlsBar";
 import { PluginActionButtons } from "../../plugins/PluginActions";
 import { PluginReplaceable } from "../../plugins/PluginReplaceable";
+import { PLUGIN_CONTEXT_KIND } from "../../plugins/pluginRegistry";
 import { composerCommandKeyHandler } from "./composerCommandKey";
 
 function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
@@ -1888,7 +1889,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     if (item.type === "plugin-mention") {
       if (trigger.kind !== "path") return;
-      const replacement = `${item.text} `;
+      const replacement = `${formatInlineContextReference({
+        kind: PLUGIN_CONTEXT_KIND,
+        contextId: item.contextId,
+        label: item.label,
+      })} `;
       const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
         snapshot.value,
         trigger.rangeEnd,

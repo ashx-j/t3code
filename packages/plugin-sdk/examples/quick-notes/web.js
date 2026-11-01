@@ -43,7 +43,7 @@ var web_default = defineWebPlugin({
           id: note.id,
           label: note.text.slice(0, 60),
           description: "Quick note",
-          text: `(Note: ${note.text})`,
+          text: note.text,
         })),
       );
     api.rpc.invoke("list").then(offerNotes);

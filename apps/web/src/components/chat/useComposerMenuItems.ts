@@ -445,7 +445,7 @@ function matchPluginMentionItems(
     .map((item) => ({
       id: item.key,
       type: "plugin-mention" as const,
-      text: item.text,
+      contextId: item.contextId,
       label: item.label,
       description: item.description ? `${item.description} · ${item.pluginName}` : item.pluginName,
     }));

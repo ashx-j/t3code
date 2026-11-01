@@ -1,4 +1,14 @@
-import type { ContextMenuItem, EnvironmentId, PLUGIN_COMMAND_PATTERN } from "@t3tools/contracts";
+import type {
+  ComposerContextId,
+  ContextMenuItem,
+  EnvironmentId,
+  PLUGIN_COMMAND_PATTERN,
+  UnknownContextRecord,
+} from "@t3tools/contracts";
+import {
+  collectComposerContextReferences,
+  toKindScopedComposerContextId,
+} from "@t3tools/shared/composerContextReferences";
 import type { WebPluginParts } from "@t3tools/plugin-sdk/web";
 import { Atom } from "effect/reactivity";
 import type { ComponentType, ReactNode } from "react";
@@ -538,6 +548,8 @@ export const pluginSidebarSectionsAtom = Atom.make((get) => {
 
 export interface PluginMentionItem {
   readonly key: string;
+  /** Picking the item inserts a chip that refers to it by this id. */
+  readonly contextId: ComposerContextId;
   readonly pluginName: string;
   readonly label: string;
   readonly description: string;
@@ -572,3 +584,51 @@ export const pluginMentionItemsAtom = Atom.family((environmentId: string) =>
       .flatMap(([, items]) => items);
   }),
 );
+
+/** The context kind of a plugin `@` item's chip. Clients without plugins treat it as unknown. */
+export const PLUGIN_CONTEXT_KIND = "plugin";
+
+export const pluginMentionContextId = (
+  environmentId: EnvironmentId,
+  pluginId: string,
+  itemId: string,
+): ComposerContextId =>
+  toKindScopedComposerContextId(PLUGIN_CONTEXT_KIND, `${environmentId}:${pluginId}:${itemId}`);
+
+function findPluginMentionItem(contextId: string): PluginMentionItem | undefined {
+  for (const items of mentionItems.values()) {
+    const item = items.find((candidate) => candidate.contextId === contextId);
+    if (item !== undefined) return item;
+  }
+  return undefined;
+}
+
+/** The item a chip refers to, or undefined once its plugin removed it or unloaded. */
+export const pluginMentionItemAtom = Atom.family((contextId: string) =>
+  Atom.make((get) => {
+    get(mentionItemsVersionAtom);
+    return findPluginMentionItem(contextId);
+  }),
+);
+
+/**
+ * Records for the plugin chips in a message, read when it is sent so the agent gets each item's
+ * current text. A chip whose item is gone has no record and reaches the agent as unavailable.
+ */
+export function pluginMentionContextRecords(prompt: string): UnknownContextRecord[] {
+  if (mentionItems.size === 0) return [];
+  const records = new Map<string, UnknownContextRecord>();
+  for (const reference of collectComposerContextReferences(prompt)) {
+    if (reference.kind !== PLUGIN_CONTEXT_KIND || records.has(reference.contextId)) continue;
+    const item = findPluginMentionItem(reference.contextId);
+    if (item === undefined) continue;
+    records.set(reference.contextId, {
+      version: 1,
+      kind: PLUGIN_CONTEXT_KIND,
+      contextId: item.contextId,
+      label: reference.label,
+      payload: { plugin: item.pluginName, text: item.text },
+    });
+  }
+  return [...records.values()];
+}

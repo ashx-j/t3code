@@ -213,8 +213,9 @@ export interface WebPluginApi {
     /** Adds a command to the composer's `/` menu. */
     readonly registerSlashCommand: (command: WebPluginSlashCommand) => void;
     /**
-     * Offers items in the composer's `@` menu, matched against what the user types; picking one
-     * inserts its `text` into the message. Each call replaces the plugin's list.
+     * Offers items in the composer's `@` menu, matched against what the user types. A picked item
+     * shows as a chip, and the agent gets its `text`, as it is when the message is sent, beside
+     * the message. Each call replaces the plugin's list.
      */
     readonly setMentionItems: (
       items: ReadonlyArray<{
@@ -222,7 +223,7 @@ export interface WebPluginApi {
         readonly id: string;
         readonly label: string;
         readonly description?: string;
-        /** Inserted into the message in place of the typed `@query`. */
+        /** What the agent reads for the chip. */
         readonly text: string;
       }>,
     ) => void;
