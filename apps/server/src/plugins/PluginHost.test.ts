@@ -436,7 +436,7 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
           Effect.provideService(SourceControlDrivers.SourceControlDrivers, []),
           Effect.provideService(SourceControlDrivers.SourceControlPluginDrivers, pluginDrivers),
         );
-        assert.deepStrictEqual(pullRequests.kinds, [kind]);
+        assert.deepStrictEqual(pullRequests.kinds, [SourceControlProviderKind.make("examplegit")]);
         const provider = pullRequests.get(SourceControlProviderKind.make("examplegit"));
         assert.strictEqual(
           yield* provider!.getViewer({ cwd: process.cwd(), host: "git.example.test" }),
