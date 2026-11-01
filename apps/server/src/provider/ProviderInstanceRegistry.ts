@@ -1,4 +1,5 @@
 import {
+  defaultInstanceIdForDriver,
   providerInstanceConfigEnabledFlag,
   ProviderInstanceId,
   type ProviderInstanceConfig,
@@ -14,7 +15,6 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
@@ -61,8 +61,43 @@ interface RegistryState {
   readonly changes: PubSub.PubSub<void>;
 }
 
+/** A driver for this kind already exists: built-ins cannot be replaced, and a kind has one plugin. */
+export class ProviderDriverKindTakenError extends Schema.TaggedError<ProviderDriverKindTakenError>()(
+  "ProviderDriverKindTakenError",
+  { driverKind: Schema.String, builtIn: Schema.Boolean },
+) {
+  override get message(): string {
+    return this.builtIn
+      ? `'${this.driverKind}' is a built-in provider driver and cannot be replaced.`
+      : `Another plugin already provides the '${this.driverKind}' provider driver.`;
+  }
+}
+
 const entryEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boolean =>
   Equal.equals(a, b);
+
+/**
+ * The saved instances plus a default instance for each added driver that has none, as
+ * `deriveProviderInstanceConfigMap` gives built-ins one, so a provider plugin shows up when it
+ * loads.
+ */
+const withAddedDriverDefaults = <R>(
+  configMap: ProviderInstanceConfigMap,
+  driversById: ReadonlyMap<ProviderDriverKind, AnyProviderDriver<R>>,
+  builtInKinds: ReadonlySet<ProviderDriverKind>,
+): ProviderInstanceConfigMap => {
+  let merged: Record<string, ProviderInstanceConfig> | undefined;
+  for (const driver of driversById.values()) {
+    if (builtInKinds.has(driver.driverKind) || driver.metadata.hasDefaultInstance === false) {
+      continue;
+    }
+    const instanceId = defaultInstanceIdForDriver(driver.driverKind);
+    if (instanceId in configMap) continue;
+    merged ??= { ...configMap };
+    merged[instanceId] = { driver: driver.driverKind };
+  }
+  return merged === undefined ? configMap : (merged as ProviderInstanceConfigMap);
+};
 
 const secretReferencesIn = (environment: ProviderInstanceEnvironment): Array<SecretReference> =>
   environment.flatMap((variable) => (typeof variable.value === "string" ? [] : [variable.value]));
@@ -273,16 +308,19 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
 
 const makeReconcile = <R>(input: {
   readonly state: RegistryState;
-  readonly driversById: ReadonlyMap<ProviderDriverKind, AnyProviderDriver<R>>;
+  readonly drivers: Ref.Ref<ReadonlyMap<ProviderDriverKind, AnyProviderDriver<R>>>;
+  readonly builtInKinds: ReadonlySet<ProviderDriverKind>;
   readonly parentScope: Scope.Scope;
 }): ((
   configMap: ProviderInstanceConfigMap,
   rebuild?: ReadonlySet<ProviderInstanceId>,
   deferSecrets?: boolean,
 ) => Effect.Effect<void, never, R | SecretResolver.SecretResolver>) => {
-  const { state, driversById, parentScope } = input;
-  return (configMap, rebuild = new Set(), deferSecrets = false) =>
+  const { state, parentScope } = input;
+  return (savedConfigMap, rebuild = new Set(), deferSecrets = false) =>
     Effect.gen(function* () {
+      const driversById = yield* Ref.get(input.drivers);
+      const configMap = withAddedDriverDefaults(savedConfigMap, driversById, input.builtInKinds);
       const previousEntries = yield* Ref.get(state.entries);
       const previousUnavailable = yield* Ref.get(state.unavailable);
       const nextRaw = Object.entries(configMap);
@@ -406,13 +444,24 @@ export const makeProviderInstanceRegistry = Effect.fn(
   {
     readonly registry: ProviderInstanceRegistry["Service"];
     readonly mutator: ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutatorShape;
+    /**
+     * Adds a driver after startup and rebuilds the instances that use it, including one saved
+     * while it was missing. The returned effect removes it again, leaving those instances
+     * unavailable. Built-in kinds cannot be replaced.
+     */
+    readonly addDriver: (
+      driver: AnyProviderDriver<R>,
+    ) => Effect.Effect<Effect.Effect<void>, ProviderDriverKindTakenError>;
   },
   never,
   R | SecretResolver.SecretResolver | Scope.Scope
 > {
-  const driversById = new Map<ProviderDriverKind, AnyProviderDriver<R>>(
-    input.drivers.map((driver) => [driver.driverKind, driver]),
+  const builtInKinds = new Set(input.drivers.map((driver) => driver.driverKind));
+  // Plugins add drivers after startup; only reconcile and secret reads look them up.
+  const drivers = yield* Ref.make<ReadonlyMap<ProviderDriverKind, AnyProviderDriver<R>>>(
+    new Map(input.drivers.map((driver) => [driver.driverKind, driver])),
   );
+  const driversById = yield* Ref.get(drivers);
 
   // Capture the enclosing scope so per-instance child scopes can be
   // attached to it at `reconcile` time. Without this, `reconcile`
@@ -428,7 +477,7 @@ export const makeProviderInstanceRegistry = Effect.fn(
   yield* Effect.addFinalizer(() => PubSub.shutdown(changes));
 
   const state: RegistryState = { entries, unavailable, changes };
-  const reconcileWithR = makeReconcile({ state, driversById, parentScope });
+  const reconcileWithR = makeReconcile({ state, drivers, builtInKinds, parentScope });
   const configMapRef = yield* Ref.make(input.configMap);
   const semaphore = yield* Semaphore.make(1);
   const reconcile: ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutatorShape["reconcile"] =
@@ -446,6 +495,7 @@ export const makeProviderInstanceRegistry = Effect.fn(
     Effect.fn("ProviderInstanceRegistry.reloadSecrets")(
       function* (instanceId) {
         const configMap = yield* Ref.get(configMapRef);
+        const driversById = yield* Ref.get(drivers);
         const targets = yield* Effect.filter(Object.entries(configMap), ([rawInstanceId, entry]) =>
           (instanceId === undefined || rawInstanceId === instanceId) &&
           secretReferencesOf(driversById, entry).length > 0
@@ -529,27 +579,42 @@ export const makeProviderInstanceRegistry = Effect.fn(
     reloadSecrets,
   };
 
-  return { registry, mutator };
-});
+  // Rebuilds the live instances of one kind against the current drivers; unavailable ones are
+  // rebuilt by every reconcile anyway.
+  const reconcileKind = (driverKind: ProviderDriverKind) =>
+    semaphore.withPermits(1)(
+      Effect.gen(function* () {
+        const live = yield* Ref.get(entries);
+        const rebuild = new Set(
+          [...live].flatMap(([instanceId, entry]) =>
+            entry.instance.driverKind === driverKind ? [instanceId] : [],
+          ),
+        );
+        yield* reconcileWithR(yield* Ref.get(configMapRef), rebuild);
+      }).pipe(Effect.provideContext(driverContext)),
+    );
 
-export const layer = <R>(input: {
-  readonly drivers: ReadonlyArray<AnyProviderDriver<R>>;
-  readonly configMap: ProviderInstanceConfigMap;
-}): Layer.Layer<
-  ProviderInstanceRegistry | ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
-  never,
-  R | SecretResolver.SecretResolver
-> =>
-  Layer.effectContext(
-    makeProviderInstanceRegistry(input).pipe(
-      Effect.map(({ registry, mutator }) =>
-        Context.make(ProviderInstanceRegistry, registry).pipe(
-          Context.add(ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator, mutator),
-        ),
-      ),
-    ),
-  ) as Layer.Layer<
-    ProviderInstanceRegistry | ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
-    never,
-    R | SecretResolver.SecretResolver
-  >;
+  const addDriver = Effect.fn("ProviderInstanceRegistry.addDriver")(function* (
+    driver: AnyProviderDriver<R>,
+  ) {
+    const kind = driver.driverKind;
+    const added = yield* Ref.modify(drivers, (current) =>
+      current.has(kind) ? [false, current] : [true, new Map(current).set(kind, driver)],
+    );
+    if (!added) {
+      return yield* new ProviderDriverKindTakenError({
+        driverKind: kind,
+        builtIn: builtInKinds.has(kind),
+      });
+    }
+    yield* reconcileKind(kind);
+    return Ref.update(drivers, (current) => {
+      if (current.get(kind) !== driver) return current;
+      const next = new Map(current);
+      next.delete(kind);
+      return next;
+    }).pipe(Effect.andThen(reconcileKind(kind)));
+  });
+
+  return { registry, mutator, addDriver };
+});

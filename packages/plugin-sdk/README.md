@@ -60,7 +60,10 @@ module.exports = {
 - send hooks that add to, replace or block a message, and slash commands that run on the server;
 - answers to agents' approvals and questions, instructions for agents, and MCP tools for agents;
 - the text T3 Code generates, such as thread titles and commit messages;
-- HTTP routes, schedules and server info.
+- HTTP routes, schedules and server info;
+- provider drivers, built with `api.providers.runtime` and typed with
+  `@t3tools/plugin-sdk/server/providers`. These follow T3 Code's internal provider packages, which
+  change with every nightly, so build a provider plugin against the T3 Code version it runs on.
 
 Everything a plugin registers is released when it is disabled, reloaded or uninstalled; add your
 own cleanup with `api.onDeactivate`.

@@ -20,7 +20,8 @@ after it unloads, so one stuck or slow plugin cannot hold the others.
 ## The plugin API is plain JavaScript
 
 The server bundle inlines `effect`, so plugins never share the host's Effect runtime or `Schema`
-instances. They get Promises, `AsyncIterable` streams and `AbortSignal` cancellation, never Effect.
+instances. They get Promises, `AsyncIterable` streams and `AbortSignal` cancellation, never Effect,
+except for provider drivers (below).
 
 ## Server entries are CommonJS
 
@@ -138,6 +139,24 @@ clients drop them from paged threads, while a note inside a running turn would s
 
 The `t3_plugins_*` management tools live in `PluginMcpTools`, but the host depends on that service,
 so the host hands it its actions when it starts.
+
+## Provider drivers
+
+Provider drivers are Effect code that the server runs inside its own runtime, so this is the one
+place plugins use Effect. The server bundles its own copy of `effect`, and a copy a plugin
+imports would only work while both are the same version. A driver is built with the modules in
+`api.providers.runtime` instead, and its types come from `@t3tools/plugin-sdk/server/providers`,
+which re-exports T3's provider packages. Those change with every nightly, so a provider plugin
+tracks one T3 version.
+
+The instance registry keeps its drivers in a `Ref` seeded with the built-ins, read only by
+reconcile and secret reloads, never per turn. Adding a driver rebuilds instances saved for its
+kind, which stay as unavailable entries while no driver exists, and gives it a default instance
+the way built-ins get one. Removing it leaves those instances unavailable. Built-in kinds cannot
+be replaced. Registration is a hydration service rather than a mutator method because only there
+is the drivers' service type concrete, so plugin drivers get the services built-ins get. The
+host turns defects in a plugin's driver into driver errors, because the registry reports those
+as an unavailable instance and a defect would stop a reconcile.
 
 ## Installing
 

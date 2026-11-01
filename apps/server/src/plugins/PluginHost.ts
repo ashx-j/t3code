@@ -46,6 +46,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ProviderDriverRegistration from "../provider/ProviderDriverRegistration.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -369,6 +370,7 @@ const make = Effect.gen(function* () {
     launches: yield* ThreadLaunchService.ThreadLaunchService,
     projectService: yield* ProjectService.ProjectService,
     providers: yield* ProviderRegistry.ProviderRegistry,
+    providerDrivers: yield* ProviderDriverRegistration.ProviderDriverRegistration,
     hooks: yield* PluginHooks.PluginHooks,
     runtimeRequests: makeRuntimeRequestHooks({ context, orchestrator, threads, crypto }),
     mcpTools: yield* PluginMcpTools.PluginMcpTools,

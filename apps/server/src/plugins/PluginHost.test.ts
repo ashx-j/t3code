@@ -5,10 +5,12 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   AuthOrchestrationOperateScope,
+  defaultInstanceIdForDriver,
   AuthOrchestrationReadScope,
   EnvironmentId,
   PluginId,
   ProjectId,
+  ProviderDriverKind,
   RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ServerCommand,
@@ -18,13 +20,17 @@ import {
   ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
+import type { PluginProviderDriverEnv } from "@t3tools/plugin-sdk/server/providers";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import type * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -41,6 +47,8 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ProviderDriverRegistration from "../provider/ProviderDriverRegistration.ts";
+import { makeProviderInstanceRegistry } from "../provider/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -56,6 +64,7 @@ import { withPluginTextGeneration } from "./pluginTextGeneration.ts";
 
 // None of these messages replays an accepted command.
 const notAccepted = Effect.succeed(false);
+const echoAgent = ProviderDriverKind.make("echoAgent");
 const fixturesDir = new URL("../../../../packages/plugin-sdk/fixtures/", import.meta.url).pathname;
 const hello = PluginId.make("hello-plugin");
 const broken = PluginId.make("broken-plugin");
@@ -69,6 +78,7 @@ const layerUnusedLaunchServices = Layer.mergeAll(
   Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
   Layer.mock(ProjectService.ProjectService)({}),
   Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+  Layer.mock(ProviderDriverRegistration.ProviderDriverRegistration)({}),
 );
 
 // Orchestration services the lifecycle tests never reach.
@@ -330,6 +340,54 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
     }).pipe(Effect.provide(layerConfig())),
   );
 
+  it.effect("starts a plugin's provider driver and removes it when the plugin is turned off", () =>
+    Effect.gen(function* () {
+      const providerPlugin = PluginId.make("provider-plugin");
+      yield* writePluginsConfig({
+        enabled: { [providerPlugin]: true },
+        devPaths: [`${fixturesDir}provider-plugin`],
+      });
+      const { registry, addDriver } = yield* makeProviderInstanceRegistry<PluginProviderDriverEnv>({
+        drivers: [],
+        configMap: {},
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            TestProviderHost.layer(),
+            Layer.succeed(SecretResolver.SecretResolver, {
+              read: () => Effect.succeed([]),
+              invalidate: () => Effect.void,
+            }),
+          ),
+        ),
+      );
+      const services = Layer.mergeAll(
+        layerUnusedServices,
+        Layer.succeed(ProviderDriverRegistration.ProviderDriverRegistration, {
+          // Plugin drivers need only the plugin driver services this registry provides.
+          add: addDriver as ProviderDriverRegistration.ProviderDriverRegistration["Service"]["add"],
+        }),
+      );
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        // Activation waits for the driver the fixture registers.
+        yield* waitForStatuses(host, { [providerPlugin]: "active" });
+        const [instance] = yield* registry.listInstances;
+        assert.strictEqual(instance?.instanceId, defaultInstanceIdForDriver(echoAgent));
+        assert.include(yield* instance!.snapshot.getSnapshot, {
+          driver: echoAgent,
+          displayName: "Echo agent",
+          status: "ready",
+        });
+
+        const changes = yield* registry.subscribeChanges;
+        yield* host.setEnabled(providerPlugin, false);
+        yield* PubSub.take(changes);
+        assert.deepStrictEqual(yield* registry.listInstances, []);
+      }).pipe(Effect.provide(layerHost(services)));
+    }).pipe(Effect.provide(layerConfig()), Effect.scoped),
+  );
+
   it.effect("reload picks up a changed manifest and changed code", () =>
     Effect.gen(function* () {
       const rootDir = yield* writeInstalledPlugin(
@@ -532,6 +590,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
             }),
         }),
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderDriverRegistration.ProviderDriverRegistration)({}),
         Layer.mock(Orchestrator.OrchestratorV2)({
           streamStoredEventsFrom: () => Stream.never,
           streamDomainEvents: Stream.fromQueue(domainEvents),

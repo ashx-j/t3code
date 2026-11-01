@@ -1598,12 +1598,21 @@ importers:
 
   packages/plugin-sdk:
     devDependencies:
+      '@t3tools/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@t3tools/provider-core':
+        specifier: workspace:*
+        version: link:../provider-core
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
       '@types/react':
         specifier: 'catalog:'
         version: 19.3.0
+      effect:
+        specifier: 4.0.5
+        version: 4.0.5
       react:
         specifier: 'catalog:'
         version: 19.3.0
