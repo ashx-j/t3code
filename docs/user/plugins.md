@@ -70,6 +70,9 @@ A plugin can give Claude and Codex agents extra instructions and skills, from th
 session while the plugin is on. Its skills appear in the composer's `$` menu with the plugin's name
 for those agents. Other agents don't get them yet.
 
+A plugin can give agents new tools. Agents in threads started after you turn the plugin on see
+them; a thread that is already running keeps the tools it started with.
+
 A plugin can also write the text T3 Code usually generates with a model: thread titles, commit
 messages, pull request titles and descriptions, branch names and review guides. When it has
 nothing to offer, T3 Code generates the text as usual.
