@@ -46,6 +46,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import { parseSkillFrontmatter } from "../provider/Drivers/ClaudeSkills.ts";
 import * as ProviderDriverRegistration from "../provider/ProviderDriverRegistration.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
@@ -430,14 +431,18 @@ const make = Effect.gen(function* () {
       yield* environmentThemes.setPluginThemeDirectories(
         active.map((plugin) => path.join(plugin.rootDir, "themes")),
       );
+      const withSkills = yield* Effect.filter(
+        active.map((plugin) => {
+          const folder = agentFolderOf(plugin.id);
+          return { plugin, folder: { plugin: folder, skills: path.join(folder, "skills") } };
+        }),
+        ({ folder }) => fs.exists(folder.skills).pipe(Effect.orElseSucceed(() => false)),
+      );
       yield* services.hooks.setSkillFolders(
-        yield* Effect.filter(
-          active.map((plugin) => {
-            const folder = agentFolderOf(plugin.id);
-            return { plugin: folder, skills: path.join(folder, "skills") };
-          }),
-          (folder) => fs.exists(folder.skills).pipe(Effect.orElseSucceed(() => false)),
-        ),
+        withSkills.map(({ folder }) => folder),
+        (yield* Effect.forEach(withSkills, ({ plugin, folder }) =>
+          skillsIn(plugin, folder.skills),
+        )).flat(),
       );
       yield* PubSub.publish(changes, states);
     }),
@@ -598,6 +603,44 @@ const make = Effect.gen(function* () {
     }
   });
 
+  // Read when plugins change, so provider lists name each skill without reading files.
+  const skillsIn = (plugin: DiscoveredPlugin, skillsDir: string) =>
+    fs.readDirectory(skillsDir).pipe(
+      Effect.orElseSucceed((): ReadonlyArray<string> => []),
+      Effect.flatMap((folders) =>
+        Effect.forEach(folders.toSorted(), (folder) => {
+          const skillPath = path.join(skillsDir, folder, "SKILL.md");
+          return fs.readFileString(skillPath).pipe(
+            Effect.map((contents): ReadonlyArray<PluginHooks.PluginSkill> => {
+              const frontmatter = parseSkillFrontmatter(contents);
+              // Agents cannot load a skill they cannot parse, and agent-only skills stay unlisted.
+              if (
+                frontmatter.kind === "malformed" ||
+                (frontmatter.kind === "parsed" && frontmatter.userInvocable === false)
+              ) {
+                return [];
+              }
+              return [
+                {
+                  pluginId: plugin.id,
+                  pluginName: manifestOf(plugin)?.name ?? plugin.id,
+                  folder,
+                  path: skillPath,
+                  ...(frontmatter.kind === "parsed" && frontmatter.name !== undefined
+                    ? { name: frontmatter.name }
+                    : {}),
+                  ...(frontmatter.kind === "parsed" && frontmatter.description !== undefined
+                    ? { description: frontmatter.description }
+                    : {}),
+                },
+              ];
+            }),
+            Effect.orElseSucceed((): ReadonlyArray<PluginHooks.PluginSkill> => []),
+          );
+        }),
+      ),
+      Effect.map((lists) => lists.flat()),
+    );
   const removeAgentFolder = (pluginId: PluginId) =>
     fs.remove(agentFolderOf(pluginId), { recursive: true, force: true }).pipe(Effect.ignore);
   const prepareAgentFolder = Effect.fn("PluginHost.prepareAgentFolder")(

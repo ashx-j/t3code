@@ -1735,9 +1735,12 @@ export const layerWsRpc = (
         readonly workspaceSnapshotsOnDemand: boolean;
       }) {
         const keybindingsConfig = yield* keybindings.loadConfigState;
-        const currentProviders = PluginHooks.withPluginSlashCommands(
-          yield* providerRegistry.getProviders,
-          yield* pluginHooks.currentSlashCommands,
+        const currentProviders = PluginHooks.withPluginSkills(
+          PluginHooks.withPluginSlashCommands(
+            yield* providerRegistry.getProviders,
+            yield* pluginHooks.currentSlashCommands,
+          ),
+          yield* pluginHooks.currentSkills,
         );
         const commandProviders = options.usageLimitsCommand
           ? withUsageLimitsCommands(currentProviders, yield* usageLimitSources.current)
@@ -2362,9 +2365,12 @@ export const layerWsRpc = (
                 providers = yield* providerRegistry.refreshInstance(instance.instanceId);
               }
             }
-            const pluginProviders = PluginHooks.withPluginSlashCommands(
-              providers,
-              yield* pluginHooks.currentSlashCommands,
+            const pluginProviders = PluginHooks.withPluginSkills(
+              PluginHooks.withPluginSlashCommands(
+                providers,
+                yield* pluginHooks.currentSlashCommands,
+              ),
+              yield* pluginHooks.currentSkills,
             );
             if (input.workspaceSnapshotsOnDemand !== true) return { providers: pluginProviders };
             const commandProviders =
@@ -3132,12 +3138,16 @@ export const layerWsRpc = (
               const providerStatuses = Stream.zipLatestWith(
                 // Seed the changes-only stream so early source refreshes pair with current providers.
                 Stream.zipLatestWith(
-                  Stream.concat(
-                    Stream.fromEffect(providerRegistry.getProviders),
-                    providerRegistry.streamChanges,
+                  Stream.zipLatestWith(
+                    Stream.concat(
+                      Stream.fromEffect(providerRegistry.getProviders),
+                      providerRegistry.streamChanges,
+                    ),
+                    pluginHooks.slashCommands,
+                    PluginHooks.withPluginSlashCommands,
                   ),
-                  pluginHooks.slashCommands,
-                  PluginHooks.withPluginSlashCommands,
+                  pluginHooks.skills,
+                  PluginHooks.withPluginSkills,
                 ),
                 usageLimitSources.streamChanges.pipe(
                   Stream.changesWith(

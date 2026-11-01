@@ -134,8 +134,11 @@ gets the instructions as `application` context entries and the `skills` folders 
 `skills/extraRoots/set`, sent only when they change. The ACP agents (Grok, Antigravity, Fx),
 OpenCode, Cursor, Pi and Muse are not wired: each puts T3's own text in its own place, so each
 needs its own change, and none takes a skill folder from T3. Claude starts a process with its
-options, so a change reaches a Claude thread when its next process starts. The composer's `$`
-picker lists what each provider discovers, which does not include plugin skills yet.
+options, so a change reaches a Claude thread when its next process starts. The `$` picker reads
+each provider's skill list, so the host reads the skills' frontmatter when plugin states change and
+the server adds them to the Claude and Codex lists where it adds plugin slash commands, under the
+name each invokes: Claude namespaces a `--plugin-dir` folder's skills by its manifest name, and the
+adapter's skill dispatch reads the turn's plugin folders so `$<id>:<skill>` becomes `/<id>:<skill>`.
 
 `threads.notify` and slash command replies are the plugin changes inside `Orchestrator.ts`, each
 one internal command, because every `message.dispatch` starts a run. A note

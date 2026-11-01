@@ -347,8 +347,36 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
         );
         assert.isTrue(yield* fs.exists(`${agentFolder}/skills/release-notes/SKILL.md`));
 
+        // The `$` picker lists the skill for the providers that receive it, by each one's name.
+        const listed = PluginHooks.withPluginSkills(
+          [
+            {
+              driver: "claudeAgent",
+              skills: [],
+              workspaceSnapshots: [{ cwd: "/repo", skills: [] }],
+            },
+            { driver: "codex", skills: [] },
+            { driver: "cursor", skills: [] },
+          ] as unknown as ReadonlyArray<ServerProvider>,
+          yield* hooks.currentSkills,
+        );
+        const skill = {
+          path: `${agentFolder}/skills/release-notes/SKILL.md`,
+          enabled: true,
+          scope: "plugin",
+          displayName: "Release helper: release-notes",
+          description: "Drafts release notes from the commits since the last tag.",
+        };
+        const claudeSkill = { name: "skills-plugin:release-notes", ...skill };
+        assert.deepStrictEqual(
+          listed.map((provider) => provider.skills),
+          [[claudeSkill], [{ name: "release-notes", ...skill }], []],
+        );
+        assert.deepStrictEqual(listed[0]?.workspaceSnapshots?.[0]?.skills, [claudeSkill]);
+
         yield* host.setEnabled(skills, false);
         assert.isUndefined(yield* hooks.agentContext);
+        assert.deepStrictEqual(yield* hooks.currentSkills, []);
         assert.isFalse(yield* fs.exists(agentFolder));
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),

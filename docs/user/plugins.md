@@ -67,7 +67,8 @@ commands, in every app. A plugin's command runs on the server. It can send the a
 plugin prepares, stop with a reason, or answer you in the thread without asking the agent.
 
 A plugin can give Claude and Codex agents extra instructions and skills, from their next turn or
-session while the plugin is on. Other agents don't get them yet.
+session while the plugin is on. Its skills appear in the composer's `$` menu with the plugin's name
+for those agents. Other agents don't get them yet.
 
 A plugin can also write the text T3 Code usually generates with a model: thread titles, commit
 messages, pull request titles and descriptions, branch names and review guides. When it has
