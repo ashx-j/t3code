@@ -374,11 +374,14 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
         yield* waitForStatuses(host, { [providerPlugin]: "active" });
         const [instance] = yield* registry.listInstances;
         assert.strictEqual(instance?.instanceId, defaultInstanceIdForDriver(echoAgent));
-        assert.include(yield* instance!.snapshot.getSnapshot, {
-          driver: echoAgent,
-          displayName: "Echo agent",
-          status: "ready",
+        const snapshot = yield* instance!.snapshot.getSnapshot;
+        assert.include(snapshot, { driver: echoAgent, displayName: "Echo agent", status: "ready" });
+        // Clients have no definition for a plugin's driver, so its snapshot describes its form.
+        assert.deepStrictEqual(snapshot.settingsSchema, {
+          type: "object",
+          properties: { greeting: { type: "string", title: "Greeting" } },
         });
+        assert.match(snapshot.iconUrl ?? "", /^data:image\/svg\+xml,/);
 
         const changes = yield* registry.subscribeChanges;
         yield* host.setEnabled(providerPlugin, false);

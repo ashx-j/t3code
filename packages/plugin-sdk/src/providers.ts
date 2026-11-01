@@ -30,6 +30,8 @@ import type * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import type * as Stream from "effect/Stream";
 
+import type { JsonObject } from "./shared.ts";
+
 export type {
   ProviderDriverCreateInput,
   ProviderDriverMetadata,
@@ -49,7 +51,19 @@ export type PluginProviderDriverEnv =
 export type PluginProviderDriver<Config = unknown> = ProviderDriverModule.ProviderDriver<
   Config,
   PluginProviderDriverEnv
->;
+> & {
+  /** What clients show for this driver, since they have no built-in definition for it. */
+  readonly client?: {
+    /**
+     * JSON Schema of an instance's `config`, in the subset plugin settings use (an object of
+     * strings, numbers, booleans, enums and string lists); clients draw the settings form from it.
+     * Put secrets in the instance's environment variables, not here.
+     */
+    readonly settingsSchema?: JsonObject;
+    /** An https or small data URL of at most 2,048 characters. */
+    readonly iconUrl?: string;
+  };
+};
 
 /**
  * T3 Code's own Effect and provider modules. The server bundles its own copy of `effect`, so a

@@ -23,6 +23,13 @@ module.exports = {
       driverKind,
       metadata: { displayName: "Echo agent" },
       configSchema: Schema.Struct({ greeting: Schema.optional(Schema.String) }),
+      client: {
+        settingsSchema: {
+          type: "object",
+          properties: { greeting: { type: "string", title: "Greeting" } },
+        },
+        iconUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E",
+      },
       defaultConfig: () => ({}),
       create: ({ instanceId, displayName, accentColor, enabled }) =>
         Effect.sync(() => {

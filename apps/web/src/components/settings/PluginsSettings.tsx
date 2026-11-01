@@ -1,12 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
-import {
-  type PluginSettingsField,
-  pluginSettingsForm,
-} from "@t3tools/client-runtime/plugins/settings-form";
+import { pluginSettingsForm } from "@t3tools/client-runtime/plugins/settings-form";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, PluginInstallSource, PluginState } from "@t3tools/contracts";
-import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
+import type * as Schema from "effect/Schema";
 import {
   DownloadIcon,
   PuzzleIcon,
@@ -34,7 +30,7 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
-import { Textarea } from "../ui/textarea";
+import { JsonSchemaSettingsForm } from "./JsonSchemaSettingsForm";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 
@@ -520,57 +516,6 @@ function PluginSettingsEditor({
   );
 }
 
-type Draft = Readonly<Record<string, string | boolean>>;
-
-const draftValue = (field: PluginSettingsField, value: Schema.Json | undefined) => {
-  switch (field.kind) {
-    case "boolean":
-      return typeof value === "boolean" ? value : (field.defaultValue ?? false);
-    case "secret":
-      return "";
-    case "list":
-      return Array.isArray(value) ? value.join("\n") : "";
-    default:
-      return typeof value === "string" || typeof value === "number" ? String(value) : "";
-  }
-};
-
-/** The changed fields as a settings patch, or the first problem a user can fix before saving. */
-const toPatch = (
-  fields: ReadonlyArray<PluginSettingsField>,
-  saved: Draft,
-  draft: Draft,
-): { readonly patch: Schema.JsonObject } | { readonly problem: string } => {
-  const patch: Record<string, Schema.Json> = {};
-  for (const field of fields) {
-    const value = draft[field.key];
-    if (value === saved[field.key] || value === undefined) continue;
-    if (typeof value === "boolean") {
-      patch[field.key] = value;
-    } else if (field.kind === "secret") {
-      if (value !== "") patch[field.key] = value;
-    } else if (value.trim() === "") {
-      patch[field.key] = null;
-    } else if (field.kind === "number") {
-      const parsed = Number(value);
-      if (!Number.isFinite(parsed)) return { problem: `${field.label} must be a number.` };
-      patch[field.key] = parsed;
-    } else if (field.kind === "select") {
-      patch[field.key] = field.options.find((option) => String(option) === value) ?? value;
-    } else if (field.kind === "list") {
-      patch[field.key] = value
-        .split("\n")
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0);
-    } else {
-      patch[field.key] = value;
-    }
-  }
-  return { patch };
-};
-
-const parseJsonObject = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.JsonObject));
-
 function PluginSettingsFormView({
   environmentId,
   plugin,
@@ -580,8 +525,6 @@ function PluginSettingsFormView({
   readonly plugin: PluginState;
   readonly initialSettings: Schema.JsonObject;
 }) {
-  const form = pluginSettingsForm(plugin.settingsSchema);
-  const fields = form.kind === "fields" ? form.fields : [];
   const update = useAtomCommand(pluginEnvironment.updatePluginSettings, {
     label: "plugin settings",
     reportFailure: false,
@@ -589,135 +532,21 @@ function PluginSettingsFormView({
   const canSave = useAtomValue(
     pluginEnvironment.updatePluginSettings.permissionAtom(environmentId),
   );
-  const toDraft = (settings: Schema.JsonObject): Draft =>
-    Object.fromEntries(fields.map((field) => [field.key, draftValue(field, settings[field.key])]));
-  const [savedSettings, setSavedSettings] = useState(initialSettings);
-  const [saved, setSaved] = useState(() => toDraft(initialSettings));
-  const [draft, setDraft] = useState(saved);
-  const [json, setJson] = useState(() => JSON.stringify(initialSettings, null, 2));
-  const [problem, setProblem] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const save = async () => {
-    const next =
-      form.kind === "json"
-        ? (() => {
-            const parsed = parseJsonObject(json);
-            return Option.isSome(parsed)
-              ? { patch: parsed.value }
-              : { problem: "Settings must be a JSON object." };
-          })()
-        : toPatch(fields, saved, draft);
-    if ("problem" in next) return setProblem(next.problem);
-    setBusy(true);
-    const result = await update({
-      environmentId,
-      input: { pluginId: plugin.id, patch: next.patch },
-    });
-    setBusy(false);
-    if (result._tag === "Failure") {
-      const error = squashAtomCommandFailure(result);
-      return setProblem(error instanceof Error ? error.message : "Could not save the settings.");
-    }
-    setProblem(null);
-    setSavedSettings(result.value.settings);
-    const savedDraft = toDraft(result.value.settings);
-    setSaved(savedDraft);
-    setDraft(savedDraft);
-    setJson(JSON.stringify(result.value.settings, null, 2));
-  };
-
   return (
-    <div className="space-y-3 border-t py-3">
-      {form.kind === "json" ? (
-        <Textarea
-          aria-label={`${plugin.name} settings JSON`}
-          rows={8}
-          value={json}
-          onChange={(event) => setJson(event.target.value)}
-        />
-      ) : (
-        fields.map((field) => (
-          <PluginSettingsFieldView
-            key={field.key}
-            field={field}
-            value={draft[field.key]}
-            hasSecret={savedSettings[field.key] !== undefined}
-            onChange={(value) => setDraft((current) => ({ ...current, [field.key]: value }))}
-          />
-        ))
-      )}
-      {problem ? <p className="text-xs text-destructive">{problem}</p> : null}
-      <div className="flex justify-end">
-        <Button size="sm" disabled={busy || !canSave} onClick={() => void save()}>
-          Save
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function PluginSettingsFieldView({
-  field,
-  value,
-  hasSecret,
-  onChange,
-}: {
-  readonly field: PluginSettingsField;
-  readonly value: string | boolean | undefined;
-  readonly hasSecret: boolean;
-  readonly onChange: (value: string | boolean) => void;
-}) {
-  const id = `plugin-setting-${field.key}`;
-  const text = typeof value === "string" ? value : "";
-  return (
-    <div className="space-y-1">
-      <Label htmlFor={id}>
-        {field.label}
-        {field.required ? " *" : ""}
-      </Label>
-      {field.description ? (
-        <p className="text-xs text-muted-foreground">{field.description}</p>
-      ) : null}
-      {field.kind === "boolean" ? (
-        <Switch id={id} checked={value === true} onCheckedChange={onChange} />
-      ) : field.kind === "select" ? (
-        <Select value={text} onValueChange={(next) => typeof next === "string" && onChange(next)}>
-          <SelectTrigger id={id} size="sm" aria-label={field.label}>
-            <SelectValue>{text}</SelectValue>
-          </SelectTrigger>
-          <SelectPopup align="start" alignItemWithTrigger={false}>
-            {field.options.map((option) => (
-              <SelectItem key={String(option)} value={String(option)}>
-                {String(option)}
-              </SelectItem>
-            ))}
-          </SelectPopup>
-        </Select>
-      ) : field.kind === "list" ? (
-        <Textarea
-          id={id}
-          rows={3}
-          placeholder="One value per line"
-          value={text}
-          onChange={(event) => onChange(event.target.value)}
-        />
-      ) : (
-        <Input
-          id={id}
-          type={field.kind === "secret" ? "password" : field.kind === "number" ? "number" : "text"}
-          autoComplete="off"
-          placeholder={
-            field.kind === "secret"
-              ? hasSecret
-                ? "Saved. Type to replace."
-                : "Not set"
-              : undefined
-          }
-          value={text}
-          onChange={(event) => onChange(event.target.value)}
-        />
-      )}
-    </div>
+    <JsonSchemaSettingsForm
+      idPrefix={`plugin-setting-${plugin.id}`}
+      label={plugin.name}
+      schema={plugin.settingsSchema}
+      settings={initialSettings}
+      canSave={canSave}
+      onSave={async (patch) => {
+        const result = await update({ environmentId, input: { pluginId: plugin.id, patch } });
+        if (result._tag === "Success") return { settings: result.value.settings };
+        const error = squashAtomCommandFailure(result);
+        return {
+          problem: error instanceof Error ? error.message : "Could not save the settings.",
+        };
+      }}
+    />
   );
 }

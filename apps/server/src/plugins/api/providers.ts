@@ -1,4 +1,4 @@
-import { ProviderDriverKind, TextGenerationError } from "@t3tools/contracts";
+import { ProviderDriverKind, type ServerProvider, TextGenerationError } from "@t3tools/contracts";
 import type { PluginApi } from "@t3tools/plugin-sdk/server";
 import type {
   PluginProviderDriver,
@@ -8,6 +8,7 @@ import type {
 import {
   type AnyProviderDriver,
   defaultProviderContinuationIdentity,
+  type ProviderInstance,
 } from "@t3tools/provider-core/server/driver";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
@@ -87,6 +88,35 @@ const errorText = (error: unknown) => {
  * The plugin's driver with every failure of its own code turned into a driver error: the
  * registry reports those as an unavailable instance, while a defect would stop a reconcile.
  */
+const isJsonObject = Schema.is(Schema.JsonObject);
+
+/** Stamps the driver's client description onto every snapshot its instance reports. */
+const withClient = (
+  instance: ProviderInstance,
+  client: PluginProviderDriver["client"],
+): ProviderInstance => {
+  const settingsSchema = isJsonObject(client?.settingsSchema) ? client.settingsSchema : undefined;
+  const iconUrl =
+    typeof client?.iconUrl === "string" && client.iconUrl.length <= 2_048
+      ? client.iconUrl
+      : undefined;
+  if (settingsSchema === undefined && iconUrl === undefined) return instance;
+  const stamp = (snapshot: ServerProvider): ServerProvider => ({
+    ...snapshot,
+    ...(settingsSchema === undefined ? {} : { settingsSchema }),
+    ...(iconUrl === undefined || snapshot.iconUrl !== undefined ? {} : { iconUrl }),
+  });
+  return {
+    ...instance,
+    snapshot: {
+      ...instance.snapshot,
+      getSnapshot: instance.snapshot.getSnapshot.pipe(Effect.map(stamp)),
+      refresh: instance.snapshot.refresh.pipe(Effect.map(stamp)),
+      streamChanges: instance.snapshot.streamChanges.pipe(Stream.map(stamp)),
+    },
+  };
+};
+
 const guardedDriver = <Config>(
   driver: PluginProviderDriver<Config>,
 ): AnyProviderDriver<PluginProviderDriverEnv> => ({
@@ -98,7 +128,7 @@ const guardedDriver = <Config>(
     Effect.suspend(() => {
       const created = driver.create(input);
       return Effect.isEffect(created)
-        ? created
+        ? created.pipe(Effect.map((instance) => withClient(instance, driver.client)))
         : Effect.fail(
             new ProviderDriverError({
               driver: driver.driverKind,

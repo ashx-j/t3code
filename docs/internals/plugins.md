@@ -158,6 +158,13 @@ is the drivers' service type concrete, so plugin drivers get the services built-
 host turns defects in a plugin's driver into driver errors, because the registry reports those
 as an unavailable instance and a defect would stop a reconcile.
 
+Clients pick a provider's card, icon and form from static definitions, so a plugin's driver
+declares `client.settingsSchema` (the JSON Schema subset plugin settings use) and
+`client.iconUrl`, and the host stamps both onto its snapshots. Web draws the plugin settings
+form from the schema where it has no definition for the driver. An Effect `configSchema` is not
+converted, because its JSON Schema uses `anyOf` for optional fields, which that form cannot draw.
+Mobile has no provider settings form for any driver.
+
 ## Installing
 
 `plugins.install` fetches into `<stateDir>/plugin-staging/<uuid>`, outside `plugins/`, so discovery
