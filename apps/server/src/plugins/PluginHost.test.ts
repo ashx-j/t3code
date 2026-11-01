@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -64,6 +65,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as PullRequestProviderRegistry from "../pullRequest/PullRequestProviderRegistry.ts";
 import * as SourceControlDrivers from "../sourceControl/builtInDrivers.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import packageJson from "../../package.json" with { type: "json" };
 import { gzipTarball, tarEntry } from "./testTarball.ts";
 import type { AcpAgentDriverEnv } from "./acpAgentDriver.ts";
@@ -93,6 +95,7 @@ const layerUnusedLaunchServices = Layer.mergeAll(
   Layer.mock(ProviderRegistry.ProviderRegistry)({}),
   Layer.mock(ProviderDriverRegistration.ProviderDriverRegistration)({}),
   Layer.mock(SourceControlDrivers.SourceControlPluginDrivers)({ current: () => [] }),
+  Layer.mock(GitVcsDriver.GitVcsDriver)({}),
 );
 
 // Orchestration services the lifecycle tests never reach.
@@ -685,6 +688,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
         Layer.mock(ProviderDriverRegistration.ProviderDriverRegistration)({}),
         Layer.mock(SourceControlDrivers.SourceControlPluginDrivers)({ current: () => [] }),
+        Layer.mock(GitVcsDriver.GitVcsDriver)({}),
         Layer.mock(Orchestrator.OrchestratorV2)({
           streamStoredEventsFrom: () => Stream.never,
           streamDomainEvents: Stream.fromQueue(domainEvents),
@@ -1218,6 +1222,64 @@ module.exports = { activate() {} };`,
     }).pipe(Effect.provide(layerConfig())),
   );
 });
+
+it.live("lists a project's git worktrees for a plugin", () =>
+  Effect.gen(function* () {
+    const worktrees = PluginId.make("worktrees-plugin");
+    const projectId = ProjectId.make("project:plugin-worktrees");
+    yield* writePluginsConfig({
+      enabled: { [worktrees]: true },
+      devPaths: [`${fixturesDir}worktrees-plugin`],
+    });
+    const fs = yield* FileSystem.FileSystem;
+    const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-plugin-worktrees-" });
+    const repo = `${parent}/repo`;
+    yield* fs.makeDirectory(repo);
+    const git = (...args: ReadonlyArray<string>) =>
+      NodeChildProcess.execFileSync("git", args, { cwd: repo, stdio: "ignore" });
+    git("init", "-q", "-b", "main");
+    git(
+      "-c",
+      "user.email=t@t.test",
+      "-c",
+      "user.name=T",
+      "commit",
+      "-q",
+      "--allow-empty",
+      "-m",
+      "init",
+    );
+    git("worktree", "add", "-q", "-b", "feature", `${parent}/feature`);
+    git("worktree", "add", "-q", "--detach", `${parent}/detached`);
+    git("worktree", "add", "-q", "-b", "gone", `${parent}/gone`);
+    yield* fs.remove(`${parent}/gone`, { recursive: true });
+    const services = Layer.mergeAll(
+      layerUnusedServices,
+      Layer.mock(ProjectService.ProjectService)({
+        getById: (id) =>
+          Effect.succeed(
+            id === projectId ? Option.some({ workspaceRoot: repo } as Project) : Option.none(),
+          ),
+      }),
+      Layer.succeed(GitVcsDriver.GitVcsDriver, yield* GitVcsDriver.make),
+    );
+    yield* Effect.gen(function* () {
+      const host = yield* PluginHost.PluginHost;
+      yield* waitForStatuses(host, { [worktrees]: "active" });
+      // The main checkout comes first, then the rest by path; a detached one has no branch, and a
+      // removed one is left out.
+      assert.deepStrictEqual(
+        yield* host.invoke({
+          pluginId: worktrees,
+          method: "branches",
+          input: { projectId },
+          scopes: operate,
+        }),
+        ["main", null, "feature"],
+      );
+    }).pipe(Effect.provide(layerHost(services)));
+  }).pipe(Effect.provide(layerConfig()), Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 
 it.live("runs a turn with the ACP agent a plugin registers by its command", () =>
   Effect.gen(function* () {

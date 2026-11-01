@@ -340,6 +340,16 @@ export interface PluginApi {
      */
     readonly update: (projectId: string, patch: JsonObject) => Promise<JsonObject>;
   };
+  readonly worktrees: {
+    /**
+     * The git worktrees of a project's repository: the main checkout, then the others by path,
+     * leaving out any whose folder is gone. `branch` is null for a detached checkout. Rejects when
+     * the project's folder is not in a git repository.
+     */
+    readonly list: (
+      projectId: string,
+    ) => Promise<ReadonlyArray<{ readonly path: string; readonly branch: string | null }>>;
+  };
   readonly schedule: {
     /**
      * Calls `handler` every `everyMs` (at least 1000) until the plugin deactivates or the returned

@@ -18,6 +18,7 @@ import type * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import type * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import type * as ServerSettings from "../serverSettings.ts";
 import type * as SourceControlDrivers from "../sourceControl/builtInDrivers.ts";
+import type * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { makeAgentsApi } from "./api/agents.ts";
 import { makeEventsApi, storedEvents } from "./api/events.ts";
 import { makeFacadeContext } from "./api/facade.ts";
@@ -32,6 +33,7 @@ import { makeSourceControlApi } from "./api/sourceControl.ts";
 import { makeTextGenerationApi } from "./api/textGeneration.ts";
 import { makeProjectsApi, makeThreadsApi } from "./api/threads.ts";
 import { makeTurnsApi } from "./api/turns.ts";
+import { makeWorktreesApi } from "./api/worktrees.ts";
 import type * as PluginHooks from "./PluginHooks.ts";
 import type * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
 import type * as PluginMcpTools from "./PluginMcpTools.ts";
@@ -88,6 +90,7 @@ export interface PluginApiServices {
   readonly projects: ProjectStore.ProjectStoreV2["Service"];
   readonly launches: ThreadLaunchService.ThreadLaunchService["Service"];
   readonly projectService: ProjectService.ProjectService["Service"];
+  readonly git: GitVcsDriver.GitVcsDriver["Service"];
   readonly providers: ProviderRegistry.ProviderRegistry["Service"];
   readonly providerDrivers: ProviderDriverRegistration.ProviderDriverRegistration["Service"];
   readonly sourceControlDrivers: SourceControlDrivers.SourceControlPluginDrivers["Service"];
@@ -183,6 +186,7 @@ export const makePluginApi = (input: {
     events,
     threads: makeThreadsApi(facade, services, input.name),
     projects: makeProjectsApi(facade, services),
+    worktrees: makeWorktreesApi(facade, services),
     schedule: makeScheduleApi(facade),
     turns: makeTurnsApi(facade, services, {
       storage,

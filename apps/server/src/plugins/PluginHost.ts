@@ -52,6 +52,7 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SourceControlDrivers from "../sourceControl/builtInDrivers.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { forkParked } from "../serverActivation.ts";
 import {
@@ -371,6 +372,7 @@ const make = Effect.gen(function* () {
     projects: yield* ProjectStore.ProjectStoreV2,
     launches: yield* ThreadLaunchService.ThreadLaunchService,
     projectService: yield* ProjectService.ProjectService,
+    git: yield* GitVcsDriver.GitVcsDriver,
     providers: yield* ProviderRegistry.ProviderRegistry,
     providerDrivers: yield* ProviderDriverRegistration.ProviderDriverRegistration,
     sourceControlDrivers: yield* SourceControlDrivers.SourceControlPluginDrivers,

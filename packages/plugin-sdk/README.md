@@ -58,7 +58,7 @@ module.exports = {
 - settings, storage, and RPC methods and channels for the web half;
 - stored orchestration events, run-completed hooks and notes in threads;
 - threads and projects: read, start, archive, snooze, settle and delete threads, add and change
-  projects;
+  projects, and list a project's git worktrees;
 - send hooks that add to, replace or block a message, and slash commands that run on the server
   and may answer in the thread without starting a turn;
 - answers to agents' approvals and questions, instructions for agents, and MCP tools for agents;
