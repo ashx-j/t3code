@@ -13,6 +13,7 @@ import {
   ProviderDriverKind,
   ProviderSessionId,
   RuntimeRequestId,
+  SourceControlProviderKind,
   ThreadId,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2DomainEvent,
@@ -28,6 +29,8 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -58,6 +61,9 @@ import { makeProviderInstanceRegistry } from "../provider/ProviderInstanceRegist
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as PullRequestProviderRegistry from "../pullRequest/PullRequestProviderRegistry.ts";
+import * as SourceControlDrivers from "../sourceControl/builtInDrivers.ts";
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import packageJson from "../../package.json" with { type: "json" };
 import { gzipTarball, tarEntry } from "./testTarball.ts";
 import type { AcpAgentDriverEnv } from "./acpAgentDriver.ts";
@@ -86,6 +92,7 @@ const layerUnusedLaunchServices = Layer.mergeAll(
   Layer.mock(ProjectService.ProjectService)({}),
   Layer.mock(ProviderRegistry.ProviderRegistry)({}),
   Layer.mock(ProviderDriverRegistration.ProviderDriverRegistration)({}),
+  Layer.mock(SourceControlDrivers.SourceControlPluginDrivers)({ current: () => [] }),
 );
 
 // Orchestration services the lifecycle tests never reach.
@@ -398,6 +405,51 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
     }).pipe(Effect.provide(layerConfig()), Effect.scoped),
   );
 
+  it.effect("adds a plugin's source control host to remote recognition and pull requests", () =>
+    Effect.gen(function* () {
+      const sourceControlPlugin = PluginId.make("source-control-plugin");
+      yield* writePluginsConfig({
+        enabled: { [sourceControlPlugin]: true },
+        devPaths: [`${fixturesDir}source-control-plugin`],
+      });
+      const pluginDrivers = yield* SourceControlDrivers.makePluginDrivers.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            TestSourceControlHost.layer(),
+            SourceControlRateLimit.layer,
+            layerNpmRegistry,
+          ),
+        ),
+      );
+      const services = Layer.mergeAll(
+        layerUnusedServices,
+        Layer.succeed(SourceControlDrivers.SourceControlPluginDrivers, pluginDrivers),
+      );
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        yield* waitForStatuses(host, { [sourceControlPlugin]: "active" });
+        // The pull request lookup recognizes the remote, then asks that host's provider.
+        const remote = "git@git.example.test:team/app.git";
+        const kind = sourceControlDefinitions.recognizeRemote(remote)?.kind;
+        assert.strictEqual(kind, "examplegit");
+        const pullRequests = yield* PullRequestProviderRegistry.make.pipe(
+          Effect.provideService(SourceControlDrivers.SourceControlDrivers, []),
+          Effect.provideService(SourceControlDrivers.SourceControlPluginDrivers, pluginDrivers),
+        );
+        assert.deepStrictEqual(pullRequests.kinds, [kind]);
+        const provider = pullRequests.get(SourceControlProviderKind.make("examplegit"));
+        assert.strictEqual(
+          yield* provider!.getViewer({ cwd: process.cwd(), host: "git.example.test" }),
+          "example-bot",
+        );
+
+        yield* host.setEnabled(sourceControlPlugin, false);
+        assert.strictEqual(sourceControlDefinitions.recognizeRemote(remote)?.kind, "unknown");
+        assert.isNull(pullRequests.get(SourceControlProviderKind.make("examplegit")));
+      }).pipe(Effect.provide(layerHost(services)));
+    }).pipe(Effect.provide(layerConfig()), Effect.scoped),
+  );
+
   it.effect("reload picks up a changed manifest and changed code", () =>
     Effect.gen(function* () {
       const rootDir = yield* writeInstalledPlugin(
@@ -601,6 +653,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         }),
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
         Layer.mock(ProviderDriverRegistration.ProviderDriverRegistration)({}),
+        Layer.mock(SourceControlDrivers.SourceControlPluginDrivers)({ current: () => [] }),
         Layer.mock(Orchestrator.OrchestratorV2)({
           streamStoredEventsFrom: () => Stream.never,
           streamDomainEvents: Stream.fromQueue(domainEvents),

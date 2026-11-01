@@ -63,6 +63,8 @@ module.exports = {
 - HTTP routes, schedules and server info;
 - ACP agents T3 Code runs by their command (`api.providers.registerAcpAgent`), with no Effect
   code; the `acp-agent-plugin` fixture is a complete one;
+- source control hosts (`api.sourceControl.registerDriver`), which join remote recognition and
+  pull requests; the `source-control-plugin` fixture is a minimal one;
 - provider drivers, built with `api.providers.runtime` and typed with
   `@t3tools/plugin-sdk/server/providers`. These follow T3 Code's internal provider packages, which
   change with every nightly, so build a provider plugin against the T3 Code version it runs on.

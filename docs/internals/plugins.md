@@ -172,6 +172,18 @@ registry's card, and its status check opens a session, which background checks m
 ACP agent's snapshot is therefore "ready" with unknown sign-in until a turn runs, and it writes
 no text for T3 (titles and commit messages fall back to other providers).
 
+## Source control hosts
+
+Source control drivers are built once in a layer, and remote recognition reads a definitions
+registry that clients share. A plugin's host goes into a plugin driver list beside the built-in
+one, which the provider and pull request registries read after their own map, and its definition
+is registered into the shared registry after the built-ins, so a plugin cannot take a built-in
+host's remotes. The driver runs in its own scope with the host services and rate limit built-ins
+share, and leaves both when the plugin turns off. Discovery items already carry the spec's label,
+so the settings page names a plugin host without a client definition; elsewhere clients show the
+generic host presentation. Plugin hosts get no app sign-in, media proxy or repository identity
+refinement, which read the built-in list.
+
 ## Installing
 
 `plugins.install` fetches into `<stateDir>/plugin-staging/<uuid>`, outside `plugins/`, so discovery

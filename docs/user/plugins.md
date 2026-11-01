@@ -79,6 +79,9 @@ A plugin can add an agent provider. Its provider appears in **Settings → Provi
 plugin is on, and turning the plugin off leaves the provider listed as unavailable with its
 settings kept, so turning it back on restores it.
 
+A plugin can also add a source control host. Its repositories are recognized like GitHub's or
+GitLab's, and it appears under **Settings → Source control** with the name the plugin gives it.
+
 ## Where plugins live
 
 Installed plugins are in the `plugins` folder of the environment's T3 Code data directory, one

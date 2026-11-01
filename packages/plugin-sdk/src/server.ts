@@ -1,4 +1,10 @@
-import type { PluginAcpAgent, PluginProviderDriver, PluginProviderRuntime } from "./providers.ts";
+import type {
+  PluginAcpAgent,
+  PluginProviderDriver,
+  PluginProviderRuntime,
+  PluginSourceControlDriver,
+  PluginSourceControlRuntime,
+} from "./providers.ts";
 import type { JsonObject, JsonValue } from "./shared.ts";
 
 /** `read` methods need the caller's `orchestration:read` scope, `write` methods `orchestration:operate`. */
@@ -429,6 +435,15 @@ export interface PluginApi {
      * generation. Agents that need vendor hooks write a driver with `registerDriver`.
      */
     readonly registerAcpAgent: (agent: PluginAcpAgent) => Promise<void>;
+  };
+  readonly sourceControl: {
+    readonly runtime: PluginSourceControlRuntime;
+    /**
+     * Adds a source control host until the plugin deactivates: its definition joins remote
+     * recognition after the built-in hosts, and its driver is built once. Clients show it with the
+     * generic host presentation. Rejects a kind T3 Code or another plugin already provides.
+     */
+    readonly registerDriver: (driver: PluginSourceControlDriver) => Promise<void>;
   };
   readonly mcp: {
     /** Offers a tool to agents in every thread until the plugin deactivates. */

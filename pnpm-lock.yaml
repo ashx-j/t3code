@@ -1604,6 +1604,9 @@ importers:
       '@t3tools/provider-core':
         specifier: workspace:*
         version: link:../provider-core
+      '@t3tools/source-control-core':
+        specifier: workspace:*
+        version: link:../source-control-core
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4

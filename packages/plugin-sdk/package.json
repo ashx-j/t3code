@@ -34,6 +34,7 @@
   "devDependencies": {
     "@t3tools/contracts": "workspace:*",
     "@t3tools/provider-core": "workspace:*",
+    "@t3tools/source-control-core": "workspace:*",
     "@types/node": "catalog:",
     "@types/react": "catalog:",
     "effect": "catalog:",

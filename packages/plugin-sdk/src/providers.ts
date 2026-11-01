@@ -9,6 +9,9 @@ import type { makeManagedServerProvider } from "@t3tools/provider-core/server/ma
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import type { buildServerProvider } from "@t3tools/provider-core/server/snapshotProbe";
+import type { providerAuth } from "@t3tools/source-control-core/server/discovery";
+import type * as SourceControlDriverModule from "@t3tools/source-control-core/server/driver";
+import type { UNKNOWN_SOURCE_CONTROL_CLIENT } from "@t3tools/source-control-core/shared/definition";
 import type * as Cause from "effect/Cause";
 import type * as Context from "effect/Context";
 import type * as Crypto from "effect/Crypto";
@@ -64,6 +67,28 @@ export type PluginProviderDriver<Config = unknown> = ProviderDriverModule.Provid
     readonly iconUrl?: string;
   };
 };
+
+/**
+ * A source control host: a definition clients and remote recognition read, and a driver the
+ * server builds once. Build `make` with `api.providers.runtime`.
+ */
+export type PluginSourceControlDriver = SourceControlDriverModule.SourceControlDriver;
+
+export type {
+  SourceControlDriverInstance,
+  SourceControlDriverServices,
+} from "@t3tools/source-control-core/server/driver";
+export type { SourceControlProviderDiscoverySpec } from "@t3tools/source-control-core/server/discovery";
+export type { PullRequestProviderApi } from "@t3tools/source-control-core/server/PullRequestProvider";
+export type { SourceControlDefinition } from "@t3tools/source-control-core/shared/definition";
+
+/** Plain helpers for source control definitions. */
+export interface PluginSourceControlRuntime {
+  /** T3 Code's definition for an unknown host; spread it and override what your host does. */
+  readonly unknownDefinition: typeof UNKNOWN_SOURCE_CONTROL_CLIENT;
+  /** Builds the sign-in state a discovery spec's `probeAuth` reports. */
+  readonly providerAuth: typeof providerAuth;
+}
 
 /** An ACP agent T3 Code runs by its command, with the shared ACP adapter. */
 export interface PluginAcpAgent {

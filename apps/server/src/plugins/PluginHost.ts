@@ -50,6 +50,7 @@ import * as ProviderDriverRegistration from "../provider/ProviderDriverRegistrat
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as SourceControlDrivers from "../sourceControl/builtInDrivers.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { forkParked } from "../serverActivation.ts";
 import {
@@ -371,6 +372,7 @@ const make = Effect.gen(function* () {
     projectService: yield* ProjectService.ProjectService,
     providers: yield* ProviderRegistry.ProviderRegistry,
     providerDrivers: yield* ProviderDriverRegistration.ProviderDriverRegistration,
+    sourceControlDrivers: yield* SourceControlDrivers.SourceControlPluginDrivers,
     hooks: yield* PluginHooks.PluginHooks,
     runtimeRequests: makeRuntimeRequestHooks({ context, orchestrator, threads, crypto }),
     mcpTools: yield* PluginMcpTools.PluginMcpTools,
