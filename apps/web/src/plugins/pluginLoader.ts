@@ -73,6 +73,7 @@ const PANEL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
 const COMMAND_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const BADGE_TONES = new Set(["info", "success", "warning", "error"]);
 const CODE_LANGUAGE = /^[a-z0-9][a-z0-9+#.-]{0,31}$/;
+const MENTION_TEXT_MAX_CHARS = 30_000;
 // Languages the app already draws itself.
 const BUILT_IN_LANGUAGES = new Set(["mermaid", "math"]);
 
@@ -383,7 +384,9 @@ function makeWebPluginApi({
             pluginName: plugin.name,
             label: item.label,
             description,
-            text: item.text,
+            // A chip's record holds at most 64,000 characters of JSON, so longer text would
+            // fail the whole send.
+            text: item.text.slice(0, MENTION_TEXT_MAX_CHARS),
           };
         });
         setPluginMentionItems(environmentId, pluginId, entries);

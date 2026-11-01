@@ -223,7 +223,7 @@ export interface WebPluginApi {
         readonly id: string;
         readonly label: string;
         readonly description?: string;
-        /** What the agent reads for the chip. */
+        /** What the agent reads for the chip, up to 30,000 characters; the rest is cut. */
         readonly text: string;
       }>,
     ) => void;
