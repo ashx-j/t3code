@@ -73,6 +73,15 @@ A plugin can also write the text T3 Code usually generates with a model: thread 
 messages, pull request titles and descriptions, branch names and review guides. When it has
 nothing to offer, T3 Code generates the text as usual.
 
+## Plugins that add agents
+
+A plugin can add an agent provider. Its provider appears in **Settings → Providers** while the
+plugin is on, and turning the plugin off leaves the provider listed as unavailable with its
+settings kept, so turning it back on restores it.
+
+A plugin can also add a source control host. Its repositories are recognized like GitHub's or
+GitLab's, and it appears under **Settings → Source control** with the name the plugin gives it.
+
 ## Where plugins live
 
 Installed plugins are in the `plugins` folder of the environment's T3 Code data directory, one

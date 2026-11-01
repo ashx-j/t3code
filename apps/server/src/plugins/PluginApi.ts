@@ -13,18 +13,22 @@ import type * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import type * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import type * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import type * as ProjectService from "../project/ProjectService.ts";
+import type * as ProviderDriverRegistration from "../provider/ProviderDriverRegistration.ts";
 import type * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import type * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import type * as ServerSettings from "../serverSettings.ts";
+import type * as SourceControlDrivers from "../sourceControl/builtInDrivers.ts";
 import { makeAgentsApi } from "./api/agents.ts";
 import { makeEventsApi, storedEvents } from "./api/events.ts";
 import { makeFacadeContext } from "./api/facade.ts";
 import { makeHttpApi } from "./api/http.ts";
 import { makeMcpApi } from "./api/mcp.ts";
+import { makeProvidersApi } from "./api/providers.ts";
 import type { RuntimeRequestHooks } from "./api/runtimeRequests.ts";
 import { makeScheduleApi } from "./api/schedule.ts";
 import { makeServerApi } from "./api/server.ts";
 import { makeSlashCommandsApi } from "./api/slashCommands.ts";
+import { makeSourceControlApi } from "./api/sourceControl.ts";
 import { makeTextGenerationApi } from "./api/textGeneration.ts";
 import { makeProjectsApi, makeThreadsApi } from "./api/threads.ts";
 import { makeTurnsApi } from "./api/turns.ts";
@@ -85,6 +89,8 @@ export interface PluginApiServices {
   readonly launches: ThreadLaunchService.ThreadLaunchService["Service"];
   readonly projectService: ProjectService.ProjectService["Service"];
   readonly providers: ProviderRegistry.ProviderRegistry["Service"];
+  readonly providerDrivers: ProviderDriverRegistration.ProviderDriverRegistration["Service"];
+  readonly sourceControlDrivers: SourceControlDrivers.SourceControlPluginDrivers["Service"];
   readonly hooks: PluginHooks.PluginHooksRegistry;
   readonly runtimeRequests: RuntimeRequestHooks;
   readonly mcpTools: PluginMcpTools.PluginMcpTools["Service"];
@@ -192,6 +198,8 @@ export const makePluginApi = (input: {
     slashCommands: makeSlashCommandsApi(facade, services, input.name),
     textGeneration: makeTextGenerationApi(facade, services),
     agents: makeAgentsApi(facade, services, input.name),
+    providers: makeProvidersApi(facade, services),
+    sourceControl: makeSourceControlApi(facade, services),
     mcp: makeMcpApi(facade, services),
     http: makeHttpApi(facade, services),
     server: makeServerApi(facade, {

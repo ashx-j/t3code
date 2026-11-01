@@ -20,7 +20,8 @@ after it unloads, so one stuck or slow plugin cannot hold the others.
 ## The plugin API is plain JavaScript
 
 The server bundle inlines `effect`, so plugins never share the host's Effect runtime or `Schema`
-instances. They get Promises, `AsyncIterable` streams and `AbortSignal` cancellation, never Effect.
+instances. They get Promises, `AsyncIterable` streams and `AbortSignal` cancellation, never Effect,
+except for provider drivers (below).
 
 ## Server entries are CommonJS
 
@@ -155,6 +156,50 @@ clients drop them from paged threads, while a note inside a running turn would s
 
 The `t3_plugins_*` management tools live in `PluginMcpTools`, but the host depends on that service,
 so the host hands it its actions when it starts.
+
+## Provider drivers
+
+Provider drivers are Effect code that the server runs inside its own runtime, so this is the one
+place plugins use Effect. The server bundles its own copy of `effect`, and a copy a plugin
+imports would only work while both are the same version. A driver is built with the modules in
+`api.providers.runtime` instead, and its types come from `@t3tools/plugin-sdk/server/providers`,
+which re-exports T3's provider packages. Those change with every nightly, so a provider plugin
+tracks one T3 version.
+
+The instance registry keeps its drivers in a `Ref` seeded with the built-ins, read only by
+reconcile and secret reloads, never per turn. Adding a driver rebuilds instances saved for its
+kind, which stay as unavailable entries while no driver exists, and gives it a default instance
+the way built-ins get one. Removing it leaves those instances unavailable. Built-in kinds cannot
+be replaced. Registration is a hydration service rather than a mutator method because only there
+is the drivers' service type concrete, so plugin drivers get the services built-ins get. The
+host turns defects in a plugin's driver into driver errors, because the registry reports those
+as an unavailable instance and a defect would stop a reconcile.
+
+Clients pick a provider's card, icon and form from static definitions, so a plugin's driver
+declares `client.settingsSchema` (the JSON Schema subset plugin settings use) and
+`client.iconUrl`, and the host stamps both onto its snapshots. Web draws the plugin settings
+form from the schema where it has no definition for the driver. An Effect `configSchema` is not
+converted, because its JSON Schema uses `anyOf` for optional fields, which that form cannot draw.
+Mobile has no provider settings form for any driver.
+
+`registerAcpAgent` builds a whole driver from plain data, so most agent plugins need no Effect
+code. It uses the shared ACP adapter with the base ACP capabilities, like the `fx` driver, not
+the ACP Registry driver: that driver's instances carry its own kind, so clients would show the
+registry's card, and its status check opens a session, which background checks must not do. An
+ACP agent's snapshot is therefore "ready" with unknown sign-in until a turn runs, and it writes
+no text for T3 (titles and commit messages fall back to other providers).
+
+## Source control hosts
+
+Source control drivers are built once in a layer, and remote recognition reads a definitions
+registry that clients share. A plugin's host goes into a plugin driver list beside the built-in
+one, which the provider and pull request registries read after their own map, and its definition
+is registered into the shared registry after the built-ins, so a plugin cannot take a built-in
+host's remotes. The driver runs in its own scope with the host services and rate limit built-ins
+share, and leaves both when the plugin turns off. Discovery items already carry the spec's label,
+so the settings page names a plugin host without a client definition; elsewhere clients show the
+generic host presentation. Plugin hosts get no app sign-in, media proxy or repository identity
+refinement, which read the built-in list.
 
 ## Installing
 

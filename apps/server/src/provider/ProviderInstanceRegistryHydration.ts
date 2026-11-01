@@ -9,6 +9,7 @@ import {
   ServerSettings,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Context from "effect/Context";
 import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -19,6 +20,7 @@ import * as Stream from "effect/Stream";
 import * as Settings from "../serverSettings.ts";
 import * as SecretResolver from "../secrets/SecretResolver.ts";
 import { BUILT_IN_DRIVERS, type BuiltInDriversEnv } from "./builtInDrivers.ts";
+import * as ProviderDriverRegistration from "./ProviderDriverRegistration.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import * as ProviderOrchestrationAdapterInfrastructure from "./ProviderOrchestrationAdapterInfrastructure.ts";
@@ -146,7 +148,8 @@ const layerSettingsWatcher = (settingsChanges: Stream.Stream<ServerSettings>) =>
 
 export const layer: Layer.Layer<
   | ProviderInstanceRegistry.ProviderInstanceRegistry
-  | ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
+  | ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator
+  | ProviderDriverRegistration.ProviderDriverRegistration,
   never,
   ProviderInstanceRegistryHydrationEnv
 > = Layer.unwrap(
@@ -165,10 +168,19 @@ export const layer: Layer.Layer<
         ? ({} as ProviderInstanceConfigMap)
         : deriveProviderInstanceConfigMap(initialSettings);
 
-    const layerMutable = ProviderInstanceRegistry.layer({
-      drivers: BUILT_IN_DRIVERS,
-      configMap: initialConfigMap,
-    }).pipe(
+    const layerMutable = Layer.effectContext(
+      ProviderInstanceRegistry.makeProviderInstanceRegistry({
+        drivers: BUILT_IN_DRIVERS,
+        configMap: initialConfigMap,
+      }).pipe(
+        Effect.map(({ registry, mutator, addDriver }) =>
+          Context.make(ProviderInstanceRegistry.ProviderInstanceRegistry, registry).pipe(
+            Context.add(ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator, mutator),
+            Context.add(ProviderDriverRegistration.ProviderDriverRegistration, { add: addDriver }),
+          ),
+        ),
+      ),
+    ).pipe(
       Layer.provide(ProviderOrchestrationAdapterInfrastructure.layer),
       Layer.provide(AcpRegistrySupport.layerFromHost),
       Layer.provide(ProviderHostLive.layer),
@@ -179,7 +191,8 @@ export const layer: Layer.Layer<
   }),
 ) as Layer.Layer<
   | ProviderInstanceRegistry.ProviderInstanceRegistry
-  | ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
+  | ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator
+  | ProviderDriverRegistration.ProviderDriverRegistration,
   never,
   ProviderInstanceRegistryHydrationEnv
 >;

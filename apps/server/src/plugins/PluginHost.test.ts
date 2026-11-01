@@ -5,11 +5,15 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   AuthOrchestrationOperateScope,
+  defaultInstanceIdForDriver,
   AuthOrchestrationReadScope,
   EnvironmentId,
   PluginId,
   ProjectId,
+  ProviderDriverKind,
+  ProviderSessionId,
   RuntimeRequestId,
+  SourceControlProviderKind,
   ThreadId,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2DomainEvent,
@@ -18,13 +22,23 @@ import {
   ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
+import type { PluginProviderDriverEnv } from "@t3tools/plugin-sdk/server/providers";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import type * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -41,11 +55,18 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ProviderDriverRegistration from "../provider/ProviderDriverRegistration.ts";
+import { makeTurnInput } from "../orchestration-v2/Adapters/AcpAdapterV2.testkit.ts";
+import { makeProviderInstanceRegistry } from "../provider/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as PullRequestProviderRegistry from "../pullRequest/PullRequestProviderRegistry.ts";
+import * as SourceControlDrivers from "../sourceControl/builtInDrivers.ts";
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import packageJson from "../../package.json" with { type: "json" };
 import { gzipTarball, tarEntry } from "./testTarball.ts";
+import type { AcpAgentDriverEnv } from "./acpAgentDriver.ts";
 import * as PluginHooks from "./PluginHooks.ts";
 import * as PluginHost from "./PluginHost.ts";
 import * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
@@ -56,6 +77,7 @@ import { withPluginTextGeneration } from "./pluginTextGeneration.ts";
 
 // None of these messages replays an accepted command.
 const notAccepted = Effect.succeed(false);
+const echoAgent = ProviderDriverKind.make("echoAgent");
 const fixturesDir = new URL("../../../../packages/plugin-sdk/fixtures/", import.meta.url).pathname;
 const hello = PluginId.make("hello-plugin");
 const broken = PluginId.make("broken-plugin");
@@ -69,6 +91,8 @@ const layerUnusedLaunchServices = Layer.mergeAll(
   Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
   Layer.mock(ProjectService.ProjectService)({}),
   Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+  Layer.mock(ProviderDriverRegistration.ProviderDriverRegistration)({}),
+  Layer.mock(SourceControlDrivers.SourceControlPluginDrivers)({ current: () => [] }),
 );
 
 // Orchestration services the lifecycle tests never reach.
@@ -330,6 +354,102 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
     }).pipe(Effect.provide(layerConfig())),
   );
 
+  it.effect("starts a plugin's provider driver and removes it when the plugin is turned off", () =>
+    Effect.gen(function* () {
+      const providerPlugin = PluginId.make("provider-plugin");
+      yield* writePluginsConfig({
+        enabled: { [providerPlugin]: true },
+        devPaths: [`${fixturesDir}provider-plugin`],
+      });
+      const { registry, addDriver } = yield* makeProviderInstanceRegistry<PluginProviderDriverEnv>({
+        drivers: [],
+        configMap: {},
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            TestProviderHost.layer(),
+            Layer.succeed(SecretResolver.SecretResolver, {
+              read: () => Effect.succeed([]),
+              invalidate: () => Effect.void,
+            }),
+          ),
+        ),
+      );
+      const services = Layer.mergeAll(
+        layerUnusedServices,
+        Layer.succeed(ProviderDriverRegistration.ProviderDriverRegistration, {
+          // Plugin drivers need only the plugin driver services this registry provides.
+          add: addDriver as ProviderDriverRegistration.ProviderDriverRegistration["Service"]["add"],
+        }),
+      );
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        // Activation waits for the driver the fixture registers.
+        yield* waitForStatuses(host, { [providerPlugin]: "active" });
+        const [instance] = yield* registry.listInstances;
+        assert.strictEqual(instance?.instanceId, defaultInstanceIdForDriver(echoAgent));
+        const snapshot = yield* instance!.snapshot.getSnapshot;
+        assert.include(snapshot, { driver: echoAgent, displayName: "Echo agent", status: "ready" });
+        // Clients have no definition for a plugin's driver, so its snapshot describes its form.
+        assert.deepStrictEqual(snapshot.settingsSchema, {
+          type: "object",
+          properties: { greeting: { type: "string", title: "Greeting" } },
+        });
+        assert.match(snapshot.iconUrl ?? "", /^data:image\/svg\+xml,/);
+
+        const changes = yield* registry.subscribeChanges;
+        yield* host.setEnabled(providerPlugin, false);
+        yield* PubSub.take(changes);
+        assert.deepStrictEqual(yield* registry.listInstances, []);
+      }).pipe(Effect.provide(layerHost(services)));
+    }).pipe(Effect.provide(layerConfig()), Effect.scoped),
+  );
+
+  it.effect("adds a plugin's source control host to remote recognition and pull requests", () =>
+    Effect.gen(function* () {
+      const sourceControlPlugin = PluginId.make("source-control-plugin");
+      yield* writePluginsConfig({
+        enabled: { [sourceControlPlugin]: true },
+        devPaths: [`${fixturesDir}source-control-plugin`],
+      });
+      const pluginDrivers = yield* SourceControlDrivers.makePluginDrivers.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            TestSourceControlHost.layer(),
+            SourceControlRateLimit.layer,
+            layerNpmRegistry,
+          ),
+        ),
+      );
+      const services = Layer.mergeAll(
+        layerUnusedServices,
+        Layer.succeed(SourceControlDrivers.SourceControlPluginDrivers, pluginDrivers),
+      );
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        yield* waitForStatuses(host, { [sourceControlPlugin]: "active" });
+        // The pull request lookup recognizes the remote, then asks that host's provider.
+        const remote = "git@git.example.test:team/app.git";
+        const kind = sourceControlDefinitions.recognizeRemote(remote)?.kind;
+        assert.strictEqual(kind, "examplegit");
+        const pullRequests = yield* PullRequestProviderRegistry.make.pipe(
+          Effect.provideService(SourceControlDrivers.SourceControlDrivers, []),
+          Effect.provideService(SourceControlDrivers.SourceControlPluginDrivers, pluginDrivers),
+        );
+        assert.deepStrictEqual(pullRequests.kinds, [SourceControlProviderKind.make("examplegit")]);
+        const provider = pullRequests.get(SourceControlProviderKind.make("examplegit"));
+        assert.strictEqual(
+          yield* provider!.getViewer({ cwd: process.cwd(), host: "git.example.test" }),
+          "example-bot",
+        );
+
+        yield* host.setEnabled(sourceControlPlugin, false);
+        assert.strictEqual(sourceControlDefinitions.recognizeRemote(remote)?.kind, "unknown");
+        assert.isNull(pullRequests.get(SourceControlProviderKind.make("examplegit")));
+      }).pipe(Effect.provide(layerHost(services)));
+    }).pipe(Effect.provide(layerConfig()), Effect.scoped),
+  );
+
   it.effect("reload picks up a changed manifest and changed code", () =>
     Effect.gen(function* () {
       const rootDir = yield* writeInstalledPlugin(
@@ -532,6 +652,8 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
             }),
         }),
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderDriverRegistration.ProviderDriverRegistration)({}),
+        Layer.mock(SourceControlDrivers.SourceControlPluginDrivers)({ current: () => [] }),
         Layer.mock(Orchestrator.OrchestratorV2)({
           streamStoredEventsFrom: () => Stream.never,
           streamDomainEvents: Stream.fromQueue(domainEvents),
@@ -1014,3 +1136,90 @@ module.exports = { activate() {} };`,
     }).pipe(Effect.provide(layerConfig())),
   );
 });
+
+it.live("runs a turn with the ACP agent a plugin registers by its command", () =>
+  Effect.gen(function* () {
+    const acpPlugin = PluginId.make("acp-agent-plugin");
+    yield* writePluginsConfig({
+      enabled: { [acpPlugin]: true },
+      devPaths: [`${fixturesDir}acp-agent-plugin`],
+    });
+    const { registry, addDriver } = yield* makeProviderInstanceRegistry<AcpAgentDriverEnv>({
+      drivers: [],
+      configMap: {},
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          TestProviderHost.layer(),
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          Layer.succeed(SecretResolver.SecretResolver, {
+            read: () => Effect.succeed([]),
+            invalidate: () => Effect.void,
+          }),
+        ),
+      ),
+    );
+    const services = Layer.mergeAll(
+      layerUnusedServices,
+      Layer.succeed(ProviderDriverRegistration.ProviderDriverRegistration, {
+        // This registry provides what the ACP agent driver uses.
+        add: addDriver as ProviderDriverRegistration.ProviderDriverRegistration["Service"]["add"],
+      }),
+    );
+    yield* Effect.gen(function* () {
+      const host = yield* PluginHost.PluginHost;
+      yield* waitForStatuses(host, { [acpPlugin]: "active" });
+      const instanceId = defaultInstanceIdForDriver(ProviderDriverKind.make("echoAcp"));
+      const instance = yield* registry.getInstance(instanceId);
+      assert.include(yield* instance!.snapshot.getSnapshot, {
+        displayName: "Echo ACP",
+        status: "ready",
+      });
+
+      const threadId = ThreadId.make("thread:echo-acp");
+      const modelSelection = { instanceId, model: "default" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const session = yield* instance!.orchestrationAdapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session:echo-acp"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* session.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const replies = yield* session.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* session.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+          messageText: "Hello there",
+        }),
+      );
+      const events = Array.from(yield* Fiber.join(replies));
+      assert.include(events.at(-1), { type: "turn.terminal", status: "completed" });
+      assert.isTrue(
+        events.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "assistant_message" &&
+            event.turnItem.text.includes("Echo: Hello there"),
+        ),
+      );
+    }).pipe(Effect.provide(layerHost(services)));
+  }).pipe(Effect.provide(layerConfig()), Effect.scoped, Effect.provide(NodeServices.layer)),
+);

@@ -7,6 +7,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  defaultInstanceIdForDriver,
   EnvironmentId,
   type ClaudeSettings,
   type CodexSettings,
@@ -785,6 +786,68 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         expect(ghost.availability).toBe("unavailable");
         expect(ghost.unavailableReason).toMatch(/ghostDriver/);
       }).pipe(Effect.provide(layerTest)),
+  );
+});
+
+describe("ProviderInstanceRegistry added drivers", () => {
+  const builtInKind = ProviderDriverKind.make("builtIn");
+  const pluginKind = ProviderDriverKind.make("pluginAgent");
+  const savedId = ProviderInstanceId.make("pluginAgent_work");
+  const driverFor = (driverKind: ProviderDriverKind): AnyProviderDriver => ({
+    driverKind,
+    metadata: { displayName: driverKind },
+    configSchema: Schema.Unknown,
+    defaultConfig: () => ({}),
+    create: (input) =>
+      Effect.succeed({
+        instanceId: input.instanceId,
+        driverKind,
+        enabled: input.enabled,
+      } as ProviderInstance),
+  });
+  const noSecrets = Layer.succeed(SecretResolver.SecretResolver, {
+    read: () => Effect.succeed([]),
+    invalidate: () => Effect.void,
+  });
+
+  it.effect(
+    "starts a late driver's saved and default instances, and makes them unavailable when it goes",
+    () =>
+      Effect.gen(function* () {
+        const { registry, addDriver } = yield* makeProviderInstanceRegistry({
+          drivers: [driverFor(builtInKind)],
+          configMap: { [savedId]: { driver: pluginKind } },
+        });
+        const liveIds = registry.listInstances.pipe(
+          Effect.map((instances) => instances.map((instance) => instance.instanceId).toSorted()),
+        );
+        const unavailableIds = registry.listUnavailable.pipe(
+          Effect.map((providers) => providers.map((provider) => provider.instanceId)),
+        );
+        expect(yield* unavailableIds).toEqual([savedId]);
+
+        const remove = yield* addDriver(driverFor(pluginKind));
+        expect(yield* liveIds).toEqual(
+          [savedId, defaultInstanceIdForDriver(pluginKind)].toSorted(),
+        );
+        expect(yield* unavailableIds).toEqual([]);
+        const refusal = (driverKind: ProviderDriverKind) =>
+          addDriver(driverFor(driverKind)).pipe(
+            Effect.match({ onFailure: (error) => error, onSuccess: () => undefined }),
+          );
+        expect(yield* refusal(builtInKind)).toMatchObject({
+          driverKind: builtInKind,
+          builtIn: true,
+        });
+        expect(yield* refusal(pluginKind)).toMatchObject({
+          driverKind: pluginKind,
+          builtIn: false,
+        });
+
+        yield* remove;
+        expect(yield* liveIds).toEqual([]);
+        expect(yield* unavailableIds).toEqual([savedId]);
+      }).pipe(Effect.provide(noSecrets), Effect.scoped),
   );
 });
 

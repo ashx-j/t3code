@@ -60,10 +60,50 @@ module.exports = {
 - send hooks that add to, replace or block a message, and slash commands that run on the server;
 - answers to agents' approvals and questions, instructions for agents, and MCP tools for agents;
 - the text T3 Code generates, such as thread titles and commit messages;
-- HTTP routes, schedules and server info.
+- HTTP routes, schedules and server info;
+- ACP agents T3 Code runs by their command (`api.providers.registerAcpAgent`), with no Effect
+  code; the `acp-agent-plugin` fixture is a complete one;
+- source control hosts (`api.sourceControl.registerDriver`), which join remote recognition and
+  pull requests; the `source-control-plugin` fixture is a minimal one;
+- provider drivers, built with `api.providers.runtime` and typed with
+  `@t3tools/plugin-sdk/server/providers`. These follow T3 Code's internal provider packages, which
+  change with every nightly, so build a provider plugin against the T3 Code version it runs on.
 
 Everything a plugin registers is released when it is disabled, reloaded or uninstalled; add your
 own cleanup with `api.onDeactivate`.
+
+## Agent providers and source control hosts
+
+An ACP agent needs no Effect code:
+
+```js
+api.providers.registerAcpAgent({
+  kind: "my-agent",
+  label: "My agent",
+  command: "my-agent",
+  args: ["acp"],
+});
+```
+
+T3 Code runs it with its shared ACP adapter and gives each instance a form for the command and
+arguments. Other providers, and source control hosts, are Effect code that runs in the server:
+build them with the modules in `api.providers.runtime` (and the helpers in
+`api.sourceControl.runtime`), never with an `effect` you import, because the server bundles its own
+copy. Types come from one import, `@t3tools/plugin-sdk/server/providers`, which re-exports T3 Code's
+internal provider and source control packages. Those change with every nightly, so build these
+plugins against the T3 Code version they run on and expect to update them often.
+
+What a provider driver may leave out:
+
+- **Models.** The driver lists them in its snapshot. T3 Code has no compatibility policy for a
+  plugin's driver, so it shows no version advisory.
+- **Usage limits.** Report them in the snapshot (`usageLimits`) and through `applyUsageLimits`.
+  The Usage page's history reads only T3 Code's own drivers, so a driver has no `usage` reader.
+- **Text generation.** Fail each method with `TextGenerationError`; T3 Code then uses another
+  provider for titles and commit messages.
+- **Client presentation.** `client.settingsSchema` (the JSON Schema format plugin settings use)
+  and `client.iconUrl` give the provider a settings form and an icon; without them the instance
+  shows its name and status only.
 
 ## Web half
 
