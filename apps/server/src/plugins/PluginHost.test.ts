@@ -68,6 +68,7 @@ import * as PullRequestProviderRegistry from "../pullRequest/PullRequestProvider
 import * as SourceControlDrivers from "../sourceControl/builtInDrivers.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import packageJson from "../../package.json" with { type: "json" };
 import { gzipTarball, tarEntry } from "./testTarball.ts";
@@ -100,6 +101,7 @@ const layerUnusedLaunchServices = Layer.mergeAll(
   Layer.mock(SourceControlDrivers.SourceControlPluginDrivers)({ current: () => [] }),
   Layer.mock(GitVcsDriver.GitVcsDriver)({}),
   Layer.mock(SecretRequests.SecretRequests)({}),
+  Layer.mock(TextGeneration.TextGeneration)({}),
 );
 
 // Orchestration services the lifecycle tests never reach.
@@ -672,6 +674,8 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         deletedAt: null,
       };
       const launched: Array<ThreadLaunchService.ThreadLaunchInput> = [];
+      const prompted: Array<TextGeneration.TextGenerationInput> = [];
+      const textModel = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "haiku" };
       const projectUpdates: Array<unknown> = [];
       const services = Layer.mergeAll(
         Layer.mock(ThreadLaunchService.ThreadLaunchService)({
@@ -694,6 +698,13 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         Layer.mock(SourceControlDrivers.SourceControlPluginDrivers)({ current: () => [] }),
         Layer.mock(GitVcsDriver.GitVcsDriver)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(TextGeneration.TextGeneration)({
+          generateText: (input) =>
+            Effect.sync(() => {
+              prompted.push(input);
+              return { text: "Two commits since the last deploy." };
+            }),
+        }),
         Layer.mock(Orchestrator.OrchestratorV2)({
           streamStoredEventsFrom: () => Stream.never,
           streamDomainEvents: Stream.fromQueue(domainEvents),
@@ -732,7 +743,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
             capabilities: { repositoryIdentity: false, plugins: true },
           }),
         }),
-        ServerSettings.layerTest().pipe(Layer.orDie),
+        ServerSettings.layerTest({ textGenerationModelSelection: textModel }).pipe(Layer.orDie),
       );
       yield* writePluginsConfig({
         enabled: { [workbench]: true },
@@ -932,6 +943,17 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           title: "Workbench: Release prep",
         });
         assert.deepStrictEqual(yield* title("Release prep"), { title: "T3 title" });
+
+        // A free-form prompt runs on the text generation model from the settings.
+        assert.strictEqual(
+          yield* call("summarize", { log: "abc123 fix\ndef456 feat" }),
+          "Two commits since the last deploy.",
+        );
+        assert.deepInclude(prompted[0], {
+          cwd: `${fixturesDir}workbench-plugin`,
+          prompt: "Summarize these commits in one sentence:\nabc123 fix\ndef456 feat",
+        });
+        assert.deepInclude(prompted[0]?.modelSelection, textModel);
 
         // Thread and project management go through the commands and services clients use.
         dispatched.length = 0;

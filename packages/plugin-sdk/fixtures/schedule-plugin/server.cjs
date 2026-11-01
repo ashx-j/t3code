@@ -8,7 +8,7 @@ module.exports = {
       (input) => {
         const { time, weekdays } = /** @type {{ time: string, weekdays?: number[] }} */ (input);
         cancel();
-        cancel = api.schedule.at({ time, weekdays }, () => {
+        cancel = api.schedule.at(weekdays === undefined ? { time } : { time, weekdays }, () => {
           runs += 1;
           api.rpc.publish("reminders", runs);
         });

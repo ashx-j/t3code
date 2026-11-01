@@ -63,7 +63,8 @@ module.exports = {
   and may answer in the thread without starting a turn;
 - answers to agents' approvals and questions, instructions for agents, and MCP tools for agents;
 - secrets the user enters on a card in a thread with a turn in progress;
-- the text T3 Code generates, such as thread titles and commit messages;
+- the text T3 Code generates, such as thread titles and commit messages, and free-form text from
+  the text generation model chosen in the settings;
 - HTTP routes, schedules and server info;
 - ACP agents T3 Code runs by their command (`api.providers.registerAcpAgent`), with no Effect
   code; the `acp-agent-plugin` fixture is a small one;

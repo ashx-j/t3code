@@ -18,6 +18,7 @@ import type * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import type * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import type * as SecretRequests from "../secrets/SecretRequests.ts";
 import type * as ServerSettings from "../serverSettings.ts";
+import type * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import type * as SourceControlDrivers from "../sourceControl/builtInDrivers.ts";
 import type * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { makeAgentsApi } from "./api/agents.ts";
@@ -32,7 +33,7 @@ import { makeSecretsApi } from "./api/secrets.ts";
 import { makeServerApi } from "./api/server.ts";
 import { makeSlashCommandsApi } from "./api/slashCommands.ts";
 import { makeSourceControlApi } from "./api/sourceControl.ts";
-import { makeTextGenerationApi } from "./api/textGeneration.ts";
+import { makeGenerateText, makeTextGenerationApi } from "./api/textGeneration.ts";
 import { makeProjectsApi, makeThreadsApi } from "./api/threads.ts";
 import { makeTurnsApi } from "./api/turns.ts";
 import { makeWorktreesApi } from "./api/worktrees.ts";
@@ -94,6 +95,7 @@ export interface PluginApiServices {
   readonly projectService: ProjectService.ProjectService["Service"];
   readonly git: GitVcsDriver.GitVcsDriver["Service"];
   readonly secretRequests: SecretRequests.SecretRequests["Service"];
+  readonly textGeneration: TextGeneration.TextGeneration["Service"];
   readonly providers: ProviderRegistry.ProviderRegistry["Service"];
   readonly providerDrivers: ProviderDriverRegistration.ProviderDriverRegistration["Service"];
   readonly sourceControlDrivers: SourceControlDrivers.SourceControlPluginDrivers["Service"];
@@ -204,7 +206,10 @@ export const makePluginApi = (input: {
         ),
     }),
     slashCommands: makeSlashCommandsApi(facade, services, input.name),
-    textGeneration: makeTextGenerationApi(facade, services),
+    textGeneration: {
+      ...makeTextGenerationApi(facade, services),
+      generate: makeGenerateText(facade, services, input.rootDir),
+    },
     agents: makeAgentsApi(facade, services, input.name),
     providers: makeProvidersApi(facade, services),
     sourceControl: makeSourceControlApi(facade, services),

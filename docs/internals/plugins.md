@@ -120,9 +120,12 @@ without a message.
 
 Text generation hooks wrap the `TextGeneration` router, which every caller goes through, so thread
 titles, commit messages, pull request content, branch names and review guides all ask plugins
-first, and plugin answers get the cleanup T3 gives model output. There is still no free-form
-`text.generate`: providers only offer these tasks, and adding one means a new method in every
-text generation driver.
+first, and plugin answers get the cleanup T3 gives model output. `textGeneration.generate` runs a
+plugin's own prompt on the settings' text generation model through the router's `generateText`.
+Drivers built with `fromRunner` get it from their JSON runner, with the answer in one `text` field;
+it is optional on `ProviderTextGeneration`, so drivers that cannot run a prompt (the ACP agents,
+Muse) need no change and the router fails with `TextGenerationUnsupportedError`. Like the tasks,
+it moves to the fallback model when the selected one's usage limit is reached.
 
 Plugin instructions and skill folders ride on each adapter turn input, read once per turn in
 `RunExecutionService`, so adapters never look up plugins. Claude appends the instructions to T3's

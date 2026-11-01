@@ -441,6 +441,15 @@ export interface PluginApi {
   };
   readonly textGeneration: {
     /**
+     * Runs `prompt` on the text generation model chosen in T3 Code's settings and resolves with
+     * its answer. Claude, Codex, OpenCode, Cursor, Grok, Pi and Antigravity models can answer; any
+     * other rejects with code `TextGenerationUnsupportedError`. `signal` stops the wait.
+     */
+    readonly generate: (input: {
+      readonly prompt: string;
+      readonly signal?: AbortSignal;
+    }) => Promise<string>;
+    /**
      * Supplies `kind` of text before T3 Code generates it, until the plugin deactivates. T3 cleans
      * up the answer as it does model output. Nothing, a wrong shape, an error or 30 seconds
      * without an answer leaves it to the next plugin, then to T3 Code's own generator.

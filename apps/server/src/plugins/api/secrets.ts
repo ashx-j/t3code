@@ -14,7 +14,7 @@ import * as Schema from "effect/Schema";
 
 import * as ThreadManagementService from "../../orchestration-v2/ThreadManagementService.ts";
 import type * as SecretRequests from "../../secrets/SecretRequests.ts";
-import { abortEffect, type FacadeContext } from "./facade.ts";
+import { type FacadeContext, stopOnAbort } from "./facade.ts";
 
 const DEFAULT_TIMEOUT = Duration.minutes(10);
 const decodeRequest = Schema.decodeUnknownEffect(
@@ -71,16 +71,8 @@ export const makeSecretsApi = (
                 ? DEFAULT_TIMEOUT
                 : Duration.millis(request.timeoutMs),
           })
-          .pipe(
-            // Turning the plugin off, or the plugin's own signal, closes the card.
-            Effect.raceFirst(
-              abortEffect(
-                signal === undefined
-                  ? facade.activation.controller.signal
-                  : AbortSignal.any([signal, facade.activation.controller.signal]),
-              ).pipe(Effect.andThen(Effect.interrupt)),
-            ),
-          );
+          // Stopping the wait closes the card.
+          .pipe(stopOnAbort(facade.activation, signal));
         if (status !== "saved") return { status };
         const ref = yield* services.secretRequests.savedRef({
           threadId: request.threadId,
