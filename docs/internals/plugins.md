@@ -153,7 +153,13 @@ a running turn would split its live output.
 `SecretRequests.request`, which both call. The card belongs to a run and the answer is refused once
 that run ends, so it needs a turn in progress. It resolves with the value and takes it out of the
 secret store, as `settings.get()` hands plugins their `t3-secret` values: plugins are trusted code
-in the server, so a one-use ref would only add a step.
+in the server, so a one-use ref would only add a step. A plugin tool's handler gets the calling
+thread's id, so a tool can ask in the thread whose turn is waiting on it.
+
+MCP has no tool removal, so a deactivated plugin's tools stay listed and answer that the plugin is
+disabled, and turning it back on swaps the handlers in place. Claude reads the tool list once per
+session (checked with Haiku 5.5): a plugin turned on mid-thread gives its tools to threads started
+after that, not to the running session.
 
 The `t3_plugins_*` management tools live in `PluginMcpTools`, but the host depends on that service,
 so the host hands it its actions when it starts.

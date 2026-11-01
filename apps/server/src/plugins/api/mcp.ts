@@ -38,9 +38,9 @@ export const makeMcpApi = (
         services.mcpTools.register({
           pluginId,
           tool,
-          handler: (input, signal) =>
+          handler: (input, { signal, threadId }) =>
             Promise.resolve().then(() =>
-              handler(input, { signal: AbortSignal.any([signal, deactivated]) }),
+              handler(input, { signal: AbortSignal.any([signal, deactivated]), threadId }),
             ),
         }),
       );

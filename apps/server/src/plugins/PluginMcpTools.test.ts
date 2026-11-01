@@ -143,6 +143,15 @@ it.effect("answer under plg_ names with access checks, then answer disabled", ()
         throw new Error("boom");
       },
     );
+    api.mcp.registerTool(
+      {
+        name: "caller",
+        description: "Names its caller.",
+        inputSchema: { type: "object" },
+        access: "read",
+      },
+      (_input, { threadId }) => ({ threadId }),
+    );
     assert.throws(
       () =>
         api.mcp.registerTool(
@@ -164,6 +173,14 @@ it.effect("answer under plg_ names with access checks, then answer disabled", ()
     assert.deepStrictEqual(yield* call("plg_mcp-plugin_touch", fullAccessClient), {
       isError: false,
       text: '{"touches":1}',
+    });
+    assert.deepStrictEqual(yield* call("plg_mcp-plugin_caller", threadCaller), {
+      isError: false,
+      text: '{"threadId":"thread:caller"}',
+    });
+    assert.deepStrictEqual(yield* call("plg_mcp-plugin_caller", fullAccessClient), {
+      isError: false,
+      text: '{"threadId":null}',
     });
     assert.deepStrictEqual(yield* call("plg_mcp-plugin_fail", threadCaller), {
       isError: true,
