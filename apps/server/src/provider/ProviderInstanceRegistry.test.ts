@@ -827,9 +827,17 @@ describe("ProviderInstanceRegistry added drivers", () => {
         expect(yield* unavailableIds).toEqual([savedId]);
 
         const remove = yield* addDriver(driverFor(pluginKind));
-        expect(yield* liveIds).toEqual(
-          [savedId, defaultInstanceIdForDriver(pluginKind)].toSorted(),
+        // Clients treat an unsaved default as off unless it is Codex or Claude, so it starts off.
+        const enabledById = Object.fromEntries(
+          (yield* registry.listInstances).map((instance) => [
+            instance.instanceId,
+            instance.enabled,
+          ]),
         );
+        expect(enabledById).toEqual({
+          [savedId]: true,
+          [defaultInstanceIdForDriver(pluginKind)]: false,
+        });
         expect(yield* unavailableIds).toEqual([]);
         const refusal = (driverKind: ProviderDriverKind) =>
           addDriver(driverFor(driverKind)).pipe(

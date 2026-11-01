@@ -79,7 +79,7 @@ const entryEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boole
 /**
  * The saved instances plus a default instance for each added driver that has none, as
  * `deriveProviderInstanceConfigMap` gives built-ins one, so a provider plugin shows up when it
- * loads.
+ * loads. It starts off, as clients treat every unsaved default but Codex's and Claude's.
  */
 const withAddedDriverDefaults = <R>(
   configMap: ProviderInstanceConfigMap,
@@ -94,7 +94,7 @@ const withAddedDriverDefaults = <R>(
     const instanceId = defaultInstanceIdForDriver(driver.driverKind);
     if (instanceId in configMap) continue;
     merged ??= { ...configMap };
-    merged[instanceId] = { driver: driver.driverKind };
+    merged[instanceId] = { driver: driver.driverKind, enabled: false };
   }
   return merged === undefined ? configMap : (merged as ProviderInstanceConfigMap);
 };

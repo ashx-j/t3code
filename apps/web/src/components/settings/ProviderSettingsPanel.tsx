@@ -759,9 +759,25 @@ export function EnvironmentProviderSettings({
       });
     }
   }
+  // Plugin drivers have no client definition; the server's snapshot is their default slot.
+  const pluginDefaultIds = new Set<string>();
+  for (const provider of serverProviders) {
+    if (providerClients.get(provider.driver) !== undefined) continue;
+    if (provider.instanceId !== defaultInstanceIdForDriver(provider.driver)) continue;
+    pluginDefaultIds.add(provider.instanceId);
+    const explicitInstance = settings.providerInstances?.[provider.instanceId];
+    rows.push({
+      instanceId: provider.instanceId,
+      explicitInstance,
+      driver: provider.driver,
+      isDefault: true,
+      isDirty: explicitInstance !== undefined,
+    });
+  }
   for (const [driver, list] of instancesByDriver) {
     if (visibleDriverKinds.has(driver)) continue;
     for (const [id, instance] of list) {
+      if (pluginDefaultIds.has(id)) continue;
       rows.push({
         instanceId: id,
         explicitInstance: instance,
@@ -1253,8 +1269,10 @@ function ProviderInstanceRow({
     mode === "editor" && liveProvider?.driver === "acpRegistry"
       ? allProjects.filter((project) => project.environmentId === environmentId)
       : undefined;
-  const instance = explicitInstance ?? { driver };
   const driverOption = providerClients.get(driver);
+  // An unsaved plugin driver's default starts off, as the server builds it.
+  const instance =
+    explicitInstance ?? (driverOption === undefined ? { driver, enabled: false } : { driver });
   const updateCandidate =
     liveProvider !== undefined && isProviderSettingsUpdateCandidate(liveProvider)
       ? liveProvider
