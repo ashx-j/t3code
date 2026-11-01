@@ -984,9 +984,11 @@ it.effect("prepares the worktree when a plugin answers a new thread's first mess
   const harness = scratchHarness();
   return Effect.gen(function* () {
     const hooks = yield* PluginHooks.PluginHooks;
-    yield* hooks.addSlashCommand({ pluginId: "ops", pluginName: "Ops", name: "status" }, () =>
-      Effect.succeed({ reply: "All green." }),
-    );
+    yield* hooks
+      .addSlashCommand({ pluginId: "ops", pluginName: "Ops", name: "status" }, () =>
+        Effect.succeed({ reply: "All green." }),
+      )
+      .pipe(Effect.asVoid);
     const launches = yield* ThreadLaunch.ThreadLaunchService;
     const threads = yield* ThreadManagement.ThreadManagementService;
     const launched = yield* launches.launch({

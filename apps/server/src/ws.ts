@@ -3137,17 +3137,18 @@ export const layerWsRpc = (
               );
               const providerStatuses = Stream.zipLatestWith(
                 // Seed the changes-only stream so early source refreshes pair with current providers.
+                // Plugin lists are zipped first, so provider changes keep a single hop.
                 Stream.zipLatestWith(
-                  Stream.zipLatestWith(
-                    Stream.concat(
-                      Stream.fromEffect(providerRegistry.getProviders),
-                      providerRegistry.streamChanges,
-                    ),
-                    pluginHooks.slashCommands,
-                    PluginHooks.withPluginSlashCommands,
+                  Stream.concat(
+                    Stream.fromEffect(providerRegistry.getProviders),
+                    providerRegistry.streamChanges,
                   ),
-                  pluginHooks.skills,
-                  PluginHooks.withPluginSkills,
+                  Stream.zipLatest(pluginHooks.slashCommands, pluginHooks.skills),
+                  (providers, [commands, skills]) =>
+                    PluginHooks.withPluginSkills(
+                      PluginHooks.withPluginSlashCommands(providers, commands),
+                      skills,
+                    ),
                 ),
                 usageLimitSources.streamChanges.pipe(
                   Stream.changesWith(
