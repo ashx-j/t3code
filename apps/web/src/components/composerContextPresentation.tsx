@@ -54,6 +54,8 @@ import {
   PullRequestChip,
   UnresolvedChip,
 } from "./contextChipParts";
+import { ComposerPluginContextChip } from "../plugins/PluginContextChip";
+import { PLUGIN_CONTEXT_KIND } from "../plugins/pluginRegistry";
 
 export type ComposerDraftContextRecord =
   | { kind: "terminal"; record: TerminalContextDraft }
@@ -501,6 +503,9 @@ export function ComposerContextReferenceChip(props: {
   label: string;
 }): ReactElement {
   const records = use(ComposerContextRecordsContext);
+  if (props.kind === PLUGIN_CONTEXT_KIND) {
+    return <ComposerPluginContextChip contextId={props.contextId} label={props.label} />;
+  }
   return composerContextPresentationRegistry.render(props.kind, records.get(props.contextId), {
     label: props.label,
   });

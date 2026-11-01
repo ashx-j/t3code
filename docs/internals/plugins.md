@@ -87,9 +87,11 @@ Plugin buttons, menu items and badges belong to the plugin's environment, since 
 its server half. Thread menus are built and dispatched in two places (the header hook and the
 sidebar); plugin items carry `plugin:` ids that both pass to `runPluginThreadMenuItem` before
 their own `switch`. A badge change replaces only the changed thread's array, so other sidebar rows
-keep the same value and do not re-render. Plugin `@` items insert text: a chip would need a new
-context kind carried through the draft store, its persistence and the send path, while the server
-already sends records of unknown kinds to the agent.
+keep the same value and do not re-render. A plugin `@` item becomes a chip of kind `plugin`, a
+context kind T3 does not know, which the server already hands to agents as its JSON payload. The
+draft holds only the chip's reference; the send path looks the item up and attaches its record,
+so drafts, their persistence and queued edits need no plugin slot, and a chip whose plugin is off
+is sent as unavailable.
 
 In the desktop app, plugin commands that ask for a menu item, a tray item or a global shortcut cross
 to the main process as one list that replaces the previous one, so a reload or an unloaded plugin never leaves

@@ -1,6 +1,8 @@
 import { InlineAudioPreview } from "../files/InlineAudioPreview";
 import { PluginReplaceable } from "../../plugins/PluginReplaceable";
 import { PluginActionButtons } from "../../plugins/PluginActions";
+import { SentPluginContextChip } from "../../plugins/PluginContextChip";
+import { PLUGIN_CONTEXT_KIND } from "../../plugins/pluginRegistry";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { findRevealRef } from "./markdownFindContext";
 import {
@@ -602,7 +604,15 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     event.clipboardData.setData(COMPOSER_CONTEXT_CLIPBOARD_MIME, fragment);
   };
   const renderContextReference = (reference: ChatMarkdownContextReference) => {
-    const record = asKnownContextRecord(resolvedContext.recordsById.get(reference.contextId));
+    const rawRecord = resolvedContext.recordsById.get(reference.contextId);
+    if (rawRecord?.kind === PLUGIN_CONTEXT_KIND && "payload" in rawRecord) {
+      return (
+        <span data-thread-find-ignore>
+          <SentPluginContextChip label={reference.label} payload={rawRecord.payload} />
+        </span>
+      );
+    }
+    const record = asKnownContextRecord(rawRecord);
     if (record?.kind === "file" && userAudio.some((file) => file.id === record.attachmentId))
       return null;
     const annotationImage =

@@ -1,8 +1,12 @@
 import { EnvironmentId } from "@t3tools/contracts";
+import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import { describe, expect, it } from "vite-plus/test";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import {
+  PLUGIN_CONTEXT_KIND,
+  pluginMentionContextId,
+  pluginMentionContextRecords,
   pluginMentionItemsAtom,
   pluginPageAtom,
   pluginSlashCommandsAtom,
@@ -80,6 +84,7 @@ describe("plugin @ items", () => {
     const slashCommands = appAtomRegistry.get(pluginSlashCommandsAtom(environmentId));
     const item = {
       key: "plugin-mention:notes:1",
+      contextId: pluginMentionContextId(environmentId, "notes", "1"),
       pluginName: "Notes",
       label: "First note",
       description: "",
@@ -88,7 +93,11 @@ describe("plugin @ items", () => {
     setPluginMentionItems(environmentId, "notes", [item]);
     setPluginMentionItems(environmentId, "notes", [
       item,
-      { ...item, key: "plugin-mention:notes:2" },
+      {
+        ...item,
+        key: "plugin-mention:notes:2",
+        contextId: pluginMentionContextId(environmentId, "notes", "2"),
+      },
     ]);
 
     // The composer reads slash commands too; @ item updates must not hand it a new list.
@@ -97,5 +106,41 @@ describe("plugin @ items", () => {
     expect(appAtomRegistry.get(pluginMentionItemsAtom(otherEnvironmentId))).toEqual([]);
     setPluginMentionItems(environmentId, "notes", []);
     expect(appAtomRegistry.get(pluginMentionItemsAtom(environmentId))).toEqual([]);
+  });
+
+  it("sends each chip with its item's current text and leaves out chips whose item is gone", () => {
+    const contextId = pluginMentionContextId(environmentId, "notes", "1");
+    const chip = formatComposerContextReference({
+      kind: PLUGIN_CONTEXT_KIND,
+      contextId,
+      label: "First note",
+    });
+    const goneChip = formatComposerContextReference({
+      kind: PLUGIN_CONTEXT_KIND,
+      contextId: pluginMentionContextId(environmentId, "notes", "gone"),
+      label: "Gone",
+    });
+    const item = {
+      key: "plugin-mention:notes:1",
+      contextId,
+      pluginName: "Notes",
+      label: "First note",
+      description: "",
+      text: "old text",
+    };
+    setPluginMentionItems(environmentId, "notes", [item]);
+    setPluginMentionItems(environmentId, "notes", [{ ...item, text: "new text" }]);
+
+    expect(pluginMentionContextRecords(`see ${chip} and ${chip}, ${goneChip}`)).toEqual([
+      {
+        version: 1,
+        kind: PLUGIN_CONTEXT_KIND,
+        contextId,
+        label: "First note",
+        payload: { plugin: "Notes", text: "new text" },
+      },
+    ]);
+    setPluginMentionItems(environmentId, "notes", []);
+    expect(pluginMentionContextRecords(chip)).toEqual([]);
   });
 });

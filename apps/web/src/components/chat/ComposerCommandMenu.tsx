@@ -62,7 +62,7 @@ export type ComposerCommandItem =
   | {
       id: string;
       type: "plugin-mention";
-      text: string;
+      contextId: string;
       label: string;
       description: string;
     }
