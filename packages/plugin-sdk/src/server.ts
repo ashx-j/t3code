@@ -346,6 +346,16 @@ export interface PluginApi {
      * function is called. Runs never overlap: the next wait starts when a run finishes.
      */
     readonly every: (everyMs: number, handler: () => void | Promise<void>) => () => void;
+    /**
+     * Calls `handler` at `time` (24-hour `HH:MM` in the server's local time) on each of
+     * `weekdays` (0 is Sunday, 6 is Saturday; every day when omitted), until the plugin
+     * deactivates or the returned function is called. Runs never overlap: a time that passes
+     * while a run is still going is skipped.
+     */
+    readonly at: (
+      when: { readonly time: string; readonly weekdays?: ReadonlyArray<number> },
+      handler: () => void | Promise<void>,
+    ) => () => void;
   };
   readonly turns: {
     /**

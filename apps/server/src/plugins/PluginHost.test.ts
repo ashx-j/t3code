@@ -1137,6 +1137,51 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
     }).pipe(Effect.provide(layerConfig())),
   );
 
+  it.effect("runs a plugin's work at a time of day on its weekdays until it cancels", () =>
+    Effect.gen(function* () {
+      const reminders = PluginId.make("schedule-plugin");
+      yield* writePluginsConfig({
+        enabled: { [reminders]: true },
+        devPaths: [`${fixturesDir}schedule-plugin`],
+      });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        yield* waitForStatuses(host, { [reminders]: "active" });
+        const call = (method: string, input?: Schema.Json) =>
+          host.invoke({ pluginId: reminders, method, input, scopes: operate });
+        assert.include(
+          (yield* Effect.flip(call("remindAt", { time: "25:00" }))).message,
+          "schedule.at needs a time such as 09:30",
+        );
+
+        // An hour from now in the server's time zone, on that day's weekday only.
+        const due = DateTime.toParts(
+          DateTime.add(yield* DateTime.withCurrentZoneLocal(DateTime.nowInCurrentZone), {
+            hours: 1,
+          }),
+        );
+        const pad = (value: number) => String(value).padStart(2, "0");
+        yield* call("remindAt", {
+          time: `${pad(due.hour)}:${pad(due.minute)}`,
+          weekdays: [due.weekDay],
+        });
+        const published = yield* Queue.unbounded<Schema.Json>();
+        yield* host.subscribe({ pluginId: reminders, channel: "reminders" }).pipe(
+          Stream.runForEach((value) => Queue.offer(published, value)),
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* TestClock.adjust("1 hour");
+        assert.strictEqual(yield* Queue.take(published), 1);
+        yield* TestClock.adjust("7 days");
+        assert.strictEqual(yield* Queue.take(published), 2);
+
+        assert.strictEqual(yield* call("stopReminders"), 2);
+        yield* TestClock.adjust("7 days");
+        assert.strictEqual(yield* call("stopReminders"), 2);
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
   it.effect("does not load a disabled plugin at startup", () =>
     Effect.gen(function* () {
       const rootDir = yield* writeInstalledPlugin(
