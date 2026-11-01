@@ -29,7 +29,8 @@ class PluginApiCallError extends Error {
   }
 }
 
-const abortEffect = (signal: AbortSignal) =>
+/** Resolves when `signal` aborts. */
+export const abortEffect = (signal: AbortSignal) =>
   Effect.callback<void>((resume) => {
     const onAbort = () => resume(Effect.void);
     if (signal.aborted) return onAbort();

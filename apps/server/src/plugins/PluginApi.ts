@@ -16,6 +16,7 @@ import type * as ProjectService from "../project/ProjectService.ts";
 import type * as ProviderDriverRegistration from "../provider/ProviderDriverRegistration.ts";
 import type * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import type * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
+import type * as SecretRequests from "../secrets/SecretRequests.ts";
 import type * as ServerSettings from "../serverSettings.ts";
 import type * as SourceControlDrivers from "../sourceControl/builtInDrivers.ts";
 import type * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -27,6 +28,7 @@ import { makeMcpApi } from "./api/mcp.ts";
 import { makeProvidersApi } from "./api/providers.ts";
 import type { RuntimeRequestHooks } from "./api/runtimeRequests.ts";
 import { makeScheduleApi } from "./api/schedule.ts";
+import { makeSecretsApi } from "./api/secrets.ts";
 import { makeServerApi } from "./api/server.ts";
 import { makeSlashCommandsApi } from "./api/slashCommands.ts";
 import { makeSourceControlApi } from "./api/sourceControl.ts";
@@ -91,6 +93,7 @@ export interface PluginApiServices {
   readonly launches: ThreadLaunchService.ThreadLaunchService["Service"];
   readonly projectService: ProjectService.ProjectService["Service"];
   readonly git: GitVcsDriver.GitVcsDriver["Service"];
+  readonly secretRequests: SecretRequests.SecretRequests["Service"];
   readonly providers: ProviderRegistry.ProviderRegistry["Service"];
   readonly providerDrivers: ProviderDriverRegistration.ProviderDriverRegistration["Service"];
   readonly sourceControlDrivers: SourceControlDrivers.SourceControlPluginDrivers["Service"];
@@ -186,6 +189,7 @@ export const makePluginApi = (input: {
     events,
     threads: makeThreadsApi(facade, services, input.name),
     projects: makeProjectsApi(facade, services),
+    secrets: makeSecretsApi(facade, services),
     worktrees: makeWorktreesApi(facade, services),
     schedule: makeScheduleApi(facade),
     turns: makeTurnsApi(facade, services, {

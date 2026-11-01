@@ -62,6 +62,7 @@ module.exports = {
 - send hooks that add to, replace or block a message, and slash commands that run on the server
   and may answer in the thread without starting a turn;
 - answers to agents' approvals and questions, instructions for agents, and MCP tools for agents;
+- secrets the user enters on a card in a thread with a turn in progress;
 - the text T3 Code generates, such as thread titles and commit messages;
 - HTTP routes, schedules and server info;
 - ACP agents T3 Code runs by their command (`api.providers.registerAcpAgent`), with no Effect

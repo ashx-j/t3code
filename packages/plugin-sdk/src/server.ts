@@ -340,6 +340,27 @@ export interface PluginApi {
      */
     readonly update: (projectId: string, patch: JsonObject) => Promise<JsonObject>;
   };
+  readonly secrets: {
+    /**
+     * Asks the user for a secret in a thread with a turn in progress, on the card agents' requests
+     * use, and waits until they answer, the turn ends, `timeoutMs` (1 second to 1 hour, default
+     * 10 minutes) passes, `signal` aborts or the plugin deactivates. A saved value is handed over
+     * once and not kept. Rejects when the thread has no turn in progress.
+     */
+    readonly request: (input: {
+      readonly threadId: string;
+      /** The card's title, such as "Deploy token". */
+      readonly label: string;
+      /** What it is for and where to get it. */
+      readonly reason: string;
+      readonly placeholder?: string;
+      readonly timeoutMs?: number;
+      readonly signal?: AbortSignal;
+    }) => Promise<
+      | { readonly status: "saved"; readonly value: string }
+      | { readonly status: "declined" | "cancelled" | "timed_out" }
+    >;
+  };
   readonly worktrees: {
     /**
      * The git worktrees of a project's repository: the main checkout, then the others by path,

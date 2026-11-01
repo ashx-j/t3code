@@ -16,6 +16,7 @@ import {
   RuntimeRequestId,
   SourceControlProviderKind,
   ThreadId,
+  type TurnItemId,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2DomainEvent,
   type PluginState,
@@ -33,6 +34,7 @@ import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretReso
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -65,6 +67,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as PullRequestProviderRegistry from "../pullRequest/PullRequestProviderRegistry.ts";
 import * as SourceControlDrivers from "../sourceControl/builtInDrivers.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
+import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import packageJson from "../../package.json" with { type: "json" };
 import { gzipTarball, tarEntry } from "./testTarball.ts";
@@ -96,6 +99,7 @@ const layerUnusedLaunchServices = Layer.mergeAll(
   Layer.mock(ProviderDriverRegistration.ProviderDriverRegistration)({}),
   Layer.mock(SourceControlDrivers.SourceControlPluginDrivers)({ current: () => [] }),
   Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+  Layer.mock(SecretRequests.SecretRequests)({}),
 );
 
 // Orchestration services the lifecycle tests never reach.
@@ -689,6 +693,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         Layer.mock(ProviderDriverRegistration.ProviderDriverRegistration)({}),
         Layer.mock(SourceControlDrivers.SourceControlPluginDrivers)({ current: () => [] }),
         Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(Orchestrator.OrchestratorV2)({
           streamStoredEventsFrom: () => Stream.never,
           streamDomainEvents: Stream.fromQueue(domainEvents),
@@ -1183,6 +1188,89 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         yield* TestClock.adjust("7 days");
         assert.strictEqual(yield* call("stopReminders"), 2);
       }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("asks the user for a secret in a thread and hands the plugin the value once", () =>
+    Effect.gen(function* () {
+      const secrets = PluginId.make("secrets-plugin");
+      const threadId = ThreadId.make("thread:plugin-secret");
+      const projectId = ProjectId.make("project:plugin-secret");
+      yield* writePluginsConfig({
+        enabled: { [secrets]: true },
+        devPaths: [`${fixturesDir}secrets-plugin`],
+      });
+      // The thread as orchestration would record it: one running turn and the card on it.
+      let runStatus = "running";
+      let card: { readonly id: TurnItemId; readonly secretStatus: string } | undefined;
+      const asked = yield* Deferred.make<TurnItemId>();
+      const threads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+        getThreadRecords: () =>
+          Effect.sync(
+            () =>
+              ({
+                thread: { projectId },
+                runs: [
+                  { id: "run:secret", ordinal: 1, status: runStatus, rootNodeId: "node:root" },
+                ],
+                turnItems:
+                  card === undefined
+                    ? []
+                    : [
+                        {
+                          ...card,
+                          runId: "run:secret",
+                          nodeId: "node:root",
+                          type: "secret_request",
+                        },
+                      ],
+              }) as never,
+          ),
+        dispatch: (command) =>
+          Effect.gen(function* () {
+            if (command.type === "secret_request.record" && card?.secretStatus !== "saved") {
+              card = { id: command.turnItemId, secretStatus: command.secretStatus };
+              if (command.secretStatus === "pending") yield* Deferred.succeed(asked, card.id);
+            }
+            return { sequence: 1, storedEvents: [] } as never;
+          }),
+      });
+      const secretRequests = yield* Effect.service(SecretRequests.SecretRequests).pipe(
+        Effect.provide(
+          SecretRequests.layer.pipe(
+            Layer.provide(Layer.mergeAll(threads, ServerSecretStore.layer)),
+          ),
+        ),
+      );
+      const services = Layer.mergeAll(
+        layerUnusedServices,
+        threads,
+        Layer.succeed(SecretRequests.SecretRequests, secretRequests),
+      );
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        yield* waitForStatuses(host, { [secrets]: "active" });
+        const ask = host.invoke({
+          pluginId: secrets,
+          method: "askToken",
+          input: { threadId },
+          scopes: operate,
+        });
+        const asking = yield* ask.pipe(Effect.forkChild({ startImmediately: true }));
+        // The user answers on the card, as a client does.
+        const turnItemId = yield* Deferred.await(asked);
+        yield* secretRequests.answer({
+          threadId,
+          turnItemId,
+          answer: { type: "save", secret: "tok_staging" },
+        });
+        yield* TestClock.adjust("1 second");
+        assert.deepStrictEqual(yield* Fiber.join(asking), { saved: "tok_staging" });
+        assert.isTrue(Option.isNone(yield* secretRequests.savedRef({ threadId, turnItemId })));
+
+        runStatus = "completed";
+        assert.include((yield* Effect.flip(ask)).message, "has no turn in progress");
+      }).pipe(Effect.provide(layerHost(services)));
     }).pipe(Effect.provide(layerConfig())),
   );
 

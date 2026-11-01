@@ -146,6 +146,12 @@ one internal command, because every `message.dispatch` starts a run. A note
 sorts run-less items before every run, and clients drop them from paged threads, while a note inside
 a running turn would split its live output.
 
+`secrets.request` shows the card the `request_secret` MCP tool uses, through
+`SecretRequests.request`, which both call. The card belongs to a run and the answer is refused once
+that run ends, so it needs a turn in progress. It resolves with the value and takes it out of the
+secret store, as `settings.get()` hands plugins their `t3-secret` values: plugins are trusted code
+in the server, so a one-use ref would only add a step.
+
 The `t3_plugins_*` management tools live in `PluginMcpTools`, but the host depends on that service,
 so the host hands it its actions when it starts.
 
