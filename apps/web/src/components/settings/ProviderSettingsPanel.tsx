@@ -766,12 +766,18 @@ export function EnvironmentProviderSettings({
     if (providerClients.get(provider.driver) !== undefined) continue;
     if (provider.instanceId !== defaultInstanceIdForDriver(provider.driver)) continue;
     pluginDefaultIds.add(provider.instanceId);
-    pluginDrivers.push({
-      driverKind: provider.driver,
-      label: provider.displayName ?? String(provider.driver),
-      iconUrl: provider.iconUrl,
-    });
     const explicitInstance = settings.providerInstances?.[provider.instanceId];
+    // A kept instance of a plugin that is off has no driver to add another copy of.
+    if (provider.availability !== "unavailable") {
+      pluginDrivers.push({
+        driverKind: provider.driver,
+        // The snapshot carries the user's name for a renamed slot, not the driver's.
+        label:
+          (explicitInstance?.displayName === undefined ? provider.displayName : undefined) ??
+          String(provider.driver),
+        iconUrl: provider.iconUrl,
+      });
+    }
     rows.push({
       instanceId: provider.instanceId,
       explicitInstance,
