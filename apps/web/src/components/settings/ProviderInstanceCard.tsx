@@ -749,7 +749,10 @@ export function ProviderInstanceCard({
       : onRunUpdate;
   const urlAuthAction = liveProvider?.auth.action;
   const displayName =
-    instance.displayName?.trim() || driverOption?.label || String(instance.driver);
+    instance.displayName?.trim() ||
+    driverOption?.label ||
+    liveProvider?.displayName ||
+    String(instance.driver);
   const accentColor = normalizeProviderAccentColor(instance.accentColor);
   const { copyToClipboard } = useCopyToClipboard<{ providerName: string }>({
     onCopy: ({ providerName }) => {

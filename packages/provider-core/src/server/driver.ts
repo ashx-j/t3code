@@ -27,6 +27,11 @@ export interface ProviderDriverMetadata {
   /** Defaults to true; false rejects multiple instances of a global resource. */
   readonly supportsMultipleInstances?: boolean;
   readonly hasDefaultInstance?: boolean;
+  /**
+   * The form and icon of a driver clients have no definition for, such as a plugin's. Its
+   * unavailable instances keep them, so a config that fails to decode can still be fixed.
+   */
+  readonly client?: Pick<ServerProvider, "settingsSchema" | "iconUrl">;
 }
 
 export type ProviderWorkspaceSnapshot = ServerProvider &

@@ -79,7 +79,7 @@ const entryEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boole
 /**
  * The saved instances plus a default instance for each added driver that has none, as
  * `deriveProviderInstanceConfigMap` gives built-ins one, so a provider plugin shows up when it
- * loads.
+ * loads. It starts off, as clients treat every unsaved default but Codex's and Claude's.
  */
 const withAddedDriverDefaults = <R>(
   configMap: ProviderInstanceConfigMap,
@@ -94,7 +94,7 @@ const withAddedDriverDefaults = <R>(
     const instanceId = defaultInstanceIdForDriver(driver.driverKind);
     if (instanceId in configMap) continue;
     merged ??= { ...configMap };
-    merged[instanceId] = { driver: driver.driverKind };
+    merged[instanceId] = { driver: driver.driverKind, enabled: false };
   }
   return merged === undefined ? configMap : (merged as ProviderInstanceConfigMap);
 };
@@ -164,6 +164,18 @@ const resolveEntryEnabled = (entry: ProviderInstanceConfig, typedConfig: unknown
   return entry.enabled ?? providerInstanceConfigEnabledFlag(typedConfig) ?? true;
 };
 
+// Plugin drivers are outside code: one that throws makes its instance unavailable, never stops
+// the reconcile that rebuilds every other instance.
+const decodeEntryConfig = <R>(driver: AnyProviderDriver<R>, entry: ProviderInstanceConfig) => {
+  const decode = Schema.decodeUnknownEffect(driver.configSchema);
+  return Effect.suspend(() => decode(entry.config ?? driver.defaultConfig())).pipe(
+    Effect.mapError((issue) => issue.message ?? String(issue)),
+    Effect.catchDefect((defect) =>
+      Effect.fail(defect instanceof Error ? defect.message : String(defect)),
+    ),
+  );
+};
+
 // The enabled state `buildEntry` decodes, so a disabled instance never reads its secrets.
 const isEntryEnabled = Effect.fn("ProviderInstanceRegistry.isEntryEnabled")(function* <R>(
   driversById: ReadonlyMap<ProviderDriverKind, AnyProviderDriver<R>>,
@@ -171,8 +183,7 @@ const isEntryEnabled = Effect.fn("ProviderInstanceRegistry.isEntryEnabled")(func
 ) {
   const driver = driversById.get(entry.driver);
   if (!driver) return false;
-  const decoder = Schema.decodeUnknownEffect(driver.configSchema);
-  const decoded = yield* decoder(entry.config ?? driver.defaultConfig()).pipe(Effect.option);
+  const decoded = yield* decodeEntryConfig(driver, entry).pipe(Effect.option);
   return Option.isSome(decoded) && resolveEntryEnabled(entry, decoded.value);
 });
 
@@ -204,41 +215,35 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
     };
   }
 
-  const decoder = Schema.decodeUnknownEffect(driver.configSchema);
-  const decodeResult = yield* decoder(entry.config ?? driver.defaultConfig()).pipe(Effect.result);
+  const unavailable = (reason: string) =>
+    buildUnavailableProviderSnapshot({
+      driverKind: entry.driver,
+      instanceId,
+      displayName: entry.displayName,
+      accentColor: entry.accentColor,
+      reason,
+    }).pipe(
+      Effect.map((snapshot) => ({
+        kind: "unavailable" as const,
+        snapshot: { ...snapshot, ...driver.metadata.client },
+      })),
+    );
+
+  const decodeResult = yield* decodeEntryConfig(driver, entry).pipe(Effect.result);
   if (decodeResult._tag === "Failure") {
-    const issue = decodeResult.failure;
-    const detail = issue.message ?? String(issue);
+    const detail = decodeResult.failure;
     yield* Effect.logError("Failed to decode provider instance config", {
       instanceId: rawInstanceId,
       driver: entry.driver,
       detail,
     });
-    return {
-      kind: "unavailable" as const,
-      snapshot: yield* buildUnavailableProviderSnapshot({
-        driverKind: entry.driver,
-        instanceId,
-        displayName: entry.displayName,
-        accentColor: entry.accentColor,
-        reason: `Invalid config for instance '${rawInstanceId}': ${detail}`,
-      }),
-    };
+    return yield* unavailable(`Invalid config for instance '${rawInstanceId}': ${detail}`);
   }
 
   const typedConfig = decodeResult.success;
   const enabled = resolveEntryEnabled(entry, typedConfig);
   if (deferSecrets && enabled && secretReferencesOf(driversById, entry).length > 0) {
-    return {
-      kind: "unavailable" as const,
-      snapshot: yield* buildUnavailableProviderSnapshot({
-        driverKind: entry.driver,
-        instanceId,
-        displayName: entry.displayName,
-        accentColor: entry.accentColor,
-        reason: "Reading secrets…",
-      }),
-    };
+    return yield* unavailable("Reading secrets…");
   }
   const { secrets, unreadable } = enabled
     ? yield* readInstanceSecrets(driver, entry)
@@ -249,16 +254,9 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
   // Starting with a blank credential would fail later with a less useful error, or fall back to
   // whatever the server inherited.
   if (unreadable.length > 0) {
-    return {
-      kind: "unavailable" as const,
-      snapshot: yield* buildUnavailableProviderSnapshot({
-        driverKind: entry.driver,
-        instanceId,
-        displayName: entry.displayName,
-        accentColor: entry.accentColor,
-        reason: `Could not read ${unreadable.join(", ")} from its secret provider. Unlock it, then refresh.`,
-      }),
-    };
+    return yield* unavailable(
+      `Could not read ${unreadable.join(", ")} from its secret provider. Unlock it, then refresh.`,
+    );
   }
 
   const childScope = yield* Scope.fork(parentScope);
@@ -283,16 +281,9 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
       detail: createResult.failure.detail,
     });
     yield* Scope.close(childScope, Exit.void).pipe(Effect.ignore);
-    return {
-      kind: "unavailable" as const,
-      snapshot: yield* buildUnavailableProviderSnapshot({
-        driverKind: entry.driver,
-        instanceId,
-        displayName: entry.displayName,
-        accentColor: entry.accentColor,
-        reason: `Driver '${entry.driver}' failed to create instance: ${createResult.failure.detail}`,
-      }),
-    };
+    return yield* unavailable(
+      `Driver '${entry.driver}' failed to create instance: ${createResult.failure.detail}`,
+    );
   }
 
   return {
@@ -315,14 +306,21 @@ const makeReconcile = <R>(input: {
   configMap: ProviderInstanceConfigMap,
   rebuild?: ReadonlySet<ProviderInstanceId>,
   deferSecrets?: boolean,
+  onlyKind?: ProviderDriverKind,
 ) => Effect.Effect<void, never, R | SecretResolver.SecretResolver>) => {
   const { state, parentScope } = input;
-  return (savedConfigMap, rebuild = new Set(), deferSecrets = false) =>
+  return (savedConfigMap, rebuild = new Set(), deferSecrets = false, onlyKind) =>
     Effect.gen(function* () {
       const driversById = yield* Ref.get(input.drivers);
       const configMap = withAddedDriverDefaults(savedConfigMap, driversById, input.builtInKinds);
       const previousEntries = yield* Ref.get(state.entries);
       const previousUnavailable = yield* Ref.get(state.unavailable);
+      // A driver arriving or leaving rebuilds its own kind only: other unavailable instances keep
+      // their snapshot rather than wait on their secrets again.
+      const keptUnavailable = (instanceId: ProviderInstanceId, entry: ProviderInstanceConfig) =>
+        onlyKind === undefined || entry.driver === onlyKind
+          ? undefined
+          : previousUnavailable.get(instanceId);
       const nextRaw = Object.entries(configMap);
       const nextKeys = new Set<ProviderInstanceId>(
         nextRaw.map(([raw]) => ProviderInstanceId.make(raw)),
@@ -361,7 +359,9 @@ const makeReconcile = <R>(input: {
       const references = yield* Effect.forEach(nextRaw, ([rawInstanceId, entry]) =>
         Effect.gen(function* () {
           const instanceId = ProviderInstanceId.make(rawInstanceId);
-          const kept = previousEntries.has(instanceId) && !replacedIds.has(instanceId);
+          const kept =
+            (previousEntries.has(instanceId) && !replacedIds.has(instanceId)) ||
+            keptUnavailable(instanceId, entry) !== undefined;
           return kept || !(yield* isEntryEnabled(driversById, entry))
             ? []
             : secretReferencesOf(driversById, entry);
@@ -384,6 +384,11 @@ const makeReconcile = <R>(input: {
         const existing = previousEntries.get(instanceId);
         if (existing !== undefined && !replacedIds.has(instanceId)) {
           builtEntries.set(instanceId, existing);
+          continue;
+        }
+        const unchanged = keptUnavailable(instanceId, entry);
+        if (unchanged !== undefined) {
+          builtUnavailable.set(instanceId, unchanged);
           continue;
         }
 
@@ -590,7 +595,7 @@ export const makeProviderInstanceRegistry = Effect.fn(
             entry.instance.driverKind === driverKind ? [instanceId] : [],
           ),
         );
-        yield* reconcileWithR(yield* Ref.get(configMapRef), rebuild);
+        yield* reconcileWithR(yield* Ref.get(configMapRef), rebuild, false, driverKind);
       }).pipe(Effect.provideContext(driverContext)),
     );
 
@@ -607,13 +612,15 @@ export const makeProviderInstanceRegistry = Effect.fn(
         builtIn: builtInKinds.has(kind),
       });
     }
-    yield* reconcileKind(kind);
-    return Ref.update(drivers, (current) => {
+    const remove = Ref.update(drivers, (current) => {
       if (current.get(kind) !== driver) return current;
       const next = new Map(current);
       next.delete(kind);
       return next;
     }).pipe(Effect.andThen(reconcileKind(kind)));
+    // A registration that fails must not hold the kind, or the plugin could never register again.
+    yield* reconcileKind(kind).pipe(Effect.onError(() => remove));
+    return remove;
   });
 
   return { registry, mutator, addDriver };

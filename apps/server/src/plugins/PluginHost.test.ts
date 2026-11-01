@@ -363,7 +363,10 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
       });
       const { registry, addDriver } = yield* makeProviderInstanceRegistry<PluginProviderDriverEnv>({
         drivers: [],
-        configMap: {},
+        // Saved and on, as the provider's switch in settings leaves it; unsaved defaults start off.
+        configMap: {
+          [defaultInstanceIdForDriver(echoAgent)]: { driver: echoAgent, enabled: true },
+        },
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -1144,9 +1147,10 @@ it.live("runs a turn with the ACP agent a plugin registers by its command", () =
       enabled: { [acpPlugin]: true },
       devPaths: [`${fixturesDir}acp-agent-plugin`],
     });
+    const echoAcp = ProviderDriverKind.make("echoAcp");
     const { registry, addDriver } = yield* makeProviderInstanceRegistry<AcpAgentDriverEnv>({
       drivers: [],
-      configMap: {},
+      configMap: { [defaultInstanceIdForDriver(echoAcp)]: { driver: echoAcp, enabled: true } },
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
@@ -1170,7 +1174,7 @@ it.live("runs a turn with the ACP agent a plugin registers by its command", () =
     yield* Effect.gen(function* () {
       const host = yield* PluginHost.PluginHost;
       yield* waitForStatuses(host, { [acpPlugin]: "active" });
-      const instanceId = defaultInstanceIdForDriver(ProviderDriverKind.make("echoAcp"));
+      const instanceId = defaultInstanceIdForDriver(echoAcp);
       const instance = yield* registry.getInstance(instanceId);
       assert.include(yield* instance!.snapshot.getSnapshot, {
         displayName: "Echo ACP",
