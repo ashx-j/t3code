@@ -152,16 +152,23 @@ tracks one T3 version.
 The instance registry keeps its drivers in a `Ref` seeded with the built-ins, read only by
 reconcile and secret reloads, never per turn. Adding a driver rebuilds instances saved for its
 kind, which stay as unavailable entries while no driver exists, and gives it a default instance
-the way built-ins get one. Removing it leaves those instances unavailable. Built-in kinds cannot
-be replaced. Registration is a hydration service rather than a mutator method because only there
-is the drivers' service type concrete, so plugin drivers get the services built-ins get. The
-host turns defects in a plugin's driver into driver errors, because the registry reports those
-as an unavailable instance and a defect would stop a reconcile.
+the way built-ins get one. That default starts off, because clients treat every unsaved default
+but Codex's and Claude's as off; the settings page lists it from the snapshot. Removing a driver
+leaves its saved instances unavailable. Adding or removing one rebuilds only its kind, so other
+unavailable instances do not wait on a secret read again. Built-in kinds cannot be replaced.
+Registration is a hydration service rather than a mutator method because only there is the
+drivers' service type concrete, so plugin drivers get the services built-ins get. A defect stops
+the reconcile that rebuilds every instance, so the registry catches defects while decoding a
+config, the host turns defects in a plugin's `create` into driver errors, and a registration
+whose rebuild still fails removes its driver so the kind stays free.
 
 Clients pick a provider's card, icon and form from static definitions, so a plugin's driver
 declares `client.settingsSchema` (the JSON Schema subset plugin settings use) and
-`client.iconUrl`, and the host stamps both onto its snapshots. Web draws the plugin settings
-form from the schema where it has no definition for the driver. An Effect `configSchema` is not
+`client.iconUrl`. They travel in the driver's metadata, so its unavailable instances keep the
+form and a config that fails to decode can be fixed, and the host stamps them onto live
+snapshots. Web draws the plugin settings form from the schema where it has no definition for the
+driver. The form saves into the instance's config, which every client receives, so the host
+refuses `t3-secret` fields. An Effect `configSchema` is not
 converted, because its JSON Schema uses `anyOf` for optional fields, which that form cannot draw.
 Mobile has no provider settings form for any driver.
 

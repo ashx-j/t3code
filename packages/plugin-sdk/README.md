@@ -62,7 +62,7 @@ module.exports = {
 - the text T3 Code generates, such as thread titles and commit messages;
 - HTTP routes, schedules and server info;
 - ACP agents T3 Code runs by their command (`api.providers.registerAcpAgent`), with no Effect
-  code; the `acp-agent-plugin` fixture is a complete one;
+  code; the `acp-agent-plugin` fixture is a small one;
 - source control hosts (`api.sourceControl.registerDriver`), which join remote recognition and
   pull requests; the `source-control-plugin` fixture is a minimal one;
 - provider drivers, built with `api.providers.runtime` and typed with
@@ -86,7 +86,9 @@ api.providers.registerAcpAgent({
 ```
 
 T3 Code runs it with its shared ACP adapter and gives each instance a form for the command and
-arguments. Other providers, and source control hosts, are Effect code that runs in the server:
+arguments. The command must be an executable on the server, on its `PATH` or by absolute path. Do
+not use `process.execPath` as the fixture does: in the installed app it is T3 Code itself, not
+Node. Other providers, and source control hosts, are Effect code that runs in the server:
 build them with the modules in `api.providers.runtime` (and the helpers in
 `api.sourceControl.runtime`), never with an `effect` you import, because the server bundles its own
 copy. Types come from one import, `@t3tools/plugin-sdk/server/providers`, which re-exports T3 Code's
@@ -101,9 +103,11 @@ What a provider driver may leave out:
   The Usage page's history reads only T3 Code's own drivers, so a driver has no `usage` reader.
 - **Text generation.** Fail each method with `TextGenerationError`; T3 Code then uses another
   provider for titles and commit messages.
-- **Client presentation.** `client.settingsSchema` (the JSON Schema format plugin settings use)
-  and `client.iconUrl` give the provider a settings form and an icon; without them the instance
-  shows its name and status only.
+- **Client presentation.** `client.settingsSchema` (the JSON Schema format plugin settings use,
+  without `t3-secret` fields, because the form saves into the instance's config) and
+  `client.iconUrl` (https or `data:image`) give the provider a settings form and an icon; without
+  them the instance shows its name and status only. Users put secrets in the instance's
+  environment variables.
 
 ## Web half
 

@@ -76,7 +76,8 @@ export type PluginProviderDriver<Config = unknown> = Omit<
     /**
      * JSON Schema of an instance's `config`, in the subset plugin settings use (an object of
      * strings, numbers, booleans, enums and string lists); clients draw the settings form from it.
-     * Put secrets in the instance's environment variables, not here.
+     * The form saves into the instance's config, which clients receive, so `t3-secret` fields are
+     * refused: users put secrets in the instance's environment variables.
      */
     readonly settingsSchema?: JsonObject;
     /** An https or small data URL of at most 2,048 characters. */

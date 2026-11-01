@@ -857,6 +857,35 @@ describe("ProviderInstanceRegistry added drivers", () => {
         expect(yield* unavailableIds).toEqual([savedId]);
       }).pipe(Effect.provide(noSecrets), Effect.scoped),
   );
+
+  it.effect("keeps a throwing plugin driver to its own unavailable instance, with its form", () =>
+    Effect.gen(function* () {
+      const builtInId = ProviderInstanceId.make("builtIn");
+      const { registry, addDriver } = yield* makeProviderInstanceRegistry({
+        drivers: [driverFor(builtInKind)],
+        configMap: { [builtInId]: { driver: builtInKind } },
+      });
+      const settingsSchema = { type: "object", properties: { greeting: { type: "string" } } };
+      // The driver stays for the test, so its remover goes unused.
+      const _remove = yield* addDriver({
+        ...driverFor(pluginKind),
+        metadata: { displayName: "Plugin", client: { settingsSchema } },
+        defaultConfig: () => {
+          throw new Error("no default config");
+        },
+      });
+
+      expect((yield* registry.listInstances).map((instance) => instance.instanceId)).toEqual([
+        builtInId,
+      ]);
+      const [unavailable] = yield* registry.listUnavailable;
+      expect(unavailable).toMatchObject({
+        instanceId: defaultInstanceIdForDriver(pluginKind),
+        settingsSchema,
+      });
+      expect(unavailable?.unavailableReason).toContain("no default config");
+    }).pipe(Effect.provide(noSecrets), Effect.scoped),
+  );
 });
 
 const DisabledByDefaultConfig = Schema.Struct({
@@ -958,6 +987,30 @@ describe("ProviderInstanceRegistry secret environment", () => {
       const [unavailable] = yield* registry.listUnavailable;
       expect(unavailable?.instanceId).toBe(instanceId);
       expect(unavailable?.unavailableReason).toContain("OPENAI_API_KEY");
+    }).pipe(Effect.scoped);
+  });
+
+  it.effect("adds a driver without waiting on another instance's secrets", () => {
+    const fixture = setup({});
+    return Effect.gen(function* () {
+      // The gate stays closed, like a vault waiting for an unlock.
+      const { registry, addDriver } = yield* fixture.makeGated;
+      const pluginKind = ProviderDriverKind.make("pluginAgent");
+      const _remove = yield* addDriver({
+        driverKind: pluginKind,
+        metadata: { displayName: "Plugin" },
+        configSchema: Schema.Unknown,
+        defaultConfig: () => ({}),
+        create: (input) =>
+          Effect.succeed({
+            instanceId: input.instanceId,
+            enabled: input.enabled,
+          } as ProviderInstance),
+      });
+
+      expect(yield* registry.getInstance(defaultInstanceIdForDriver(pluginKind))).toBeDefined();
+      const [waiting] = yield* registry.listUnavailable;
+      expect(waiting).toMatchObject({ instanceId, unavailableReason: "Reading secrets…" });
     }).pipe(Effect.scoped);
   });
 
