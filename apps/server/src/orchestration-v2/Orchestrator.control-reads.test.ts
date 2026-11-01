@@ -18,6 +18,7 @@ import {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+import { latestExecutedRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -328,6 +329,10 @@ it.effect("records a plugin's reply to a command as a finished run with no provi
       checkpointId: null,
     });
     assert.equal(next?.ordinal, 2);
+    // Only an agent run counts as the latest run, for Continue and usage-limit auto-resume.
+    assert.isNull(latestExecutedRun([reply!]));
+    // The reply never reached the agent, so the first real message titles the thread.
+    assert.equal(projection.thread.titleRegeneration?.requestId, "send-next");
     assert.deepEqual(
       projection.messages.map((message) => [message.runId, message.role, message.text]),
       [

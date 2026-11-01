@@ -11,6 +11,7 @@ import { nextScheduledRunAt } from "../../scheduledTasks/Schedule.ts";
 import type { FacadeContext } from "./facade.ts";
 
 const MIN_INTERVAL_MS = 1000;
+const WALL_CLOCK_CHECK_MS = 60_000;
 const decodeSchedule = Schema.decodeUnknownOption(ScheduledTaskSchedule);
 const localNow = DateTime.withCurrentZoneLocal(DateTime.nowInCurrentZone);
 
@@ -61,16 +62,17 @@ export const makeScheduleApi = (facade: FacadeContext): PluginApi["schedule"] =>
           "schedule.at needs a time such as 09:30 and weekdays from 0 (Sunday) to 6 (Saturday).",
         );
       }
-      const untilNextRun = localNow.pipe(
-        Effect.flatMap((now) => {
-          const next = nextScheduledRunAt(schedule.value, now);
-          return next === null
-            ? Effect.never
-            : Effect.sleep(
-                Duration.millis(DateTime.toEpochMillis(next) - DateTime.toEpochMillis(now)),
-              );
-        }),
-      );
+      const untilNextRun = Effect.gen(function* () {
+        const next = nextScheduledRunAt(schedule.value, yield* localNow);
+        if (next === null) return yield* Effect.never;
+        // Timers stop while the machine sleeps and can fire a little early, so wake at least
+        // once a minute and run only once the wall clock has reached the time.
+        while (true) {
+          const remaining = DateTime.toEpochMillis(next) - DateTime.toEpochMillis(yield* localNow);
+          if (remaining <= 0) return;
+          yield* Effect.sleep(Duration.millis(Math.min(remaining, WALL_CLOCK_CHECK_MS)));
+        }
+      });
       return start(untilNextRun, handler);
     },
   };
