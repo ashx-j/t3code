@@ -60,6 +60,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as PluginHooks from "../plugins/PluginHooks.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
@@ -977,6 +978,41 @@ it.effect("launches a worktree request for Scratch at the root, in its own folde
     assert.equal(harness.createWorktree.mock.calls[0]?.[0]?.cwd, "/other-repo");
     assert.deepEqual(harness.claimed, [launched.threadId]);
   }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("prepares the worktree when a plugin answers a new thread's first message", () => {
+  const harness = scratchHarness();
+  return Effect.gen(function* () {
+    const hooks = yield* PluginHooks.PluginHooks;
+    yield* hooks.addSlashCommand({ pluginId: "ops", pluginName: "Ops", name: "status" }, () =>
+      Effect.succeed({ reply: "All green." }),
+    );
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const launched = yield* launches.launch({
+      ...launchInput({
+        command: "command:launch:plugin-reply",
+        thread: "thread:launch:plugin-reply",
+        message: "/status",
+        workspace: worktreeStrategy,
+      }),
+      projectId: otherProjectId,
+    });
+    yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
+      Stream.filter(
+        (stored) =>
+          stored.event.type === "thread.metadata-updated" &&
+          stored.event.payload.worktreePath !== null,
+      ),
+      Stream.runHead,
+    );
+    const thread = yield* threads.getThreadProjection(launched.threadId);
+    assert.equal(thread.thread.worktreePath, "/other-repo-worktrees/feature");
+    assert.deepEqual(
+      thread.runs.map((run) => run.status),
+      ["completed"],
+    );
+  }).pipe(Effect.provide(harness.layer.pipe(Layer.provideMerge(PluginHooks.layer))));
 });
 
 it.effect("stores a Scratch scheduled task at the root and keeps worktrees elsewhere", () => {
