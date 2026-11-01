@@ -3,18 +3,49 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import type * as ServerSettings from "../../serverSettings.ts";
+import type * as TextGeneration from "../../textGeneration/TextGeneration.ts";
 import type * as PluginHooks from "../PluginHooks.ts";
-import type { FacadeContext } from "./facade.ts";
+import { type FacadeContext, stopOnAbort } from "./facade.ts";
 
 // T3's own generators call a model and take seconds, so a plugin gets as long before T3 takes over.
 const TEXT_GENERATION_DEADLINE = Duration.seconds(30);
 const KINDS = new Set(["threadTitle", "commitMessage", "prContent", "branchName", "reviewGuide"]);
 const isKind = (kind: string): kind is PluginHooks.PluginTextGenerationKind => KINDS.has(kind);
 
+/** Runs a plugin's own prompt on the text generation model from the settings. */
+export const makeGenerateText =
+  (
+    facade: FacadeContext,
+    services: {
+      readonly textGeneration: TextGeneration.TextGeneration["Service"];
+      readonly serverSettings: ServerSettings.ServerSettingsService["Service"];
+    },
+    rootDir: string,
+  ): PluginApi["textGeneration"]["generate"] =>
+  ({ prompt, signal }) => {
+    if (typeof prompt !== "string" || prompt.trim().length === 0) {
+      return Promise.reject(new TypeError("textGeneration.generate needs a prompt."));
+    }
+    return facade.call(
+      Effect.gen(function* () {
+        const settings = yield* services.serverSettings.getSettings;
+        const generated = yield* services.textGeneration
+          .generateText({
+            cwd: rootDir,
+            prompt,
+            modelSelection: settings.textGenerationModelSelection,
+          })
+          .pipe(stopOnAbort(facade.activation, signal));
+        return generated.text;
+      }),
+    );
+  };
+
 export const makeTextGenerationApi = (
   facade: FacadeContext,
   services: { readonly hooks: PluginHooks.PluginHooksRegistry },
-): PluginApi["textGeneration"] => ({
+): Omit<PluginApi["textGeneration"], "generate"> => ({
   register: (kind, generate) => {
     const { activation, pluginId } = facade;
     if (activation.controller.signal.aborted) {

@@ -4,18 +4,23 @@
 import { pipe } from "effect/Function";
 import {
   CommandId,
+  type NodeId,
+  type RunId,
   SecretRef,
   SecretRequestError,
   type ProjectId,
   type SecretRequestAnswerInput,
   type ThreadId,
+  type TurnItemId,
 } from "@t3tools/contracts";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no createHmac.
 import * as NodeCrypto from "node:crypto";
 
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -34,6 +39,7 @@ const REF_PATTERN = /^secret-ref:[0-9a-f]{32}$/;
 const SECRET_REF_TTL_MS = 24 * 60 * 60 * 1000;
 const STORE_NAME_PATTERN = /^(secret-request-[0-9a-f]{32})\.bin$/;
 const FILE_NAME_PATTERN = /^[0-9a-f]{32}(\.partial)?$/;
+const POLL_INTERVAL = Duration.millis(500);
 
 const refFor = (salt: string, threadId: ThreadId, turnItemId: string) =>
   SecretRef.make(
@@ -52,6 +58,24 @@ const decodeStored = Schema.decodeUnknownOption(StoredSecret);
 export class SecretRequests extends Context.Service<
   SecretRequests,
   {
+    /**
+     * Shows a secret card on a run's root node and waits until the user answers it, the run ends
+     * or `timeout` passes. A card the wait leaves pending is closed as cancelled, because only the
+     * caller can hand on the answer. Fails with `load_failed` or `record_failed`.
+     */
+    readonly request: (input: {
+      readonly threadId: ThreadId;
+      readonly runId: RunId;
+      readonly nodeId: NodeId;
+      readonly turnItemId: TurnItemId;
+      /** Stable per status, so a retried request records nothing twice. */
+      readonly commandId: (status: "pending" | "cancelled") => CommandId;
+      readonly label: string;
+      readonly reason: string;
+      readonly placeholder?: string | undefined;
+      readonly delivery?: "file" | undefined;
+      readonly timeout: Duration.Duration;
+    }) => Effect.Effect<"saved" | "declined" | "cancelled" | "timed_out", SecretRequestError>;
     readonly answer: (input: SecretRequestAnswerInput) => Effect.Effect<void, SecretRequestError>;
     readonly savedRef: (input: {
       readonly threadId: ThreadId;
@@ -163,6 +187,76 @@ const make = Effect.gen(function* () {
         yield* pipe(refFor(salt, input.threadId, item.id), storeName, removeLogged);
         return yield* new SecretRequestError({ reason: "agent_stopped" });
       }
+    },
+  );
+
+  const request: SecretRequests["Service"]["request"] = Effect.fn("SecretRequests.request")(
+    function* (input) {
+      const record = (secretStatus: "pending" | "cancelled") =>
+        threadManagement
+          .dispatch({
+            type: "secret_request.record",
+            commandId: input.commandId(secretStatus),
+            threadId: input.threadId,
+            runId: input.runId,
+            nodeId: input.nodeId,
+            turnItemId: input.turnItemId,
+            label: input.label,
+            reason: input.reason,
+            ...(input.placeholder === undefined ? {} : { placeholder: input.placeholder }),
+            ...(input.delivery === undefined ? {} : { delivery: input.delivery }),
+            secretStatus,
+          })
+          .pipe(
+            Effect.mapError((cause) => new SecretRequestError({ reason: "record_failed", cause })),
+          );
+      const readCard = threadManagement
+        .getThreadRecords(input.threadId, ["runs", "turnItems"], {
+          turnItemTypes: ["secret_request"],
+          messageRoles: [],
+        })
+        .pipe(Effect.mapError((cause) => new SecretRequestError({ reason: "load_failed", cause })));
+      yield* record("pending");
+      const closeCard = record("cancelled").pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Could not close a secret request card", { error: error.message }),
+        ),
+      );
+
+      const answered = yield* Effect.gen(function* () {
+        while (true) {
+          const projection = yield* readCard;
+          const item = projection.turnItems.find((candidate) => candidate.id === input.turnItemId);
+          if (item?.type === "secret_request" && item.secretStatus !== "pending") {
+            return item.secretStatus;
+          }
+          const current = projection.runs.find((candidate) => candidate.id === input.runId);
+          if (
+            current === undefined ||
+            ThreadManagementService.isTerminalRunStatus(current.status)
+          ) {
+            yield* record("cancelled");
+            return "cancelled" as const;
+          }
+          yield* Effect.sleep(POLL_INTERVAL);
+        }
+      }).pipe(
+        Effect.timeoutOption(input.timeout),
+        Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : closeCard)),
+      );
+      if (Option.isSome(answered)) return answered.value;
+      yield* closeCard;
+      // An answer that landed just before the card closed still counts.
+      return yield* readCard.pipe(
+        Effect.map((records) => {
+          const item = records.turnItems.find((candidate) => candidate.id === input.turnItemId);
+          return item?.type === "secret_request" &&
+            (item.secretStatus === "saved" || item.secretStatus === "declined")
+            ? item.secretStatus
+            : ("timed_out" as const);
+        }),
+        Effect.orElseSucceed(() => "timed_out" as const),
+      );
     },
   );
 
@@ -330,7 +424,7 @@ const make = Effect.gen(function* () {
     Effect.forkScoped,
   );
 
-  return SecretRequests.of({ answer, savedRef, consume, saveToFile });
+  return SecretRequests.of({ request, answer, savedRef, consume, saveToFile });
 });
 
 export const layer = Layer.effect(SecretRequests, make);

@@ -37,6 +37,19 @@ const abortEffect = (signal: AbortSignal) =>
     return Effect.sync(() => signal.removeEventListener("abort", onAbort));
   });
 
+/** Interrupts `effect` when the plugin deactivates or the plugin's own `signal` aborts. */
+export const stopOnAbort =
+  (activation: PluginActivation, signal: AbortSignal | undefined) =>
+  <A, E>(effect: Effect.Effect<A, E>) =>
+    Effect.raceFirst(
+      effect,
+      abortEffect(
+        signal === undefined
+          ? activation.controller.signal
+          : AbortSignal.any([signal, activation.controller.signal]),
+      ).pipe(Effect.andThen(Effect.interrupt)),
+    );
+
 export const makeFacadeContext = (input: {
   readonly pluginId: PluginId;
   readonly activation: PluginActivation;

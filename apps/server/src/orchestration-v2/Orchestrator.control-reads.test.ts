@@ -260,6 +260,94 @@ it.effect("marks a never-visited thread's first completion unread", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("records a plugin's reply to a command as a finished run with no provider turn", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:plugin-reply");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-plugin-reply"),
+      threadId,
+      projectId: ProjectId.make("project:plugin-reply"),
+      title: "Plugin reply",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const commandId = CommandId.make("send-status");
+    const messageId = MessageId.make("message:status");
+    yield* orchestrator.dispatch({
+      type: "thread.command-reply.record",
+      commandId,
+      threadId,
+      messageId,
+      text: "/status",
+      attachments: [],
+      createdBy: "user",
+      creationSource: "web",
+      reply: { messageId: MessageId.make("message:status:reply"), text: "All good." },
+    });
+    // A client's retry of the message replays the reply instead of starting a turn.
+    const retried = yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId,
+      threadId,
+      messageId,
+      text: "/status",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    assert.isTrue(retried.replayed);
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("send-next"),
+      threadId,
+      messageId: MessageId.make("message:next"),
+      text: "Carry on",
+      attachments: [],
+      dispatchMode: { type: "defer_start" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+
+    const projection = yield* projections.getThreadProjection(threadId);
+    const [reply, next] = projection.runs;
+    assert.deepInclude(reply, {
+      ordinal: 1,
+      status: "completed",
+      userMessageId: messageId,
+      providerThreadId: null,
+      rootNodeId: null,
+      checkpointId: null,
+    });
+    assert.equal(next?.ordinal, 2);
+    assert.deepEqual(
+      projection.messages.map((message) => [message.runId, message.role, message.text]),
+      [
+        [reply!.id, "user", "/status"],
+        [reply!.id, "assistant", "All good."],
+        [next!.id, "user", "Carry on"],
+      ],
+    );
+    assert.deepEqual(
+      projection.turnItems
+        .filter((item) => item.runId === reply?.id)
+        .map((item) => [item.type, item.type === "user_message" ? item.inputIntent : null]),
+      [
+        ["user_message", "turn_start"],
+        ["assistant_message", null],
+      ],
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("files a plugin note under the latest finished run without starting a run", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;

@@ -36,8 +36,10 @@ Vite preset below.
 - A `themes/` folder of theme JSON files is published while the plugin is active, and an `assets/`
   folder is served to the web half when the plugin has one.
 - A `skills/` folder of `<name>/SKILL.md` skills reaches Claude and Codex agents while the plugin
-  is active. Nothing else in the plugin's folder reaches them. The skills are copied when the
-  plugin starts, so **Reload** picks up changes.
+  is active, and the composer's `$` menu lists them for those agents with the plugin's name. Claude
+  invokes one as `<plugin id>:<folder>`, Codex by the `name` in its frontmatter. Nothing else in
+  the plugin's folder reaches agents. The skills are copied when the plugin starts, so **Reload**
+  picks up changes.
 
 ## Server half
 
@@ -56,10 +58,13 @@ module.exports = {
 - settings, storage, and RPC methods and channels for the web half;
 - stored orchestration events, run-completed hooks and notes in threads;
 - threads and projects: read, start, archive, snooze, settle and delete threads, add and change
-  projects;
-- send hooks that add to, replace or block a message, and slash commands that run on the server;
+  projects, and list a project's git worktrees;
+- send hooks that add to, replace or block a message, and slash commands that run on the server
+  and may answer in the thread without starting a turn;
 - answers to agents' approvals and questions, instructions for agents, and MCP tools for agents;
-- the text T3 Code generates, such as thread titles and commit messages;
+- secrets the user enters on a card in a thread with a turn in progress;
+- the text T3 Code generates, such as thread titles and commit messages, and free-form text from
+  the text generation model chosen in the settings;
 - HTTP routes, schedules and server info;
 - ACP agents T3 Code runs by their command (`api.providers.registerAcpAgent`), with no Effect
   code; the `acp-agent-plugin` fixture is a small one;

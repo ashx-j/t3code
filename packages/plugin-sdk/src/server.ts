@@ -159,12 +159,15 @@ export interface PluginSlashCommandInvocation {
 
 /**
  * `text` is sent to the agent in place of the command, `block` stops the message with a reason the
- * sender sees, and nothing sends the command as typed.
+ * sender sees, and nothing sends the command as typed. `reply` (Markdown, up to 20,000 characters)
+ * answers in the thread: the command and the reply are recorded as a finished turn, and the agent
+ * neither runs nor sees them.
  */
 export type PluginSlashCommandResult =
   | void
   | { readonly text: string }
-  | { readonly block: string };
+  | { readonly block: string }
+  | { readonly reply: string };
 
 /** What each kind of generated text receives and returns. */
 export interface PluginTextGenerationTasks {
@@ -337,12 +340,53 @@ export interface PluginApi {
      */
     readonly update: (projectId: string, patch: JsonObject) => Promise<JsonObject>;
   };
+  readonly secrets: {
+    /**
+     * Asks the user for a secret in a thread with a turn in progress, on the card agents' requests
+     * use, and waits until they answer, the turn ends, `timeoutMs` (1 second to 1 hour, default
+     * 10 minutes) passes, `signal` aborts or the plugin deactivates. A saved value is handed over
+     * once and not kept. Rejects when the thread has no turn in progress.
+     */
+    readonly request: (input: {
+      readonly threadId: string;
+      /** The card's title, such as "Deploy token". */
+      readonly label: string;
+      /** What it is for and where to get it. */
+      readonly reason: string;
+      readonly placeholder?: string;
+      readonly timeoutMs?: number;
+      readonly signal?: AbortSignal;
+    }) => Promise<
+      | { readonly status: "saved"; readonly value: string }
+      | { readonly status: "declined" | "cancelled" | "timed_out" }
+    >;
+  };
+  readonly worktrees: {
+    /**
+     * The git worktrees of a project's repository: the main checkout, then the others by path,
+     * leaving out any whose folder is gone. `branch` is null for a detached checkout. Rejects when
+     * the project's folder is not in a git repository.
+     */
+    readonly list: (
+      projectId: string,
+    ) => Promise<ReadonlyArray<{ readonly path: string; readonly branch: string | null }>>;
+  };
   readonly schedule: {
     /**
      * Calls `handler` every `everyMs` (at least 1000) until the plugin deactivates or the returned
      * function is called. Runs never overlap: the next wait starts when a run finishes.
      */
     readonly every: (everyMs: number, handler: () => void | Promise<void>) => () => void;
+    /**
+     * Calls `handler` at `time` (24-hour `HH:MM` in the server's local time) on each of
+     * `weekdays` (0 is Sunday, 6 is Saturday; every day when omitted), until the plugin
+     * deactivates or the returned function is called. Runs never overlap: a time that passes
+     * while a run is still going is skipped.
+     */
+    readonly at: (
+      when: { readonly time: string; readonly weekdays?: ReadonlyArray<number> },
+      handler: () => void | Promise<void>,
+    ) => () => void;
   };
   readonly turns: {
     /**
@@ -396,6 +440,15 @@ export interface PluginApi {
     ) => void;
   };
   readonly textGeneration: {
+    /**
+     * Runs `prompt` on the text generation model chosen in T3 Code's settings and resolves with
+     * its answer. Claude, Codex, OpenCode, Cursor, Grok, Pi and Antigravity models can answer; any
+     * other rejects with code `TextGenerationUnsupportedError`. `signal` stops the wait.
+     */
+    readonly generate: (input: {
+      readonly prompt: string;
+      readonly signal?: AbortSignal;
+    }) => Promise<string>;
     /**
      * Supplies `kind` of text before T3 Code generates it, until the plugin deactivates. T3 cleans
      * up the answer as it does model output. Nothing, a wrong shape, an error or 30 seconds

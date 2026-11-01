@@ -225,21 +225,30 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         path.join(configDir, "settings.json"),
         '{"enabledPlugins":{"plugin@shop":true}}',
       );
-
-      const skills = yield* discoverClaudeSkills({ homePath: configDir });
-      assert.deepEqual(
-        planClaudeSkillDispatch(
-          "$plugin:alias focus on auth",
-          new Map(skills.map((skill) => [skill.name, skill])),
-        ),
-        {
-          leadingText: undefined,
-          commandText: "/plugin:alias focus on auth",
-        },
+      // A folder the session loads with --plugin-dir, such as a T3 Code plugin's skills.
+      const pluginDir = path.join(configDir, "t3-plugin");
+      yield* writeSkill(path.join(pluginDir, "skills"), "notes", "---\nname: release-notes\n---\n");
+      yield* fs.makeDirectory(path.join(pluginDir, ".claude-plugin"));
+      yield* fs.writeFileString(
+        path.join(pluginDir, ".claude-plugin", "plugin.json"),
+        '{"name":"t3-plugin"}',
       );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, undefined, undefined, [
+        pluginDir,
+      ]);
+      const byName = new Map(skills.map((skill) => [skill.name, skill]));
+      assert.deepEqual(planClaudeSkillDispatch("$plugin:alias focus on auth", byName), {
+        leadingText: undefined,
+        commandText: "/plugin:alias focus on auth",
+      });
+      assert.deepEqual(planClaudeSkillDispatch("$t3-plugin:notes", byName), {
+        leadingText: undefined,
+        commandText: "/t3-plugin:notes",
+      });
       assert.deepEqual(
         skills.map((skill) => skill.name),
-        ["plugin:alias", "plugin:review"],
+        ["plugin:alias", "plugin:review", "t3-plugin:notes"],
       );
     }),
   );

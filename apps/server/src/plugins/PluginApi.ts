@@ -16,8 +16,11 @@ import type * as ProjectService from "../project/ProjectService.ts";
 import type * as ProviderDriverRegistration from "../provider/ProviderDriverRegistration.ts";
 import type * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import type * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
+import type * as SecretRequests from "../secrets/SecretRequests.ts";
 import type * as ServerSettings from "../serverSettings.ts";
+import type * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import type * as SourceControlDrivers from "../sourceControl/builtInDrivers.ts";
+import type * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { makeAgentsApi } from "./api/agents.ts";
 import { makeEventsApi, storedEvents } from "./api/events.ts";
 import { makeFacadeContext } from "./api/facade.ts";
@@ -26,12 +29,14 @@ import { makeMcpApi } from "./api/mcp.ts";
 import { makeProvidersApi } from "./api/providers.ts";
 import type { RuntimeRequestHooks } from "./api/runtimeRequests.ts";
 import { makeScheduleApi } from "./api/schedule.ts";
+import { makeSecretsApi } from "./api/secrets.ts";
 import { makeServerApi } from "./api/server.ts";
 import { makeSlashCommandsApi } from "./api/slashCommands.ts";
 import { makeSourceControlApi } from "./api/sourceControl.ts";
-import { makeTextGenerationApi } from "./api/textGeneration.ts";
+import { makeGenerateText, makeTextGenerationApi } from "./api/textGeneration.ts";
 import { makeProjectsApi, makeThreadsApi } from "./api/threads.ts";
 import { makeTurnsApi } from "./api/turns.ts";
+import { makeWorktreesApi } from "./api/worktrees.ts";
 import type * as PluginHooks from "./PluginHooks.ts";
 import type * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
 import type * as PluginMcpTools from "./PluginMcpTools.ts";
@@ -88,6 +93,9 @@ export interface PluginApiServices {
   readonly projects: ProjectStore.ProjectStoreV2["Service"];
   readonly launches: ThreadLaunchService.ThreadLaunchService["Service"];
   readonly projectService: ProjectService.ProjectService["Service"];
+  readonly git: GitVcsDriver.GitVcsDriver["Service"];
+  readonly secretRequests: SecretRequests.SecretRequests["Service"];
+  readonly textGeneration: TextGeneration.TextGeneration["Service"];
   readonly providers: ProviderRegistry.ProviderRegistry["Service"];
   readonly providerDrivers: ProviderDriverRegistration.ProviderDriverRegistration["Service"];
   readonly sourceControlDrivers: SourceControlDrivers.SourceControlPluginDrivers["Service"];
@@ -183,6 +191,8 @@ export const makePluginApi = (input: {
     events,
     threads: makeThreadsApi(facade, services, input.name),
     projects: makeProjectsApi(facade, services),
+    secrets: makeSecretsApi(facade, services),
+    worktrees: makeWorktreesApi(facade, services),
     schedule: makeScheduleApi(facade),
     turns: makeTurnsApi(facade, services, {
       storage,
@@ -196,7 +206,10 @@ export const makePluginApi = (input: {
         ),
     }),
     slashCommands: makeSlashCommandsApi(facade, services, input.name),
-    textGeneration: makeTextGenerationApi(facade, services),
+    textGeneration: {
+      ...makeTextGenerationApi(facade, services),
+      generate: makeGenerateText(facade, services, input.rootDir),
+    },
     agents: makeAgentsApi(facade, services, input.name),
     providers: makeProvidersApi(facade, services),
     sourceControl: makeSourceControlApi(facade, services),

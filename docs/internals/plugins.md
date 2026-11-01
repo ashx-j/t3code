@@ -127,16 +127,24 @@ request while plugins decide: holding it back would need a change at every adapt
 
 A server plugin's slash commands are provider slash commands: the server adds them to every
 provider's lists where it adds `/usage-limits`, so every client lists them with no plugin code, and
-the `beforeDispatch` path runs the plugin's handler instead of the hooks. A command ends in a sent
-or a blocked message and cannot answer on its own: clients keep a sent message on screen until
-the server records a user message with its id, and recording one without starting a run would need
-a new orchestrator command.
+the `beforeDispatch` path runs the plugin's handler instead of the hooks. A handler's `reply` turns
+the message into the internal `thread.command-reply.record` command under the message's command id,
+so a retry replays it. The orchestrator records the sent message and an `assistant_message` reply
+as a run that is already completed, with no provider thread, attempt or checkpoint: clients drop a
+sent message once a user message with its id exists, and paged clients drop run-less items. Web
+takes a message's revert target from the previous run's checkpoint, so the first message after a
+reply has no revert button, while the command itself still reverts to before it. When a new
+thread's first message gets a reply, `ThreadLaunchService` prepares the workspace as for a launch
+without a message.
 
 Text generation hooks wrap the `TextGeneration` router, which every caller goes through, so thread
 titles, commit messages, pull request content, branch names and review guides all ask plugins
-first, and plugin answers get the cleanup T3 gives model output. There is still no free-form
-`text.generate`: providers only offer these tasks, and adding one means a new method in every
-text generation driver.
+first, and plugin answers get the cleanup T3 gives model output. `textGeneration.generate` runs a
+plugin's own prompt on the settings' text generation model through the router's `generateText`.
+Drivers built with `fromRunner` get it from their JSON runner, with the answer in one `text` field;
+it is optional on `ProviderTextGeneration`, so drivers that cannot run a prompt (the ACP agents,
+Muse) need no change and the router fails with `TextGenerationUnsupportedError`. Like the tasks,
+it moves to the fallback model when the selected one's usage limit is reached.
 
 Plugin instructions and skill folders ride on each adapter turn input, read once per turn in
 `RunExecutionService`, so adapters never look up plugins. Claude appends the instructions to T3's
@@ -148,13 +156,23 @@ gets the instructions as `application` context entries and the `skills` folders 
 `skills/extraRoots/set`, sent only when they change. The ACP agents (Grok, Antigravity, Fx),
 OpenCode, Cursor, Pi and Muse are not wired: each puts T3's own text in its own place, so each
 needs its own change, and none takes a skill folder from T3. Claude starts a process with its
-options, so a change reaches a Claude thread when its next process starts. The composer's `$`
-picker lists what each provider discovers, which does not include plugin skills yet.
+options, so a change reaches a Claude thread when its next process starts. The `$` picker reads
+each provider's skill list, so the host reads the skills' frontmatter when plugin states change and
+the server adds them to the Claude and Codex lists where it adds plugin slash commands, under the
+name each invokes: Claude namespaces a `--plugin-dir` folder's skills by its manifest name, and the
+adapter's skill dispatch reads the turn's plugin folders so `$<id>:<skill>` becomes `/<id>:<skill>`.
 
-`threads.notify` is the one plugin change inside `Orchestrator.ts`: the internal
-`thread.notification.record` command, because every `message.dispatch` starts a run. The note joins
-the thread's latest finished run. `TurnItemPositionStore` sorts run-less items before every run, and
-clients drop them from paged threads, while a note inside a running turn would split its live output.
+`threads.notify` and slash command replies are the plugin changes inside `Orchestrator.ts`, each
+one internal command, because every `message.dispatch` starts a run. A note
+(`thread.notification.record`) joins the thread's latest finished run. `TurnItemPositionStore`
+sorts run-less items before every run, and clients drop them from paged threads, while a note inside
+a running turn would split its live output.
+
+`secrets.request` shows the card the `request_secret` MCP tool uses, through
+`SecretRequests.request`, which both call. The card belongs to a run and the answer is refused once
+that run ends, so it needs a turn in progress. It resolves with the value and takes it out of the
+secret store, as `settings.get()` hands plugins their `t3-secret` values: plugins are trusted code
+in the server, so a one-use ref would only add a step.
 
 The `t3_plugins_*` management tools live in `PluginMcpTools`, but the host depends on that service,
 so the host hands it its actions when it starts.

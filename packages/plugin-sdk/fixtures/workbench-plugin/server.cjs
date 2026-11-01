@@ -34,9 +34,23 @@ module.exports = {
           ? { block: "Name an environment, for example /deploy staging." }
           : { text: `Deploy to ${args} and report back.` },
     );
+    api.slashCommands.register({ name: "status", description: "Show the deploy status" }, () => ({
+      reply: "**staging** is up to date.",
+    }));
 
     api.textGeneration.register("threadTitle", ({ message }) =>
       message.startsWith("#titled ") ? { title: `Workbench: ${message.slice(8)}` } : undefined,
+    );
+
+    api.rpc.register(
+      "summarize",
+      (input) => {
+        const { log } = /** @type {{ log: string }} */ (input);
+        return api.textGeneration.generate({
+          prompt: `Summarize these commits in one sentence:\n${log}`,
+        });
+      },
+      { access: "read" },
     );
 
     api.schedule.every(1000, async () => {

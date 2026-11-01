@@ -14,8 +14,12 @@ import {
   fallbackTextGenerationModelSelection,
 } from "@t3tools/shared/serverSettings";
 import * as ServerSettings from "../serverSettings.ts";
-import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
-import { TextGenerationError } from "@t3tools/contracts";
+import type {
+  ProviderTextGeneration,
+  TextGenerationInput,
+  TextGenerationResult,
+} from "@t3tools/provider-core/server/textGeneration";
+import { TextGenerationError, TextGenerationUnsupportedError } from "@t3tools/contracts";
 
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
@@ -33,15 +37,24 @@ export type {
   PrContentGenerationResult,
   ReviewGuideGenerationInput,
   ReviewGuideGenerationResult,
+  TextGenerationInput,
+  TextGenerationResult,
   ThreadTitleGenerationInput,
   ThreadTitleGenerationResult,
 } from "@t3tools/provider-core/server/textGeneration";
 
-export class TextGeneration extends Context.Service<TextGeneration, ProviderTextGeneration>()(
-  "t3/textGeneration/TextGeneration",
-) {}
+export class TextGeneration extends Context.Service<
+  TextGeneration,
+  Omit<ProviderTextGeneration, "generateText"> & {
+    /** Answers a free-form prompt; fails when the selected model's provider cannot run one. */
+    readonly generateText: (
+      input: TextGenerationInput,
+    ) => Effect.Effect<TextGenerationResult, TextGenerationError | TextGenerationUnsupportedError>;
+  }
+>()("t3/textGeneration/TextGeneration") {}
 
 type TextGenerationOp =
+  | "generateText"
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"
@@ -74,13 +87,13 @@ export const make = Effect.gen(function* () {
   const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   const sourceControl = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
-  const generate = Effect.fn("TextGeneration.generate")(function* <A>(
+  const generate = Effect.fn("TextGeneration.generate")(function* <A, E = never>(
     operation: TextGenerationOp,
     selection: ModelSelection,
     invoke: (
       service: ProviderTextGeneration,
       modelSelection: ModelSelection,
-    ) => Effect.Effect<A, TextGenerationError>,
+    ) => Effect.Effect<A, TextGenerationError | E>,
   ) {
     const snapshots = yield* registry.listInstances.pipe(
       Effect.flatMap((instances) =>
@@ -173,7 +186,19 @@ export const make = Effect.gen(function* () {
       );
     }),
   };
-  return TextGeneration.of(withPluginTextGeneration(pluginHooks, own));
+  // Plugins supply the task texts; a free-form prompt is what a plugin itself asks for.
+  return TextGeneration.of({
+    ...withPluginTextGeneration(pluginHooks, own),
+    generateText: Effect.fn("TextGeneration.generateText")(function (input) {
+      return generate("generateText", input.modelSelection, (service, modelSelection) =>
+        service.generateText === undefined
+          ? Effect.fail(
+              new TextGenerationUnsupportedError({ instanceId: modelSelection.instanceId }),
+            )
+          : service.generateText({ ...input, modelSelection }),
+      );
+    }),
+  });
 });
 
 export const layer = Layer.effect(TextGeneration, make);

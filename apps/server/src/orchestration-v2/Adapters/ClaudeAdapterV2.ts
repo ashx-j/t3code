@@ -4658,11 +4658,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     },
   );
 
-  const userInvocableSkills = (cwd: string | null) =>
+  const userInvocableSkills = (
+    cwd: string | null,
+    plugins: ProviderAdapter.ProviderAdapterV2TurnInput["plugins"],
+  ) =>
     discoverClaudeSkills(
       adapterOptions.settings,
       cwd ?? undefined,
       adapterOptions.environment,
+      plugins?.skillFolders.map((folder) => folder.plugin),
     ).pipe(
       Effect.map(
         (skills) =>
@@ -10444,7 +10448,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     attachmentsDir,
                     fileSystem,
                     pdfReservation,
-                    skills: yield* userInvocableSkills(turnInput.runtimePolicy.cwd),
+                    skills: yield* userInvocableSkills(
+                      turnInput.runtimePolicy.cwd,
+                      turnInput.plugins,
+                    ),
                     uuid: promptUuid,
                   }).pipe(
                     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -10889,7 +10896,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               attachmentsDir,
               fileSystem,
               pdfReservation,
-              skills: yield* userInvocableSkills(currentTurn.input.runtimePolicy.cwd),
+              skills: yield* userInvocableSkills(
+                currentTurn.input.runtimePolicy.cwd,
+                currentTurn.input.plugins,
+              ),
             }).pipe(
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
               Effect.provideService(Path.Path, path),

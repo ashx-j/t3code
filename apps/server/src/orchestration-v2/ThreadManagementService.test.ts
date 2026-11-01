@@ -107,6 +107,9 @@ const layerDispatchChokepointTest =
             Effect.sync(() => {
               dispatched.push(command.type);
               if (command.type === "message.dispatch") texts.push(command.text);
+              if (command.type === "thread.command-reply.record") {
+                texts.push(`${command.commandId} replied ${command.reply.text}`);
+              }
               return { sequence: 1, storedEvents: [] } as never;
             }),
         }),
@@ -208,9 +211,16 @@ it.effect(
             }),
         )
         .pipe(Effect.asVoid);
+      yield* hooks
+        .addSlashCommand({ pluginId: "deployer", pluginName: "Deployer", name: "status" }, () =>
+          Effect.succeed({ reply: "Staging is up to date." }),
+        )
+        .pipe(Effect.asVoid);
       const threads = yield* ThreadManagementService.ThreadManagementService;
       yield* threads.dispatch(message("user"));
       yield* threads.dispatch(message("plugin-command", undefined, "/deploy staging"));
+      // A reply keeps the message's command id, so a retry replays it instead of running a turn.
+      yield* threads.dispatch(message("plugin-reply", undefined, "/status"));
       // A retry of an accepted command id replays it; plugins already saw it once.
       const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
       const replayed = message("replayed", undefined, "/deploy staging");
@@ -243,6 +253,7 @@ it.effect(
       expect(texts).toEqual([
         "Fix the build.\n\nProject uses pnpm.",
         "Deploy staging now.",
+        "command:thread-management:hooks-plugin-reply replied Staging is up to date.",
         "/deploy staging",
         "Fix the build.",
         "/goal clear",

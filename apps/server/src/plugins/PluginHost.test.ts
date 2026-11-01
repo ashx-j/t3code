@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -15,6 +16,7 @@ import {
   RuntimeRequestId,
   SourceControlProviderKind,
   ThreadId,
+  type TurnItemId,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2DomainEvent,
   type PluginState,
@@ -32,6 +34,7 @@ import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretReso
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -64,6 +67,9 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as PullRequestProviderRegistry from "../pullRequest/PullRequestProviderRegistry.ts";
 import * as SourceControlDrivers from "../sourceControl/builtInDrivers.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
+import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import packageJson from "../../package.json" with { type: "json" };
 import { gzipTarball, tarEntry } from "./testTarball.ts";
 import type { AcpAgentDriverEnv } from "./acpAgentDriver.ts";
@@ -93,6 +99,9 @@ const layerUnusedLaunchServices = Layer.mergeAll(
   Layer.mock(ProviderRegistry.ProviderRegistry)({}),
   Layer.mock(ProviderDriverRegistration.ProviderDriverRegistration)({}),
   Layer.mock(SourceControlDrivers.SourceControlPluginDrivers)({ current: () => [] }),
+  Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+  Layer.mock(SecretRequests.SecretRequests)({}),
+  Layer.mock(TextGeneration.TextGeneration)({}),
 );
 
 // Orchestration services the lifecycle tests never reach.
@@ -347,8 +356,36 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
         );
         assert.isTrue(yield* fs.exists(`${agentFolder}/skills/release-notes/SKILL.md`));
 
+        // The `$` picker lists the skill for the providers that receive it, by each one's name.
+        const listed = PluginHooks.withPluginSkills(
+          [
+            {
+              driver: "claudeAgent",
+              skills: [],
+              workspaceSnapshots: [{ cwd: "/repo", skills: [] }],
+            },
+            { driver: "codex", skills: [] },
+            { driver: "cursor", skills: [] },
+          ] as unknown as ReadonlyArray<ServerProvider>,
+          yield* hooks.currentSkills,
+        );
+        const skill = {
+          path: `${agentFolder}/skills/release-notes/SKILL.md`,
+          enabled: true,
+          scope: "plugin",
+          displayName: "Release helper: release-notes",
+          description: "Drafts release notes from the commits since the last tag.",
+        };
+        const claudeSkill = { name: "skills-plugin:release-notes", ...skill };
+        assert.deepStrictEqual(
+          listed.map((provider) => provider.skills),
+          [[claudeSkill], [{ name: "release-notes", ...skill }], []],
+        );
+        assert.deepStrictEqual(listed[0]?.workspaceSnapshots?.[0]?.skills, [claudeSkill]);
+
         yield* host.setEnabled(skills, false);
         assert.isUndefined(yield* hooks.agentContext);
+        assert.deepStrictEqual(yield* hooks.currentSkills, []);
         assert.isFalse(yield* fs.exists(agentFolder));
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
@@ -637,6 +674,8 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         deletedAt: null,
       };
       const launched: Array<ThreadLaunchService.ThreadLaunchInput> = [];
+      const prompted: Array<TextGeneration.TextGenerationInput> = [];
+      const textModel = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "haiku" };
       const projectUpdates: Array<unknown> = [];
       const services = Layer.mergeAll(
         Layer.mock(ThreadLaunchService.ThreadLaunchService)({
@@ -657,6 +696,15 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
         Layer.mock(ProviderDriverRegistration.ProviderDriverRegistration)({}),
         Layer.mock(SourceControlDrivers.SourceControlPluginDrivers)({ current: () => [] }),
+        Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(TextGeneration.TextGeneration)({
+          generateText: (input) =>
+            Effect.sync(() => {
+              prompted.push(input);
+              return { text: "Two commits since the last deploy." };
+            }),
+        }),
         Layer.mock(Orchestrator.OrchestratorV2)({
           streamStoredEventsFrom: () => Stream.never,
           streamDomainEvents: Stream.fromQueue(domainEvents),
@@ -695,7 +743,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
             capabilities: { repositoryIdentity: false, plugins: true },
           }),
         }),
-        ServerSettings.layerTest().pipe(Layer.orDie),
+        ServerSettings.layerTest({ textGenerationModelSelection: textModel }).pipe(Layer.orDie),
       );
       yield* writePluginsConfig({
         enabled: { [workbench]: true },
@@ -773,6 +821,9 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           (yield* Effect.flip(outgoing("/deploy"))).message,
           "Workbench: Name an environment, for example /deploy staging.",
         );
+        assert.deepStrictEqual(yield* outgoing("/status"), {
+          reply: "**staging** is up to date.",
+        });
         const [provider] = PluginHooks.withPluginSlashCommands(
           [
             {
@@ -785,13 +836,16 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           ],
           yield* hooks.currentSlashCommands,
         );
-        const listed = {
-          name: "deploy",
-          description: "Deploy to an environment",
-          input: { hint: "environment" },
-        };
-        assert.deepStrictEqual(provider?.slashCommands, [{ name: "review" }, listed]);
-        assert.deepStrictEqual(provider?.workspaceSnapshots?.[0]?.slashCommands, [listed]);
+        const listed = [
+          {
+            name: "deploy",
+            description: "Deploy to an environment",
+            input: { hint: "environment" },
+          },
+          { name: "status", description: "Show the deploy status" },
+        ];
+        assert.deepStrictEqual(provider?.slashCommands, [{ name: "review" }, ...listed]);
+        assert.deepStrictEqual(provider?.workspaceSnapshots?.[0]?.slashCommands, listed);
 
         const request = (id: string, kind: string) => ({
           id,
@@ -889,6 +943,17 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           title: "Workbench: Release prep",
         });
         assert.deepStrictEqual(yield* title("Release prep"), { title: "T3 title" });
+
+        // A free-form prompt runs on the text generation model from the settings.
+        assert.strictEqual(
+          yield* call("summarize", { log: "abc123 fix\ndef456 feat" }),
+          "Two commits since the last deploy.",
+        );
+        assert.deepInclude(prompted[0], {
+          cwd: `${fixturesDir}workbench-plugin`,
+          prompt: "Summarize these commits in one sentence:\nabc123 fix\ndef456 feat",
+        });
+        assert.deepInclude(prompted[0]?.modelSelection, textModel);
 
         // Thread and project management go through the commands and services clients use.
         dispatched.length = 0;
@@ -1103,6 +1168,134 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
     }).pipe(Effect.provide(layerConfig())),
   );
 
+  it.effect("runs a plugin's work at a time of day on its weekdays until it cancels", () =>
+    Effect.gen(function* () {
+      const reminders = PluginId.make("schedule-plugin");
+      yield* writePluginsConfig({
+        enabled: { [reminders]: true },
+        devPaths: [`${fixturesDir}schedule-plugin`],
+      });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        yield* waitForStatuses(host, { [reminders]: "active" });
+        const call = (method: string, input?: Schema.Json) =>
+          host.invoke({ pluginId: reminders, method, input, scopes: operate });
+        assert.include(
+          (yield* Effect.flip(call("remindAt", { time: "25:00" }))).message,
+          "schedule.at needs a time such as 09:30",
+        );
+
+        // An hour from now in the server's time zone, on that day's weekday only.
+        const due = DateTime.toParts(
+          DateTime.add(yield* DateTime.withCurrentZoneLocal(DateTime.nowInCurrentZone), {
+            hours: 1,
+          }),
+        );
+        const pad = (value: number) => String(value).padStart(2, "0");
+        yield* call("remindAt", {
+          time: `${pad(due.hour)}:${pad(due.minute)}`,
+          weekdays: [due.weekDay],
+        });
+        const published = yield* Queue.unbounded<Schema.Json>();
+        yield* host.subscribe({ pluginId: reminders, channel: "reminders" }).pipe(
+          Stream.runForEach((value) => Queue.offer(published, value)),
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* TestClock.adjust("1 hour");
+        assert.strictEqual(yield* Queue.take(published), 1);
+        yield* TestClock.adjust("7 days");
+        assert.strictEqual(yield* Queue.take(published), 2);
+
+        assert.strictEqual(yield* call("stopReminders"), 2);
+        yield* TestClock.adjust("7 days");
+        assert.strictEqual(yield* call("stopReminders"), 2);
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("asks the user for a secret in a thread and hands the plugin the value once", () =>
+    Effect.gen(function* () {
+      const secrets = PluginId.make("secrets-plugin");
+      const threadId = ThreadId.make("thread:plugin-secret");
+      const projectId = ProjectId.make("project:plugin-secret");
+      yield* writePluginsConfig({
+        enabled: { [secrets]: true },
+        devPaths: [`${fixturesDir}secrets-plugin`],
+      });
+      // The thread as orchestration would record it: one running turn and the card on it.
+      let runStatus = "running";
+      let card: { readonly id: TurnItemId; readonly secretStatus: string } | undefined;
+      const asked = yield* Deferred.make<TurnItemId>();
+      const threads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+        getThreadRecords: () =>
+          Effect.sync(
+            () =>
+              ({
+                thread: { projectId },
+                runs: [
+                  { id: "run:secret", ordinal: 1, status: runStatus, rootNodeId: "node:root" },
+                ],
+                turnItems:
+                  card === undefined
+                    ? []
+                    : [
+                        {
+                          ...card,
+                          runId: "run:secret",
+                          nodeId: "node:root",
+                          type: "secret_request",
+                        },
+                      ],
+              }) as never,
+          ),
+        dispatch: (command) =>
+          Effect.gen(function* () {
+            if (command.type === "secret_request.record" && card?.secretStatus !== "saved") {
+              card = { id: command.turnItemId, secretStatus: command.secretStatus };
+              if (command.secretStatus === "pending") yield* Deferred.succeed(asked, card.id);
+            }
+            return { sequence: 1, storedEvents: [] } as never;
+          }),
+      });
+      const secretRequests = yield* Effect.service(SecretRequests.SecretRequests).pipe(
+        Effect.provide(
+          SecretRequests.layer.pipe(
+            Layer.provide(Layer.mergeAll(threads, ServerSecretStore.layer)),
+          ),
+        ),
+      );
+      const services = Layer.mergeAll(
+        layerUnusedServices,
+        threads,
+        Layer.succeed(SecretRequests.SecretRequests, secretRequests),
+      );
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        yield* waitForStatuses(host, { [secrets]: "active" });
+        const ask = host.invoke({
+          pluginId: secrets,
+          method: "askToken",
+          input: { threadId },
+          scopes: operate,
+        });
+        const asking = yield* ask.pipe(Effect.forkChild({ startImmediately: true }));
+        // The user answers on the card, as a client does.
+        const turnItemId = yield* Deferred.await(asked);
+        yield* secretRequests.answer({
+          threadId,
+          turnItemId,
+          answer: { type: "save", secret: "tok_staging" },
+        });
+        yield* TestClock.adjust("1 second");
+        assert.deepStrictEqual(yield* Fiber.join(asking), { saved: "tok_staging" });
+        assert.isTrue(Option.isNone(yield* secretRequests.savedRef({ threadId, turnItemId })));
+
+        runStatus = "completed";
+        assert.include((yield* Effect.flip(ask)).message, "has no turn in progress");
+      }).pipe(Effect.provide(layerHost(services)));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
   it.effect("does not load a disabled plugin at startup", () =>
     Effect.gen(function* () {
       const rootDir = yield* writeInstalledPlugin(
@@ -1139,6 +1332,64 @@ module.exports = { activate() {} };`,
     }).pipe(Effect.provide(layerConfig())),
   );
 });
+
+it.live("lists a project's git worktrees for a plugin", () =>
+  Effect.gen(function* () {
+    const worktrees = PluginId.make("worktrees-plugin");
+    const projectId = ProjectId.make("project:plugin-worktrees");
+    yield* writePluginsConfig({
+      enabled: { [worktrees]: true },
+      devPaths: [`${fixturesDir}worktrees-plugin`],
+    });
+    const fs = yield* FileSystem.FileSystem;
+    const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-plugin-worktrees-" });
+    const repo = `${parent}/repo`;
+    yield* fs.makeDirectory(repo);
+    const git = (...args: ReadonlyArray<string>) =>
+      NodeChildProcess.execFileSync("git", args, { cwd: repo, stdio: "ignore" });
+    git("init", "-q", "-b", "main");
+    git(
+      "-c",
+      "user.email=t@t.test",
+      "-c",
+      "user.name=T",
+      "commit",
+      "-q",
+      "--allow-empty",
+      "-m",
+      "init",
+    );
+    git("worktree", "add", "-q", "-b", "feature", `${parent}/feature`);
+    git("worktree", "add", "-q", "--detach", `${parent}/detached`);
+    git("worktree", "add", "-q", "-b", "gone", `${parent}/gone`);
+    yield* fs.remove(`${parent}/gone`, { recursive: true });
+    const services = Layer.mergeAll(
+      layerUnusedServices,
+      Layer.mock(ProjectService.ProjectService)({
+        getById: (id) =>
+          Effect.succeed(
+            id === projectId ? Option.some({ workspaceRoot: repo } as Project) : Option.none(),
+          ),
+      }),
+      Layer.succeed(GitVcsDriver.GitVcsDriver, yield* GitVcsDriver.make),
+    );
+    yield* Effect.gen(function* () {
+      const host = yield* PluginHost.PluginHost;
+      yield* waitForStatuses(host, { [worktrees]: "active" });
+      // The main checkout comes first, then the rest by path; a detached one has no branch, and a
+      // removed one is left out.
+      assert.deepStrictEqual(
+        yield* host.invoke({
+          pluginId: worktrees,
+          method: "branches",
+          input: { projectId },
+          scopes: operate,
+        }),
+        ["main", null, "feature"],
+      );
+    }).pipe(Effect.provide(layerHost(services)));
+  }).pipe(Effect.provide(layerConfig()), Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 
 it.live("runs a turn with the ACP agent a plugin registers by its command", () =>
   Effect.gen(function* () {
