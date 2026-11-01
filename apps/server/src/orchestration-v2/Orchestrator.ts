@@ -560,6 +560,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "secret_request.record":
     case "link_request.record":
     case "thread.notification.record":
+    case "thread.command-reply.record":
       return command.threadId;
     case "thread.fork":
     case "thread.merge_back":
@@ -8579,6 +8580,138 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
   });
 
+  /**
+   * A finished run of its own, without a provider thread or checkpoint: clients drop a sent message
+   * once its id is recorded, and paged clients drop run-less items.
+   */
+  const dispatchThreadCommandReplyRecord = Effect.fn(
+    "orchestrationV2.dispatch.threadCommandReplyRecord",
+  )(function* (
+    command: Extract<
+      OrchestrationV2InternalCommand,
+      { readonly type: "thread.command-reply.record" }
+    >,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const projection = yield* projectionStore
+      .getThreadRecords(command.threadId, ["runs"], { turnItemTypes: [], messageRoles: [] })
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
+    if (projection.thread.deletedAt !== null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} is deleted.`,
+      });
+    }
+    const now = yield* DateTime.now;
+    const ordinal = nextRunOrdinal(projection);
+    const modelSelection = command.modelSelection ?? projection.thread.modelSelection;
+    const run: OrchestrationV2Run = {
+      id: idAllocator.derive.run({ threadId: command.threadId, ordinal }),
+      threadId: command.threadId,
+      ordinal,
+      providerInstanceId: modelSelection.instanceId,
+      modelSelection,
+      providerThreadId: null,
+      userMessageId: command.messageId,
+      rootNodeId: null,
+      activeAttemptId: null,
+      status: "completed",
+      requestedAt: now,
+      startedAt: now,
+      completedAt: now,
+      checkpointId: null,
+      contextHandoffId: null,
+    };
+    // What the sender sent, as the message and as its turn item.
+    const sent = {
+      createdBy: command.createdBy,
+      creationSource: command.creationSource,
+      ...(command.scheduledTaskId === undefined
+        ? {}
+        : { scheduledTaskId: command.scheduledTaskId }),
+      ...(command.senderThreadId === undefined ? {} : { senderThreadId: command.senderThreadId }),
+      text: command.text,
+      ...(command.context ? { context: command.context } : {}),
+      attachments: command.attachments,
+    };
+    const messageFields = {
+      threadId: command.threadId,
+      runId: run.id,
+      nodeId: null,
+      streaming: false,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const userMessage: OrchestrationV2ConversationMessage = {
+      ...sent,
+      ...messageFields,
+      id: command.messageId,
+      role: "user",
+    };
+    const replyMessage: OrchestrationV2ConversationMessage = {
+      ...messageFields,
+      createdBy: "system",
+      creationSource: "server",
+      id: command.reply.messageId,
+      role: "assistant",
+      text: command.reply.text,
+      attachments: [],
+    };
+    const itemFields = {
+      threadId: command.threadId,
+      runId: run.id,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      status: "completed",
+      title: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+    } as const;
+    const itemOrdinal = yield* nextTurnItemOrdinal(projection);
+    const userItem: OrchestrationV2TurnItem = {
+      ...sent,
+      ...itemFields,
+      id: idAllocator.derive.userTurnItem({ messageId: userMessage.id }),
+      ordinal: itemOrdinal,
+      type: "user_message",
+      messageId: userMessage.id,
+      inputIntent: "turn_start",
+    };
+    const replyItem: OrchestrationV2TurnItem = {
+      ...itemFields,
+      id: idAllocator.derive.userTurnItem({ messageId: replyMessage.id }),
+      ordinal: itemOrdinal + 1,
+      type: "assistant_message",
+      messageId: replyMessage.id,
+      text: replyMessage.text,
+      streaming: false,
+    };
+    const emitEvent = emit(events, command);
+    const eventFields = {
+      threadId: command.threadId,
+      runId: run.id,
+      providerInstanceId: run.providerInstanceId,
+      occurredAt: now,
+    };
+    yield* emitEvent({ type: "run.created", ...eventFields, payload: run });
+    for (const [message, item] of [
+      [userMessage, userItem],
+      [replyMessage, replyItem],
+    ] as const) {
+      yield* emitEvent({ type: "message.updated", ...eventFields, payload: message });
+      yield* emitEvent({ type: "turn-item.updated", ...eventFields, payload: item });
+    }
+  });
+
   const dispatchSecretRequestRecord = Effect.fn("orchestrationV2.dispatch.secretRequestRecord")(
     function* (
       command: Extract<OrchestrationV2InternalCommand, { readonly type: "secret_request.record" }>,
@@ -13305,6 +13438,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "thread.notification.record":
         yield* dispatchThreadNotificationRecord(command, events);
+        break;
+      case "thread.command-reply.record":
+        yield* dispatchThreadCommandReplyRecord(command, events);
         break;
       default:
         return yield* dispatchUnsupported(command);

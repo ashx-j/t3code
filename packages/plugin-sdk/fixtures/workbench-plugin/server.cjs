@@ -34,6 +34,9 @@ module.exports = {
           ? { block: "Name an environment, for example /deploy staging." }
           : { text: `Deploy to ${args} and report back.` },
     );
+    api.slashCommands.register({ name: "status", description: "Show the deploy status" }, () => ({
+      reply: "**staging** is up to date.",
+    }));
 
     api.textGeneration.register("threadTitle", ({ message }) =>
       message.startsWith("#titled ") ? { title: `Workbench: ${message.slice(8)}` } : undefined,

@@ -159,12 +159,15 @@ export interface PluginSlashCommandInvocation {
 
 /**
  * `text` is sent to the agent in place of the command, `block` stops the message with a reason the
- * sender sees, and nothing sends the command as typed.
+ * sender sees, and nothing sends the command as typed. `reply` (Markdown, up to 20,000 characters)
+ * answers in the thread: the command and the reply are recorded as a finished turn, and the agent
+ * neither runs nor sees them.
  */
 export type PluginSlashCommandResult =
   | void
   | { readonly text: string }
-  | { readonly block: string };
+  | { readonly block: string }
+  | { readonly reply: string };
 
 /** What each kind of generated text receives and returns. */
 export interface PluginTextGenerationTasks {

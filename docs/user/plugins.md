@@ -63,8 +63,8 @@ A plugin can also change a message before it is sent, or stop it and say why. A 
 stays in the composer, so you can edit it and send it again.
 
 Plugins can add slash commands. They appear in the composer's `/` menu with the agent's own
-commands, in every app. A plugin's command runs on the server and sends the agent a message the
-plugin prepares, or stops with a reason.
+commands, in every app. A plugin's command runs on the server. It can send the agent a message the
+plugin prepares, stop with a reason, or answer you in the thread without asking the agent.
 
 A plugin can give Claude and Codex agents extra instructions and skills, from their next turn or
 session while the plugin is on. Other agents don't get them yet.

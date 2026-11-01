@@ -773,6 +773,9 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           (yield* Effect.flip(outgoing("/deploy"))).message,
           "Workbench: Name an environment, for example /deploy staging.",
         );
+        assert.deepStrictEqual(yield* outgoing("/status"), {
+          reply: "**staging** is up to date.",
+        });
         const [provider] = PluginHooks.withPluginSlashCommands(
           [
             {
@@ -785,13 +788,16 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           ],
           yield* hooks.currentSlashCommands,
         );
-        const listed = {
-          name: "deploy",
-          description: "Deploy to an environment",
-          input: { hint: "environment" },
-        };
-        assert.deepStrictEqual(provider?.slashCommands, [{ name: "review" }, listed]);
-        assert.deepStrictEqual(provider?.workspaceSnapshots?.[0]?.slashCommands, [listed]);
+        const listed = [
+          {
+            name: "deploy",
+            description: "Deploy to an environment",
+            input: { hint: "environment" },
+          },
+          { name: "status", description: "Show the deploy status" },
+        ];
+        assert.deepStrictEqual(provider?.slashCommands, [{ name: "review" }, ...listed]);
+        assert.deepStrictEqual(provider?.workspaceSnapshots?.[0]?.slashCommands, listed);
 
         const request = (id: string, kind: string) => ({
           id,

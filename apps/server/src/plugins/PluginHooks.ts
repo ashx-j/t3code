@@ -48,6 +48,11 @@ type DispatchOutcome =
   | { readonly block: string; readonly pluginName: string }
   | undefined;
 
+/** A slash command's answer, recorded in the thread instead of sending the message. */
+export interface PluginCommandReply {
+  readonly reply: string;
+}
+
 /** The host makes hooks safe: bounded and fail-open. */
 type BeforeDispatchHook = (message: PluginOutgoingMessage) => Effect.Effect<DispatchOutcome>;
 
@@ -80,7 +85,7 @@ export interface PluginAgentContext {
 /** Runs a plugin's slash command; `args` is the text after `/name`. The host bounds it. */
 type SlashCommandHandler = (
   message: PluginOutgoingMessage & { readonly args: string },
-) => Effect.Effect<DispatchOutcome>;
+) => Effect.Effect<DispatchOutcome | PluginCommandReply>;
 
 const SLASH_COMMAND = /^\/([a-z0-9][a-z0-9-]*)(?:\s+([\s\S]*))?$/;
 
@@ -119,15 +124,15 @@ export interface PluginHooksRegistry {
   /** Adds a hook and returns the effect that removes it. */
   readonly addBeforeDispatch: (hook: BeforeDispatchHook) => Effect.Effect<Effect.Effect<void>>;
   /**
-   * The text to send. A plugin's slash command runs its handler instead of the hooks; other slash
-   * commands pass unchanged. Otherwise every hook sees the message in order, and a block stops the
-   * rest.
+   * The text to send, or a plugin's reply to record instead. A plugin's slash command runs its
+   * handler instead of the hooks; other slash commands pass unchanged. Otherwise every hook sees
+   * the message in order, and a block stops the rest.
    */
   readonly beforeDispatch: (
     message: PluginOutgoingMessage,
     /** Read only when a plugin would run: a replay of an accepted command goes out unchanged. */
     alreadyAccepted: Effect.Effect<boolean>,
-  ) => Effect.Effect<string, PluginMessageBlockedError>;
+  ) => Effect.Effect<string | PluginCommandReply, PluginMessageBlockedError>;
   /** Adds a slash command and returns the effect that removes it. */
   readonly addSlashCommand: (
     command: PluginSlashCommand,
@@ -181,6 +186,14 @@ const applyOutcome = (text: string, outcome: DispatchOutcome) =>
         )
       : Effect.succeed(outcome.text);
 
+const applyCommandOutcome = (
+  text: string,
+  outcome: DispatchOutcome | PluginCommandReply,
+): Effect.Effect<string | PluginCommandReply, PluginMessageBlockedError> =>
+  outcome !== undefined && "reply" in outcome
+    ? Effect.succeed(outcome)
+    : applyOutcome(text, outcome);
+
 const make = Effect.gen(function* () {
   const hooks = yield* Ref.make<ReadonlyArray<{ readonly run: BeforeDispatchHook }>>([]);
   const instructions = yield* Ref.make<ReadonlyArray<{ readonly text: string }>>([]);
@@ -192,11 +205,16 @@ const make = Effect.gen(function* () {
     ReadonlyArray<{ readonly command: PluginSlashCommand; readonly run: SlashCommandHandler }>
   >([]);
   // A plugin sees a message once: a replayed command id was handled when it was first accepted.
-  const unlessAccepted = (
+  const unlessAccepted = <A>(
     alreadyAccepted: Effect.Effect<boolean>,
     text: string,
-    run: Effect.Effect<string, PluginMessageBlockedError>,
-  ) => alreadyAccepted.pipe(Effect.flatMap((accepted) => (accepted ? Effect.succeed(text) : run)));
+    run: Effect.Effect<A, PluginMessageBlockedError>,
+  ) =>
+    alreadyAccepted.pipe(
+      Effect.flatMap((accepted): Effect.Effect<string | A, PluginMessageBlockedError> =>
+        accepted ? Effect.succeed(text) : run,
+      ),
+    );
   const runHooks = (message: PluginOutgoingMessage, alreadyAccepted: Effect.Effect<boolean>) =>
     Ref.get(hooks).pipe(
       Effect.flatMap((all) =>
@@ -237,7 +255,7 @@ const make = Effect.gen(function* () {
                 message.text,
                 entry
                   .run({ ...message, args: match[2]?.trim() ?? "" })
-                  .pipe(Effect.flatMap((outcome) => applyOutcome(message.text, outcome))),
+                  .pipe(Effect.flatMap((outcome) => applyCommandOutcome(message.text, outcome))),
               );
         }),
       );
