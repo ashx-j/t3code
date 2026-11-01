@@ -35,7 +35,10 @@ export const make = Effect.gen(function* () {
     get: (kind) =>
       builtIn.get(kind) ?? pluginProviders().find((provider) => provider.kind === kind) ?? null,
     get kinds() {
-      return [...builtIn.kinds, ...pluginProviders().map((provider) => provider.kind)];
+      const added = pluginProviders();
+      return added.length === 0
+        ? builtIn.kinds
+        : [...builtIn.kinds, ...added.map((provider) => provider.kind)];
     },
   } satisfies PullRequestProviderRegistry["Service"];
 });
