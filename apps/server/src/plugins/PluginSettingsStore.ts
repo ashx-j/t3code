@@ -341,10 +341,15 @@ const make = Effect.gen(function* () {
       const names = new Set(
         Array.from(secretFields(settingsSchema), (field) => secretName(pluginId, field)),
       );
-      // Also secrets of fields the plugin has since renamed. Ids contain hyphens, so a name with
-      // another one after the prefix may be a longer id's (`foo-bar`'s for `foo`) and is kept.
+      // Also secrets of fields the plugin has since renamed. A longer id can share the prefix
+      // (`foo-bar` for `foo`), and every id with secrets has a settings folder, so those are kept.
       const prefix = `plugin-${pluginId}-`;
       if (secretStore.directory !== undefined) {
+        const longerIds = (yield* fileSystem
+          .readDirectory(path.dirname(path.dirname(settingsPath(pluginId))))
+          .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))).filter((id) =>
+          id.startsWith(`${pluginId}-`),
+        );
         const files = yield* fileSystem
           .readDirectory(secretStore.directory)
           .pipe(
@@ -355,7 +360,12 @@ const make = Effect.gen(function* () {
           );
         for (const file of files) {
           const name = file.endsWith(".bin") ? file.slice(0, -".bin".length) : "";
-          if (name.startsWith(prefix) && !name.slice(prefix.length).includes("-")) names.add(name);
+          if (
+            name.startsWith(prefix) &&
+            !longerIds.some((id) => name.startsWith(`plugin-${id}-`))
+          ) {
+            names.add(name);
+          }
         }
       }
       for (const name of names) {
