@@ -9,7 +9,7 @@ T3's close button.
 Install it from **Settings → Plugins → Add plugin** with this folder's path.
 
 It replaces the `app.pageFrame` part with the `page` piece T3 hands it, and the `app.sidebar` part
-with T3's header, Settings' `nav` in place of `threads`, and `back` in place of `footer`. A small
-stylesheet lines the page's header up with the sidebar's top row. Rebuild `web.js` after editing
-`web.tsx` with `vp build --config examples/settings-pages/vite.config.ts` from
+with T3's header, Settings' `nav` in place of `threads`, and `back` in place of `footer`. T3 draws
+the page's header as the window's title bar row, so the plugin has no stylesheet. Rebuild `web.js`
+after editing `web.tsx` with `vp build --config examples/settings-pages/vite.config.ts` from
 `packages/plugin-sdk`.
