@@ -1,0 +1,8 @@
+{
+  "id": "claude-agent-acp",
+  "name": "Claude Agent over ACP",
+  "version": "0.1.0",
+  "description": "Adds Claude as an ACP agent provider, run with npx from the ACP Registry's package.",
+  "engines": { "t3": ">=0.1.6" },
+  "server": "./server.cjs"
+}

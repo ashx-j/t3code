@@ -95,7 +95,7 @@ import { ScrollArea } from "../ui/scroll-area";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { stackedThreadToast, toastManager } from "../ui/toast";
-import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
+import { AddProviderInstanceDialog, type PluginDriverOption } from "./AddProviderInstanceDialog";
 import { ExpandableText } from "./ExpandableText";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { useSecretSources } from "./SecretSourceInput";
@@ -761,11 +761,23 @@ export function EnvironmentProviderSettings({
   }
   // Plugin drivers have no client definition; the server's snapshot is their default slot.
   const pluginDefaultIds = new Set<string>();
+  const pluginDrivers: Array<PluginDriverOption> = [];
   for (const provider of serverProviders) {
     if (providerClients.get(provider.driver) !== undefined) continue;
     if (provider.instanceId !== defaultInstanceIdForDriver(provider.driver)) continue;
     pluginDefaultIds.add(provider.instanceId);
     const explicitInstance = settings.providerInstances?.[provider.instanceId];
+    // A kept instance of a plugin that is off has no driver to add another copy of.
+    if (provider.availability !== "unavailable") {
+      pluginDrivers.push({
+        driverKind: provider.driver,
+        // The snapshot carries the user's name for a renamed slot, not the driver's.
+        label:
+          (explicitInstance?.displayName === undefined ? provider.displayName : undefined) ??
+          String(provider.driver),
+        iconUrl: provider.iconUrl,
+      });
+    }
     rows.push({
       instanceId: provider.instanceId,
       explicitInstance,
@@ -1179,6 +1191,7 @@ export function EnvironmentProviderSettings({
           environmentLabel={environmentLabel}
           onOpenChange={setIsAddInstanceDialogOpen}
           onCreated={setSelectedInstanceId}
+          pluginDrivers={pluginDrivers}
         />
       ) : null}
     </>

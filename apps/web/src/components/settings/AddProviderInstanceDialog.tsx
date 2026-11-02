@@ -8,6 +8,7 @@ import type { ProviderClientDefinition } from "@t3tools/provider-core/client";
 import {
   type AcpRegistrySearchAgent,
   AuthProvidersManageScope,
+  defaultInstanceIdForDriver,
   ProviderInstanceId,
   ProviderDriverKind,
   type EnvironmentId,
@@ -82,6 +83,14 @@ const DRIVER_OPTIONS = providerClients.definitions.filter(
 const FEATURED_DRIVER_OPTIONS = DRIVER_OPTIONS.filter((option) => option.featured !== false);
 const MORE_DRIVER_OPTIONS = DRIVER_OPTIONS.filter((option) => option.featured === false);
 const EMPTY_CONFIG_DRAFT: Record<string, unknown> = {};
+
+/** A driver a plugin registered on the server; clients have no definition for it. */
+export interface PluginDriverOption {
+  readonly driverKind: ProviderDriverKind;
+  readonly label: string;
+  readonly iconUrl?: string | undefined;
+}
+
 function validateInstanceId(id: string, existing: ReadonlySet<string>): string | null {
   if (id.length === 0) return "Instance ID is required.";
   if (id.length > 64) return "Instance ID must be 64 characters or fewer.";
@@ -99,7 +108,7 @@ function ProviderOptionGrid({
   onValueChange,
   ...labelProps
 }: {
-  readonly options: ReadonlyArray<ProviderClientDefinition>;
+  readonly options: ReadonlyArray<ProviderClientDefinition | PluginDriverOption>;
   readonly value: ProviderDriverKind;
   readonly disabled: boolean;
   readonly onValueChange: (value: string) => void;
@@ -123,6 +132,7 @@ function ProviderOptionGrid({
           <ProviderInstanceIcon
             driverKind={option.driverKind}
             displayName={option.label}
+            acpRegistryIconUrl={"iconUrl" in option ? option.iconUrl : undefined}
             iconClassName="size-4"
           />
           <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
@@ -134,7 +144,7 @@ function ProviderOptionGrid({
           >
             <CheckIcon className="size-3.5 shrink-0" />
           </RadioPrimitive.Indicator>
-          {option.badgeLabel ? (
+          {"badgeLabel" in option && option.badgeLabel ? (
             <Badge variant="warning" size="sm">
               {option.badgeLabel}
             </Badge>
@@ -151,7 +161,10 @@ interface AddProviderInstanceDialogProps {
   readonly environmentLabel: string;
   readonly onOpenChange: (open: boolean) => void;
   readonly onCreated?: (instanceId: ProviderInstanceId) => void;
+  readonly pluginDrivers?: ReadonlyArray<PluginDriverOption>;
 }
+
+const NO_PLUGIN_DRIVERS: ReadonlyArray<PluginDriverOption> = [];
 
 export function AddProviderInstanceDialog({
   open,
@@ -159,6 +172,7 @@ export function AddProviderInstanceDialog({
   environmentLabel,
   onOpenChange,
   onCreated,
+  pluginDrivers = NO_PLUGIN_DRIVERS,
 }: AddProviderInstanceDialogProps) {
   const settings = useEnvironmentSettings(environmentId);
   const secretSources = useSecretSources(environmentId);
@@ -183,14 +197,21 @@ export function AddProviderInstanceDialog({
   const [createdInstanceId, setCreatedInstanceId] = useState<ProviderInstanceId | null>(null);
 
   // Reserve Codex/Claude default ids because they run before configuration; other unconfigured slots are
-  // available.
+  // available. A plugin driver's default slot already has its own card, so a new copy needs a new id.
   const existingIds = new Set([
     "codex",
     "claudeAgent",
+    ...pluginDrivers.map((option) => defaultInstanceIdForDriver(option.driverKind)),
     ...Object.keys(settings.providerInstances ?? {}),
   ]);
 
-  const driverOption = providerClients.get(driver) ?? DEFAULT_DRIVER_OPTION;
+  const clientDefinition = providerClients.get(driver);
+  const pluginDriver =
+    clientDefinition === undefined
+      ? pluginDrivers.find((option) => option.driverKind === driver)
+      : undefined;
+  const driverOption = clientDefinition ?? DEFAULT_DRIVER_OPTION;
+  const driverLabel = pluginDriver?.label ?? driverOption.label;
   const isAcpRegistry = driver === ACP_REGISTRY_DRIVER_KIND;
   const showRegistrySearch =
     !createdInstanceId &&
@@ -201,7 +222,7 @@ export function AddProviderInstanceDialog({
   const registry = useAcpRegistrySearch(environmentId, showRegistrySearch);
   const isPreparingRegistryAgent = registry.preparingId !== null;
   const defaultIdentity: ProviderIdentityDraft = {
-    label: driverOption.label,
+    label: driverLabel,
     accentColor: "",
     instanceIdOverride: null,
   };
@@ -210,7 +231,7 @@ export function AddProviderInstanceDialog({
     instanceIdOverride ??
     deriveAvailableInstanceId(
       (candidateLabel) => {
-        if (!candidateLabel.trim() || candidateLabel === driverOption.label) {
+        if (!candidateLabel.trim() || candidateLabel === driverLabel) {
           return isAcpRegistry ? `${driver}_custom` : driver;
         }
         return deriveInstanceId(driver, candidateLabel);
@@ -218,11 +239,13 @@ export function AddProviderInstanceDialog({
       label,
       existingIds,
     );
-  const driverSettingsFields = deriveProviderSettingsFields(driverOption);
+  // A plugin driver's form needs its saved instance, so it is set on the card after adding.
+  const driverSettingsFields =
+    pluginDriver === undefined ? deriveProviderSettingsFields(driverOption) : [];
   const instanceIdError = validateInstanceId(instanceId, existingIds);
   const showInstanceIdError = hasAttemptedSubmit && instanceIdError !== null;
   const identityStep = 1;
-  const previewLabel = label.trim() || `${driverOption.label} Workspace`;
+  const previewLabel = label.trim() || `${driverLabel} Workspace`;
 
   const configDraft = configByDriver[driver] ?? EMPTY_CONFIG_DRAFT;
   const isLocalAcp = isAcpRegistry && isManualAcpConfiguration && configDraft.source === "local";
@@ -242,7 +265,7 @@ export function AddProviderInstanceDialog({
         previewLabel,
         null,
       ] as const)
-    : ([driverOption.label, previewLabel, null] as const);
+    : ([driverLabel, previewLabel, null] as const);
   const setConfigDraft = (config: Record<string, unknown> | undefined) => {
     setConfigByDriver((existing) => {
       const next = { ...existing };
@@ -409,7 +432,7 @@ export function AddProviderInstanceDialog({
     toastManager.add({
       type: "success",
       title: "Provider instance added",
-      description: `${driverOption.label} instance '${instanceId}' was added.`,
+      description: `${driverLabel} instance '${instanceId}' was added.`,
     });
     onOpenChange(false);
   };
@@ -467,7 +490,11 @@ export function AddProviderInstanceDialog({
                   Provider
                 </div>
                 <ProviderOptionGrid
-                  options={FEATURED_DRIVER_OPTIONS}
+                  options={
+                    pluginDrivers.length > 0
+                      ? [...FEATURED_DRIVER_OPTIONS, ...pluginDrivers]
+                      : FEATURED_DRIVER_OPTIONS
+                  }
                   value={driver}
                   disabled={isPreparingRegistryAgent}
                   onValueChange={selectDriver}
@@ -667,7 +694,7 @@ export function AddProviderInstanceDialog({
                   description="Optional marker shown in the picker."
                   control={
                     <ProviderAccentColorPicker
-                      displayName={label || driverOption.label}
+                      displayName={label || driverLabel}
                       value={accentColor || undefined}
                       onCommit={(value) => setIdentityDraft({ accentColor: value })}
                       layout="inline"
@@ -690,7 +717,9 @@ export function AddProviderInstanceDialog({
               ) : !isAcpRegistry && wizardStep === 2 ? (
                 <div className="grid gap-2">
                   <p className="text-sm text-muted-foreground">
-                    This driver has no required configuration. You can add the instance now.
+                    {pluginDriver === undefined
+                      ? "This driver has no required configuration. You can add the instance now."
+                      : "You can change its settings on its card after you add it."}
                   </p>
                 </div>
               ) : null}
