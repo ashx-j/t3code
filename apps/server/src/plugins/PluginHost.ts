@@ -306,6 +306,14 @@ const shownSource = (source: PluginInstallSource): PluginInstallSource => {
   return { ...source, url: url.toString() };
 };
 
+// Git output can carry the URL's credentials too, with or without its scheme
+// (`unable to look up user:token@host`).
+const withoutCredentials = (text: string, source: PluginInstallSource) => {
+  if (source.type !== "git") return text;
+  const userinfo = /^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)@/i.exec(source.url)?.[1];
+  return userinfo === undefined ? text : text.replaceAll(`${userinfo}@`, "***@");
+};
+
 const toState = (
   record: PluginRecord,
   enabled: boolean,
@@ -995,7 +1003,7 @@ const make = Effect.gen(function* () {
     ]).pipe(Effect.mapError(installFailed("Could not run git.")));
     if (result.code !== 0) {
       return yield* new PluginInstallError({
-        reason: `git clone failed: ${result.stderr.trim().slice(-300) || `exit ${result.code}`}`,
+        reason: `git clone failed: ${withoutCredentials(result.stderr.trim(), source).slice(-300) || `exit ${result.code}`}`,
       });
     }
     const head = yield* runGit(["-C", into, "rev-parse", "HEAD"]).pipe(Effect.option);
@@ -1128,7 +1136,7 @@ const make = Effect.gen(function* () {
             if (previous !== undefined) found[pluginId] = previous;
             return Effect.logWarning("plugin update check failed", {
               pluginId,
-              cause: Cause.pretty(cause).slice(0, 500),
+              cause: withoutCredentials(Cause.pretty(cause), source).slice(0, 500),
             });
           }),
         ),

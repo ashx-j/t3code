@@ -1466,6 +1466,22 @@ it.live("lists a project's git worktrees for a plugin", () =>
   }).pipe(Effect.provide(layerConfig()), Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.live("keeps a git URL's credentials out of a failed install's reason", () =>
+  Effect.gen(function* () {
+    const host = yield* PluginHost.PluginHost;
+    // Git prints `user:token@host` for a git:// URL it cannot reach.
+    const failed = yield* host
+      .install({ type: "git", url: "git://ash:secret-token@127.0.0.1:1/plugin.git" })
+      .pipe(Effect.flip);
+    assert.match(failed.message, /^git clone failed: /);
+    assert.notInclude(failed.message, "secret-token");
+  }).pipe(
+    Effect.provide(
+      layerHost().pipe(Layer.provideMerge(layerConfig()), Layer.provideMerge(NodeServices.layer)),
+    ),
+  ),
+);
+
 it.live("runs a turn with the ACP agent a plugin registers by its command", () =>
   Effect.gen(function* () {
     const acpPlugin = PluginId.make("acp-agent-plugin");
