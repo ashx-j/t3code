@@ -6,6 +6,7 @@ import {
   useAtomSubscribe,
   useAtomValue,
 } from "@effect/atom-react";
+import { T3_SLASH_COMMAND_NAMES } from "@t3tools/shared/slashCommands";
 import type { PreparedHttpAuthorization } from "@t3tools/client-runtime/connection";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -359,6 +360,9 @@ function makeWebPluginApi({
       registerSlashCommand: (command) => {
         if (!COMMAND_ID.test(command.name)) {
           throw new TypeError(`"${command.name}" is not a valid slash command name.`);
+        }
+        if (T3_SLASH_COMMAND_NAMES.has(command.name)) {
+          throw new TypeError(`/${command.name} is one of T3's own commands.`);
         }
         track(
           registerPluginSlashCommand({
