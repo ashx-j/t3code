@@ -243,8 +243,12 @@ export interface PluginApi {
   readonly rootDir: string;
   readonly log: PluginLogger;
   readonly settings: {
+    /**
+     * The saved settings, secret values included. Fields nobody saved read as the `default` in
+     * the manifest's `settingsSchema`, at the top level and for fields that are not secrets.
+     */
     readonly get: () => Promise<JsonObject>;
-    /** Yields the settings, secret values included, after each change until deactivation. */
+    /** Yields the settings as `get` reads them after each change, until deactivation. */
     readonly changes: () => AsyncIterable<JsonObject>;
   };
   readonly storage: {
@@ -283,7 +287,10 @@ export interface PluginApi {
       readonly projectId?: string;
     }) => Promise<ReadonlyArray<JsonObject>>;
     readonly read: (threadId: string) => Promise<JsonObject>;
-    /** Sends `text` to the thread's agent as the user would; resolves once accepted. */
+    /**
+     * Sends `text` to the thread's agent as a message from an agent, not the user, so send hooks
+     * see `createdBy: "agent"`. Resolves once accepted.
+     */
     readonly sendMessage: (input: {
       readonly threadId: string;
       readonly text: string;
