@@ -36,10 +36,10 @@ tools, so the first plugin comes from Settings.
 
 ## Update a plugin
 
-Plugins installed from a git repository or npm have **Update** on their row. It installs the
-plugin again from the same repository or package, and keeps the current version running if that
-fails. An npm
-plugin without a pinned version updates to the package's latest version.
+Plugins installed from a git repository or npm, or by an agent from a folder, have **Update** on
+their row. It installs the plugin again from the same place, and keeps the current version running
+if that fails. An npm plugin without a pinned version updates to the package's latest version.
+Plugins added by dropping or choosing a folder update the same way they were added.
 
 T3 Code checks plugins added from a git repository or npm once a day and marks the ones with a
 newer version as **Update available**. **Check for updates** on the Plugins page checks now.
@@ -53,12 +53,13 @@ files.
 
 ## Plugin settings
 
-If a plugin has settings, open them from its row. Secret fields are stored in
-the environment's secret store and are never shown again after you save them.
+If a plugin has settings, open them from its row. An empty field shows the default the plugin
+uses. Secret fields are stored in the environment's secret store and are never shown again after
+you save them; **Clear** removes a saved one.
 
 ## Remove a plugin
 
-Choose **Remove** on the plugin's row and confirm. Its settings and stored data are
+Choose **Remove** on the plugin's row and confirm in the popup. Its settings and stored data are
 kept unless you tick **Also delete its settings and stored data**, so reinstalling it later picks
 up where it left off.
 

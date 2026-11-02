@@ -80,19 +80,29 @@ control's internals. Unused pieces are elements that never render, and `original
 T3 draws it, also drawn when a replacement throws. Replacements apply in every environment's
 threads, like injected styles, and stack per part: the newest wins, and unloading it brings back the
 one before. Parts have their own version atom because they sit on hot paths such as the composer
-and every timeline row. The `app.pageFrame` part's `page` piece renders Settings or Usage beside
-the thread kept mounted under it; `index.css` hides that thread, and the page carries
-`data-app-modal` so focus and shortcut guards treat it as they treat the window.
+and every timeline row. A replacement that throws records the failure on its plugin's row, which
+is why each registered replacement carries its plugin and environment. The `app.pageFrame` part's
+`page` piece renders Settings or Usage beside the thread kept mounted under it; `index.css` hides
+that thread, and the page carries `data-app-modal` so focus and shortcut guards treat it as they
+treat the window.
+
+T3 keeps the frame around a part and plugins arrange what is inside it, so updates rarely break
+them. Settings and Usage draw their top row with `AppRouteHeader`, which in the page frame becomes
+the window's title bar row with the window-controls inset and drag area, the same as the thread
+header; plugins that restyled that row by selector broke on Windows. When a part gains a control,
+put it inside an existing piece where it fits, such as `actions`, so a plugin that places that
+piece gets it without an update. A new top-level piece is invisible to every plugin that replaced
+the part before it existed.
 
 The sidebar's header and footer render beside `ThreadSidebar` in `AppSidebarLayout` rather than
 inside it, so the `app.sidebar` part places them without edits to the thread list. `page` leaves
 Settings' section list out; the sidebar's `nav` is a second instance, loaded on demand, because the
-page's own lives in the Settings route's tree and chunk. The shown page publishes its label in an
+page's own lives in the Settings route's tree and chunk. The shown page publishes its kind in an
 atom, so `nav` and `page` stay null under T3's window, where the sidebar sits under the backdrop.
 
 The composer cannot see the timeline's scroll position, which `ChatView` owns. `useTimelineFollow`
-publishes the scroll-to-end pill's state per thread, and the composer reads it only while a plugin
-asks to fold on scroll, so a composer without plugins never re-renders on scroll. A wide screen
+publishes the scroll-to-end pill's state per thread only while a plugin asks to fold on scroll, and
+only the composer of such a plugin reads it, so threads without one never re-render on scroll. A wide screen
 keeps the composer focused while the wheel scrolls, so leaving the end blurs it.
 
 Published palettes, plugin themes among them, arrive over the server config stream after the

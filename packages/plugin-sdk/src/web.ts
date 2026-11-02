@@ -122,7 +122,8 @@ export interface WebPluginMessage {
 export interface WebPluginParts {
   /**
    * The row under the composer's text box. While no provider is available, `model` offers to open
-   * provider settings and `effort` and `access` draw nothing.
+   * provider settings and `effort` and `access` draw nothing. Only T3's own row folds the controls
+   * into a menu as it narrows; pieces placed elsewhere keep their full width.
    */
   readonly "composer.controls": {
     readonly original: WebPluginNode;
