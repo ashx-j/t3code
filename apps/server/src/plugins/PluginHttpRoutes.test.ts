@@ -80,10 +80,15 @@ const serveFixture = Effect.fn(function* () {
   const send = Effect.fn(function* (
     method: "GET" | "POST",
     path: string,
-    options: { readonly token?: string; readonly body?: string } = {},
+    options: {
+      readonly token?: string;
+      readonly body?: string;
+      readonly headers?: Record<string, string>;
+    } = {},
   ) {
     const response = yield* client.execute(
       HttpClientRequest.make(method)(path).pipe(
+        HttpClientRequest.setHeaders(options.headers ?? {}),
         options.token === undefined
           ? (request) => request
           : HttpClientRequest.setHeader("authorization", options.token),
@@ -109,6 +114,9 @@ it.effect("serves a plugin's routes and answers 404 and 500 for the rest", () =>
     });
     api.http.route("GET", "/files/*", (request) => ({ body: `any ${request.path}` }));
     api.http.route("GET", "/files/deep/*", (request) => ({ body: `deep ${request.path}` }));
+    api.http.route("GET", "/headers", (request) => ({
+      body: Object.keys(request.headers).toSorted().join(","),
+    }));
 
     assert.deepStrictEqual(
       yield* send("GET", "/api/plugins/http-plugin/hello?name=ash", { token: "Bearer read" }),
@@ -129,6 +137,14 @@ it.effect("serves a plugin's routes and answers 404 and 500 for the rest", () =>
       (yield* send("GET", "/api/plugins/http-plugin/files/deep/c.txt", { token: "Bearer read" }))
         .body,
       "deep /files/deep/c.txt",
+    );
+    // The caller's credentials, a DPoP proof included, stay with the server.
+    assert.notMatch(
+      (yield* send("GET", "/api/plugins/http-plugin/headers", {
+        token: "Bearer read",
+        headers: { cookie: "session=1", dpop: "proof" },
+      })).body,
+      /authorization|cookie|dpop/,
     );
     assert.strictEqual(
       (yield* send("GET", "/api/plugins/other-plugin/hello", { token: "Bearer read" })).status,

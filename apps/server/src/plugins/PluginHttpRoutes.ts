@@ -27,7 +27,7 @@ const MAX_REASON_CHARS = 500;
 const METHODS = ["GET", "POST", "PUT", "DELETE"] as const;
 type PluginHttpMethod = (typeof METHODS)[number];
 // The caller's credentials stay with the server; a plugin that logs headers cannot leak them.
-const WITHHELD_HEADERS = new Set(["authorization", "cookie"]);
+const WITHHELD_HEADERS = new Set(["authorization", "cookie", "dpop"]);
 
 const isMethod = Schema.is(Schema.Literals(METHODS));
 // Plugins are untyped JavaScript, so their responses are checked before they reach the socket.
