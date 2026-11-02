@@ -106,6 +106,12 @@ it.layer(NodeServices.layer)("PluginSettingsStore", (it) => {
       // `hello-world`'s secret names start with `plugin-hello-` too.
       const longerId = PluginId.make("hello-world");
       yield* store.update(hello, settingsSchema, { token: "old-secret" });
+      // This field's encoded name contains a hyphen, like a longer id's secret would.
+      yield* store.update(
+        hello,
+        { type: "object", properties: { 密钥: { type: "string", format: "t3-secret" } } },
+        { 密钥: "unicode-secret" },
+      );
       yield* store.update(hello, renamed, { apiKey: "new-secret" });
       yield* store.update(longerId, settingsSchema, { token: "other-secret" });
 
