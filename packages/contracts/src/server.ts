@@ -570,6 +570,8 @@ const environmentThemeFields = {
       dark: Schema.optional(EnvironmentThemeColors),
     }),
   ),
+  /** Keeps the nightly and dev artwork in the sidebar, which T3 otherwise swaps for a label. */
+  sidebarArtwork: Schema.optional(Schema.Boolean),
 };
 
 export const EnvironmentThemeFile = Schema.Struct(environmentThemeFields);
