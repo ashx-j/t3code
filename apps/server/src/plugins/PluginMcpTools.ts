@@ -125,6 +125,7 @@ const toolState = (state: PluginState) => ({
   ...(state.failure === undefined
     ? {}
     : { failure: `${state.failure.stage}: ${state.failure.message}` }),
+  ...(state.webFailure === undefined ? {} : { webFailure: state.webFailure }),
 });
 
 /** One tool as `/mcp` advertises it. `call` runs it; McpHttpServer checks `access` first. */
@@ -208,7 +209,7 @@ const make = () => {
   const pluginsList: PluginMcpToolEntry = {
     name: PLUGINS_LIST_TOOL,
     description:
-      "List the plugins installed in this T3 Code environment, with each one's status and whether it is enabled.",
+      "List the plugins installed in this T3 Code environment, with each one's status, whether it is enabled, and why its web half failed in the browser, if it did.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     access: "read",
     call: () =>
@@ -220,6 +221,7 @@ const make = () => {
             version: plugin.version ?? null,
             status: plugin.status,
             enabled: plugin.enabled,
+            ...(plugin.webFailure === undefined ? {} : { webFailure: plugin.webFailure }),
             slashCommands: commands
               .filter((command) => command.pluginId === plugin.id)
               .map((command) => `/${command.name}`),
@@ -353,7 +355,7 @@ const make = () => {
   const pluginsReload: PluginMcpToolEntry = {
     name: PLUGINS_RELOAD_TOOL,
     description:
-      "Restart an installed plugin with its current files, including a changed t3-plugin.json, and return its status and why it failed, if it did. Run t3_plugins_check on it to find the cause of a failure.",
+      "Restart an installed plugin with its current files, including a changed t3-plugin.json, and return its status and why it failed, if it did. Run t3_plugins_check on it to find the cause of a failure. An open T3 Code window loads its web half after this returns; t3_plugins_list then shows whether that failed.",
     inputSchema: {
       type: "object",
       properties: { pluginId: { type: "string" } },
@@ -372,7 +374,7 @@ const make = () => {
   const pluginsCheck: PluginMcpToolEntry = {
     name: PLUGINS_CHECK_TOOL,
     description:
-      'Check a plugin for problems without running it: its manifest, its T3 Code version range, its entry files, how its web bundle was built, and CSS or selectors likely to break when T3 Code updates. Give pluginId for an installed plugin, or path for a plugin folder on the server. Returns each problem with a one-line fix. The "Keeping a plugin working across T3 updates" section of the @t3tools/plugin-sdk README explains the warnings.',
+      'Check a plugin for problems without running it: its manifest, its T3 Code version range, its entry files, how its web bundle was built, and CSS or selectors likely to break when T3 Code updates. Give pluginId for an installed plugin, or path for a plugin folder on the server; for an installed plugin it also reports why its last start or its web half failed. Returns each problem with a one-line fix. The "Keeping a plugin working across T3 updates" section of the @t3tools/plugin-sdk README explains the warnings.',
     inputSchema: {
       type: "object",
       properties: {

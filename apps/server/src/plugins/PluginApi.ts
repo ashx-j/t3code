@@ -198,12 +198,9 @@ export const makePluginApi = (input: {
       storage,
       pluginName: input.name,
       runEvents: (afterSequence) =>
-        storedEvents(
-          facade,
-          services,
-          { types: ["run.updated"], ...(afterSequence === undefined ? {} : { afterSequence }) },
-          "suspend",
-        ),
+        storedEvents(facade, services, { types: ["run.updated"], afterSequence }, "suspend"),
+      latestSequence: () =>
+        Effect.runPromiseWith(facade.context)(services.eventStore.latestAgentSequence()),
     }),
     slashCommands: makeSlashCommandsApi(facade, services, input.name),
     textGeneration: {

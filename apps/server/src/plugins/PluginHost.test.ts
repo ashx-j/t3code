@@ -392,7 +392,18 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
         );
         assert.deepStrictEqual(listed[0]?.workspaceSnapshots?.[0]?.skills, [claudeSkill]);
 
+        // A rescan that finds nothing new publishes nothing, so provider lists are not rebuilt.
+        const skillLists = yield* hooks.skills.pipe(
+          Stream.take(2),
+          Stream.runCollect,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* host.rescan;
         yield* host.setEnabled(skills, false);
+        assert.deepStrictEqual(
+          (yield* Fiber.join(skillLists)).map((list) => list.length),
+          [1, 0],
+        );
         assert.isUndefined(yield* hooks.agentContext);
         assert.deepStrictEqual(yield* hooks.currentSkills, []);
         assert.isFalse(yield* fs.exists(agentFolder));
@@ -646,6 +657,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         }),
       );
       yield* writeFile(`${folder}/server.cjs`, plugin("v1"));
+      const installedDir = yield* writeInstalledPlugin("installed-one", plugin("v1"));
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
         const id = PluginId.make("in-place");
@@ -659,6 +671,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           status: "active",
           enabled: true,
           source: "dev",
+          linkedFolder: folder,
         });
         assert.isFalse(yield* fs.exists(`${stateDir}/plugins/in-place`));
         assert.strictEqual(yield* which, "v1");
@@ -667,12 +680,71 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         yield* host.reload(id);
         assert.strictEqual(yield* which, "v2");
         const copy = yield* host.install({ type: "path", path: folder }).pipe(Effect.flip);
-        assert.match(copy.message, /is linked from/);
+        assert.match(copy.message, /is linked from .+\. Unlink it first\./);
+        // A second copy of an installed plugin would share its id, so removing that copy would
+        // delete the installed one.
+        yield* waitForStatuses(host, { "installed-one": "disabled" });
+        const twice = yield* host
+          .install({ type: "path", path: installedDir, link: true })
+          .pipe(Effect.flip);
+        assert.strictEqual(twice.message, "installed-one is already installed. Remove it first.");
 
         yield* host.uninstall(id, false);
         assert.isTrue(yield* fs.exists(`${folder}/server.cjs`));
         // Forgotten, not only stopped: a rescan does not find it again.
         assert.isUndefined(stateOf((yield* host.rescan).plugins, "in-place"));
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("keeps the web failure a client reports for a plugin's current start", () =>
+    Effect.gen(function* () {
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      yield* writeFile(
+        `${stateDir}/plugins/web-only/t3-plugin.json`,
+        JSON.stringify({
+          id: "web-only",
+          name: "Web only",
+          version: "0.1.0",
+          engines: { t3: ">=0.1.0" },
+          web: "./web.js",
+        }),
+      );
+      yield* writeFile(`${stateDir}/plugins/web-only/web.js`, "export default {};");
+      yield* writePluginsConfig({ enabled: { "web-only": true } });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const id = PluginId.make("web-only");
+        const revision = stateOf(yield* waitForStatuses(host, { [id]: "active" }), id)?.revision;
+        assert.isDefined(revision);
+        const webFailure = Effect.map(host.list, (states) => stateOf(states, id)?.webFailure);
+        const report = (message: string | null, at = revision) =>
+          host.reportWebFailure({ pluginId: id, revision: at, message });
+
+        const call = yield* host
+          .invoke({ pluginId: id, method: "ping", input: undefined, scopes: operate })
+          .pipe(Effect.flip);
+        assert.strictEqual(
+          call.message,
+          "Plugin web-only has no server half, so it has no methods or channels.",
+        );
+
+        yield* report("activate threw");
+        assert.strictEqual(yield* webFailure, "activate threw");
+        yield* report(null);
+        assert.isUndefined(yield* webFailure);
+        yield* report("a part threw");
+        assert.deepInclude((yield* host.check({ pluginId: id })).findings[0], {
+          code: "web-failed",
+          problem: "Its web half failed in the browser: a part threw",
+        });
+        // A restart forgets it, and a report about the earlier start is ignored.
+        const reloaded = yield* host.reload(id);
+        assert.isUndefined(reloaded.webFailure);
+        yield* report("stale");
+        assert.isUndefined(yield* webFailure);
+        yield* report("fresh", reloaded.revision);
+        assert.strictEqual(yield* webFailure, "fresh");
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );

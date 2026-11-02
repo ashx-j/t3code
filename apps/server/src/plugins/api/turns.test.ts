@@ -26,6 +26,7 @@ const unusedStorage = {} as PluginApi["storage"];
 const unusedRunEvents = () => {
   throw new Error("run events are not used here");
 };
+const unusedLatestSequence = () => Promise.reject(new Error("run events are not used here"));
 const unusedRuntimeRequests = {
   add: () => {
     throw new Error("runtime requests are not used here");
@@ -45,7 +46,12 @@ it.effect(
           context: yield* Effect.context<never>(),
         }),
         { hooks, runtimeRequests: unusedRuntimeRequests },
-        { storage: unusedStorage, runEvents: unusedRunEvents, pluginName: "Hooked" },
+        {
+          storage: unusedStorage,
+          runEvents: unusedRunEvents,
+          latestSequence: unusedLatestSequence,
+          pluginName: "Hooked",
+        },
       );
       turns.beforeDispatch(() => ({ appendText: "first" }));
       turns.beforeDispatch(() => {
@@ -92,7 +98,7 @@ it.effect(
 it.effect("delivers each ended run once and resumes after the last one it handled", () =>
   Effect.gen(function* () {
     const saved = new Map<string, JsonValue>();
-    const requests: Array<number | undefined> = [];
+    const requests: Array<number> = [];
     const runUpdate = (sequence: number, status: string): PluginStoredEvent => ({
       sequence,
       type: "run.updated",
@@ -120,7 +126,7 @@ it.effect("delivers each ended run once and resumes after the last one it handle
             saved.set(key, value);
           },
         } as PluginApi["storage"];
-        const runEvents = (afterSequence: number | undefined) => {
+        const runEvents = (afterSequence: number) => {
           requests.push(afterSequence);
           return (async function* () {
             try {
@@ -134,7 +140,7 @@ it.effect("delivers each ended run once and resumes after the last one it handle
         makeTurnsApi(
           facade,
           { hooks, runtimeRequests: unusedRuntimeRequests },
-          { storage, runEvents, pluginName: "Runs" },
+          { storage, runEvents, latestSequence: async () => 9, pluginName: "Runs" },
         ).afterRunCompleted((run) => {
           seen.push(`${run.runId}:${run.status}`);
         });
@@ -142,6 +148,8 @@ it.effect("delivers each ended run once and resumes after the last one it handle
         return seen;
       });
 
+    // Turned off before any run ended: the runs that end meanwhile still arrive on the next start.
+    assert.deepStrictEqual(yield* activate([]), []);
     assert.deepStrictEqual(
       yield* activate([
         runUpdate(10, "completed"),
@@ -156,7 +164,7 @@ it.effect("delivers each ended run once and resumes after the last one it handle
       ["run:13:interrupted"],
     );
     assert.deepStrictEqual(yield* activate([runUpdateOf(15, "run:12", "failed")]), []);
-    assert.deepStrictEqual(requests, [undefined, 12, 13]);
+    assert.deepStrictEqual(requests, [9, 9, 12, 13]);
   }).pipe(Effect.provide(PluginHooks.layer)),
 );
 
@@ -181,7 +189,12 @@ it.effect("drops what a plugin answers after it is turned off", () =>
           },
         },
       },
-      { storage: unusedStorage, runEvents: unusedRunEvents, pluginName: "Late" },
+      {
+        storage: unusedStorage,
+        runEvents: unusedRunEvents,
+        latestSequence: unusedLatestSequence,
+        pluginName: "Late",
+      },
     );
     // Every handler answers only after the plugin has been turned off.
     const turnedOff = Promise.withResolvers<void>();

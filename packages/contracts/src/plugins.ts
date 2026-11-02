@@ -135,6 +135,8 @@ export const PluginState = Schema.Struct({
   failure: Schema.optionalKey(PluginFailure),
   /** Changes each time the plugin starts, so clients can reload its web half after a restart. */
   revision: Schema.optionalKey(Schema.Number),
+  /** The folder a `dev` plugin loads from, where an agent or plugins.json linked it. */
+  linkedFolder: Schema.optionalKey(Schema.String),
   /** Where it was installed from, when installed through `plugins.install`; updates reuse it. */
   installSource: Schema.optionalKey(PluginInstallSource),
   /** A newer npm version or git commit at its install source, found by the last update check. */
@@ -143,6 +145,8 @@ export const PluginState = Schema.Struct({
   hasWeb: Schema.Boolean,
   /** Has a `skills` folder, whose skills agents on this environment get while it runs. */
   hasSkills: Schema.optionalKey(Schema.Boolean),
+  /** Why its web half failed in a client since it last started, as that client reported it. */
+  webFailure: Schema.optionalKey(Schema.String),
   settingsSchema: Schema.optionalKey(Schema.JsonObject),
   contributes: Schema.optionalKey(PluginContributions),
 });
@@ -211,6 +215,17 @@ export type PluginUpdateInput = typeof PluginUpdateInput.Type;
 
 export const PluginCheckUpdatesInput = Schema.Struct({});
 export type PluginCheckUpdatesInput = typeof PluginCheckUpdatesInput.Type;
+
+/**
+ * A client's report that a plugin's web half failed, or `null` once it works. `revision` is the
+ * start the client loaded, so a report about an earlier start is ignored.
+ */
+export const PluginReportWebFailureInput = Schema.Struct({
+  pluginId: PluginId,
+  revision: Schema.Number,
+  message: Schema.NullOr(Schema.String),
+});
+export type PluginReportWebFailureInput = typeof PluginReportWebFailureInput.Type;
 
 export const PluginUninstallInput = Schema.Struct({
   pluginId: PluginId,
