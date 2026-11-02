@@ -126,6 +126,17 @@ describe("startPluginLoader", () => {
     expect(appAtomRegistry.get(greetRenderer)).toBeDefined();
     expect(appAtomRegistry.get(pluginComposerCollapseOnScrollAtom)).toBe(true);
 
+    // Turning a plugin off takes effect while another still hangs, and a failed one isn't retried.
+    const brokenFetches = () =>
+      fetchSpy.mock.calls.filter(([input]) => String(input).includes("/broken-web/")).length;
+    expect(brokenFetches()).toBe(1);
+    appAtomRegistry.set(
+      live,
+      AsyncResult.success({ plugins: [webPlugin("hung-web"), webPlugin("broken-web")] }),
+    );
+    await vi.waitFor(() => expect(appAtomRegistry.get(helloPanel)).toBeUndefined());
+    expect(brokenFetches()).toBe(1);
+
     stop();
     releaseHungBundle(new Response("missing", { status: 500 }));
     expect(document.querySelectorAll('style[data-plugin="hello-web"]')).toHaveLength(0);

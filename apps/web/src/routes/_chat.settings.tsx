@@ -5,7 +5,7 @@ import { RotateCcwIcon } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { useSettingsRestore } from "../components/settings/SettingsPanels";
 
-import { AppRouteModal, AppRouteModalClose, AppRouteModalNav } from "../components/AppRouteModal";
+import { AppRouteHeader, AppRouteModal, AppRouteModalNav } from "../components/AppRouteModal";
 import { SettingsBreadcrumb } from "../components/settings/SettingsBreadcrumb";
 import { SettingsSidebarNav } from "../components/settings/SettingsSidebarNav";
 import {
@@ -122,11 +122,15 @@ function SettingsContentLayout() {
   const [restoreSignal, setRestoreSignal] = useState(0);
 
   return (
-    <AppRouteModal label="Settings" nav={<SettingsSidebarNav pathname={location.pathname} />}>
+    <AppRouteModal
+      page="settings"
+      label="Settings"
+      nav={<SettingsSidebarNav pathname={location.pathname} />}
+    >
       <div className="relative flex min-h-0 flex-1">
         <AppRouteModalNav />
         <div {...contentArea} className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <header className="flex h-12 shrink-0 items-center gap-3 border-b ps-5 pe-2">
+          <AppRouteHeader>
             <SettingsBreadcrumb pathname={location.pathname} />
             <div className="ms-auto flex shrink-0 items-center gap-1">
               {location.pathname === "/settings/general" ? (
@@ -134,9 +138,8 @@ function SettingsContentLayout() {
                   onRestored={() => setRestoreSignal((value) => value + 1)}
                 />
               ) : null}
-              <AppRouteModalClose />
             </div>
-          </header>
+          </AppRouteHeader>
           <div key={`${contentScopeKey}:${restoreSignal}`} className="min-h-0 flex flex-1 flex-col">
             <SettingsScopeBoundary pathname={location.pathname}>
               <Outlet />

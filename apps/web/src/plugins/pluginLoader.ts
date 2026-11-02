@@ -20,7 +20,6 @@ import {
 } from "@t3tools/plugin-sdk/web";
 import { AsyncResult } from "effect/reactivity";
 import * as React from "react";
-import type { ComponentType } from "react";
 import * as ReactDOM from "react-dom";
 import * as jsxRuntime from "react/jsx-runtime";
 
@@ -66,8 +65,6 @@ import {
   type PluginActionContexts,
   type PluginActionEntry,
   type PluginActionPlace,
-  type PluginPartProps,
-  type PluginToolRendererProps,
 } from "./pluginRegistry";
 import { isLoadableWebPlugin } from "./pluginWatch";
 
@@ -201,8 +198,7 @@ const pluginActionEntry = <Place extends PluginActionPlace>(
     key: `plugin:${pluginId}:${action.id}`,
     environmentId,
     title: action.title,
-    // The SDK types components without React; they are React function components.
-    icon: action.icon as ComponentType | undefined,
+    icon: action.icon,
     run: (context) => runReportingFailure(action.title, () => action.run(context)),
   };
 };
@@ -232,6 +228,7 @@ function makeWebPluginApi({
   let bannerCount = 0;
   // One cleanup each for a plugin's badges and `@` items, however often it updates them.
   const badgedThreads = new Set<string>();
+  let badgesTracked = false;
   let mentionCleanupTracked = false;
   let collapseCleanupTracked = false;
   return {
@@ -290,15 +287,14 @@ function makeWebPluginApi({
             pluginId,
             name: panel.name,
             title: panel.title,
-            // The SDK types components without React; they are React function components.
-            component: panel.component as ComponentType<{ readonly threadId: string }>,
+            component: panel.component,
           }),
         );
       },
     },
     settings: {
       registerPanel: (component) => {
-        track(registerPluginSettingsPanel(environmentId, pluginId, component as ComponentType));
+        track(registerPluginSettingsPanel(environmentId, pluginId, component));
       },
     },
     commands: {
@@ -436,7 +432,8 @@ function makeWebPluginApi({
           throw new TypeError("A badge needs a text label and a known tone.");
         }
         setPluginThreadBadge(threadKey, pluginId, { label: badge.label, tone });
-        if (badgedThreads.size === 0) {
+        if (!badgesTracked) {
+          badgesTracked = true;
           track(() => {
             for (const key of badgedThreads) setPluginThreadBadge(key, pluginId, null);
             badgedThreads.clear();
@@ -453,8 +450,7 @@ function makeWebPluginApi({
         track(
           registerPluginPage(pluginPageKey(pluginId, page.name), {
             title: page.title,
-            // The SDK types components without React; they are React function components.
-            component: page.component as ComponentType,
+            component: page.component,
           }),
         );
       },
@@ -468,7 +464,7 @@ function makeWebPluginApi({
           registerPluginSidebarSection({
             key: `${environmentId}\u0000${pluginId}\u0000${section.id}`,
             title: section.title,
-            component: section.component as ComponentType,
+            component: section.component,
           }),
         );
       },
@@ -493,6 +489,10 @@ function makeWebPluginApi({
           return objectUrl;
         });
       assetUrls.set(name, url);
+      // A failed fetch is asked again next time instead of failing for the plugin's lifetime.
+      url.catch(() => {
+        if (assetUrls.get(name) === url) assetUrls.delete(name);
+      });
       return url;
     },
     markdown: {
@@ -500,12 +500,7 @@ function makeWebPluginApi({
         if (!CODE_LANGUAGE.test(renderer.language) || BUILT_IN_LANGUAGES.has(renderer.language)) {
           throw new TypeError(`"${renderer.language}" is not a language plugins can draw.`);
         }
-        track(
-          registerPluginCodeBlock(
-            renderer.language,
-            renderer.component as ComponentType<{ readonly code: string }>,
-          ),
-        );
+        track(registerPluginCodeBlock(renderer.language, renderer.component));
       },
     },
     timeline: {
@@ -514,18 +509,14 @@ function makeWebPluginApi({
           registerPluginToolRenderer({
             environmentId,
             toolName: `plg_${pluginId}_${renderer.tool}`,
-            // The SDK types components without React; they are React function components.
-            component: renderer.component as ComponentType<PluginToolRendererProps>,
+            component: renderer.component,
           }),
         );
       },
     },
     ui: {
       replace: (part, component) => {
-        // The SDK types components without React; they are React function components.
-        track(
-          registerPluginReplacement(part, component as ComponentType<PluginPartProps<typeof part>>),
-        );
+        track(registerPluginReplacement(part, component, { environmentId, pluginId }));
       },
     },
     injectStyles: (css) => {
@@ -608,7 +599,6 @@ export function startPluginLoader(
     return shortcutHandlers;
   };
   const loaded = new Map<PluginState["id"], LoadedPlugin>();
-  let queue = Promise.resolve();
   let stopped = false;
 
   const unload = (pluginId: PluginState["id"]) => {
@@ -636,6 +626,7 @@ export function startPluginLoader(
         fetchPluginFile(environmentId, plugin, "/web.js").then((response) => response.text()),
         "Loading the web bundle",
       );
+      if (entry.disposed) return;
       // A bundle's top-level `await` can hang too.
       const definition = await withDeadline(importBundle(bundle), "Loading the web bundle");
       if (stopped || entry.disposed) return;
@@ -653,14 +644,19 @@ export function startPluginLoader(
         ),
         "Starting the web half",
       );
-      setPluginWebFailure(environmentId, plugin.id, undefined);
+      if (!entry.disposed) setPluginWebFailure(environmentId, plugin.id, undefined);
     } catch (error) {
-      if (loaded.get(plugin.id) === entry) unload(plugin.id);
+      // A load that was replaced or stopped meanwhile has nothing to report.
+      if (entry.disposed) return;
+      // Stays in `loaded`, so it is tried again only when the plugin restarts, not on every change.
+      entry.disposed = true;
+      runCleanups(entry.cleanups);
+      entry.cleanups.clear();
       setPluginWebFailure(environmentId, plugin.id, errorText(error));
     }
   };
 
-  const reconcile = async (plugins: ReadonlyArray<PluginState>) => {
+  const reconcile = (plugins: ReadonlyArray<PluginState>) => {
     const wanted = new Map(
       plugins.filter(isLoadableWebPlugin).map((plugin) => [plugin.id, plugin] as const),
     );
@@ -671,16 +667,17 @@ export function startPluginLoader(
     for (const plugin of plugins) {
       if (!wanted.has(plugin.id)) setPluginWebFailure(environmentId, plugin.id, undefined);
     }
-    // In parallel, so one plugin that hangs until its deadline does not hold the others back.
-    await Promise.all([...wanted.values()].filter((plugin) => !loaded.has(plugin.id)).map(load));
+    // Not awaited, so a plugin that hangs until its deadline holds back neither the others nor
+    // the next change, such as turning another plugin off.
+    for (const plugin of wanted.values()) {
+      if (!loaded.has(plugin.id)) void load(plugin);
+    }
   };
 
   const stopFollowing = appAtomRegistry.subscribe(
     pluginEnvironment.pluginsLive({ environmentId, input: {} }),
     (result) => {
-      if (!AsyncResult.isSuccess(result)) return;
-      const plugins = result.value.plugins;
-      queue = queue.then(() => (stopped ? undefined : reconcile(plugins)));
+      if (!stopped && AsyncResult.isSuccess(result)) reconcile(result.value.plugins);
     },
     { immediate: true },
   );

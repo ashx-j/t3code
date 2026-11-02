@@ -459,7 +459,7 @@ function AppSidebarContent({ routeReveal }: { routeReveal: SidebarRouteReveal })
         footer,
         back: <SidebarChromeFooter utility="back" />,
         update: <SidebarChromeFooter utility="none" />,
-        nav: page === "Settings" ? <SidebarSettingsNav /> : null,
+        nav: page === "settings" ? <SidebarSettingsNav /> : null,
         page,
       }}
     />

@@ -37,8 +37,14 @@ export function useNavigateToMainApp() {
   return () => navigate({ href: mainAppHref ?? "/" });
 }
 
-/** Settings or Usage while a plugin's page frame shows it in place of the thread, else null. */
-export const shownAppPageAtom = Atom.make<string | null>(null).pipe(Atom.keepAlive);
+/** The pages that open as a modal, or in place of the thread through a plugin's page frame. */
+export type AppPage = "settings" | "usage";
+
+/** The page a plugin's page frame shows in place of the thread, else null. */
+export const shownAppPageAtom = Atom.make<AppPage | null>(null).pipe(Atom.keepAlive);
+
+/** Whether the sidebar shows a Back button, which makes a page's own close button redundant. */
+export const sidebarBackShownAtom = Atom.make(false).pipe(Atom.keepAlive);
 
 /** Leaves Settings or Usage for the page that opened it. */
 export function useCloseAppModal() {

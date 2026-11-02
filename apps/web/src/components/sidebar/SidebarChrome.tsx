@@ -11,6 +11,7 @@ import {
   useCanNavigateHistory,
   type HistoryDirection,
 } from "../../navigationHistory";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { cn } from "../../lib/utils";
 import { usePullRequestsSupported } from "../../state/environments";
@@ -36,6 +37,7 @@ import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPr
 import {
   isAppModalPage,
   isSidebarUtilityPage,
+  sidebarBackShownAtom,
   useCloseAppModal,
   useNavigateToMainApp,
 } from "./mainAppLocation";
@@ -266,6 +268,10 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu({
     void navigate({ to: "/usage" });
   };
 
+  const showBack = () => {
+    appAtomRegistry.set(sidebarBackShownAtom, true);
+    return () => appAtomRegistry.set(sidebarBackShownAtom, false);
+  };
   const handleBackClick = () => {
     closeMobileSidebar();
     void (isOnAppModalPage ? closeAppModal() : navigateToMainApp());
@@ -274,7 +280,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu({
   return (
     <SidebarMenu className="flex-row items-center">
       {utility === "none" ? null : utility === "back" || isOnUtilityPage ? (
-        <SidebarMenuItem className="min-w-0 flex-1">
+        <SidebarMenuItem ref={showBack} className="min-w-0 flex-1">
           <SidebarMenuButton onClick={handleBackClick}>
             <ArrowLeftIcon />
             <span>Back</span>

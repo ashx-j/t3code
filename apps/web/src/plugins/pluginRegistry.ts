@@ -11,7 +11,7 @@ import {
 } from "@t3tools/shared/composerContextReferences";
 import type { WebPluginParts } from "@t3tools/plugin-sdk/web";
 import { Atom } from "effect/reactivity";
-import type { ComponentType, ReactNode } from "react";
+import type { ComponentType } from "react";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
 
@@ -297,17 +297,16 @@ export function registerPluginCodeBlock(
 
 export type PluginPartName = keyof WebPluginParts;
 
-/** A replaceable part's props as React sees them: the SDK's untyped pieces are React nodes. */
-export type PluginPartProps<Part extends PluginPartName> = {
-  /** T3's own drawing of the part, also drawn when there is no replacement or it throws. */
-  readonly original: ReactNode;
-} & {
-  readonly [
-    Key in Exclude<keyof WebPluginParts[Part], "original">
-  ]: unknown extends WebPluginParts[Part][Key] ? ReactNode : WebPluginParts[Part][Key];
-};
+/** A replaceable part's pieces. `original` is T3's own drawing, also drawn when the plugin's throws. */
+export type PluginPartProps<Part extends PluginPartName> = WebPluginParts[Part];
 
-export interface PluginReplacementEntry<Part extends PluginPartName> {
+/** The plugin that registered a contribution, so its failures show on that plugin's row. */
+export interface PluginOwner {
+  readonly environmentId: EnvironmentId;
+  readonly pluginId: string;
+}
+
+export interface PluginReplacementEntry<Part extends PluginPartName> extends PluginOwner {
   readonly component: ComponentType<PluginPartProps<Part>>;
 }
 
@@ -348,12 +347,13 @@ export const pluginReplacementAtoms: {
 export function registerPluginReplacement<Part extends PluginPartName>(
   part: Part,
   component: ComponentType<PluginPartProps<Part>>,
+  owner: PluginOwner,
 ): () => void {
   if (!Object.hasOwn(replacements, part)) {
     throw new TypeError(`"${part}" is not a part plugins can replace.`);
   }
   const list = replacements[part];
-  const entry = { component };
+  const entry = { component, ...owner };
   list.push(entry);
   appAtomRegistry.set(replacementsVersionAtom, appAtomRegistry.get(replacementsVersionAtom) + 1);
   return () => {

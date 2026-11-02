@@ -10,14 +10,24 @@ import {
   type ReactNode,
 } from "react";
 
+import { useAtomValue } from "@effect/atom-react";
+
+import { isElectron } from "../env";
+import { cn } from "../lib/utils";
 import { PluginReplaceable } from "../plugins/PluginReplaceable";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { registerCommands } from "../shortcuts/dispatcher";
-import { shownAppPageAtom, useCloseAppModal } from "./sidebar/mainAppLocation";
+import {
+  type AppPage,
+  shownAppPageAtom,
+  sidebarBackShownAtom,
+  useCloseAppModal,
+} from "./sidebar/mainAppLocation";
 import { Button } from "./ui/button";
 import { DialogBackdrop } from "./ui/dialog";
-import { SidebarInset } from "./ui/sidebar";
+import { SidebarInset, useSidebar } from "./ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { WorkspacePageHeader } from "./WorkspacePageHeader";
 
 // Set inside the page frame, where no dialog exists for the close button to close.
 const AppRoutePageCloseContext = createContext<(() => void) | null>(null);
@@ -31,10 +41,12 @@ const AppRouteNavContext = createContext<ReactNode>(null);
  * place of the thread instead (the `app.pageFrame` part), with `nav` drawn where it chooses.
  */
 export function AppRouteModal({
+  page,
   label,
   nav = null,
   children,
 }: {
+  page: AppPage;
   label: string;
   nav?: ReactNode;
   children: ReactNode;
@@ -98,8 +110,13 @@ export function AppRouteModal({
       pieces={{
         original: modal,
         content,
-        page: <AppRoutePage label={label}>{children}</AppRoutePage>,
+        page: (
+          <AppRoutePage page={page} label={label}>
+            {children}
+          </AppRoutePage>
+        ),
         nav,
+        kind: page,
         label,
         close: () => void closeAppModal(),
       }}
@@ -116,12 +133,20 @@ export function AppRouteModalNav() {
  * Settings or Usage in place of the thread, beside the sidebar. The thread stays mounted under it
  * (see `index.css`). Esc goes back unless a popup or dialog inside the page takes it.
  */
-function AppRoutePage({ label, children }: { label: string; children: ReactNode }) {
+function AppRoutePage({
+  page,
+  label,
+  children,
+}: {
+  page: AppPage;
+  label: string;
+  children: ReactNode;
+}) {
   const closeAppModal = useCloseAppModal();
   const close = () => void closeAppModal();
   // Tells the sidebar which page it sits beside, for the `app.sidebar` part.
   const showPage = () => {
-    appAtomRegistry.set(shownAppPageAtom, label);
+    appAtomRegistry.set(shownAppPageAtom, page);
     return () => appAtomRegistry.set(shownAppPageAtom, null);
   };
   const onEscape = useEffectEvent(close);
@@ -159,29 +184,58 @@ function AppRoutePage({ label, children }: { label: string; children: ReactNode 
   );
 }
 
-export function AppRouteModalClose() {
+/**
+ * The top row of a Settings or Usage page, ending in its close button. Shown as a page beside the
+ * sidebar it is the window's title bar row, so it leaves room for the window controls and drags
+ * the window like the thread's header.
+ */
+export function AppRouteHeader({
+  className,
+  children,
+}: {
+  className?: string;
+  children: ReactNode;
+}) {
   const closePage = use(AppRoutePageCloseContext);
-  if (closePage) {
+  if (closePage !== null) {
     return (
+      <WorkspacePageHeader electron={isElectron} className={className}>
+        {children}
+        <AppRoutePageClose close={closePage} />
+      </WorkspacePageHeader>
+    );
+  }
+  return (
+    <header
+      className={cn("flex min-h-12 shrink-0 items-center gap-3 border-b ps-5 pe-2", className)}
+    >
+      {children}
       <Tooltip>
         <TooltipTrigger
-          render={<Button size="icon-sm" variant="ghost" aria-label="Close" onClick={closePage} />}
+          render={
+            <DialogPrimitive.Close
+              aria-label="Close"
+              render={<Button size="icon-sm" variant="ghost" />}
+            />
+          }
         >
           <XIcon />
         </TooltipTrigger>
         <TooltipPopup side="bottom">Close (Esc)</TooltipPopup>
       </Tooltip>
-    );
-  }
+    </header>
+  );
+}
+
+function AppRoutePageClose({ close }: { close: () => void }) {
+  const { open, isMobile } = useSidebar();
+  const sidebarBackShown = useAtomValue(sidebarBackShownAtom);
+  // A Back button in the sidebar beside the page already closes it.
+  if (sidebarBackShown && open && !isMobile) return null;
   return (
     <Tooltip>
       <TooltipTrigger
-        render={
-          <DialogPrimitive.Close
-            aria-label="Close"
-            render={<Button size="icon-sm" variant="ghost" />}
-          />
-        }
+        render={<Button size="icon-sm" variant="ghost" aria-label="Close" onClick={close} />}
       >
         <XIcon />
       </TooltipTrigger>

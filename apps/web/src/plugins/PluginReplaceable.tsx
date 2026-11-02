@@ -1,11 +1,34 @@
 import { useAtomValue } from "@effect/atom-react";
 
 import { RenderErrorBoundary } from "../components/RenderErrorBoundary";
+import { toastManager } from "../components/ui/toast";
 import {
+  type PluginOwner,
   pluginReplacementAtoms,
   type PluginPartName,
   type PluginPartProps,
+  setPluginWebFailure,
 } from "./pluginRegistry";
+
+const toastedFailures = new WeakSet<PluginOwner>();
+
+// Shown on the plugin's row until it reloads, and once as a toast, since T3's own part quietly
+// takes its place.
+const reportFailure = (part: PluginPartName, owner: PluginOwner, error: unknown) => {
+  const reason = error instanceof Error ? error.message : String(error);
+  setPluginWebFailure(
+    owner.environmentId,
+    owner.pluginId,
+    `Its ${part} part stopped with an error (${reason}), so T3 shows its own until the plugin reloads.`,
+  );
+  if (toastedFailures.has(owner)) return;
+  toastedFailures.add(owner);
+  toastManager.add({
+    type: "error",
+    title: `The ${owner.pluginId} plugin stopped drawing ${part}`,
+    description: `T3 shows its own until the plugin reloads. ${reason}`,
+  });
+};
 
 /**
  * Draws a plugin's version of `part` when one is registered, and T3's `pieces.original`
@@ -19,7 +42,11 @@ export function PluginReplaceable<Part extends PluginPartName>(props: {
   if (replacement === undefined) return props.pieces.original;
   const Replacement = replacement.component;
   return (
-    <RenderErrorBoundary resetKeys={[replacement]} fallback={props.pieces.original}>
+    <RenderErrorBoundary
+      resetKeys={[replacement]}
+      fallback={props.pieces.original}
+      onError={(error) => reportFailure(props.part, replacement, error)}
+    >
       <Replacement {...props.pieces} />
     </RenderErrorBoundary>
   );

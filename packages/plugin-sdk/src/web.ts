@@ -1,10 +1,16 @@
+import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
+import type { ReactNode } from "react";
+
 import type { JsonValue } from "./shared.ts";
 
+/** Anything React can draw: an element, text, or null for nothing. */
+export type WebPluginNode = ReactNode;
+
 /**
- * A React function component. Typed without React so the SDK has no dependencies. Build with
+ * A React function component. Only React's types are needed: build with
  * `@t3tools/plugin-sdk/vite` so the bundle uses T3's React instead of its own copy.
  */
-export type WebPluginComponent<Props = Record<string, never>> = (props: Props) => unknown;
+export type WebPluginComponent<Props = Record<string, never>> = (props: Props) => WebPluginNode;
 
 export interface WebPluginRightPanel {
   /** Unique within the plugin. Letters, digits, `_` and `-`. */
@@ -119,25 +125,25 @@ export interface WebPluginParts {
    * provider settings and `effort` and `access` draw nothing.
    */
   readonly "composer.controls": {
-    readonly original: unknown;
+    readonly original: WebPluginNode;
     /** The attach button, or null where the composer offers no attachments. */
-    readonly attach: unknown;
+    readonly attach: WebPluginNode;
     /** T3's grouped model, effort and permissions controls. */
-    readonly controls: unknown;
+    readonly controls: WebPluginNode;
     /** A picker that only chooses the model. */
-    readonly model: unknown;
+    readonly model: WebPluginNode;
     /** The reasoning effort picker; draws nothing when the model has no options. */
-    readonly effort: unknown;
+    readonly effort: WebPluginNode;
     /** The permissions picker, always labelled, and the plan toggle when plan mode is on. */
-    readonly access: unknown;
+    readonly access: WebPluginNode;
     /** Send, stop and the other primary actions. */
-    readonly actions: unknown;
+    readonly actions: WebPluginNode;
     /** Buttons plugins added with `composer.addButton`; draws nothing when there are none. */
-    readonly buttons: unknown;
+    readonly buttons: WebPluginNode;
   };
   /** An assistant message's text in the timeline, drawn as Markdown. */
   readonly "message.assistant": {
-    readonly original: unknown;
+    readonly original: WebPluginNode;
     /** The message's Markdown, growing while it streams. */
     readonly text: string;
     readonly messageId: string;
@@ -147,39 +153,46 @@ export interface WebPluginParts {
   };
   /** A user message's text in the timeline, drawn as Markdown. */
   readonly "message.user": {
-    readonly original: unknown;
+    readonly original: WebPluginNode;
     readonly text: string;
+    readonly messageId: string;
+    /** Null outside a thread, such as in a shared guest view. */
+    readonly threadId: string | null;
   };
   /** The details shown when a tool call, command or other step of an agent's work is expanded. */
   readonly "timeline.item": {
-    readonly original: unknown;
+    readonly original: WebPluginNode;
     /**
      * The step as T3 sends it to clients. `type` names the kind, such as `command_execution`,
-     * `file_change`, `web_search` or `dynamic_tool`, and the other fields depend on it.
+     * `file_change`, `web_search` or `dynamic_tool`, and narrows the other fields.
      */
-    readonly item: Readonly<Record<string, unknown>>;
+    readonly item: OrchestrationV2TurnItem;
     /** The step's text output, when it has one. */
     readonly output: string | null;
   };
   /** The file diffs in the diff panel. */
   readonly "diff.view": {
-    readonly original: unknown;
+    readonly original: WebPluginNode;
     /** The selection's unified diff, or null while T3 loads it file by file. */
     readonly patch: string | null;
   };
   /** The frame Settings and Usage open in. T3 draws a large window over the thread. */
   readonly "app.pageFrame": {
-    readonly original: unknown;
+    readonly original: WebPluginNode;
     /** The page itself, with its section list, header and close button. */
-    readonly content: unknown;
+    readonly content: WebPluginNode;
     /**
      * The page in place of the thread, beside the sidebar, without its section list: draw `nav`
-     * here, or `app.sidebar`'s `nav` in the sidebar. Esc goes back.
+     * here, or `app.sidebar`'s `nav` in the sidebar. Esc goes back. Its header is the window's
+     * title bar row, with room for the window controls, and its close button hides while the
+     * sidebar beside it shows `app.sidebar`'s `back`.
      */
-    readonly page: unknown;
+    readonly page: WebPluginNode;
     /** The page's section list, such as Settings' sections and search; null when it has none. */
-    readonly nav: unknown;
-    /** `Settings` or `Usage`. */
+    readonly nav: WebPluginNode;
+    /** Which page this is. Compare this, not `label`, which is text for people. */
+    readonly kind: "settings" | "usage";
+    /** The page's name as shown, such as `Settings`. */
     readonly label: string;
     /** Goes back to where the page was opened. */
     readonly close: () => void;
@@ -190,21 +203,21 @@ export interface WebPluginParts {
    * of `footer`.
    */
   readonly "app.sidebar": {
-    readonly original: unknown;
+    readonly original: WebPluginNode;
     /** The top row: the T3 Code name, back and forward buttons, and the toggle on phones. */
-    readonly header: unknown;
+    readonly header: WebPluginNode;
     /** The thread list with its search row, and the sections plugins added under it. */
-    readonly threads: unknown;
+    readonly threads: WebPluginNode;
     /** The bottom row: the Settings, Pull requests and Usage buttons, and T3's update button. */
-    readonly footer: unknown;
+    readonly footer: WebPluginNode;
     /** `footer` with a Back button in place of its Settings, Pull requests and Usage buttons. */
-    readonly back: unknown;
+    readonly back: WebPluginNode;
     /** T3's update button and update notices alone; `footer` and `back` already have them. */
-    readonly update: unknown;
-    /** The open page's section list, made for the sidebar, while `page` is Settings; else null. */
-    readonly nav: unknown;
-    /** `Settings` or `Usage` while it shows through `app.pageFrame`'s `page`, otherwise null. */
-    readonly page: string | null;
+    readonly update: WebPluginNode;
+    /** The open page's section list, made for the sidebar, while `page` is `settings`; else null. */
+    readonly nav: WebPluginNode;
+    /** The page shown through `app.pageFrame`'s `page` beside the sidebar, otherwise null. */
+    readonly page: "settings" | "usage" | null;
   };
 }
 
