@@ -835,6 +835,13 @@ function PluginRow({
               </PopoverTrigger>
               <PopoverPopup side="top" align="end" width="md">
                 <div className="flex flex-col gap-3">
+                  {removeLabel === "Unlink" && plugin.linkedFolder !== undefined ? (
+                    <p className="text-muted-foreground text-xs">
+                      Stops loading{" "}
+                      <span className="break-all font-mono">{plugin.linkedFolder}</span>. The folder
+                      stays.
+                    </p>
+                  ) : null}
                   <div className="flex items-center gap-2">
                     <Checkbox
                       id={`plugin-remove-data-${first.environmentId}-${plugin.id}`}

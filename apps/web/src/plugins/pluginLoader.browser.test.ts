@@ -13,6 +13,7 @@ vi.mock(import("../state/session"), async (original) => ({
       : { _tag: "Bearer", token: "token" },
   })) as never,
 }));
+const reportWebFailure = vi.hoisted(() => vi.fn());
 const { live, channel } = await vi.hoisted(async () => {
   const { Atom, AsyncResult } = await import("effect/reactivity");
   return {
@@ -31,6 +32,13 @@ vi.mock(import("../state/plugins"), () => ({
       label: "plugin-file-headers",
       run: async (_registry: unknown, input: { readonly url: string }) =>
         AsyncResult.success({ authorization: "DPoP relay-token", dpop: `proof for ${input.url}` }),
+    },
+    reportPluginWebFailure: {
+      label: "plugin-web-failure",
+      run: async (_registry: unknown, input: unknown) => {
+        reportWebFailure(input);
+        return AsyncResult.success({});
+      },
     },
   } as never,
 }));
@@ -89,7 +97,11 @@ describe("startPluginLoader", () => {
     appAtomRegistry.set(
       live,
       AsyncResult.success({
-        plugins: [webPlugin("hung-web"), webPlugin("hello-web"), webPlugin("broken-web")],
+        plugins: [
+          webPlugin("hung-web"),
+          webPlugin("hello-web"),
+          { ...webPlugin("broken-web"), revision: 3 },
+        ],
       }),
     );
 
@@ -100,6 +112,15 @@ describe("startPluginLoader", () => {
           pluginWebFailureAtom(pluginContributionKey(environmentId, "broken-web")),
         ),
       ).toBe("The request for /web.js failed with 500.");
+    });
+    // Agents' plugin tools hear about it through the server, tied to the start that failed.
+    expect(reportWebFailure).toHaveBeenCalledWith({
+      environmentId,
+      input: {
+        pluginId: "broken-web",
+        revision: 3,
+        message: "The request for /web.js failed with 500.",
+      },
     });
     expect(String(fetchSpy.mock.calls[1]?.[0])).toBe(
       "http://plugins.test/api/plugins/hello-web/web.js?v=0.1.0",
@@ -132,7 +153,9 @@ describe("startPluginLoader", () => {
     expect(brokenFetches()).toBe(1);
     appAtomRegistry.set(
       live,
-      AsyncResult.success({ plugins: [webPlugin("hung-web"), webPlugin("broken-web")] }),
+      AsyncResult.success({
+        plugins: [webPlugin("hung-web"), { ...webPlugin("broken-web"), revision: 3 }],
+      }),
     );
     await vi.waitFor(() => expect(appAtomRegistry.get(helloPanel)).toBeUndefined());
     expect(brokenFetches()).toBe(1);

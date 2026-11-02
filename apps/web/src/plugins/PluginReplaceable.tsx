@@ -26,11 +26,9 @@ const PART_NAMES: { readonly [Part in PluginPartName]: string } = {
 // takes its place.
 const reportFailure = (part: PluginPartName, owner: PluginOwner, error: unknown) => {
   const reason = error instanceof Error ? error.message : String(error);
-  setPluginWebFailure(
-    owner.environmentId,
-    owner.pluginId,
-    `Its version of ${PART_NAMES[part]} (${part}) stopped with an error: ${reason}. T3 shows its own until the plugin reloads.`,
-  );
+  const message = `Its version of ${PART_NAMES[part]} (${part}) stopped with an error: ${reason}. T3 shows its own until the plugin reloads.`;
+  setPluginWebFailure(owner.environmentId, owner.pluginId, message);
+  owner.report?.(message);
   if (toastedFailures.has(owner)) return;
   toastedFailures.add(owner);
   toastManager.add({

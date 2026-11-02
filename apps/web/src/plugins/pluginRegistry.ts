@@ -306,6 +306,8 @@ export interface PluginOwner {
   readonly environmentId: EnvironmentId;
   readonly pluginId: string;
   readonly pluginName: string;
+  /** Passes a failure on to the server, where agents' plugin tools see it. */
+  readonly report?: (message: string) => void;
 }
 
 export interface PluginReplacementEntry<Part extends PluginPartName> extends PluginOwner {

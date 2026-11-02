@@ -112,6 +112,18 @@ const installHostModules = () =>
     } satisfies Record<(typeof HOST_UI_EXPORTS)[number], unknown>,
   });
 
+/** Tells the server why a plugin's web half failed, so agents' plugin tools can say. */
+const reportWebFailure = (environmentId: EnvironmentId, plugin: PluginState, message: string) => {
+  if (plugin.revision === undefined) return;
+  void runAtomCommand(
+    appAtomRegistry,
+    pluginEnvironment.reportPluginWebFailure,
+    { environmentId, input: { pluginId: plugin.id, revision: plugin.revision, message } },
+    // A client without settings access may not report; the Plugins page still shows it.
+    { reportFailure: false, reportDefect: false },
+  );
+};
+
 const isWebPluginDefinition = (value: unknown): value is WebPluginDefinition =>
   typeof value === "object" &&
   value !== null &&
@@ -527,6 +539,7 @@ function makeWebPluginApi({
             environmentId,
             pluginId,
             pluginName: plugin.name,
+            report: (message) => reportWebFailure(environmentId, plugin, message),
           }),
         );
       },
@@ -667,6 +680,7 @@ export function startPluginLoader(
       runCleanups(entry.cleanups);
       entry.cleanups.clear();
       setPluginWebFailure(environmentId, plugin.id, errorText(error));
+      reportWebFailure(environmentId, plugin, errorText(error));
     }
   };
 
