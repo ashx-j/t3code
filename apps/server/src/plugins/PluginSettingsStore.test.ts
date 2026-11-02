@@ -95,6 +95,34 @@ it.layer(NodeServices.layer)("PluginSettingsStore", (it) => {
     }).pipe(Effect.provide(layerTest())),
   );
 
+  it.effect("clears secrets of fields a plugin renamed, and only its own", () =>
+    Effect.gen(function* () {
+      const store = yield* PluginSettingsStore.PluginSettingsStore;
+      const { secretsDir } = yield* ServerConfig.ServerConfig;
+      const renamed: Schema.JsonObject = {
+        type: "object",
+        properties: { apiKey: { type: "string", format: "t3-secret" } },
+      };
+      // `hello-world`'s secret names start with `plugin-hello-` too.
+      const longerId = PluginId.make("hello-world");
+      yield* store.update(hello, settingsSchema, { token: "old-secret" });
+      yield* store.update(hello, renamed, { apiKey: "new-secret" });
+      yield* store.update(longerId, settingsSchema, { token: "other-secret" });
+
+      yield* store.clear(hello, renamed);
+
+      const secretNames = yield* FileSystem.FileSystem.use((fileSystem) =>
+        fileSystem.readDirectory(secretsDir),
+      );
+      assert.isFalse(
+        secretNames.some(
+          (name) => name.startsWith(`plugin-${hello}-`) && !name.startsWith(`plugin-${longerId}-`),
+        ),
+      );
+      assert.deepStrictEqual(yield* store.get(longerId, settingsSchema), { token: "other-secret" });
+    }).pipe(Effect.provide(layerTest())),
+  );
+
   it.effect("keeps plugin settings when the server saves its own settings", () =>
     Effect.gen(function* () {
       const store = yield* PluginSettingsStore.PluginSettingsStore;

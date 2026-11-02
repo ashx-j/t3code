@@ -338,9 +338,29 @@ const make = Effect.gen(function* () {
 
   const clear: PluginSettingsStore["Service"]["clear"] = Effect.fn("PluginSettingsStore.clear")(
     function* (pluginId, settingsSchema) {
-      for (const field of secretFields(settingsSchema)) {
+      const names = new Set(
+        Array.from(secretFields(settingsSchema), (field) => secretName(pluginId, field)),
+      );
+      // Also secrets of fields the plugin has since renamed. Ids contain hyphens, so a name with
+      // another one after the prefix may be a longer id's (`foo-bar`'s for `foo`) and is kept.
+      const prefix = `plugin-${pluginId}-`;
+      if (secretStore.directory !== undefined) {
+        const files = yield* fileSystem
+          .readDirectory(secretStore.directory)
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new PluginSettingsPersistenceError({ pluginId, operation: "readSecret", cause }),
+            ),
+          );
+        for (const file of files) {
+          const name = file.endsWith(".bin") ? file.slice(0, -".bin".length) : "";
+          if (name.startsWith(prefix) && !name.slice(prefix.length).includes("-")) names.add(name);
+        }
+      }
+      for (const name of names) {
         yield* secretStore
-          .remove(secretName(pluginId, field))
+          .remove(name)
           .pipe(
             Effect.mapError(
               (cause) =>
