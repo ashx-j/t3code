@@ -313,10 +313,9 @@ const make = Effect.gen(function* () {
         Effect.map((entry) => Ref.update(hooks, (all) => all.filter((other) => other !== entry))),
       ),
     beforeDispatch: (message, alreadyAccepted) => {
-      const trimmed = message.text.trimStart();
-      if (!trimmed.startsWith("/")) return runHooks(message, alreadyAccepted);
-      const match = SLASH_COMMAND.exec(trimmed);
-      if (match === null) return Effect.succeed(message.text);
+      // Text that only starts with a slash, such as a path, is not a command.
+      const match = SLASH_COMMAND.exec(message.text.trimStart());
+      if (match === null) return runHooks(message, alreadyAccepted);
       return SubscriptionRef.get(commands).pipe(
         Effect.flatMap((all) => {
           const entry = all.find((candidate) => candidate.command.name === match[1]);
