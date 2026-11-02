@@ -5,7 +5,7 @@ import { RotateCcwIcon } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { useSettingsRestore } from "../components/settings/SettingsPanels";
 
-import { AppRouteModal, AppRouteModalClose } from "../components/AppRouteModal";
+import { AppRouteModal, AppRouteModalClose, AppRouteModalNav } from "../components/AppRouteModal";
 import { SettingsBreadcrumb } from "../components/settings/SettingsBreadcrumb";
 import { SettingsSidebarNav } from "../components/settings/SettingsSidebarNav";
 import {
@@ -119,9 +119,9 @@ function SettingsContentLayout() {
   const [restoreSignal, setRestoreSignal] = useState(0);
 
   return (
-    <AppRouteModal label="Settings">
+    <AppRouteModal label="Settings" nav={<SettingsSidebarNav pathname={location.pathname} />}>
       <div className="relative flex min-h-0 flex-1">
-        <SettingsSidebarNav pathname={location.pathname} />
+        <AppRouteModalNav />
         <div {...contentArea} className="flex min-h-0 min-w-0 flex-1 flex-col">
           <header className="flex h-12 shrink-0 items-center gap-3 border-b ps-5 pe-2">
             <SettingsBreadcrumb pathname={location.pathname} />

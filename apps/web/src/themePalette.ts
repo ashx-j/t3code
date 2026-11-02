@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
 import "culori/css";
-import { converter, parse } from "culori/fn";
+import { converter, formatHex, parse } from "culori/fn";
 import {
   BUILT_IN_THEMES,
   EMBER_THEME,
@@ -30,7 +30,7 @@ import {
 } from "./lib/contextChipAccents";
 
 import { appAtomRegistry, subscribeAtomChanges } from "./rpc/atomRegistry";
-import { primaryServerEnvironmentThemesAtom } from "./state/server";
+import { primaryServerConfigEventAtom, primaryServerEnvironmentThemesAtom } from "./state/server";
 
 export { EMBER_THEME, GROVE_THEME, IRIS_THEME, OCEAN_THEME, T3_CHAT_THEME, THEME_COLOR_ROLES };
 export type { ThemeAppearance, ThemeColorRole, ThemeColors, ThemeDefinition, ThemeVariants };
@@ -45,6 +45,7 @@ export const CUSTOM_THEMES_STORAGE_KEY = "t3code:themes:v1";
 export const THEME_FOLLOW_SYSTEM_STORAGE_KEY = "t3code:theme-follow-system";
 export const THEME_APPEARANCE_MODE_STORAGE_KEY = "t3code:theme-appearance-mode";
 export const THEME_HALVES_STORAGE_KEY = "t3code:theme-halves:v1";
+export const ENVIRONMENT_THEMES_STORAGE_KEY = "t3code:environment-themes:v1";
 
 const LEGACY_T3_CHAT_DARK_THEME_ID = "t3-chat-dark";
 
@@ -320,14 +321,79 @@ const publishedThemesAtom = Atom.make((get): ReadonlyArray<EnvironmentTheme> => 
   return previous !== null && Equal.equals(previous, next) ? previous : next;
 }).pipe(Atom.withLabel("web-published-environment-themes"));
 
+// The server sends its palettes as their own event after it connects. Until the first one,
+// the palettes it sent last time stand in, so a published theme (a plugin's, say) paints from
+// the first frame, and the boot screen in index.html reads the same copy.
+const environmentThemesKnownAtom = Atom.make(false).pipe(Atom.keepAlive);
+
+function readStoredEnvironmentThemes(): ReadonlyArray<ThemeDefinition> {
+  if (typeof window === "undefined") return EMPTY_CUSTOM_THEMES;
+  try {
+    const parsed: unknown = JSON.parse(
+      window.localStorage.getItem(ENVIRONMENT_THEMES_STORAGE_KEY) ?? "null",
+    );
+    return Array.isArray(parsed) ? parseStoredThemes(parsed) : EMPTY_CUSTOM_THEMES;
+  } catch {
+    return EMPTY_CUSTOM_THEMES;
+  }
+}
+
+function storeEnvironmentThemes(themes: ReadonlyArray<ThemeDefinition>) {
+  try {
+    if (themes.length === 0) {
+      window.localStorage.removeItem(ENVIRONMENT_THEMES_STORAGE_KEY);
+      return;
+    }
+    const stored = JSON.stringify(themes);
+    if (window.localStorage.getItem(ENVIRONMENT_THEMES_STORAGE_KEY) !== stored) {
+      window.localStorage.setItem(ENVIRONMENT_THEMES_STORAGE_KEY, stored);
+    }
+  } catch {
+    // Without storage the palettes still arrive with the server, a moment later.
+  }
+}
+
 /**
- * The environment's palettes are not saved: they are republished by the server
- * on every change and would go stale the moment the machine's theme moved on.
- * Kept alive because theme lookups read it outside React on every repaint.
+ * The environment's palettes, republished by the server on every change. The saved copy is only
+ * read until the server sends them. Kept alive because theme lookups read it outside React on
+ * every repaint.
  */
-export const environmentThemeDefinitionsAtom = Atom.make((get) =>
-  publishedThemeDefinitions(get(publishedThemesAtom)),
-).pipe(Atom.keepAlive, Atom.withLabel("web-environment-theme-definitions"));
+export const environmentThemeDefinitionsAtom = Atom.make((get) => {
+  const published = publishedThemeDefinitions(get(publishedThemesAtom));
+  if (published.length > 0) return published;
+  // The shared empty list, so a server without themes never repaints the app.
+  return get(environmentThemesKnownAtom) ? EMPTY_CUSTOM_THEMES : readStoredEnvironmentThemes();
+}).pipe(Atom.keepAlive, Atom.withLabel("web-environment-theme-definitions"));
+
+// Derived from the palettes rather than read in the event listener: the event can be announced
+// before the same update reaches the palettes.
+const environmentThemesToSaveAtom = Atom.make((get) =>
+  get(environmentThemesKnownAtom) ? get(environmentThemeDefinitionsAtom) : null,
+);
+
+/** Switches to the server's palettes once it sends them, and saves them for the next start. */
+export function startEnvironmentThemeCache(): () => void {
+  const stopKnowing = appAtomRegistry.subscribe(
+    primaryServerConfigEventAtom,
+    (event) => {
+      if (event?.type === "environmentThemesUpdated") {
+        appAtomRegistry.set(environmentThemesKnownAtom, true);
+      }
+    },
+    { immediate: true },
+  );
+  const stopSaving = appAtomRegistry.subscribe(
+    environmentThemesToSaveAtom,
+    (themes) => {
+      if (themes !== null) storeEnvironmentThemes(themes);
+    },
+    { immediate: true },
+  );
+  return () => {
+    stopKnowing();
+    stopSaving();
+  };
+}
 
 function getEnvironmentThemes(): ReadonlyArray<ThemeDefinition> {
   return appAtomRegistry.get(environmentThemeDefinitionsAtom);
@@ -1633,6 +1699,14 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
     root.style.removeProperty(variable);
   }
   applyContextChipVariables(root, getStandardPaintedThemeColors(appearance ?? "light"));
+}
+
+/** The canvas `applyThemePalette` paints for `theme`, as `#rrggbb`; null without a palette. */
+export function themeCanvasHex(theme: ThemePreference, appearance: ThemeAppearance): string | null {
+  const palette = getThemeDefinition(theme);
+  if (!palette) return null;
+  const canvas = parse((getThemeColorsForMode(palette, appearance) ?? palette.colors).canvas);
+  return canvas ? formatHex(canvas) : null;
 }
 
 export function resolveThemeAppearance(

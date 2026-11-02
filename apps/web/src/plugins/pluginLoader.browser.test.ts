@@ -40,6 +40,7 @@ import { startPluginLoader } from "./pluginLoader";
 import {
   pluginBannersAtom,
   pluginCommandsAtom,
+  pluginComposerCollapseOnScrollAtom,
   pluginContributionKey,
   pluginRightPanelAtom,
   pluginRightPanelKey,
@@ -64,12 +65,19 @@ const webPlugin = (id: string): PluginState => ({
 describe("startPluginLoader", () => {
   it("loads active web plugins, runs their commands, records one that fails, and unloads everything when stopped", async () => {
     const navigate = vi.fn();
+    // A bundle that never arrives must not hold back the plugins after it.
+    let releaseHungBundle: (response: Response) => void = () => {};
+    const hungBundle = new Promise<Response>((resolve) => {
+      releaseHungBundle = resolve;
+    });
     using fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation(async (input) =>
-        String(input).includes("/hello-web/")
-          ? new Response(helloWebSource)
-          : new Response("missing", { status: 500 }),
+        String(input).includes("/hung-web/")
+          ? hungBundle
+          : String(input).includes("/hello-web/")
+            ? new Response(helloWebSource)
+            : new Response("missing", { status: 500 }),
       );
     const environmentId = EnvironmentId.make("environment:plugin-loader");
     const helloPanel = pluginRightPanelAtom(
@@ -80,7 +88,9 @@ describe("startPluginLoader", () => {
 
     appAtomRegistry.set(
       live,
-      AsyncResult.success({ plugins: [webPlugin("hello-web"), webPlugin("broken-web")] }),
+      AsyncResult.success({
+        plugins: [webPlugin("hung-web"), webPlugin("hello-web"), webPlugin("broken-web")],
+      }),
     );
 
     await vi.waitFor(() => {
@@ -91,10 +101,10 @@ describe("startPluginLoader", () => {
         ),
       ).toBe("The request for /web.js failed with 500.");
     });
-    expect(String(fetchSpy.mock.calls[0]?.[0])).toBe(
+    expect(String(fetchSpy.mock.calls[1]?.[0])).toBe(
       "http://plugins.test/api/plugins/hello-web/web.js?v=0.1.0",
     );
-    expect(fetchSpy.mock.calls[0]?.[1]).toEqual({ headers: { authorization: "Bearer token" } });
+    expect(fetchSpy.mock.calls[1]?.[1]).toEqual({ headers: { authorization: "Bearer token" } });
 
     const [command] = appAtomRegistry.get(pluginCommandsAtom(environmentId));
     expect(command?.command).toBe("plugin.hello-web.open-settings");
@@ -114,14 +124,17 @@ describe("startPluginLoader", () => {
       pluginToolRendererKey(environmentId, "plg_hello-web_greet"),
     );
     expect(appAtomRegistry.get(greetRenderer)).toBeDefined();
+    expect(appAtomRegistry.get(pluginComposerCollapseOnScrollAtom)).toBe(true);
 
     stop();
+    releaseHungBundle(new Response("missing", { status: 500 }));
     expect(document.querySelectorAll('style[data-plugin="hello-web"]')).toHaveLength(0);
     expect(appAtomRegistry.get(helloPanel)).toBeUndefined();
     expect(appAtomRegistry.get(pluginCommandsAtom(environmentId))).toEqual([]);
     expect(appAtomRegistry.get(pluginSlashCommandsAtom(environmentId))).toEqual([]);
     expect(appAtomRegistry.get(pluginBannersAtom(environmentId))).toEqual([]);
     expect(appAtomRegistry.get(greetRenderer)).toBeUndefined();
+    expect(appAtomRegistry.get(pluginComposerCollapseOnScrollAtom)).toBe(false);
   });
 
   it("reloads a restarted plugin and undoes what it registers after unloading", async () => {

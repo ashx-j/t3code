@@ -34,7 +34,8 @@ Vite preset below.
 - `settingsSchema` is JSON Schema. T3 Code draws a form from it on the Plugins page, and fields with
   `"format": "t3-secret"` are stored in the server's secret store and never shown again.
 - A `themes/` folder of theme JSON files is published while the plugin is active, and an `assets/`
-  folder is served to the web half when the plugin has one.
+  folder is served to the web half when the plugin has one. T3 Code remembers the published
+  themes, so the boot screen and the desktop window start in the active theme's colors.
 - A `skills/` folder of `<name>/SKILL.md` skills reaches Claude and Codex agents while the plugin
   is active, and the composer's `$` menu lists them for those agents with the plugin's name. Claude
   invokes one as `<plugin id>:<folder>`, Codex by the `name` in its frontmatter. Nothing else in
@@ -158,7 +159,11 @@ them in both.
 T3's own controls as ready-made pieces to arrange, plus `original`, T3's own drawing of the part.
 The parts and their pieces are listed in `WebPluginParts`. If your component throws, T3 draws its
 own part. [`examples/classic-composer`](./examples/classic-composer) moves the composer's controls
-back to their layout from before T3's redesign. [`examples/message-extras`](./examples/message-extras) adds a word count under assistant messages,
+back to their layout from before T3's redesign.
+[`examples/settings-pages`](./examples/settings-pages) shows Settings in place of the thread
+(`app.pageFrame`'s `page`) and lists its sections in the sidebar, with Back at the bottom
+(`app.sidebar`'s `nav` and `back`). `composer.setCollapseOnScroll(true)` folds the composer to one
+line on wide screens while the timeline is scrolled up, as it does on phones. [`examples/message-extras`](./examples/message-extras) adds a word count under assistant messages,
 redraws expanded commands and sums up diffs.
 
 Build it with the Vite preset, which makes the bundle use T3 Code's own React, atom hooks and UI

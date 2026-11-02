@@ -11,8 +11,9 @@ import {
 } from "react";
 
 import { PluginReplaceable } from "../plugins/PluginReplaceable";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { registerCommands } from "../shortcuts/dispatcher";
-import { useCloseAppModal } from "./sidebar/mainAppLocation";
+import { shownAppPageAtom, useCloseAppModal } from "./sidebar/mainAppLocation";
 import { Button } from "./ui/button";
 import { DialogBackdrop } from "./ui/dialog";
 import { SidebarInset } from "./ui/sidebar";
@@ -20,14 +21,24 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 // Set inside the page frame, where no dialog exists for the close button to close.
 const AppRoutePageCloseContext = createContext<(() => void) | null>(null);
+// The section list `AppRouteModalNav` draws; unset in the page frame, which hands it over.
+const AppRouteNavContext = createContext<ReactNode>(null);
 
 /**
  * Large modal for the Settings and Usage routes. Esc, the close button, or a press on the
  * backdrop returns to the page that opened it. Keyboard guards that skip dialogs exempt
  * `[data-app-modal]`, because these pages own their shortcuts. A plugin may show the page in
- * place of the thread instead (the `app.pageFrame` part).
+ * place of the thread instead (the `app.pageFrame` part), with `nav` drawn where it chooses.
  */
-export function AppRouteModal({ label, children }: { label: string; children: ReactNode }) {
+export function AppRouteModal({
+  label,
+  nav = null,
+  children,
+}: {
+  label: string;
+  nav?: ReactNode;
+  children: ReactNode;
+}) {
   const closeAppModal = useCloseAppModal();
   const [open, setOpen] = useState(true);
   // Text selection that ends on the backdrop is not a dismissal.
@@ -35,6 +46,7 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
   // Focus the surface, not its first control: no stray focus ring, no phone keyboard.
   // On close, leave focus alone; returning it to the opener paints a focus ring.
   const popupRef = useRef<HTMLDivElement>(null);
+  const content = <AppRouteNavContext value={nav}>{children}</AppRouteNavContext>;
 
   const modal = (
     <DialogPrimitive.Root
@@ -74,7 +86,7 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
             data-app-modal=""
             className="relative flex size-full min-h-0 min-w-0 flex-col overflow-hidden bg-background max-sm:pt-safe max-sm:pb-safe text-foreground outline-none transition-[opacity,scale] duration-150 ease-out [-webkit-app-region:no-drag] data-ending-style:scale-[0.985] data-ending-style:opacity-0 data-starting-style:scale-[0.985] data-starting-style:opacity-0 sm:max-h-[60rem] sm:max-w-[80rem] sm:rounded-2xl sm:border sm:shadow-2xl/40"
           >
-            {children}
+            {content}
           </DialogPrimitive.Popup>
         </DialogPrimitive.Viewport>
       </DialogPrimitive.Portal>
@@ -85,13 +97,19 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
       part="app.pageFrame"
       pieces={{
         original: modal,
-        content: children,
+        content,
         page: <AppRoutePage label={label}>{children}</AppRoutePage>,
+        nav,
         label,
         close: () => void closeAppModal(),
       }}
     />
   );
+}
+
+/** Where a page draws its section list: nothing while the page frame hands it over. */
+export function AppRouteModalNav() {
+  return use(AppRouteNavContext);
 }
 
 /**
@@ -100,13 +118,11 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
  */
 function AppRoutePage({ label, children }: { label: string; children: ReactNode }) {
   const closeAppModal = useCloseAppModal();
-  const pageRef = useRef<HTMLElement>(null);
-  const close = () => {
-    // Leaving unmounts a focused field without a blur, so commit-on-blur rows would drop what
-    // was typed. Blur first so they commit.
-    const focused = document.activeElement;
-    if (focused instanceof HTMLElement && pageRef.current?.contains(focused)) focused.blur();
-    void closeAppModal();
+  const close = () => void closeAppModal();
+  // Tells the sidebar which page it sits beside, for the `app.sidebar` part.
+  const showPage = () => {
+    appAtomRegistry.set(shownAppPageAtom, label);
+    return () => appAtomRegistry.set(shownAppPageAtom, null);
   };
   const onEscape = useEffectEvent(close);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- binds Esc in the global shortcut dispatcher while the page is shown
@@ -132,7 +148,7 @@ function AppRoutePage({ label, children }: { label: string; children: ReactNode 
   );
   return (
     <SidebarInset
-      ref={pageRef}
+      ref={showPage}
       aria-label={label}
       data-app-modal=""
       data-app-route-page=""

@@ -1,6 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
+  lazy,
+  Suspense,
   useEffect,
   useState,
   useSyncExternalStore,
@@ -40,8 +42,14 @@ import {
 import { BackgroundThreadAnnouncer } from "./BackgroundThreadAnnouncer";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 import ThreadSidebar from "./Sidebar";
-import { SidebarBrandWidthProbe } from "./sidebar/SidebarChrome";
-import { isAppModalPage } from "./sidebar/mainAppLocation";
+import { PluginReplaceable } from "../plugins/PluginReplaceable";
+import { PluginSidebarSections } from "../plugins/PluginSidebarSections";
+import {
+  SidebarBrandWidthProbe,
+  SidebarChromeFooter,
+  SidebarChromeHeader,
+} from "./sidebar/SidebarChrome";
+import { isAppModalPage, shownAppPageAtom } from "./sidebar/mainAppLocation";
 import type { SidebarRouteReveal } from "./sidebar/routeReveal";
 import { useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
 import {
@@ -66,6 +74,13 @@ import { registerCommands, registerMenuAction } from "../shortcuts/dispatcher";
 import { resolveThreadRouteRef } from "../threadRoutes";
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "var(--desktop-window-controls-inset, 90px)";
+
+// Loaded only when a plugin draws Settings' sections in the sidebar.
+const SettingsSidebarNav = lazy(() =>
+  import("./settings/SettingsSidebarNav").then((module) => ({
+    default: module.SettingsSidebarNav,
+  })),
+);
 
 function subscribeToViewportWidth(onChange: () => void): () => void {
   window.addEventListener("resize", onChange);
@@ -401,6 +416,56 @@ function SidebarControl() {
   );
 }
 
+function SidebarSettingsNav() {
+  const pathname = useLocation({ select: (location) => location.pathname });
+  const { isMobile, setOpenMobile } = useSidebar();
+  return (
+    <Suspense fallback={<div className="min-h-0 flex-1" />}>
+      <SettingsSidebarNav
+        pathname={pathname}
+        placement="sidebar"
+        onNavigate={() => {
+          if (isMobile) setOpenMobile(false);
+        }}
+      />
+    </Suspense>
+  );
+}
+
+/** The sidebar's content, which a plugin may rearrange through the `app.sidebar` part. */
+function AppSidebarContent({ routeReveal }: { routeReveal: SidebarRouteReveal }) {
+  const page = useAtomValue(shownAppPageAtom);
+  const header = <SidebarChromeHeader isElectron={isElectron} />;
+  const threads = (
+    <>
+      <ThreadSidebar routeReveal={routeReveal} />
+      <PluginSidebarSections />
+    </>
+  );
+  const footer = <SidebarChromeFooter />;
+  return (
+    <PluginReplaceable
+      part="app.sidebar"
+      pieces={{
+        original: (
+          <>
+            {header}
+            {threads}
+            {footer}
+          </>
+        ),
+        header,
+        threads,
+        footer,
+        back: <SidebarChromeFooter utility="back" />,
+        update: <SidebarChromeFooter utility="none" />,
+        nav: page === "Settings" ? <SidebarSettingsNav /> : null,
+        page,
+      }}
+    />
+  );
+}
+
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const sidebarArea = workspaceAreaProps("sidebar", 0, "Threads");
   const [sidebarRouteReveal] = useState<SidebarRouteReveal>(() => ({
@@ -469,7 +534,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           }}
           style={windowControlsInsetStyle}
         >
-          <ThreadSidebar routeReveal={sidebarRouteReveal} />
+          <AppSidebarContent routeReveal={sidebarRouteReveal} />
           <SidebarRail onDoubleClick={resetSidebarWidth} />
         </Sidebar>
         {children}

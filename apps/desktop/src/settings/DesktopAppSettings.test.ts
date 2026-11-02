@@ -170,6 +170,7 @@ describe("DesktopSettings", () => {
             "tailscaleServeEnabled": true,
             "tailscaleServePort": 8443,
             "mainWindowBounds": { "x": 120, "y": 80, "width": 1280, "height": 900 },
+            "windowBackground": "#151515",
           }\n`,
         );
 
@@ -186,6 +187,7 @@ describe("DesktopSettings", () => {
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
+          windowBackground: "#151515",
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
     ),
@@ -281,6 +283,7 @@ describe("DesktopSettings", () => {
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
+          windowBackground: null,
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
       { appVersion: "0.0.17-nightly.20260415.1" },
@@ -310,6 +313,7 @@ describe("DesktopSettings", () => {
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
+          windowBackground: null,
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
       { appVersion: "0.0.17-nightly.20260415.1" },
