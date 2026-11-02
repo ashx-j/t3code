@@ -19,9 +19,11 @@ The plugin is enabled and started once it is installed. If installing over an ex
 fails, the previous version keeps running.
 
 Once an environment has a plugin, agents can also install, remove, turn on and off, and call
-plugins when you ask them to. Like other changes to the environment, this needs a session with
-full access. Agents in an environment with no plugins don't see these tools, so the first plugin
-comes from Settings.
+plugins when you ask them to. Only an agent in a thread set to **Full access**, and not in Plan
+mode, can do this, or an outside agent you approved with **Full access**. Agents from linked
+environments can't. T3 Code checks the thread's permission mode, not whether the person who
+started the thread may change Settings. Agents in an environment with no plugins don't see these
+tools, so the first plugin comes from Settings.
 
 ## Update a plugin
 
