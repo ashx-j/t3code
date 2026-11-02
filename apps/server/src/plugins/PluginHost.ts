@@ -410,6 +410,9 @@ const make = Effect.gen(function* () {
   const changes = yield* PubSub.sliding<ReadonlyArray<PluginState>>(1);
   const lifecycle = yield* Semaphore.make(1);
   const publishLock = yield* Semaphore.make(1);
+  // Update checks write plugins.json outside the lifecycle lock, so every read that is written
+  // back, or kept as the current config, holds this one.
+  const configLock = yield* Semaphore.make(1);
   const activations = yield* FiberMap.make<PluginId>();
   const hostScope = yield* Effect.scope;
 
@@ -497,7 +500,7 @@ const make = Effect.gen(function* () {
       Effect.mapError((cause) => new PluginConfigError({ path: configPath, cause })),
     );
     yield* Ref.set(pluginsConfig, next);
-  });
+  }, configLock.withPermits(1));
 
   const writeEnabled = (pluginId: PluginId, enabled: boolean) =>
     writeConfig((current) => ({
@@ -772,17 +775,21 @@ const make = Effect.gen(function* () {
   // Startup tolerates an unreadable plugins.json; an explicit reload reports it instead.
   const discover = Effect.fnUntraced(function* (lenient: boolean) {
     const emptyConfig: PluginsConfigFile = {};
-    const current = lenient
-      ? yield* readConfig.pipe(
-          Effect.catchTags({
-            PluginConfigError: (error) =>
-              Effect.logWarning("ignoring unreadable plugins.json", { path: error.path }).pipe(
-                Effect.as(emptyConfig),
-              ),
-          }),
-        )
-      : yield* readConfig;
-    yield* Ref.set(pluginsConfig, current);
+    const current = yield* (
+      lenient
+        ? readConfig.pipe(
+            Effect.catchTags({
+              PluginConfigError: (error) =>
+                Effect.logWarning("ignoring unreadable plugins.json", { path: error.path }).pipe(
+                  Effect.as(emptyConfig),
+                ),
+            }),
+          )
+        : readConfig
+    ).pipe(
+      Effect.tap((config) => Ref.set(pluginsConfig, config)),
+      configLock.withPermits(1),
+    );
     const plugins = yield* discoverPlugins({ pluginsDir, devPaths: current.devPaths ?? [] }).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
