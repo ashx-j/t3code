@@ -1,17 +1,16 @@
 # Surface
 
-A web-only plugin with a dark theme and a stylesheet. The theme is neutral grays: a #151515
-background, #191919 cards, #1e1e1e raised rows and a near-white main button. The stylesheet makes
-borders and hover fills translucent white, rounds corners a little more, turns each thread details
-section into its own card, gives segmented tabs a sunken track and makes the stop button a dark
-square with a red icon.
+A theme-only plugin with Surface's dark palette: neutral grays, a #151515 background, #191919
+cards, #1e1e1e raised rows and a near-white main button. Borders and hover fills are translucent
+white, so they read the same on the canvas, cards and rows.
 
 Install it from **Settings → Plugins → Add plugin** with this folder's path, then pick **Surface**
-under **Settings → Appearance → Themes** and switch the color scheme to Dark. The stylesheet only
-applies while the Surface theme is in use, so picking another theme brings back T3's own look.
+under **Settings → Appearance → Themes** and switch the color scheme to Dark. `themes/surface.json`
+also imports on its own through **Add theme**.
 
 T3 Code remembers the theme once it has seen it, so later starts paint the boot screen, and on
-desktop the window, #151515 from the first frame instead of black.
+desktop the window, #151515 from the first frame instead of black. `"sidebarArtwork": true` keeps
+the nightly and dev artwork in the sidebar's corner.
 
-It uses a `themes/` folder and `api.injectStyles`. The stylesheet targets T3's own markup, so a T3
-update that changes those elements can undo parts of it.
+It has no code or stylesheet. Every color is a theme color role, so it only depends on the theme
+file format.
