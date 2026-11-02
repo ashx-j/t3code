@@ -54,6 +54,12 @@ const FRAGILE_PATTERNS: ReadonlyArray<{
     fix: "Labels change with wording. Replace the part with ui.replace, or style elements the plugin renders.",
   },
   {
+    code: "data-slot-selector",
+    pattern: /\[data-slot/g,
+    problem: "selects T3's elements by data-slot",
+    fix: "Slot names belong to T3's components and change with them. Replace the part with ui.replace, or style elements the plugin renders.",
+  },
+  {
     code: "has-selector",
     pattern: /:has\(/g,
     problem: "uses :has() to reach into T3's markup",
@@ -297,9 +303,9 @@ export const checkPluginFolder = Effect.fn("PluginCheck.check")(function* (
     }
   }
   // CSS beside the manifest and the web bundle, which a plugin passes to injectStyles.
-  const cssFolders = new Set(["", web?.slice(0, Math.max(0, web.lastIndexOf("/"))) ?? ""]);
+  const webFolder = web?.slice(0, Math.max(0, web.lastIndexOf("/"))) ?? "";
   const cssFiles: Array<string> = [];
-  for (const within of cssFolders) {
+  for (const within of new Set(["", webFolder])) {
     const entries = yield* fs
       .readDirectory(path.join(folder, within))
       .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
@@ -308,6 +314,19 @@ export const checkPluginFolder = Effect.fn("PluginCheck.check")(function* (
       const file = within === "" ? name : `${within}/${name}`;
       if (!cssFiles.includes(file)) cssFiles.push(file);
     }
+  }
+  // Vite's library mode writes an imported stylesheet beside the bundle, and T3 loads only the
+  // bundle. The root is left out: hand-written plugins keep source CSS there.
+  const emittedCss =
+    webFolder === "" ? [] : cssFiles.filter((file) => file.startsWith(`${webFolder}/`));
+  if (emittedCss.length > 0) {
+    findings.push({
+      code: "css-not-loaded",
+      severity: "warning",
+      file: emittedCss[0] ?? null,
+      problem: `${emittedCss.join(", ")} ${emittedCss.length === 1 ? "sits" : "sit"} beside the web bundle, and T3 never loads CSS files.`,
+      fix: 'Import the stylesheet with `import css from "./web.css?inline"` and pass it to `api.injectStyles(css)`.',
+    });
   }
   for (const file of cssFiles.slice(0, MAX_CSS_FILES)) {
     const css = yield* readText(path.join(folder, file), MAX_SCANNED_BYTES);

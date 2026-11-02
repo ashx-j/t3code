@@ -81,6 +81,8 @@ import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
 
 const MAX_FAILURE_MESSAGE_CHARS = 500;
+// Clients send web failures and agents read them, so they are bounded like plugin errors.
+const MAX_WEB_FAILURE_CHARS = 1_000;
 const WEB_CONTENT_TYPES: Readonly<Record<string, string>> = {
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -116,6 +118,15 @@ export class PluginNotActiveError extends Schema.TaggedError<PluginNotActiveErro
 ) {
   override get message(): string {
     return `Plugin ${this.pluginId} is ${this.status}.`;
+  }
+}
+
+export class PluginNoServerError extends Schema.TaggedError<PluginNoServerError>()(
+  "PluginNoServerError",
+  { pluginId: PluginId },
+) {
+  override get message(): string {
+    return `Plugin ${this.pluginId} has no server half, so it has no methods or channels.`;
   }
 }
 
@@ -245,6 +256,15 @@ export class PluginHost extends Context.Service<
       target: { readonly pluginId: PluginId } | { readonly path: string },
     ) => Effect.Effect<PluginCheckReport, PluginNotFoundError>;
     /**
+     * Keeps the latest web failure a client reported for the plugin's current start, in memory;
+     * `null` clears it. A report about an earlier start is ignored.
+     */
+    readonly reportWebFailure: (input: {
+      readonly pluginId: PluginId;
+      readonly revision: number;
+      readonly message: string | null;
+    }) => Effect.Effect<void, PluginNotFoundError>;
+    /**
      * Stops a plugin and deletes its folder, or for a linked folder only forgets it;
      * `removeData` also deletes its settings.
      */
@@ -262,6 +282,7 @@ export class PluginHost extends Context.Service<
       Schema.Json,
       | PluginNotFoundError
       | PluginNotActiveError
+      | PluginNoServerError
       | PluginMethodNotFoundError
       | PluginAccessDeniedError
       | PluginHandlerError
@@ -270,7 +291,10 @@ export class PluginHost extends Context.Service<
     readonly subscribe: (input: {
       readonly pluginId: PluginId;
       readonly channel: string;
-    }) => Stream.Stream<Schema.Json, PluginNotFoundError | PluginNotActiveError>;
+    }) => Stream.Stream<
+      Schema.Json,
+      PluginNotFoundError | PluginNotActiveError | PluginNoServerError
+    >;
   }
 >()("t3/plugins/PluginHost") {}
 
@@ -356,6 +380,7 @@ const toState = (
   enabled: boolean,
   installSource: PluginInstallSource | undefined,
   availableUpdate: string | undefined,
+  webFailure: string | undefined,
 ): PluginState => {
   const manifest = manifestOf(record.plugin);
   return {
@@ -373,6 +398,7 @@ const toState = (
         }),
     permissions: manifest?.permissions ?? [],
     source: record.plugin.source,
+    ...(record.plugin.source === "dev" ? { linkedFolder: record.plugin.folder } : {}),
     enabled,
     status: record.status,
     ...(record.failure === undefined ? {} : { failure: record.failure }),
@@ -388,6 +414,7 @@ const toState = (
     hasServer: manifest?.server !== undefined,
     hasWeb: manifest?.web !== undefined,
     ...("hasSkills" in record.plugin ? { hasSkills: record.plugin.hasSkills } : {}),
+    ...(webFailure === undefined ? {} : { webFailure }),
   };
 };
 
@@ -453,6 +480,10 @@ const make = Effect.gen(function* () {
   let revision = yield* Clock.currentTimeMillis;
   const nextRevision = () => ++revision;
   const pluginsConfig = yield* Ref.make<PluginsConfigFile>({});
+  // By plugin id, for the start it was reported for: a new start's revision hides the old one.
+  const webFailures = yield* Ref.make<
+    ReadonlyMap<PluginId, { readonly revision: number; readonly message: string }>
+  >(new Map());
   const changes = yield* PubSub.sliding<ReadonlyArray<PluginState>>(1);
   const lifecycle = yield* Semaphore.make(1);
   const publishLock = yield* Semaphore.make(1);
@@ -465,20 +496,30 @@ const make = Effect.gen(function* () {
   const currentStates = Effect.gen(function* () {
     const config = yield* Ref.get(pluginsConfig);
     const enabled = config.enabled ?? {};
-    return (yield* Ref.get(records)).map((record) =>
-      toState(
+    const failures = yield* Ref.get(webFailures);
+    return (yield* Ref.get(records)).map((record) => {
+      const webFailure = failures.get(record.plugin.id);
+      return toState(
         record,
         enabled[record.plugin.id] === true,
         config.sources?.[record.plugin.id],
         config.updates?.available[record.plugin.id],
-      ),
-    );
+        webFailure !== undefined && webFailure.revision === record.revision
+          ? webFailure.message
+          : undefined,
+      );
+    });
   });
+  // What the last publish sent. Settings rescans on every visit, and a list sent again would make
+  // every client and provider stream rebuild what it already shows.
+  let published: ReadonlyArray<PluginState> | undefined;
   // Reading and publishing under one lock, so a slower fiber cannot publish an older list last.
   const publishStates = publishLock.withPermits(1)(
     Effect.gen(function* () {
       const all = yield* Ref.get(records);
       const states = yield* currentStates;
+      if (published !== undefined && Equal.equals(states, published)) return;
+      published = states;
       yield* services.mcpTools.setInstalledPlugins(states);
       const active = all.flatMap((record, index) =>
         states[index]?.status === "active" ? [record.plugin] : [],
@@ -1112,7 +1153,7 @@ const make = Effect.gen(function* () {
     // source, so they replace only plugins that were sent or put in the plugins folder.
     const refusal =
       existing?.plugin.source === "dev"
-        ? `${manifest.id} is linked from ${existing.plugin.folder}. Remove it first.`
+        ? `${manifest.id} is linked from ${existing.plugin.folder}. Unlink it first.`
         : expectedId !== undefined && manifest.id !== expectedId
           ? `The source now provides ${manifest.id}, not ${expectedId}.`
           : existing !== undefined && !Equal.equals(recorded, source)
@@ -1175,9 +1216,16 @@ const make = Effect.gen(function* () {
     }
     const manifest = yield* readSourceManifest(from);
     const existing = yield* findRecord(manifest.id);
+    // Linking an installed plugin's own folder would list it twice, and the copy that loses
+    // shares its id, so removing that copy would delete the installed one.
+    if (existing !== undefined && existing.plugin.source !== "dev") {
+      return yield* new PluginInstallError({
+        reason: `${manifest.id} is already installed. Remove it first.`,
+      });
+    }
     if (existing !== undefined && existing.plugin.folder !== from) {
       return yield* new PluginInstallError({
-        reason: `${manifest.id} is already ${existing.plugin.source === "dev" ? `linked from ${existing.plugin.folder}` : "installed"}. Remove it first.`,
+        reason: `${manifest.id} is already linked from ${existing.plugin.folder}. Unlink it first.`,
       });
     }
     yield* writeConfig((current) => ({
@@ -1345,6 +1393,10 @@ const make = Effect.gen(function* () {
   const activeRecord = Effect.fnUntraced(function* (pluginId: PluginId) {
     const record = yield* findRecord(pluginId);
     if (record === undefined) return yield* new PluginNotFoundError({ pluginId });
+    const manifest = manifestOf(record.plugin);
+    if (manifest !== undefined && manifest.server === undefined) {
+      return yield* new PluginNoServerError({ pluginId });
+    }
     if (record.status !== "active" || record.activation === undefined) {
       return yield* new PluginNotActiveError({ pluginId, status: record.status });
     }
@@ -1382,29 +1434,67 @@ const make = Effect.gen(function* () {
     checkUpdates: checkUpdates(),
     uninstall,
     check: Effect.fn("PluginHost.check")(function* (target) {
-      const { folder, failure } =
+      const { folder, state } =
         "path" in target
-          ? { folder: path.resolve(target.path), failure: undefined }
+          ? { folder: path.resolve(target.path), state: undefined }
           : yield* findRecord(target.pluginId).pipe(
               Effect.flatMap((record) =>
                 record === undefined
                   ? Effect.fail(new PluginNotFoundError({ pluginId: target.pluginId }))
-                  : Effect.succeed({ folder: record.plugin.rootDir, failure: record.failure }),
+                  : stateOf(target.pluginId).pipe(
+                      Effect.map((state) => ({ folder: record.plugin.rootDir, state })),
+                    ),
               ),
             );
       const report = yield* checkPluginFolder(folder, packageJson.version).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
       );
-      if (failure === undefined) return report;
-      const lastStart: PluginCheckFinding = {
-        code: "last-start-failed",
-        severity: "error",
-        file: null,
-        problem: `Its last start failed at ${failure.stage}: ${failure.message}`,
-        fix: "Fix it, then reload the plugin.",
-      };
-      return { ...report, findings: [lastStart, ...report.findings] };
+      const failures: ReadonlyArray<PluginCheckFinding> = [
+        ...(state?.failure === undefined
+          ? []
+          : [
+              {
+                code: "last-start-failed",
+                severity: "error" as const,
+                file: null,
+                problem: `Its last start failed at ${state.failure.stage}: ${state.failure.message}`,
+                fix: "Fix it, then reload the plugin.",
+              },
+            ]),
+        ...(state?.webFailure === undefined
+          ? []
+          : [
+              {
+                code: "web-failed",
+                severity: "error" as const,
+                file: null,
+                problem: `Its web half failed in the browser: ${state.webFailure}`,
+                fix: "Fix it, rebuild the web bundle, then reload the plugin.",
+              },
+            ]),
+      ];
+      return { ...report, findings: [...failures, ...report.findings] };
+    }),
+    reportWebFailure: Effect.fn("PluginHost.reportWebFailure")(function* (report) {
+      const record = yield* findRecord(report.pluginId);
+      if (record === undefined) {
+        return yield* new PluginNotFoundError({ pluginId: report.pluginId });
+      }
+      if (record.revision !== report.revision) return;
+      yield* Ref.update(webFailures, (all) => {
+        const next = new Map(all);
+        if (report.message === null) {
+          next.delete(report.pluginId);
+        } else {
+          next.set(report.pluginId, {
+            revision: report.revision,
+            message: report.message.slice(0, MAX_WEB_FAILURE_CHARS),
+          });
+        }
+        return next;
+      });
+      yield* publishStates;
     }),
     getSettings: Effect.fn("PluginHost.getSettings")(function* (pluginId) {
       const manifest = yield* manifestFor(pluginId);

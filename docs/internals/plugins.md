@@ -143,9 +143,10 @@ decoded for the plugin; several types share one stream so events stay in sequenc
 buffer means a slow plugin loses old events rather than stalling the server; plugins resume by
 `sequence`. `turns.afterRunCompleted` reads the same events through a stream that waits instead of
 dropping, because a dropped run would be lost for good once the saved position moves past it. It
-saves the sequence and the last 256 ended runs in the plugin's storage: runs that end while a
-plugin is off arrive when it starts, and a run updated again after it ended (a checkpoint landing
-on an interrupted run) is not delivered twice. Hooks skip slash commands, whose meaning changed
+saves the sequence in the plugin's storage when the plugin first subscribes and after each run,
+with the last 256 ended runs: runs that end while a plugin is off arrive when it starts, even
+before it has handled one, and a run updated again after it ended (a checkpoint landing on an
+interrupted run) is not delivered twice. Hooks skip slash commands, whose meaning changed
 text would change.
 
 `turns.onRuntimeRequest` reacts to stored events too and answers through the same
@@ -218,6 +219,12 @@ after that, not to the running session.
 The `t3_plugins_*` management tools live in `PluginMcpTools`, but the host depends on that service,
 so the host hands it its actions when it starts.
 
+A web half fails in the browser, where agents cannot see it, so the web loader reports the failure
+with `plugins.reportWebFailure` and the host adds it to the plugin's state, which the tools return.
+The host keeps it in memory for the start whose `revision` the report names, so a restart clears it
+and a late report about an earlier start is ignored. The call needs the settings write scope:
+agents read the text, so a guest or read-only client must not write it.
+
 ## Provider drivers
 
 Provider drivers are Effect code that the server runs inside its own runtime, so this is the one
@@ -289,7 +296,8 @@ Discovery takes a plugin's id from its manifest, not its folder name, because pe
 folders in by hand. A folder named after its id wins over other copies, and installs replace a
 plugin in the folder it was found in. There is no watcher on `plugins/`: the server reads it at
 startup, on reload and when Settings → Plugins asks with `plugins.rescan`, so an idle server pays
-nothing for it.
+nothing for it. A rescan that changes nothing publishes nothing, so each visit to Settings does not
+resend the list to every client and make provider streams rebuild their skill lists.
 
 `plugins.installFiles` takes a folder the client read from a drop or a folder picker, in one
 message, within the limits in the contract. Clients cannot hand the server a path, which would

@@ -388,6 +388,7 @@ import {
   PluginCheckUpdatesInput,
   PluginListResult,
   PluginRescanInput,
+  PluginReportWebFailureInput,
   PluginMutationResult,
   PluginReloadInput,
   PluginSetEnabledInput,
@@ -580,6 +581,7 @@ export const WS_METHODS = {
   pluginsUninstall: "plugins.uninstall",
   pluginsUpdate: "plugins.update",
   pluginsCheckUpdates: "plugins.checkUpdates",
+  pluginsReportWebFailure: "plugins.reportWebFailure",
   pluginsSettingsGet: "plugins.settings.get",
   pluginsSettingsUpdate: "plugins.settings.update",
   pluginsInvoke: "plugins.invoke",
@@ -2048,6 +2050,13 @@ const WsPluginsCheckUpdatesRpc = Rpc.make(WS_METHODS.pluginsCheckUpdates, {
   error: PluginRpcError,
 });
 
+/** Tells the server why a plugin's web half failed, so agents can read it. */
+const WsPluginsReportWebFailureRpc = Rpc.make(WS_METHODS.pluginsReportWebFailure, {
+  payload: PluginReportWebFailureInput,
+  success: Schema.Void,
+  error: PluginRpcError,
+});
+
 const WsPluginsUninstallRpc = Rpc.make(WS_METHODS.pluginsUninstall, {
   payload: PluginUninstallInput,
   success: PluginUninstallResult,
@@ -2174,6 +2183,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPluginsUninstallRpc,
   WsPluginsUpdateRpc,
   WsPluginsCheckUpdatesRpc,
+  WsPluginsReportWebFailureRpc,
   WsPluginsSettingsGetRpc,
   WsPluginsSettingsUpdateRpc,
   WsPluginsInvokeRpc,

@@ -8,6 +8,7 @@ import {
   type PluginInvokeInput,
   type PluginListInput,
   type PluginReloadInput,
+  type PluginReportWebFailureInput,
   type PluginRescanInput,
   type PluginSetEnabledInput,
   type PluginSettingsGetInput,
@@ -69,6 +70,8 @@ export const makePluginRpcHandlers = (
       Effect.map((plugins) => ({ plugins })),
       Effect.mapError((error) => new PluginError({ message: error.message })),
     ),
+  [WS_METHODS.pluginsReportWebFailure]: (input: PluginReportWebFailureInput) =>
+    pluginHost.reportWebFailure(input).pipe(Effect.mapError(toRpcError(input.pluginId))),
   [WS_METHODS.pluginsUninstall]: (input: PluginUninstallInput) =>
     pluginHost
       .uninstall(input.pluginId, input.removeData === true)

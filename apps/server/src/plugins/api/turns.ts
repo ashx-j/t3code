@@ -77,8 +77,10 @@ export const makeTurnsApi = (
   },
   api: {
     readonly storage: PluginApi["storage"];
-    /** Every `run.updated` event after `afterSequence`, or from now; never drops events. */
-    readonly runEvents: (afterSequence: number | undefined) => AsyncIterable<PluginStoredEvent>;
+    /** Every `run.updated` event after `afterSequence`; never drops events. */
+    readonly runEvents: (afterSequence: number) => AsyncIterable<PluginStoredEvent>;
+    /** The newest stored thread event's sequence, where reading from now starts. */
+    readonly latestSequence: () => Promise<number>;
     /** Shown with a block reason, so the sender knows which plugin stopped the message. */
     readonly pluginName: string;
   },
@@ -100,6 +102,12 @@ export const makeTurnsApi = (
         // saved position instead of going quiet until the plugin restarts.
         while (!activation.controller.signal.aborted) {
           try {
+            if (sequence === undefined) {
+              // Saved before any run ends, so runs that end while the plugin is off arrive when
+              // it starts again, even if it never handled one.
+              sequence = await api.latestSequence();
+              await api.storage.set(cursorKey, { sequence, runIds: [] });
+            }
             for await (const stored of api.runEvents(sequence)) {
               const run = stored.event.payload;
               if (!isJsonObject(run) || typeof run.status !== "string") continue;
