@@ -10,5 +10,8 @@ Install it from **Settings → Plugins → Add plugin** with this folder's path,
 under **Settings → Appearance → Themes** and switch the color scheme to Dark. The stylesheet only
 applies while the Surface theme is in use, so picking another theme brings back T3's own look.
 
+T3 Code remembers the theme once it has seen it, so later starts paint the boot screen, and on
+desktop the window, #151515 from the first frame instead of black.
+
 It uses a `themes/` folder and `api.injectStyles`. The stylesheet targets T3's own markup, so a T3
 update that changes those elements can undo parts of it.

@@ -106,6 +106,8 @@ svg.lucide-shield-off {
 export default defineWebPlugin({
   activate(api) {
     api.injectStyles(css);
+    // Scrolling the timeline up folds the composer to one line, as it did before the redesign.
+    api.composer.setCollapseOnScroll(true);
     api.ui.replace("composer.controls", (pieces) => (
       <>
         <div className="classic-composer-pickers">

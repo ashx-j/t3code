@@ -108,6 +108,7 @@ svg.lucide-shield-off {
 var web_default = defineWebPlugin({
   activate(api) {
     api.injectStyles(css);
+    api.composer.setCollapseOnScroll(true);
     api.ui.replace("composer.controls", (pieces) =>
       /* @__PURE__ */ jsxs(Fragment, {
         children: [
