@@ -1,4 +1,8 @@
 import { InlineAudioPreview } from "../files/InlineAudioPreview";
+import { PluginReplaceable } from "../../plugins/PluginReplaceable";
+import { PluginActionButtons } from "../../plugins/PluginActions";
+import { SentPluginContextChip } from "../../plugins/PluginContextChip";
+import { PLUGIN_CONTEXT_KIND } from "../../plugins/pluginRegistry";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { findRevealRef } from "./markdownFindContext";
 import {
@@ -600,7 +604,15 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     event.clipboardData.setData(COMPOSER_CONTEXT_CLIPBOARD_MIME, fragment);
   };
   const renderContextReference = (reference: ChatMarkdownContextReference) => {
-    const record = asKnownContextRecord(resolvedContext.recordsById.get(reference.contextId));
+    const rawRecord = resolvedContext.recordsById.get(reference.contextId);
+    if (rawRecord?.kind === PLUGIN_CONTEXT_KIND && "payload" in rawRecord) {
+      return (
+        <span data-thread-find-ignore>
+          <SentPluginContextChip label={reference.label} payload={rawRecord.payload} />
+        </span>
+      );
+    }
+    const record = asKnownContextRecord(rawRecord);
     if (record?.kind === "file" && userAudio.some((file) => file.id === record.attachmentId))
       return null;
     const annotationImage =
@@ -803,6 +815,18 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             variant="ghost"
           />
         )}
+        {ctx.threadRef ? (
+          <PluginActionButtons
+            place="message"
+            environmentId={ctx.threadRef.environmentId}
+            context={{
+              threadId: ctx.threadRef.threadId,
+              messageId: row.message.id,
+              role: "user",
+              text: plainText,
+            }}
+          />
+        ) : null}
       </div>
     </div>
   );
@@ -1166,7 +1190,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
   if (props.text.length === 0) {
     return null;
   }
-  return (
+  const markdown = (
     <ChatMarkdown
       text={props.text}
       cwd={props.markdownCwd}
@@ -1178,5 +1202,8 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       renderContextReference={props.renderContextReference}
       headingLevelOffset={MESSAGE_HEADING_LEVEL}
     />
+  );
+  return (
+    <PluginReplaceable part="message.user" pieces={{ original: markdown, text: props.text }} />
   );
 });

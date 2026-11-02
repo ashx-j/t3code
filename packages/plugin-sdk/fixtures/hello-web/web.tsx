@@ -45,6 +45,7 @@ export default defineWebPlugin({
       component: (props) => <p className="text-sm">👋 {props.output ?? "Greeting…"}</p>,
     });
     api.injectStyles(".hello-web-panel { border-top: 2px solid var(--color-primary); }");
+    api.composer.setCollapseOnScroll(true);
     api.rightPanel.register({ name: "hello", title: "Hello panel", component: HelloPanel });
     api.composer.registerSlashCommand({
       name: "hello",
@@ -60,7 +61,7 @@ export default defineWebPlugin({
       id: "open-settings",
       title: "Open hello-web settings",
       keywords: ["hello"],
-      desktop: { menu: true },
+      desktop: { menu: true, tray: true },
       run: () => api.navigate("/settings/plugins"),
     });
     api.settings.registerPanel(() => (

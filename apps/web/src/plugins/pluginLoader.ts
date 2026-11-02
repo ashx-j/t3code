@@ -6,12 +6,15 @@ import {
   useAtomSubscribe,
   useAtomValue,
 } from "@effect/atom-react";
-import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, PluginState } from "@t3tools/contracts";
+import type { PreparedHttpAuthorization } from "@t3tools/client-runtime/connection";
+import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { ThreadId, type EnvironmentId, type PluginState } from "@t3tools/contracts";
 import {
   defineWebPlugin,
   type HOST_ATOM_REACT_EXPORTS,
   type HOST_UI_EXPORTS,
+  type WebPluginAction,
   type WebPluginApi,
   type WebPluginDefinition,
 } from "@t3tools/plugin-sdk/web";
@@ -45,18 +48,34 @@ import {
   registerPluginBanner,
   registerPluginCodeBlock,
   registerPluginCommand,
+  registerPluginAction,
+  pluginPageKey,
+  registerPluginPage,
+  registerPluginReplacement,
   registerPluginRightPanel,
+  registerPluginSidebarSection,
   registerPluginSlashCommand,
   registerPluginToolRenderer,
   registerPluginSettingsPanel,
+  pluginContributionKey,
+  pluginMentionContextId,
+  setPluginComposerCollapseOnScroll,
+  setPluginMentionItems,
+  setPluginThreadBadge,
   setPluginWebFailure,
+  type PluginActionContexts,
+  type PluginActionEntry,
+  type PluginActionPlace,
+  type PluginPartProps,
   type PluginToolRendererProps,
 } from "./pluginRegistry";
 import { isLoadableWebPlugin } from "./pluginWatch";
 
 const PANEL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
 const COMMAND_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
+const BADGE_TONES = new Set(["info", "success", "warning", "error"]);
 const CODE_LANGUAGE = /^[a-z0-9][a-z0-9+#.-]{0,31}$/;
+const MENTION_TEXT_MAX_CHARS = 30_000;
 // Languages the app already draws itself.
 const BUILT_IN_LANGUAGES = new Set(["mermaid", "math"]);
 
@@ -106,6 +125,25 @@ const errorText = (error: unknown) =>
 
 // Bearer and cookie sessions can fetch plugin files directly. A DPoP proof needs the relay
 // signer, which only the client runtime holds.
+async function pluginFileRequestInit(
+  authorization: PreparedHttpAuthorization | null,
+  url: URL,
+): Promise<RequestInit> {
+  if (authorization === null) return { credentials: "include" };
+  if (authorization._tag === "Bearer") {
+    return { headers: { authorization: `Bearer ${authorization.token}` } };
+  }
+  const headers = await runAtomCommand(
+    appAtomRegistry,
+    pluginEnvironment.pluginFileHeaders,
+    { authorization, url: url.href },
+    { reportFailure: false },
+  );
+  if (headers._tag !== "Success")
+    throw new Error("Could not authorize the request over T3 Connect.");
+  return { headers: { ...headers.value } };
+}
+
 async function fetchPluginFile(
   environmentId: EnvironmentId,
   plugin: PluginState,
@@ -114,20 +152,12 @@ async function fetchPluginFile(
   const connection = readPreparedConnection(environmentId);
   if (connection === null) throw new Error("The environment is not connected.");
   const authorization = connection.httpAuthorization;
-  if (authorization?._tag === "Dpop") {
-    throw new Error("Plugin web bundles cannot load over a T3 Connect link yet.");
-  }
   const url = new URL(
     `/api/plugins/${encodeURIComponent(plugin.id)}${filePath}`,
     connection.httpBaseUrl,
   );
   url.searchParams.set("v", plugin.version ?? "0");
-  const response = await fetch(
-    url,
-    authorization === null
-      ? { credentials: "include" }
-      : { headers: { authorization: `Bearer ${authorization.token}` } },
-  );
+  const response = await fetch(url, await pluginFileRequestInit(authorization, url));
   if (!response.ok) throw new Error(`The request for ${filePath} failed with ${response.status}.`);
   return response;
 }
@@ -159,11 +189,32 @@ const runReportingFailure = (label: string, run: () => void | Promise<void>) => 
     });
 };
 
+// Builds a toolbar or menu entry from a plugin's action; `run` reports failures as toasts.
+const pluginActionEntry = <Place extends PluginActionPlace>(
+  environmentId: EnvironmentId,
+  pluginId: string,
+  action: WebPluginAction<PluginActionContexts[Place]>,
+): PluginActionEntry<Place> => {
+  if (!COMMAND_ID.test(action.id)) throw new TypeError(`"${action.id}" is not a valid action id.`);
+  if (typeof action.title !== "string") throw new TypeError(`"${action.id}" needs a text title.`);
+  return {
+    key: `plugin:${pluginId}:${action.id}`,
+    environmentId,
+    title: action.title,
+    // The SDK types components without React; they are React function components.
+    icon: action.icon as ComponentType | undefined,
+    run: (context) => runReportingFailure(action.title, () => action.run(context)),
+  };
+};
+
 interface WebPluginApiContext {
   readonly environmentId: EnvironmentId;
   readonly plugin: PluginState;
-  /** Keeps a cleanup for unload, or runs it at once when the plugin is already unloaded. */
-  readonly track: (cleanup: () => void) => void;
+  /**
+   * Keeps a cleanup for unload, or runs it at once when the plugin is already unloaded. Returns the
+   * function that forgets the cleanup without running it.
+   */
+  readonly track: (cleanup: () => void) => () => void;
   /** One dispatcher scope shared by every plugin; commands add and remove their own entries. */
   readonly shortcutHandlers: () => CommandHandlers;
   readonly navigate: (path: string) => void;
@@ -179,6 +230,10 @@ function makeWebPluginApi({
   const pluginId = plugin.id;
   const assetUrls = new Map<string, Promise<string>>();
   let bannerCount = 0;
+  // One cleanup each for a plugin's badges and `@` items, however often it updates them.
+  const badgedThreads = new Set<string>();
+  let mentionCleanupTracked = false;
+  let collapseCleanupTracked = false;
   return {
     version: 1,
     id: pluginId,
@@ -195,18 +250,33 @@ function makeWebPluginApi({
           { reportFailure: false },
         );
         if (result._tag === "Success") return result.value.output;
-        throw new Error(`${pluginId}.${method} failed.`);
+        // The server's reason, so the plugin's UI can say why its own call failed.
+        const failure = squashAtomCommandFailure(result);
+        throw new Error(
+          failure instanceof Error && failure.message !== ""
+            ? failure.message
+            : `${pluginId}.${method} failed.`,
+        );
       },
       subscribe: (channel, onValue) => {
         const atom = pluginEnvironment.pluginChannel({
           environmentId,
           input: { pluginId, channel },
         });
-        const stop = appAtomRegistry.subscribe(atom, (result) => {
-          if (AsyncResult.isSuccess(result)) onValue(result.value.value);
-        });
-        track(stop);
-        return stop;
+        // `immediate` reads the atom, which starts its stream; a bare subscribe on an atom no one
+        // has read yet waits for a change that never comes.
+        const stop = appAtomRegistry.subscribe(
+          atom,
+          (result) => {
+            if (AsyncResult.isSuccess(result)) onValue(result.value.value);
+          },
+          { immediate: true },
+        );
+        const untrack = track(stop);
+        return () => {
+          untrack();
+          stop();
+        };
       },
     },
     rightPanel: {
@@ -255,6 +325,7 @@ function makeWebPluginApi({
             title: command.title,
             pluginName: plugin.name,
             menu: command.desktop.menu === true,
+            ...(command.desktop.tray === true ? { tray: true } : {}),
             ...(command.desktop.globalShortcut === undefined
               ? {}
               : { globalShortcut: command.desktop.globalShortcut }),
@@ -304,6 +375,108 @@ function makeWebPluginApi({
           }),
         );
       },
+      addButton: (button) => {
+        track(registerPluginAction("composer", pluginActionEntry(environmentId, pluginId, button)));
+      },
+      setCollapseOnScroll: (enabled) => {
+        const key = pluginContributionKey(environmentId, pluginId);
+        setPluginComposerCollapseOnScroll(key, enabled === true);
+        if (!collapseCleanupTracked) {
+          collapseCleanupTracked = true;
+          track(() => setPluginComposerCollapseOnScroll(key, false));
+        }
+      },
+      setMentionItems: (items) => {
+        const entries = items.slice(0, 500).map((item) => {
+          const description = item.description ?? "";
+          if (
+            typeof item.id !== "string" ||
+            typeof item.label !== "string" ||
+            typeof item.text !== "string" ||
+            typeof description !== "string"
+          ) {
+            throw new TypeError("`@` items need a text id, label and text.");
+          }
+          return {
+            key: `plugin-mention:${pluginId}:${item.id}`,
+            contextId: pluginMentionContextId(environmentId, pluginId, item.id),
+            pluginName: plugin.name,
+            label: item.label,
+            description,
+            // A chip's record holds at most 64,000 characters of JSON, so longer text would
+            // fail the whole send.
+            text: item.text.slice(0, MENTION_TEXT_MAX_CHARS),
+          };
+        });
+        setPluginMentionItems(environmentId, pluginId, entries);
+        if (!mentionCleanupTracked) {
+          mentionCleanupTracked = true;
+          track(() => setPluginMentionItems(environmentId, pluginId, []));
+        }
+      },
+    },
+    threads: {
+      addMenuItem: (item) => {
+        track(registerPluginAction("threadMenu", pluginActionEntry(environmentId, pluginId, item)));
+      },
+      addHeaderButton: (button) => {
+        track(
+          registerPluginAction("threadHeader", pluginActionEntry(environmentId, pluginId, button)),
+        );
+      },
+      setBadge: (threadId, badge) => {
+        const threadKey = scopedThreadKey(scopeThreadRef(environmentId, ThreadId.make(threadId)));
+        if (badge === null) {
+          badgedThreads.delete(threadKey);
+          setPluginThreadBadge(threadKey, pluginId, null);
+          return;
+        }
+        const tone = badge.tone ?? "info";
+        if (typeof badge.label !== "string" || !BADGE_TONES.has(tone)) {
+          throw new TypeError("A badge needs a text label and a known tone.");
+        }
+        setPluginThreadBadge(threadKey, pluginId, { label: badge.label, tone });
+        if (badgedThreads.size === 0) {
+          track(() => {
+            for (const key of badgedThreads) setPluginThreadBadge(key, pluginId, null);
+            badgedThreads.clear();
+          });
+        }
+        badgedThreads.add(threadKey);
+      },
+    },
+    pages: {
+      register: (page) => {
+        if (!COMMAND_ID.test(page.name) || typeof page.title !== "string") {
+          throw new TypeError(`"${page.name}" needs a valid name and a text title.`);
+        }
+        track(
+          registerPluginPage(pluginPageKey(pluginId, page.name), {
+            title: page.title,
+            // The SDK types components without React; they are React function components.
+            component: page.component as ComponentType,
+          }),
+        );
+      },
+    },
+    sidebar: {
+      addSection: (section) => {
+        if (!COMMAND_ID.test(section.id) || typeof section.title !== "string") {
+          throw new TypeError(`"${section.id}" needs a valid id and a text title.`);
+        }
+        track(
+          registerPluginSidebarSection({
+            key: `${environmentId}\u0000${pluginId}\u0000${section.id}`,
+            title: section.title,
+            component: section.component as ComponentType,
+          }),
+        );
+      },
+    },
+    messages: {
+      addAction: (action) => {
+        track(registerPluginAction("message", pluginActionEntry(environmentId, pluginId, action)));
+      },
     },
     assetUrl: (name) => {
       const cached = assetUrls.get(name);
@@ -347,6 +520,14 @@ function makeWebPluginApi({
         );
       },
     },
+    ui: {
+      replace: (part, component) => {
+        // The SDK types components without React; they are React function components.
+        track(
+          registerPluginReplacement(part, component as ComponentType<PluginPartProps<typeof part>>),
+        );
+      },
+    },
     injectStyles: (css) => {
       const style = document.createElement("style");
       style.dataset.plugin = pluginId;
@@ -374,7 +555,7 @@ function makeWebPluginApi({
 interface LoadedPlugin {
   /** Version and start revision: a change of either loads the bundle again. */
   readonly key: string;
-  readonly cleanups: Array<() => void>;
+  readonly cleanups: Set<() => void>;
   disposed: boolean;
 }
 
@@ -399,8 +580,8 @@ const withDeadline = async <A>(work: Promise<A>, what: string) => {
 
 const loadKey = (plugin: PluginState) => `${plugin.version ?? ""}:${plugin.revision ?? ""}`;
 
-const runCleanups = (cleanups: ReadonlyArray<() => void>) => {
-  for (const cleanup of cleanups.toReversed()) {
+const runCleanups = (cleanups: Iterable<() => void>) => {
+  for (const cleanup of [...cleanups].toReversed()) {
     try {
       cleanup();
     } catch {
@@ -439,13 +620,16 @@ export function startPluginLoader(
   };
 
   const load = async (plugin: PluginState) => {
-    const entry: LoadedPlugin = { key: loadKey(plugin), cleanups: [], disposed: false };
+    const entry: LoadedPlugin = { key: loadKey(plugin), cleanups: new Set(), disposed: false };
     loaded.set(plugin.id, entry);
     // Registrations that arrive after unload, from a slow `activate` or a later callback, are
     // undone at once instead of outliving the plugin.
     const track = (cleanup: () => void) => {
       if (entry.disposed) runCleanups([cleanup]);
-      else entry.cleanups.push(cleanup);
+      else entry.cleanups.add(cleanup);
+      return () => {
+        entry.cleanups.delete(cleanup);
+      };
     };
     try {
       const bundle = await withDeadline(
@@ -487,9 +671,8 @@ export function startPluginLoader(
     for (const plugin of plugins) {
       if (!wanted.has(plugin.id)) setPluginWebFailure(environmentId, plugin.id, undefined);
     }
-    for (const plugin of wanted.values()) {
-      if (!loaded.has(plugin.id)) await load(plugin);
-    }
+    // In parallel, so one plugin that hangs until its deadline does not hold the others back.
+    await Promise.all([...wanted.values()].filter((plugin) => !loaded.has(plugin.id)).map(load));
   };
 
   const stopFollowing = appAtomRegistry.subscribe(

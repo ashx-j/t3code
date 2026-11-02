@@ -34,7 +34,8 @@ Vite preset below.
 - `settingsSchema` is JSON Schema. T3 Code draws a form from it on the Plugins page, and fields with
   `"format": "t3-secret"` are stored in the server's secret store and never shown again.
 - A `themes/` folder of theme JSON files is published while the plugin is active, and an `assets/`
-  folder is served to the web half when the plugin has one.
+  folder is served to the web half when the plugin has one. T3 Code remembers the published
+  themes, so the boot screen and the desktop window start in the active theme's colors.
 - A `skills/` folder of `<name>/SKILL.md` skills reaches Claude and Codex agents while the plugin
   is active, and the composer's `$` menu lists them for those agents with the plugin's name. Claude
   invokes one as `<plugin id>:<folder>`, Codex by the `name` in its frontmatter. Nothing else in
@@ -137,9 +138,33 @@ export default defineWebPlugin({
 ```
 
 `activate` receives the [`WebPluginApi`](./src/web.ts): calls into the server half, right panels,
-a settings panel, palette commands (which the desktop app can also list in its menu or bind to a
-global shortcut), composer slash commands and banners, timeline renderers for the plugin's agent
+a settings panel, palette commands (which the desktop app can also list in its menu or tray, or
+bind to a global shortcut), composer slash commands and banners, timeline renderers for the plugin's agent
 tools, renderers for fenced code languages, styles, assets, navigation and toasts.
+
+Plugins can also add buttons and menu items to T3's own toolbars and menus: under each message
+(`messages.addAction`), in the thread header (`threads.addHeaderButton`), beside the composer's
+attach button (`composer.addButton`) and in the thread actions menu (`threads.addMenuItem`).
+`threads.setBadge` shows a short badge on a thread's sidebar row and header, and
+`composer.setMentionItems` offers items in the composer's `@` menu; a picked item shows as a chip,
+and the agent gets its text with the message.
+[`examples/review-flags`](./examples/review-flags) uses all of them.
+
+`pages.register` adds a full page at `/plugins/<pluginId>/<name>`, shown beside the sidebar in place
+of the thread; a `t3code://plugins/<pluginId>/<name>` link opens the desktop app on it, and `sidebar.addSection` adds a titled section under the thread list.
+[`examples/quick-notes`](./examples/quick-notes) keeps notes in its server half's storage and shows
+them in both.
+
+`api.ui.replace(part, component)` draws one of T3's own parts your way. The component receives
+T3's own controls as ready-made pieces to arrange, plus `original`, T3's own drawing of the part.
+The parts and their pieces are listed in `WebPluginParts`. If your component throws, T3 draws its
+own part. [`examples/classic-composer`](./examples/classic-composer) moves the composer's controls
+back to their layout from before T3's redesign and folds the composer while the timeline is
+scrolled up. [`examples/settings-pages`](./examples/settings-pages) shows Settings in place of the thread
+(`app.pageFrame`'s `page`) and lists its sections in the sidebar, with Back at the bottom
+(`app.sidebar`'s `nav` and `back`). `composer.setCollapseOnScroll(true)` folds the composer to one
+line on wide screens while the timeline is scrolled up, as it does on phones. [`examples/message-extras`](./examples/message-extras) adds a word count under assistant messages,
+redraws expanded commands and sums up diffs.
 
 Build it with the Vite preset, which makes the bundle use T3 Code's own React, atom hooks and UI
 components instead of shipping copies:

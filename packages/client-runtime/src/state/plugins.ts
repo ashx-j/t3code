@@ -1,11 +1,16 @@
 import { WS_METHODS } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import { Atom } from "effect/reactivity";
 
+import type { PreparedHttpAuthorization } from "../connection/model.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
+import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
+import { buildEnvironmentAuthHeaders } from "./environmentHttpAuth.ts";
 import {
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
+  createRuntimeCommand,
 } from "./runtime.ts";
 
 /** Plugin management and calls into plugins. Nothing here runs until something reads it. */
@@ -67,6 +72,17 @@ export function createPluginEnvironmentAtoms<R, E>(
     pluginChannel: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:plugins:channel",
       tag: WS_METHODS.pluginsSubscribe,
+    }),
+    // Plugin bundles and assets are plain GETs; over T3 Connect each needs its own DPoP proof.
+    pluginFileHeaders: createRuntimeCommand(runtime, {
+      label: "environment-data:plugins:file-headers",
+      execute: (input: {
+        readonly authorization: PreparedHttpAuthorization;
+        readonly url: string;
+      }) =>
+        Effect.flatMap(Effect.serviceOption(ManagedRelayDpopSigner), (signer) =>
+          buildEnvironmentAuthHeaders(input.authorization, "GET", input.url, signer),
+        ).pipe(Effect.map((headers): Readonly<Record<string, string>> => ({ ...headers }))),
     }),
   };
 }

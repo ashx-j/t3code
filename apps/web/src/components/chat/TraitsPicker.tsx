@@ -485,11 +485,14 @@ export const TraitsPicker = memo(function TraitsPicker({
   size = "sm",
   hidden = false,
   disabled = false,
+  triggerShortcuts,
   ...props
 }: TraitsSelectionInput & {
   size?: ComposerControlSize;
   hidden?: boolean;
   disabled?: boolean;
+  /** Composer shortcuts that open this picker, as `data-composer-shortcut` names them. */
+  triggerShortcuts?: string;
 }) {
   const [isMenuOpen, setIsMenuOpen] = useComposerMenuState(hidden || disabled);
   const traits = useTraitsSelection(props);
@@ -524,6 +527,7 @@ export const TraitsPicker = memo(function TraitsPicker({
                 <ComposerControl
                   disabled={disabled}
                   aria-label={triggerLabel}
+                  data-composer-shortcut={triggerShortcuts}
                   size={size}
                   className={cn(
                     isCodexStyle

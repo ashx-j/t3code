@@ -3,7 +3,10 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../test/render";
 import { useCommitOnBlur } from "../hooks/useCommitOnBlur";
-import { AppRouteModal } from "./AppRouteModal";
+import { registerPluginReplacement } from "../plugins/pluginRegistry";
+import { AppAtomRegistryProvider, appAtomRegistry } from "../rpc/atomRegistry";
+import { AppRouteModal, AppRouteModalClose, AppRouteModalNav } from "./AppRouteModal";
+import { shownAppPageAtom } from "./sidebar/mainAppLocation";
 
 function CommitOnBlurField({ onCommit }: { onCommit: (next: string) => void }) {
   return <input aria-label="Instructions" {...useCommitOnBlur("", onCommit)} />;
@@ -23,5 +26,33 @@ describe("AppRouteModal", () => {
     await userEvent.keyboard("{Escape}");
 
     expect(onCommit).toHaveBeenCalledWith("Keep titles short");
+  });
+
+  it("shows a plugin's page frame without a dialog or section list, and Esc commits a focused field there too", async () => {
+    using _frame = {
+      [Symbol.dispose]: registerPluginReplacement("app.pageFrame", (frame) => frame.page),
+    };
+    const onCommit = vi.fn();
+    await using screen = await render(
+      <AppAtomRegistryProvider>
+        <AppRouteModal label="Settings" nav={<p>Settings sections</p>}>
+          <AppRouteModalNav />
+          <CommitOnBlurField onCommit={onCommit} />
+          <AppRouteModalClose />
+        </AppRouteModal>
+      </AppAtomRegistryProvider>,
+      { router: "/settings/general" },
+    );
+
+    await expect.element(page.getByRole("button", { name: "Close" })).toBeVisible();
+    await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
+    // The sidebar draws the section list instead, and learns which page it sits beside.
+    await expect.element(page.getByText("Settings sections")).not.toBeInTheDocument();
+    expect(appAtomRegistry.get(shownAppPageAtom)).toBe("Settings");
+    await page.getByRole("textbox", { name: "Instructions" }).fill("Keep titles short");
+    await userEvent.keyboard("{Escape}");
+
+    expect(onCommit).toHaveBeenCalledWith("Keep titles short");
+    await vi.waitFor(() => expect(screen.router?.state.location.pathname).toBe("/"));
   });
 });

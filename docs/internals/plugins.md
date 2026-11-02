@@ -14,8 +14,8 @@ that throws or hangs while loading or activating is marked failed, one that thro
 that call, hung cleanups are abandoned after a deadline, and none of them stops the server. Enable,
 disable, reload and install run in the host's scope, so a client that disconnects mid-change never
 leaves a plugin half torn down. A newly found plugin starts disabled; the user enables it. The web
-loader gives each bundle 30 seconds to load and to activate, and undoes anything a plugin registers
-after it unloads, so one stuck or slow plugin cannot hold the others.
+loader starts bundles in parallel, gives each 30 seconds to load and to activate, and undoes
+anything a plugin registers after it unloads, so one stuck or slow plugin cannot hold the others.
 
 ## The plugin API is plain JavaScript
 
@@ -56,9 +56,8 @@ settings page that opted into the shared stream would need a second subscription
 whole config. Once the app is idle, a small starter follows that stream on servers that advertise
 `plugins` and downloads the web loader, its own chunk, only when an active plugin has a web part.
 Bare `import(url)` cannot send credentials, so the loader fetches each bundle with
-the connection's bearer token or cookie and imports a `blob:` URL; the desktop CSP allows `blob:`
-scripts. A T3 Connect (DPoP) connection needs the relay signer for that fetch, so it cannot load
-web bundles yet. Bundles reach React and the UI kit through `globalThis.__t3PluginHost`, not an
+the connection's bearer token, cookie or, over T3 Connect, a DPoP proof signed for that one URL,
+and imports a `blob:` URL; the desktop CSP allows `blob:` scripts. Bundles reach React and the UI kit through `globalThis.__t3PluginHost`, not an
 import map. Mobile release builds cannot load code at all, so mobile renders settings from the
 manifest's JSON Schema and declarative contributions only.
 
@@ -67,15 +66,54 @@ drivers, MCP toolkits), plugins add an entry beside the built-ins: a `plugin` ri
 `plugin.<pluginId>.<commandId>` keybinding command, a `plugin-slash-command` composer item for a
 web plugin's command, which runs in the page. Where T3 has a server-supplied open variant (dynamic
 tool items, themes, provider slash commands), plugins use it. Registries are module-level `Map`s behind one version atom,
-read through atoms derived from it: React Compiler would cache a plain lookup. Hot paths such as
-timeline and sidebar rows re-render on that one version, never through a per-row subscription.
+read through atoms derived from it: React Compiler would cache a plain lookup. Rows in hot paths,
+such as timeline and sidebar rows, each read that one shared version; with no plugins it never
+changes, so rows never re-render because of plugins.
 Chat code blocks read their own atom of code block renderers instead, so a banner or panel change
 never re-renders them, and only `plg_` tool rows look up a tool renderer. A
 plugin right panel stores its title on the surface so tab titles need no lookup, and renders
 "plugin not active" with a close button while its plugin is unloaded.
 
-In the desktop app, plugin commands that ask for a menu item or a global shortcut cross to the main
-process as one list that replaces the previous one, so a reload or an unloaded plugin never leaves
+A replaceable part (`ui.replace`) hands the plugin T3's own controls as elements T3 has already
+wired, so a plugin rearranges T3's code instead of copying it and keeps working when T3 changes a
+control's internals. Unused pieces are elements that never render, and `original` is the part as
+T3 draws it, also drawn when a replacement throws. Replacements apply in every environment's
+threads, like injected styles, and stack per part: the newest wins, and unloading it brings back the
+one before. Parts have their own version atom because they sit on hot paths such as the composer
+and every timeline row. The `app.pageFrame` part's `page` piece renders Settings or Usage beside
+the thread kept mounted under it; `index.css` hides that thread, and the page carries
+`data-app-modal` so focus and shortcut guards treat it as they treat the window.
+
+The sidebar's header and footer render beside `ThreadSidebar` in `AppSidebarLayout` rather than
+inside it, so the `app.sidebar` part places them without edits to the thread list. `page` leaves
+Settings' section list out; the sidebar's `nav` is a second instance, loaded on demand, because the
+page's own lives in the Settings route's tree and chunk. The shown page publishes its label in an
+atom, so `nav` and `page` stay null under T3's window, where the sidebar sits under the backdrop.
+
+The composer cannot see the timeline's scroll position, which `ChatView` owns. `useTimelineFollow`
+publishes the scroll-to-end pill's state per thread, and the composer reads it only while a plugin
+asks to fold on scroll, so a composer without plugins never re-renders on scroll. A wide screen
+keeps the composer focused while the wheel scrolls, so leaving the end blurs it.
+
+Published palettes, plugin themes among them, arrive over the server config stream after the
+first paint. The client saves them in localStorage on each themes event and reads that copy until
+the server sends its own, so the boot script in `index.html` and the first paint already use a
+plugin theme; an empty event clears the copy. The desktop main process cannot read localStorage,
+so the client sends the applied palette's canvas over IPC and the desktop keeps it in its settings
+for the next window.
+
+Plugin buttons, menu items and badges belong to the plugin's environment, since they act through
+its server half. Thread menus are built and dispatched in two places (the header hook and the
+sidebar); plugin items carry `plugin:` ids that both pass to `runPluginThreadMenuItem` before
+their own `switch`. A badge change replaces only the changed thread's array, so other sidebar rows
+keep the same value and do not re-render. A plugin `@` item becomes a chip of kind `plugin`, a
+context kind T3 does not know, which the server already hands to agents as its JSON payload. The
+draft holds only the chip's reference; the send path looks the item up and attaches its record,
+so drafts, their persistence and queued edits need no plugin slot, and a chip whose plugin is off
+is sent as unavailable.
+
+In the desktop app, plugin commands that ask for a menu item, a tray item or a global shortcut cross
+to the main process as one list that replaces the previous one, so a reload or an unloaded plugin never leaves
 stale items. Clicks and shortcuts come back through the existing menu-action channel as the
 `plugin.<pluginId>.<commandId>` command.
 

@@ -74,6 +74,7 @@ var web_default = defineWebPlugin({
         }),
     });
     api.injectStyles(".hello-web-panel { border-top: 2px solid var(--color-primary); }");
+    api.composer.setCollapseOnScroll(true);
     api.rightPanel.register({
       name: "hello",
       title: "Hello panel",
@@ -93,7 +94,10 @@ var web_default = defineWebPlugin({
       id: "open-settings",
       title: "Open hello-web settings",
       keywords: ["hello"],
-      desktop: { menu: true },
+      desktop: {
+        menu: true,
+        tray: true,
+      },
       run: () => api.navigate("/settings/plugins"),
     });
     api.settings.registerPanel(() =>

@@ -6,21 +6,33 @@ import helloWebSource from "../../../../packages/plugin-sdk/fixtures/hello-web/w
 
 vi.mock(import("../state/session"), async (original) => ({
   ...(await original()),
-  readPreparedConnection: (() => ({
+  readPreparedConnection: ((environmentId: string) => ({
     httpBaseUrl: "http://plugins.test/",
-    httpAuthorization: { _tag: "Bearer", token: "token" },
+    httpAuthorization: environmentId.endsWith(":relay")
+      ? { _tag: "Dpop", accessToken: "relay-token" }
+      : { _tag: "Bearer", token: "token" },
   })) as never,
 }));
-const { live } = await vi.hoisted(async () => {
+const { live, channel } = await vi.hoisted(async () => {
   const { Atom, AsyncResult } = await import("effect/reactivity");
   return {
     live: Atom.make<AsyncResult.AsyncResult<{ readonly plugins: ReadonlyArray<PluginState> }>>(
       AsyncResult.initial(),
     ),
+    // Computed only when something reads it, like the real subscription stream.
+    channel: Atom.make(() => AsyncResult.success({ value: "first value" })),
   };
 });
 vi.mock(import("../state/plugins"), () => ({
-  pluginEnvironment: { pluginsLive: () => live } as never,
+  pluginEnvironment: {
+    pluginsLive: () => live,
+    pluginChannel: () => channel,
+    pluginFileHeaders: {
+      label: "plugin-file-headers",
+      run: async (_registry: unknown, input: { readonly url: string }) =>
+        AsyncResult.success({ authorization: "DPoP relay-token", dpop: `proof for ${input.url}` }),
+    },
+  } as never,
 }));
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -28,6 +40,7 @@ import { startPluginLoader } from "./pluginLoader";
 import {
   pluginBannersAtom,
   pluginCommandsAtom,
+  pluginComposerCollapseOnScrollAtom,
   pluginContributionKey,
   pluginRightPanelAtom,
   pluginRightPanelKey,
@@ -52,12 +65,19 @@ const webPlugin = (id: string): PluginState => ({
 describe("startPluginLoader", () => {
   it("loads active web plugins, runs their commands, records one that fails, and unloads everything when stopped", async () => {
     const navigate = vi.fn();
+    // A bundle that never arrives must not hold back the plugins after it.
+    let releaseHungBundle: (response: Response) => void = () => {};
+    const hungBundle = new Promise<Response>((resolve) => {
+      releaseHungBundle = resolve;
+    });
     using fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation(async (input) =>
-        String(input).includes("/hello-web/")
-          ? new Response(helloWebSource)
-          : new Response("missing", { status: 500 }),
+        String(input).includes("/hung-web/")
+          ? hungBundle
+          : String(input).includes("/hello-web/")
+            ? new Response(helloWebSource)
+            : new Response("missing", { status: 500 }),
       );
     const environmentId = EnvironmentId.make("environment:plugin-loader");
     const helloPanel = pluginRightPanelAtom(
@@ -68,7 +88,9 @@ describe("startPluginLoader", () => {
 
     appAtomRegistry.set(
       live,
-      AsyncResult.success({ plugins: [webPlugin("hello-web"), webPlugin("broken-web")] }),
+      AsyncResult.success({
+        plugins: [webPlugin("hung-web"), webPlugin("hello-web"), webPlugin("broken-web")],
+      }),
     );
 
     await vi.waitFor(() => {
@@ -79,10 +101,10 @@ describe("startPluginLoader", () => {
         ),
       ).toBe("The request for /web.js failed with 500.");
     });
-    expect(String(fetchSpy.mock.calls[0]?.[0])).toBe(
+    expect(String(fetchSpy.mock.calls[1]?.[0])).toBe(
       "http://plugins.test/api/plugins/hello-web/web.js?v=0.1.0",
     );
-    expect(fetchSpy.mock.calls[0]?.[1]).toEqual({ headers: { authorization: "Bearer token" } });
+    expect(fetchSpy.mock.calls[1]?.[1]).toEqual({ headers: { authorization: "Bearer token" } });
 
     const [command] = appAtomRegistry.get(pluginCommandsAtom(environmentId));
     expect(command?.command).toBe("plugin.hello-web.open-settings");
@@ -102,14 +124,17 @@ describe("startPluginLoader", () => {
       pluginToolRendererKey(environmentId, "plg_hello-web_greet"),
     );
     expect(appAtomRegistry.get(greetRenderer)).toBeDefined();
+    expect(appAtomRegistry.get(pluginComposerCollapseOnScrollAtom)).toBe(true);
 
     stop();
+    releaseHungBundle(new Response("missing", { status: 500 }));
     expect(document.querySelectorAll('style[data-plugin="hello-web"]')).toHaveLength(0);
     expect(appAtomRegistry.get(helloPanel)).toBeUndefined();
     expect(appAtomRegistry.get(pluginCommandsAtom(environmentId))).toEqual([]);
     expect(appAtomRegistry.get(pluginSlashCommandsAtom(environmentId))).toEqual([]);
     expect(appAtomRegistry.get(pluginBannersAtom(environmentId))).toEqual([]);
     expect(appAtomRegistry.get(greetRenderer)).toBeUndefined();
+    expect(appAtomRegistry.get(pluginComposerCollapseOnScrollAtom)).toBe(false);
   });
 
   it("reloads a restarted plugin and undoes what it registers after unloading", async () => {
@@ -155,5 +180,43 @@ describe("startPluginLoader", () => {
         pluginRightPanelAtom(pluginRightPanelKey(environmentId, "slow-web", "slow")),
       ),
     ).toBeUndefined();
+  });
+
+  it("starts a channel the plugin subscribes to and hands it the values", async () => {
+    const channelSource = `export default { activate(api) {
+      api.rpc.subscribe("notes", (value) => api.composer.showBanner({ title: String(value) }));
+    } };`;
+    using _fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response(channelSource));
+    const environmentId = EnvironmentId.make("environment:plugin-loader-channel");
+    const stop = startPluginLoader(environmentId, vi.fn());
+    using _loader = { [Symbol.dispose]: stop };
+
+    appAtomRegistry.set(live, AsyncResult.success({ plugins: [webPlugin("channel-web")] }));
+
+    await vi.waitFor(() =>
+      expect(appAtomRegistry.get(pluginBannersAtom(environmentId))[0]?.title).toBe("first value"),
+    );
+  });
+
+  it("signs bundle requests with a DPoP proof over a T3 Connect link", async () => {
+    using fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response("export default { activate() {} };"));
+    const environmentId = EnvironmentId.make("environment:plugin-loader:relay");
+    const stop = startPluginLoader(environmentId, vi.fn());
+    using _loader = { [Symbol.dispose]: stop };
+
+    appAtomRegistry.set(live, AsyncResult.success({ plugins: [webPlugin("relay-web")] }));
+
+    await vi.waitFor(() =>
+      expect(fetchSpy.mock.calls[0]?.[1]).toEqual({
+        headers: {
+          authorization: "DPoP relay-token",
+          dpop: "proof for http://plugins.test/api/plugins/relay-web/web.js?v=0.1.0",
+        },
+      }),
+    );
   });
 });

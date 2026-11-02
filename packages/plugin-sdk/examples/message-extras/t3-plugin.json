@@ -1,0 +1,10 @@
+{
+  "id": "message-extras",
+  "name": "Message extras",
+  "version": "0.1.0",
+  "description": "Shows a word count under each finished assistant message, draws expanded commands as a plain terminal block and sums up each diff.",
+  "engines": {
+    "t3": ">=0.1.5"
+  },
+  "web": "./web.js"
+}

@@ -1015,6 +1015,8 @@ export const DesktopPluginCommandSchema = Schema.Struct({
   title: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
   pluginName: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
   menu: Schema.Boolean,
+  /** Lists the command in the tray icon's menu. */
+  tray: Schema.optional(Schema.Boolean),
   /** An Electron accelerator, such as `CommandOrControl+Shift+Y`. */
   globalShortcut: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
 });
@@ -1100,6 +1102,8 @@ export interface DesktopBridge {
   pickProjectFavicon: (initialPath?: string) => Promise<string | null>;
   pickThemeFiles: () => Promise<readonly PickedThemeFile[] | null>;
   setTheme: (theme: DesktopTheme) => Promise<void>;
+  /** The theme's canvas as `#rrggbb`, which new windows start in; null for plain black or white. */
+  setWindowBackground: (color: string | null) => Promise<void>;
   showContextMenu: <T extends string>(
     items: readonly ContextMenuItem<T>[],
     position?: { x: number; y: number },
