@@ -884,7 +884,6 @@ const make = Effect.gen(function* () {
       yield* runLifecycle(
         Effect.gen(function* () {
           const { plugins, enabled } = yield* discover(false);
-          const fresh = plugins.find((plugin) => plugin.id === pluginId);
           yield* stopPlugin(pluginId);
           // Plugins whose folders are gone are stopped too, or they would keep running unlisted.
           const vanished = (yield* Ref.get(records)).filter(
@@ -905,9 +904,11 @@ const make = Effect.gen(function* () {
             ...added.map((plugin) => initialRecord(plugin, enabled[plugin.id] === true)),
           ]);
           yield* publishStates;
-          if (fresh === undefined) return yield* new PluginNotFoundError({ pluginId });
           for (const plugin of added) {
             if (enabled[plugin.id] === true && "manifest" in plugin) yield* startPlugin(plugin);
+          }
+          if (!plugins.some((plugin) => plugin.id === pluginId)) {
+            return yield* new PluginNotFoundError({ pluginId });
           }
         }),
       );
