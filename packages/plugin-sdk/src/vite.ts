@@ -22,6 +22,18 @@ const FIXED_EXPORTS: Readonly<Record<string, ReadonlyArray<string>>> = {
 
 const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
 
+// React's export list depends on its version, so it is read from the plugin's own install.
+const installedExports = (root: string, specifier: string) => {
+  try {
+    return Object.keys(NodeModule.createRequire(NodePath.join(root, "package.json"))(specifier));
+  } catch (cause) {
+    throw new Error(
+      `The plugin imports ${specifier}, which isn't installed in ${root}. Install react and react-dom as dev dependencies: the bundle uses T3's own copies at runtime, but the build reads their export lists.`,
+      { cause },
+    );
+  }
+};
+
 export interface T3PluginWebOptions {
   /** The web entry, relative to the Vite root. Defaults to `web.tsx`. */
   readonly entry?: string;
@@ -59,10 +71,7 @@ export function t3PluginWeb(options: T3PluginWebOptions = {}) {
     load: (id: string) => {
       if (!id.startsWith(HOST_PREFIX)) return undefined;
       const specifier = id.slice(HOST_PREFIX.length);
-      // React's export list depends on its version, so read it from the plugin's own install.
-      const names =
-        FIXED_EXPORTS[specifier] ??
-        Object.keys(NodeModule.createRequire(NodePath.join(root, "package.json"))(specifier));
+      const names = FIXED_EXPORTS[specifier] ?? installedExports(root, specifier);
       const exported = names.filter((name) => name !== "default" && IDENTIFIER.test(name));
       // Pure reads let the bundler drop every export the plugin does not use.
       return [

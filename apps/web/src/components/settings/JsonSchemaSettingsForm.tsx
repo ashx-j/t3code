@@ -13,7 +13,9 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 
-type Draft = Readonly<Record<string, string | boolean>>;
+// `null` is a saved secret the user cleared, removed when they save.
+type DraftValue = string | boolean | null;
+export type Draft = Readonly<Record<string, DraftValue>>;
 
 const draftValue = (field: PluginSettingsField, value: Schema.Json | undefined) => {
   switch (field.kind) {
@@ -29,7 +31,7 @@ const draftValue = (field: PluginSettingsField, value: Schema.Json | undefined) 
 };
 
 /** The changed fields as a settings patch, or the first problem a user can fix before saving. */
-const toPatch = (
+export const toPatch = (
   fields: ReadonlyArray<PluginSettingsField>,
   saved: Draft,
   draft: Draft,
@@ -38,7 +40,9 @@ const toPatch = (
   for (const field of fields) {
     const value = draft[field.key];
     if (value === saved[field.key] || value === undefined) continue;
-    if (typeof value === "boolean") {
+    if (value === null) {
+      patch[field.key] = null;
+    } else if (typeof value === "boolean") {
       patch[field.key] = value;
     } else if (field.kind === "secret") {
       if (value !== "") patch[field.key] = value;
@@ -160,11 +164,18 @@ function JsonSchemaFieldView({
 }: {
   readonly id: string;
   readonly field: PluginSettingsField;
-  readonly value: string | boolean | undefined;
+  readonly value: DraftValue | undefined;
   readonly hasSecret: boolean;
-  readonly onChange: (value: string | boolean) => void;
+  readonly onChange: (value: DraftValue) => void;
 }) {
   const text = typeof value === "string" ? value : "";
+  // What the plugin gets while the field is empty.
+  const fallback =
+    field.kind === "secret" || field.kind === "boolean" || field.defaultValue === undefined
+      ? undefined
+      : field.kind === "list"
+        ? field.defaultValue.join(", ")
+        : String(field.defaultValue);
   return (
     <div className="space-y-1">
       <Label htmlFor={id}>
@@ -179,7 +190,9 @@ function JsonSchemaFieldView({
       ) : field.kind === "select" ? (
         <Select value={text} onValueChange={(next) => typeof next === "string" && onChange(next)}>
           <SelectTrigger id={id} size="sm" aria-label={field.label}>
-            <SelectValue>{text}</SelectValue>
+            <SelectValue>
+              {text || (fallback === undefined ? "" : `${fallback} (default)`)}
+            </SelectValue>
           </SelectTrigger>
           <SelectPopup align="start" alignItemWithTrigger={false}>
             {field.options.map((option) => (
@@ -193,22 +206,42 @@ function JsonSchemaFieldView({
         <Textarea
           id={id}
           rows={3}
-          placeholder="One value per line"
+          placeholder={
+            fallback === undefined
+              ? "One value per line"
+              : `One value per line. Default: ${fallback}`
+          }
           value={text}
           onChange={(event) => onChange(event.target.value)}
         />
+      ) : field.kind === "secret" ? (
+        <div className="flex items-center gap-2">
+          <Input
+            id={id}
+            type="password"
+            autoComplete="off"
+            placeholder={
+              value === null
+                ? "Removed when you save"
+                : hasSecret
+                  ? "Saved. Type to replace."
+                  : "Not set"
+            }
+            value={text}
+            onChange={(event) => onChange(event.target.value)}
+          />
+          {hasSecret && value !== null ? (
+            <Button size="sm" variant="outline" onClick={() => onChange(null)}>
+              Clear
+            </Button>
+          ) : null}
+        </div>
       ) : (
         <Input
           id={id}
-          type={field.kind === "secret" ? "password" : field.kind === "number" ? "number" : "text"}
+          type={field.kind === "number" ? "number" : "text"}
           autoComplete="off"
-          placeholder={
-            field.kind === "secret"
-              ? hasSecret
-                ? "Saved. Type to replace."
-                : "Not set"
-              : undefined
-          }
+          placeholder={fallback === undefined ? undefined : `Default: ${fallback}`}
           value={text}
           onChange={(event) => onChange(event.target.value)}
         />

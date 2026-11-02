@@ -166,7 +166,6 @@ function PluginsPage({
           if (!isFileDrag(event)) return;
           event.preventDefault();
           setDragActive(false);
-          if (installer.installing !== null) return;
           void installer
             .installFolders(droppedFolders(event.dataTransfer))
             .then((installed) => installed && setAdding(false));
@@ -305,8 +304,13 @@ function usePluginInstaller(targets: ReadonlyArray<PluginTarget>) {
     installing,
     problems,
     clearProblems: () => setProblems([]),
-    installFolders: (folders: ReadonlyArray<PluginFolder>) =>
-      run(async (report) => {
+    installFolders: (folders: ReadonlyArray<PluginFolder>) => {
+      // Outside `run`, which would end the install in progress as far as the page can tell.
+      if (installing !== null) {
+        setProblems([`${installing} is still installing. Add more once it's done.`]);
+        return Promise.resolve(false);
+      }
+      return run(async (report) => {
         if (folders.length === 0) return report("Drop a plugin's folder, not the files in it.");
         for (const folder of folders) {
           setInstalling(folder.name);
@@ -320,7 +324,8 @@ function usePluginInstaller(targets: ReadonlyArray<PluginTarget>) {
             report,
           );
         }
-      }),
+      });
+    },
     installSource: (source: PluginInstallSource) =>
       run(async (report) => {
         setInstalling(installSourceLabel(source));
@@ -661,7 +666,7 @@ function AddPluginDialog({
               <Label htmlFor="plugin-install-ref">
                 {kind === "git"
                   ? "Branch or tag (optional)"
-                  : "Version (optional, latest by default)"}
+                  : "Exact version, such as 1.2.3 (optional, latest by default)"}
               </Label>
               <Input
                 id="plugin-install-ref"

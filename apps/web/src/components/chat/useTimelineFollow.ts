@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { type MessageId, type RunId } from "@t3tools/contracts";
 import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
@@ -41,6 +42,7 @@ import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import type { deriveThreadActivityRun } from "@t3tools/client-runtime/state/thread-execution";
 import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
 import type { TimelineEntry } from "../../session-logic";
+import { pluginComposerCollapseOnScrollAtom } from "../../plugins/pluginRegistry";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 
 const TIMELINE_SCROLL_CANCEL_SENTINEL = Object.freeze({});
@@ -206,12 +208,14 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     { visit, show: false },
   );
   const showScrollToBottom = pill.visit === visit ? pill.show : !visit.followEnd;
+  // Only a plugin's collapse on scroll reads it, so threads cost nothing while none asks.
+  const tellComposer = useAtomValue(pluginComposerCollapseOnScrollAtom) && showScrollToBottom;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the thread's composer, which lives outside this hook, that the reader left the end
   useEffect(() => {
-    if (!showScrollToBottom) return;
+    if (!tellComposer) return;
     appAtomRegistry.set(timelineAwayFromEndAtom(routeThreadKey), true);
     return () => appAtomRegistry.set(timelineAwayFromEndAtom(routeThreadKey), false);
-  }, [routeThreadKey, showScrollToBottom]);
+  }, [routeThreadKey, tellComposer]);
   // Called on every streamed chunk while following; an unchanged pill must
   // bail out instead of re-rendering ChatView.
   const setShowScrollToBottom = (show: boolean) =>

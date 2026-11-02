@@ -35,7 +35,9 @@ Vite preset below.
   `"format": "t3-secret"` are stored in the server's secret store and never shown again.
 - A `themes/` folder of theme JSON files is published while the plugin is active, and an `assets/`
   folder is served to the web half when the plugin has one. T3 Code remembers the published
-  themes, so the boot screen and the desktop window start in the active theme's colors.
+  themes, so the boot screen and the desktop window start in the active theme's colors. A theme
+  that sets `"sidebarArtwork": true` keeps the nightly and dev artwork in the sidebar, which T3
+  otherwise swaps for a label.
 - A `skills/` folder of `<name>/SKILL.md` skills reaches Claude and Codex agents while the plugin
   is active, and the composer's `$` menu lists them for those agents with the plugin's name. Claude
   invokes one as `<plugin id>:<folder>`, Codex by the `name` in its frontmatter. Nothing else in
@@ -179,6 +181,34 @@ export default defineConfig({ plugins: [t3PluginWeb({ entry: "web.tsx", outDir: 
 
 Point the manifest's `web` at `dist/web.js`. Only the hooks listed in `HOST_ATOM_REACT_EXPORTS` and
 the components in `@t3tools/plugin-sdk/ui` are shared.
+
+## Keeping a plugin working across T3 updates
+
+T3 changes its markup, class names, labels and layout in most releases. A plugin keeps working
+when it uses only what T3 hands it on purpose:
+
+- **Arrange pieces instead of rebuilding T3's controls.** `ui.replace` gives you T3's own controls,
+  already wired up. Place them, wrap them or leave them out. A copied control, with its markup,
+  icons and labels, misses every fix T3 makes to the real one.
+- **Style with theme tokens.** Colors, radii and fonts come from the theme. Set them in a theme
+  file in `themes/`, and use `var(--border)`, `var(--radius)` and the other tokens in your own
+  components instead of hex or rgb values.
+- **Don't select T3's markup in CSS.** Selectors on `aria-label`, `data-slot`, class names such as
+  `[class~="border-border/65"]` or `.lucide-shield-off`, and `:has()` break when T3 renames or
+  moves things. Style your own elements.
+- **Leave T3's frame to T3.** The title bar row, the room for the window buttons on Windows and
+  Linux, drag areas, phone safe areas and breakpoints are T3's. A page shown through
+  `app.pageFrame` gets T3's header with all of that, so don't resize or pad it.
+- **Compare ids, not text.** `app.sidebar`'s `page` and `app.pageFrame`'s `kind` are stable ids;
+  labels such as `Settings` can change.
+- **Ship what the plugin runs.** Adding a folder leaves out `.git` and `node_modules`, and npm
+  installs don't install dependencies, so build everything into the files the manifest names.
+- **Ask for a seam.** When T3 doesn't hand over what you need, ask for a piece, part or token on
+  the T3 Code repository instead of reaching into its markup.
+
+An agent can run the `t3_plugins_check` tool on a plugin to find the patterns above. A
+replacement that throws shows a note on its plugin's row in Settings → Plugins, and T3 draws its
+own part until the plugin reloads.
 
 ## Developing a plugin
 

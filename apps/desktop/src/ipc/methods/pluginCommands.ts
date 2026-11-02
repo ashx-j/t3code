@@ -44,7 +44,7 @@ export const installPluginCommands = Effect.fn("desktop.ipc.installPluginCommand
     DesktopIpc.makeIpcMethod({
       channel: SET_PLUGIN_COMMANDS_CHANNEL,
       payload: Schema.Array(DesktopPluginCommandSchema).check(Schema.isMaxLength(500)),
-      result: Schema.Void,
+      result: Schema.Array(Schema.String),
       handler: Effect.fn("desktop.ipc.setPluginCommands")(function* (commands, event) {
         const electronWindow = yield* ElectronWindow.ElectronWindow;
         const window = yield* electronWindow.main;
@@ -53,7 +53,7 @@ export const installPluginCommands = Effect.fn("desktop.ipc.installPluginCommand
           Option.isNone(window) ||
           window.value.webContents.id !== event.sender.id
         ) {
-          return;
+          return [];
         }
         yield* menu.setPluginCommands(commands);
         const trayCommands = commands.filter((entry) => entry.tray === true);
@@ -95,6 +95,7 @@ export const installPluginCommands = Effect.fn("desktop.ipc.installPluginCommand
           );
         }
         unregisterAll();
+        const refused: Array<string> = [];
         for (const { command, globalShortcut } of commands) {
           if (globalShortcut === undefined) continue;
           const run = () => runCommand(command);
@@ -103,12 +104,15 @@ export const installPluginCommands = Effect.fn("desktop.ipc.installPluginCommand
             Electron.globalShortcut.register(globalShortcut, run),
           ).pipe(Effect.orElseSucceed(() => false));
           if (added) registered.push(globalShortcut);
-          else
+          else {
+            refused.push(command);
             yield* Effect.logWarning("Could not register a plugin's global shortcut", {
               command,
               globalShortcut,
             });
+          }
         }
+        return refused;
       }),
     }),
   );

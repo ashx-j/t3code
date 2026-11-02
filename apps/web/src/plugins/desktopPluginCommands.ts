@@ -1,12 +1,30 @@
 import { DesktopPluginCommandSchema, type DesktopPluginCommand } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
+import { toastManager } from "../components/ui/toast";
 import { registerMenuAction } from "../shortcuts/dispatcher";
 
 export const isDesktopPluginCommand = Schema.is(DesktopPluginCommandSchema);
 
 const commands = new Map<string, DesktopPluginCommand>();
 let syncQueued = false;
+// Told once per command and shortcut, since every sync registers all of them again.
+const refusalsShown = new Set<string>();
+
+const showRefusals = (refused: ReadonlyArray<string>) => {
+  for (const command of refused) {
+    const entry = commands.get(command);
+    if (entry?.globalShortcut === undefined) continue;
+    const key = `${command}\u0000${entry.globalShortcut}`;
+    if (refusalsShown.has(key)) continue;
+    refusalsShown.add(key);
+    toastManager.add({
+      type: "warning",
+      title: `${entry.globalShortcut} is taken`,
+      description: `Another app uses it, so ${entry.pluginName}'s "${entry.title}" has no global shortcut.`,
+    });
+  }
+};
 
 // One IPC call per burst of changes, such as a plugin registering several commands at once.
 const queueSync = () => {
@@ -14,7 +32,11 @@ const queueSync = () => {
   syncQueued = true;
   queueMicrotask(() => {
     syncQueued = false;
-    void window.desktopBridge?.setPluginCommands([...commands.values()]).catch(() => undefined);
+    void window.desktopBridge
+      ?.setPluginCommands([...commands.values()])
+      // An older desktop app resolves with nothing.
+      .then((refused) => showRefusals(Array.isArray(refused) ? refused : []))
+      .catch(() => undefined);
   });
 };
 
