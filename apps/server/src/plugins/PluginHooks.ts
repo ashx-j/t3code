@@ -105,22 +105,24 @@ type SlashCommandHandler = (
 
 const SLASH_COMMAND = /^\/([a-z0-9][a-z0-9-]*)(?:\s+([\s\S]*))?$/;
 
-/** Adds plugin slash commands to every provider's lists, replacing provider commands of the same name. */
+/**
+ * Adds plugin slash commands to every provider's lists. A provider's own command of the same
+ * name, such as `/review`, stays and the plugin's is left out of that list.
+ */
 export const withPluginSlashCommands = <P extends ServerProvider>(
   providers: ReadonlyArray<P>,
   commands: ReadonlyArray<PluginSlashCommand>,
 ): ReadonlyArray<P> => {
   if (commands.length === 0) return providers;
-  const names = new Set(commands.map((command) => command.name));
   const listed: ReadonlyArray<ServerProviderSlashCommand> = commands.map((command) => ({
     name: command.name,
     ...(command.description === undefined ? {} : { description: command.description }),
     ...(command.inputHint === undefined ? {} : { input: { hint: command.inputHint } }),
   }));
-  const merge = (items: ReadonlyArray<ServerProviderSlashCommand>) => [
-    ...items.filter((item) => !names.has(item.name)),
-    ...listed,
-  ];
+  const merge = (items: ReadonlyArray<ServerProviderSlashCommand>) => {
+    const own = new Set(items.map((item) => item.name));
+    return [...items, ...listed.filter((command) => !own.has(command.name))];
+  };
   return providers.map((provider) => ({
     ...provider,
     slashCommands: merge(provider.slashCommands),
@@ -189,6 +191,9 @@ export const withPluginItems = <P extends ServerProvider>(
   skills: ReadonlyArray<PluginSkill>,
 ): ReadonlyArray<P> => withPluginSkills(withPluginSlashCommands(providers, commands), skills);
 
+/** The names of a provider instance's own slash commands. */
+type ProviderSlashCommandNames = (instanceId: string) => Effect.Effect<ReadonlyArray<string>>;
+
 /** The registry behind the `PluginHooks` reference. */
 export interface PluginHooksRegistry {
   /** Adds a hook and returns the effect that removes it. */
@@ -202,7 +207,14 @@ export interface PluginHooksRegistry {
     message: PluginOutgoingMessage,
     /** Read only when a plugin would run: a replay of an accepted command goes out unchanged. */
     alreadyAccepted: Effect.Effect<boolean>,
+    /**
+     * The provider instance the message goes to, read only when a plugin's slash command
+     * matches: a command the provider has too goes to the provider, as its lists show.
+     */
+    providerInstanceId?: Effect.Effect<string | undefined>,
   ) => Effect.Effect<string | PluginCommandReply, PluginMessageBlockedError>;
+  /** Sets where `beforeDispatch` reads providers' own commands. The plugin host supplies it. */
+  readonly setProviderSlashCommands: (names: ProviderSlashCommandNames) => Effect.Effect<void>;
   /** Adds a slash command and returns the effect that removes it. */
   readonly addSlashCommand: (
     command: PluginSlashCommand,
@@ -240,6 +252,7 @@ export class PluginHooks extends Context.Reference<PluginHooksRegistry>("t3/plug
   defaultValue: () => ({
     addBeforeDispatch: () => Effect.succeed(Effect.void),
     beforeDispatch: (message) => Effect.succeed(message.text),
+    setProviderSlashCommands: () => Effect.void,
     addSlashCommand: () => Effect.succeed(Effect.void),
     currentSlashCommands: Effect.succeed([]),
     addTextGenerator: () => Effect.succeed(Effect.void),
@@ -283,6 +296,38 @@ const make = Effect.gen(function* () {
   const commands = yield* SubscriptionRef.make<
     ReadonlyArray<{ readonly command: PluginSlashCommand; readonly run: SlashCommandHandler }>
   >([]);
+  const providerCommands = yield* Ref.make<ProviderSlashCommandNames>(() => Effect.succeed([]));
+  // `<instance>/<command>` pairs already logged, so a busy thread logs its collision once.
+  const loggedCollisions = new Set<string>();
+  const providerHas = (
+    command: PluginSlashCommand,
+    providerInstanceId: Effect.Effect<string | undefined> | undefined,
+  ): Effect.Effect<boolean> =>
+    providerInstanceId === undefined
+      ? Effect.succeed(false)
+      : providerInstanceId.pipe(
+          Effect.flatMap((instanceId) =>
+            instanceId === undefined
+              ? Effect.succeed(false)
+              : Ref.get(providerCommands).pipe(
+                  Effect.flatMap((names) => names(instanceId)),
+                  Effect.map((names) => names.includes(command.name)),
+                  Effect.tap((has) => {
+                    const key = `${instanceId}/${command.name}`;
+                    if (!has || loggedCollisions.has(key)) return Effect.void;
+                    loggedCollisions.add(key);
+                    return Effect.logWarning(
+                      "a provider's own slash command is used instead of a plugin's",
+                      {
+                        pluginId: command.pluginId,
+                        command: command.name,
+                        instanceId,
+                      },
+                    );
+                  }),
+                ),
+          ),
+        );
   // A plugin sees a message once: a replayed command id was handled when it was first accepted.
   const unlessAccepted = <A>(
     alreadyAccepted: Effect.Effect<boolean>,
@@ -319,25 +364,33 @@ const make = Effect.gen(function* () {
         Effect.tap((entry) => Ref.update(hooks, (all) => [...all, entry])),
         Effect.map((entry) => Ref.update(hooks, (all) => all.filter((other) => other !== entry))),
       ),
-    beforeDispatch: (message, alreadyAccepted) => {
+    beforeDispatch: (message, alreadyAccepted, providerInstanceId) => {
       // Text that only starts with a slash, such as a path, is not a command.
       const match = SLASH_COMMAND.exec(message.text.trimStart());
       if (match === null) return runHooks(message, alreadyAccepted);
       return SubscriptionRef.get(commands).pipe(
         Effect.flatMap((all) => {
           const entry = all.find((candidate) => candidate.command.name === match[1]);
-          return entry === undefined
-            ? Effect.succeed(message.text)
-            : unlessAccepted(
-                alreadyAccepted,
-                message.text,
-                entry
-                  .run({ ...message, args: match[2]?.trim() ?? "" })
-                  .pipe(Effect.flatMap((outcome) => applyCommandOutcome(message.text, outcome))),
-              );
+          if (entry === undefined) return Effect.succeed(message.text);
+          return providerHas(entry.command, providerInstanceId).pipe(
+            Effect.flatMap((owned) =>
+              owned
+                ? Effect.succeed(message.text)
+                : unlessAccepted(
+                    alreadyAccepted,
+                    message.text,
+                    entry
+                      .run({ ...message, args: match[2]?.trim() ?? "" })
+                      .pipe(
+                        Effect.flatMap((outcome) => applyCommandOutcome(message.text, outcome)),
+                      ),
+                  ),
+            ),
+          );
         }),
       );
     },
+    setProviderSlashCommands: (names) => Ref.set(providerCommands, names),
     addSlashCommand: (command, handler) =>
       SubscriptionRef.modifyEffect(commands, (all) => {
         const taken = all.find((entry) => entry.command.name === command.name);

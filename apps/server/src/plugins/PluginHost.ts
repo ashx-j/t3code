@@ -10,7 +10,6 @@ import {
   PluginId,
   PluginManifest,
   PluginInstallSource,
-  PLUGIN_UPLOAD_MAX_BYTES,
   type PluginState,
   type PluginUploadFile,
   type PluginStatus,
@@ -68,6 +67,11 @@ import {
 } from "./PluginApi.ts";
 import { makeRuntimeRequestHooks } from "./api/runtimeRequests.ts";
 import { discoverPlugins, type DiscoveredPlugin } from "./pluginDiscovery.ts";
+import {
+  checkPluginFolder,
+  type PluginCheckFinding,
+  type PluginCheckReport,
+} from "./pluginCheck.ts";
 import { fetchNpmPackage, resolveNpmVersion } from "./pluginNpm.ts";
 import { commitFromLsRemote } from "./pluginUpdates.ts";
 import * as PluginHooks from "./PluginHooks.ts";
@@ -211,7 +215,8 @@ export class PluginHost extends Context.Service<
     >;
     /**
      * Copies or clones a plugin into the plugins folder, enables it and starts it. It is staged
-     * first and swapped in with a rename, so a failed install leaves the previous version.
+     * first and swapped in with a rename, so a failed install leaves the previous version. A
+     * `link` folder is added to `devPaths` instead, so its edits apply on reload.
      */
     readonly install: (
       source: PluginInstallSource,
@@ -232,7 +237,17 @@ export class PluginHost extends Context.Service<
      * what it finds and returns the list. The host also checks once a day.
      */
     readonly checkUpdates: Effect.Effect<ReadonlyArray<PluginState>, PluginConfigError>;
-    /** Stops an installed plugin and deletes its folder; `removeData` also deletes its settings. */
+    /**
+     * Lists what would stop a plugin loading or break it when T3 updates, from its folder on
+     * disk; an installed plugin's last failure comes first. Runs none of its code.
+     */
+    readonly check: (
+      target: { readonly pluginId: PluginId } | { readonly path: string },
+    ) => Effect.Effect<PluginCheckReport, PluginNotFoundError>;
+    /**
+     * Stops a plugin and deletes its folder, or for a linked folder only forgets it;
+     * `removeData` also deletes its settings.
+     */
     readonly uninstall: (
       pluginId: PluginId,
       removeData: boolean,
@@ -1097,7 +1112,7 @@ const make = Effect.gen(function* () {
     // source, so they replace only plugins that were sent or put in the plugins folder.
     const refusal =
       existing?.plugin.source === "dev"
-        ? `A dev folder already provides ${manifest.id}. Remove it from plugins.json first.`
+        ? `${manifest.id} is linked from ${existing.plugin.folder}. Remove it first.`
         : expectedId !== undefined && manifest.id !== expectedId
           ? `The source now provides ${manifest.id}, not ${expectedId}.`
           : existing !== undefined && !Equal.equals(recorded, source)
@@ -1149,25 +1164,46 @@ const make = Effect.gen(function* () {
     return yield* stateOf(manifest.id);
   });
 
+  // A folder loaded where it is, so an author's edits plus a reload are the whole loop.
+  const linkFolder = Effect.fnUntraced(function* (folder: string) {
+    const from = path.resolve(folder);
+    const info = yield* fs
+      .stat(from)
+      .pipe(Effect.mapError(installFailed(`${folder} does not exist on the server.`)));
+    if (info.type !== "Directory") {
+      return yield* new PluginInstallError({ reason: `${folder} is not a folder.` });
+    }
+    const manifest = yield* readSourceManifest(from);
+    const existing = yield* findRecord(manifest.id);
+    if (existing !== undefined && existing.plugin.folder !== from) {
+      return yield* new PluginInstallError({
+        reason: `${manifest.id} is already ${existing.plugin.source === "dev" ? `linked from ${existing.plugin.folder}` : "installed"}. Remove it first.`,
+      });
+    }
+    yield* writeConfig((current) => ({
+      ...current,
+      devPaths: [...(current.devPaths ?? []).filter((entry) => path.resolve(entry) !== from), from],
+      enabled: { ...current.enabled, [manifest.id]: true },
+    }));
+    return yield* reload(manifest.id);
+  });
+
   // Like lifecycle changes, an install runs in the host's scope: a caller that disconnects stops
   // waiting but cannot interrupt the swap or the staging cleanup.
   const install: PluginHost["Service"]["install"] = Effect.fn("PluginHost.install")((source) =>
-    installInHost({ source }, undefined).pipe(Effect.forkIn(hostScope), Effect.flatMap(Fiber.join)),
+    (source.type === "path" && source.link === true
+      ? linkFolder(source.path)
+      : installInHost({ source }, undefined)
+    ).pipe(Effect.forkIn(hostScope), Effect.flatMap(Fiber.join)),
   );
 
+  // `PluginInstallFilesInput` bounds the folder's size before it gets here.
   const installFiles: PluginHost["Service"]["installFiles"] = Effect.fn("PluginHost.installFiles")(
-    function* (files) {
-      const bytes = files.reduce((total, file) => total + file.contents.byteLength, 0);
-      if (bytes > PLUGIN_UPLOAD_MAX_BYTES) {
-        return yield* new PluginInstallError({
-          reason: `The folder is larger than ${PLUGIN_UPLOAD_MAX_BYTES / 1024 / 1024} MB.`,
-        });
-      }
-      return yield* installInHost({ files }, undefined).pipe(
+    (files) =>
+      installInHost({ files }, undefined).pipe(
         Effect.forkIn(hostScope),
         Effect.flatMap(Fiber.join),
-      );
-    },
+      ),
   );
 
   const update: PluginHost["Service"]["update"] = Effect.fn("PluginHost.update")(
@@ -1254,27 +1290,28 @@ const make = Effect.gen(function* () {
     function* (pluginId, removeData) {
       const record = yield* findRecord(pluginId);
       if (record === undefined) return yield* new PluginNotFoundError({ pluginId });
-      if (record.plugin.source === "dev") {
-        return yield* new PluginInstallError({
-          reason: `${pluginId} is loaded from a dev folder. Remove it from plugins.json instead.`,
-        });
-      }
+      const { folder, source } = record.plugin;
       const settingsSchema = manifestOf(record.plugin)?.settingsSchema;
       yield* runLifecycle(
         Effect.gen(function* () {
           yield* stopPlugin(pluginId);
-          // The folder as listed, not `rootDir`: that is the real path, so a symlinked plugin
-          // would delete the user's own folder behind the link.
-          const entry = record.plugin.folder;
-          yield* fs
-            .remove(entry, { recursive: true, force: true })
-            .pipe(Effect.mapError(installFailed(`Could not delete ${entry}.`)));
+          if (source === "dev") {
+            // A linked folder is the author's own; only plugins.json forgets it.
+            yield* writeConfig((current) => ({
+              ...current,
+              devPaths: (current.devPaths ?? []).filter((entry) => path.resolve(entry) !== folder),
+            }));
+          } else {
+            // The folder as listed, not `rootDir`: that is the real path, so a symlinked plugin
+            // would delete the user's own folder behind the link.
+            yield* fs
+              .remove(folder, { recursive: true, force: true })
+              .pipe(Effect.mapError(installFailed(`Could not delete ${folder}.`)));
+          }
           yield* removeFromConfig(pluginId);
           // Stopping replaces the record, so match it by id and source rather than identity.
           yield* Ref.update(records, (all) =>
-            all.filter(
-              (entry) => entry.plugin.id !== pluginId || entry.plugin.source !== "installed",
-            ),
+            all.filter((entry) => entry.plugin.id !== pluginId || entry.plugin.source !== source),
           );
           yield* publishStates;
         }),
@@ -1344,6 +1381,31 @@ const make = Effect.gen(function* () {
     update,
     checkUpdates: checkUpdates(),
     uninstall,
+    check: Effect.fn("PluginHost.check")(function* (target) {
+      const { folder, failure } =
+        "path" in target
+          ? { folder: path.resolve(target.path), failure: undefined }
+          : yield* findRecord(target.pluginId).pipe(
+              Effect.flatMap((record) =>
+                record === undefined
+                  ? Effect.fail(new PluginNotFoundError({ pluginId: target.pluginId }))
+                  : Effect.succeed({ folder: record.plugin.rootDir, failure: record.failure }),
+              ),
+            );
+      const report = yield* checkPluginFolder(folder, packageJson.version).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+      );
+      if (failure === undefined) return report;
+      const lastStart: PluginCheckFinding = {
+        code: "last-start-failed",
+        severity: "error",
+        file: null,
+        problem: `Its last start failed at ${failure.stage}: ${failure.message}`,
+        fix: "Fix it, then reload the plugin.",
+      };
+      return { ...report, findings: [lastStart, ...report.findings] };
+    }),
     getSettings: Effect.fn("PluginHost.getSettings")(function* (pluginId) {
       const manifest = yield* manifestFor(pluginId);
       return yield* settingsStore.getForClient(pluginId, manifest.settingsSchema);
@@ -1424,6 +1486,16 @@ const make = Effect.gen(function* () {
         ),
       ),
   });
+  yield* services.hooks.setProviderSlashCommands((instanceId) =>
+    services.providers.getProviders.pipe(
+      Effect.map(
+        (providers) =>
+          providers
+            .find((provider) => provider.instanceId === instanceId)
+            ?.slashCommands.map((command) => command.name) ?? [],
+      ),
+    ),
+  );
   // Agents reach these through the `t3_plugins_*` tools, which MCP already gates as writes, so
   // the call carries operate access.
   yield* services.mcpTools.setHostActions({
@@ -1435,8 +1507,10 @@ const make = Effect.gen(function* () {
         scopes: [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
       }),
     setEnabled: service.setEnabled,
+    reload: service.reload,
     install: service.install,
     uninstall: service.uninstall,
+    check: service.check,
     slashCommands: services.hooks.currentSlashCommands,
   });
   return service;

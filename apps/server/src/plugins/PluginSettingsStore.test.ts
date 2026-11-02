@@ -65,6 +65,51 @@ it.layer(NodeServices.layer)("PluginSettingsStore", (it) => {
     }).pipe(Effect.provide(layerTest())),
   );
 
+  it.effect("drops keys a newer schema no longer has instead of refusing every save", () =>
+    Effect.gen(function* () {
+      const store = yield* PluginSettingsStore.PluginSettingsStore;
+      const withFoo: Schema.JsonObject = {
+        ...settingsSchema,
+        properties: {
+          ...(settingsSchema.properties as Schema.JsonObject),
+          foo: { type: "string" },
+        },
+      };
+      yield* store.update(hello, withFoo, { foo: "old", count: 1 });
+
+      assert.deepStrictEqual(yield* store.update(hello, settingsSchema, { count: 2 }), {
+        count: 2,
+      });
+      assert.deepStrictEqual(JSON.parse(yield* readSettingsFile), { count: 2 });
+    }).pipe(Effect.provide(layerTest())),
+  );
+
+  it.effect("gives the plugin its schema's defaults and clients only what is saved", () =>
+    Effect.gen(function* () {
+      const store = yield* PluginSettingsStore.PluginSettingsStore;
+      const withDefaults: Schema.JsonObject = {
+        type: "object",
+        properties: {
+          enabled: { type: "boolean", default: true },
+          name: { type: "string", default: "T3" },
+          token: { type: "string", format: "t3-secret", default: "not-a-secret" },
+        },
+      };
+      const next = yield* store
+        .changes(hello)
+        .pipe(Stream.runHead, Effect.forkChild({ startImmediately: true }));
+      assert.deepStrictEqual(yield* store.get(hello, withDefaults), { enabled: true, name: "T3" });
+
+      yield* store.update(hello, withDefaults, { name: "Mine" });
+      assert.deepStrictEqual(yield* store.get(hello, withDefaults), {
+        enabled: true,
+        name: "Mine",
+      });
+      assert.deepStrictEqual(yield* Fiber.join(next), Option.some({ enabled: true, name: "Mine" }));
+      assert.deepStrictEqual(yield* store.getForClient(hello, withDefaults), { name: "Mine" });
+    }).pipe(Effect.provide(layerTest())),
+  );
+
   it.effect("keeps secrets out of settings.json and redacts them for clients", () =>
     Effect.gen(function* () {
       const store = yield* PluginSettingsStore.PluginSettingsStore;

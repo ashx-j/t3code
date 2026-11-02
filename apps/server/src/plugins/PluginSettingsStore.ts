@@ -71,12 +71,15 @@ export class PluginSettingsValidationError extends Schema.TaggedError<PluginSett
 export class PluginSettingsStore extends Context.Service<
   PluginSettingsStore,
   {
-    /** Stored settings with secret values, for the plugin. JSON Schema defaults are not applied. */
+    /** Stored settings with secret values, over the schema's top-level defaults, for the plugin. */
     readonly get: (
       pluginId: PluginId,
       settingsSchema: Schema.JsonObject | undefined,
     ) => Effect.Effect<Schema.JsonObject, PluginSettingsPersistenceError>;
-    /** Stored settings for clients. A secret that has a value reads as `SECRET_REDACTED`. */
+    /**
+     * Stored settings for clients, without defaults. A secret that has a value reads as
+     * `SECRET_REDACTED`.
+     */
     readonly getForClient: (
       pluginId: PluginId,
       settingsSchema: Schema.JsonObject | undefined,
@@ -84,6 +87,7 @@ export class PluginSettingsStore extends Context.Service<
     /**
      * Merges `patch` over the stored settings at the top level, where `null` removes a key and
      * `SECRET_REDACTED` keeps a secret, validates the result, saves it and returns the client view.
+     * Stored keys a schema with `additionalProperties: false` no longer lists are dropped first.
      */
     readonly update: (
       pluginId: PluginId,
@@ -116,6 +120,7 @@ interface SettingsChange {
 const SettingsJson = fromJsonStringPretty(Schema.JsonObject);
 const decodeSettingsJson = Schema.decodeUnknownEffect(SettingsJson);
 const encodeSettingsJson = Schema.encodeEffect(SettingsJson);
+const isJson = Schema.is(Schema.Json);
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
@@ -130,6 +135,28 @@ const secretFields = (settingsSchema: Schema.JsonObject | undefined): ReadonlySe
         : [],
     ),
   );
+};
+
+// Top-level `default`s, which the plugin reads for fields nobody saved. Secrets have none.
+const defaultsOf = (settingsSchema: Schema.JsonObject | undefined): Schema.JsonObject => {
+  const properties = settingsSchema?.properties;
+  if (!Predicate.isObject(properties)) return {};
+  const secrets = secretFields(settingsSchema);
+  return Object.fromEntries(
+    Object.entries(properties).flatMap(([field, property]) =>
+      Predicate.isObject(property) && !secrets.has(field) && isJson(property.default)
+        ? [[field, property.default]]
+        : [],
+    ),
+  );
+};
+
+// Keys saved under an older schema that a closed schema no longer lists. Validating them would
+// refuse every save, and the form cannot remove a key it does not show.
+const keysOutside = (settingsSchema: Schema.JsonObject | undefined, values: Schema.JsonObject) => {
+  const properties = settingsSchema?.properties;
+  if (settingsSchema?.additionalProperties !== false || !Predicate.isObject(properties)) return [];
+  return Object.keys(values).filter((key) => !Object.hasOwn(properties, key));
 };
 
 // Secret names become file names, so the field is base64url encoded.
@@ -245,7 +272,7 @@ const make = Effect.gen(function* () {
     settingsSchema: Schema.JsonObject | undefined,
   ) {
     const { values, secrets } = yield* load(pluginId, secretFields(settingsSchema));
-    return { ...values, ...secrets } satisfies Schema.JsonObject;
+    return { ...defaultsOf(settingsSchema), ...values, ...secrets } satisfies Schema.JsonObject;
   });
 
   const getForClient = Effect.fn("PluginSettingsStore.getForClient")(function* (
@@ -266,7 +293,15 @@ const make = Effect.gen(function* () {
     return yield* writeSemaphore.withPermits(1)(
       Effect.gen(function* () {
         const current = yield* load(pluginId, fields);
+        const stale = keysOutside(settingsSchema, current.values);
+        if (stale.length > 0) {
+          yield* Effect.logWarning("dropping plugin settings its schema no longer has", {
+            pluginId,
+            keys: stale,
+          });
+        }
         const merged: Record<string, Schema.Json> = { ...current.values, ...current.secrets };
+        for (const key of stale) delete merged[key];
         for (const [key, value] of Object.entries(patch)) {
           if (fields.has(key) && value === SECRET_REDACTED) continue;
           if (value === null) delete merged[key];
@@ -323,7 +358,7 @@ const make = Effect.gen(function* () {
 
         yield* PubSub.publish(changesPubSub, {
           pluginId,
-          settings: { ...next.values, ...next.secrets },
+          settings: { ...defaultsOf(settingsSchema), ...next.values, ...next.secrets },
         });
         return clientView(next);
       }),

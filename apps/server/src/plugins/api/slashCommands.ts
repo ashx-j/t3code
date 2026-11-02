@@ -1,4 +1,5 @@
 import type { PluginApi, PluginSlashCommandResult } from "@t3tools/plugin-sdk/server";
+import { T3_SLASH_COMMAND_NAMES } from "@t3tools/shared/slashCommands";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -12,19 +13,6 @@ import type { FacadeContext } from "./facade.ts";
 // The sender waits on the command, so it gets longer than a hook but still a bound.
 const SLASH_COMMAND_DEADLINE = Duration.seconds(10);
 const NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
-// T3 handles these itself, on the server or in the composer.
-const RESERVED = new Set([
-  "btw",
-  "compact",
-  "default",
-  "goal",
-  "logout",
-  "model",
-  "plan",
-  "side",
-  "skill",
-  "usage-limits",
-]);
 const MAX_TEXT_CHARS = 500;
 // Every client holds a thread's messages in memory, so one reply stays a message, not a document.
 const MAX_REPLY_CHARS = 20_000;
@@ -71,7 +59,7 @@ export const makeSlashCommandsApi = (
     if (activation.controller.signal.aborted) {
       throw new Error("This plugin activation has ended.");
     }
-    if (!NAME.test(command.name) || RESERVED.has(command.name)) {
+    if (!NAME.test(command.name) || T3_SLASH_COMMAND_NAMES.has(command.name)) {
       throw new TypeError(
         `"/${command.name}" is not available. Use lowercase letters, digits and "-", and none of T3 Code's own commands.`,
       );
