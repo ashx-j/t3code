@@ -63,8 +63,8 @@ Choose **Remove** on the plugin's row and confirm in the popup. Its settings and
 kept unless you tick **Also delete its settings and stored data**, so reinstalling it later picks
 up where it left off.
 
-Plugins loaded from a development folder listed in `plugins.json` cannot be removed from Settings.
-Remove the folder from `plugins.json` instead.
+A plugin loaded from its own folder, such as one an agent is writing, shows **Unlink** instead.
+Unlinking stops loading it and leaves the folder where it is.
 
 ## Plugins in your threads
 

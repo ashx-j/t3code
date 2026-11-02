@@ -628,6 +628,55 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
     }).pipe(Effect.provide(layerConfig())),
   );
 
+  it.effect("links a folder in place, reloads its edits and keeps the folder when removed", () =>
+    Effect.gen(function* () {
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const folder = `${stateDir}/checkout/in-place`;
+      const plugin = (version: string) =>
+        `module.exports = { activate(api) { api.rpc.register("which", () => "${version}", { access: "read" }); } };`;
+      yield* writeFile(
+        `${folder}/t3-plugin.json`,
+        JSON.stringify({
+          id: "in-place",
+          name: "In place",
+          version: "0.1.0",
+          engines: { t3: ">=0.1.0" },
+          server: "./server.cjs",
+        }),
+      );
+      yield* writeFile(`${folder}/server.cjs`, plugin("v1"));
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const id = PluginId.make("in-place");
+        const which = host.invoke({
+          pluginId: id,
+          method: "which",
+          input: undefined,
+          scopes: operate,
+        });
+        assert.include(yield* host.install({ type: "path", path: folder, link: true }), {
+          status: "active",
+          enabled: true,
+          source: "dev",
+        });
+        assert.isFalse(yield* fs.exists(`${stateDir}/plugins/in-place`));
+        assert.strictEqual(yield* which, "v1");
+
+        yield* writeFile(`${folder}/server.cjs`, plugin("v2"));
+        yield* host.reload(id);
+        assert.strictEqual(yield* which, "v2");
+        const copy = yield* host.install({ type: "path", path: folder }).pipe(Effect.flip);
+        assert.match(copy.message, /is linked from/);
+
+        yield* host.uninstall(id, false);
+        assert.isTrue(yield* fs.exists(`${folder}/server.cjs`));
+        // Forgotten, not only stopped: a rescan does not find it again.
+        assert.isUndefined(stateOf((yield* host.rescan).plugins, "in-place"));
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
   it.effect("finishes disabling a plugin when the caller gives up during its cleanup", () =>
     Effect.gen(function* () {
       const started = Promise.withResolvers<void>();
@@ -895,16 +944,36 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           ],
           yield* hooks.currentSlashCommands,
         );
-        const listed = [
-          {
-            name: "deploy",
-            description: "Deploy to an environment",
-            input: { hint: "environment" },
-          },
-          { name: "status", description: "Show the deploy status" },
-        ];
-        assert.deepStrictEqual(provider?.slashCommands, [{ name: "review" }, ...listed]);
-        assert.deepStrictEqual(provider?.workspaceSnapshots?.[0]?.slashCommands, listed);
+        const deploy = {
+          name: "deploy",
+          description: "Deploy to an environment",
+          input: { hint: "environment" },
+        };
+        const status = { name: "status", description: "Show the deploy status" };
+        // A provider's own command of the same name wins, in its lists and when sent to it.
+        assert.deepStrictEqual(provider?.slashCommands, [
+          { name: "deploy", description: "Provider deploy" },
+          { name: "review" },
+          status,
+        ]);
+        assert.deepStrictEqual(provider?.workspaceSnapshots?.[0]?.slashCommands, [deploy, status]);
+        yield* hooks.setProviderSlashCommands((instanceId) =>
+          Effect.succeed(instanceId === "claudeAgent" ? ["deploy"] : []),
+        );
+        const sendTo = (instanceId: string) =>
+          hooks.beforeDispatch(
+            {
+              threadId,
+              messageId: "message:workbench",
+              text: "/deploy staging",
+              createdBy: "user",
+              attachments: [],
+            },
+            notAccepted,
+            Effect.succeed(instanceId),
+          );
+        assert.strictEqual(yield* sendTo("claudeAgent"), "/deploy staging");
+        assert.strictEqual(yield* sendTo("codex"), "Deploy to staging and report back.");
 
         const request = (id: string, kind: string) => ({
           id,
@@ -1152,6 +1221,10 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           const fromNpm = yield* host.install({ type: "npm", name: "npm-hello" });
           assert.include(fromNpm, { id: PluginId.make("npm-hello"), status: "active" });
           assert.isUndefined(stateOf(yield* host.checkUpdates, "npm-hello")?.availableUpdate);
+          const ranged = yield* host
+            .install({ type: "npm", name: "npm-hello", version: "^1.0.0" })
+            .pipe(Effect.flip);
+          assert.match(ranged.message, /not an exact version\. Use one such as 1\.2\.3/);
           npmLatest = "1.1.0";
           assert.deepStrictEqual(stateOf(yield* host.checkUpdates, "npm-hello")?.availableUpdate, {
             version: "1.1.0",

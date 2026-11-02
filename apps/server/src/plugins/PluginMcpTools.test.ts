@@ -200,6 +200,7 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
   Effect.gen(function* () {
     const tools = yield* PluginMcpTools.PluginMcpTools;
     const invoked: Array<unknown> = [];
+    const checked: Array<unknown> = [];
     yield* tools.setHostActions({
       invoke: (pluginId, method, input) =>
         Effect.sync(() => {
@@ -209,6 +210,18 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
       setEnabled: (pluginId, enabled) => Effect.succeed({ ...installed, id: pluginId, enabled }),
       install: () => Effect.succeed(installed),
       uninstall: () => Effect.void,
+      reload: (pluginId) =>
+        Effect.succeed({
+          ...installed,
+          id: pluginId,
+          status: "failed",
+          failure: { stage: "load", message: "Cannot find module './util'" },
+        }),
+      check: (target) =>
+        Effect.sync(() => {
+          checked.push(target);
+          return { folder: "/home/user/plugin", pluginId: null, findings: [] };
+        }),
       slashCommands: Effect.succeed([{ pluginId: "mcp-plugin", name: "deploy" }]),
     });
     yield* tools.setInstalledPlugins([]);
@@ -221,6 +234,8 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
       "t3_plugins_set_enabled",
       "t3_plugins_install",
       "t3_plugins_uninstall",
+      "t3_plugins_reload",
+      "t3_plugins_check",
     ]);
     assert.deepStrictEqual(yield* call("t3_plugins_list", readOnlyClient), {
       isError: false,
@@ -240,5 +255,20 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
       }),
       { isError: false, text: '{"id":"mcp-plugin","status":"active","enabled":false}' },
     );
+    // A failed reload says why, so an agent can fix the plugin without opening Settings.
+    assert.deepStrictEqual(
+      yield* call("t3_plugins_reload", fullAccessClient, { pluginId: "mcp-plugin" }),
+      {
+        isError: false,
+        text: '{"id":"mcp-plugin","status":"failed","enabled":true,"failure":"load: Cannot find module \'./util\'"}',
+      },
+    );
+    const unnamed = yield* call("t3_plugins_check", readOnlyClient, {});
+    assert.isTrue(unnamed.isError);
+    assert.include(unnamed.text, "Give either pluginId or path.");
+    assert.isFalse(
+      (yield* call("t3_plugins_check", readOnlyClient, { path: "/home/user/plugin" })).isError,
+    );
+    assert.deepStrictEqual(checked, [{ path: "/home/user/plugin" }]);
   }).pipe(Effect.provide(layerTest)),
 );

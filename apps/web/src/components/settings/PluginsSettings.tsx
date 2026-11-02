@@ -722,7 +722,8 @@ function PluginRow({
     setBusy(false);
   };
   const updatable = copies.filter((copy) => copy.plugin.installSource !== undefined);
-  const removable = copies.filter((copy) => copy.plugin.source === "installed");
+  // A plugin an agent linked from its own folder is unlinked instead; the folder stays.
+  const removeLabel = copies.every((copy) => copy.plugin.source === "dev") ? "Unlink" : "Remove";
   const source = updatable[0]?.plugin.installSource;
   const availableUpdate = copies.find((copy) => copy.plugin.availableUpdate !== undefined)?.plugin
     .availableUpdate;
@@ -805,56 +806,54 @@ function PluginRow({
               <DownloadIcon className="size-4" />
             </Button>
           )}
-          {removable.length === 0 ? null : (
-            <Popover>
-              <PopoverTrigger
-                render={
-                  <Button
-                    size="icon-sm"
-                    variant="ghost"
-                    disabled={busy || !canManage}
-                    aria-label={`Remove ${plugin.name}`}
+          <Popover>
+            <PopoverTrigger
+              render={
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  disabled={busy || !canManage}
+                  aria-label={`${removeLabel} ${plugin.name}`}
+                />
+              }
+            >
+              <Trash2Icon className="size-4" />
+            </PopoverTrigger>
+            <PopoverPopup side="top" align="end" width="md">
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id={`plugin-remove-data-${plugin.id}`}
+                    checked={removeData}
+                    onCheckedChange={(checked) => setRemoveData(checked === true)}
                   />
-                }
-              >
-                <Trash2Icon className="size-4" />
-              </PopoverTrigger>
-              <PopoverPopup side="top" align="end" width="md">
-                <div className="flex flex-col gap-3">
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      id={`plugin-remove-data-${plugin.id}`}
-                      checked={removeData}
-                      onCheckedChange={(checked) => setRemoveData(checked === true)}
-                    />
-                    <Label htmlFor={`plugin-remove-data-${plugin.id}`}>
-                      Also delete its settings and stored data
-                    </Label>
-                  </div>
-                  <div className="flex justify-end gap-2">
-                    <PopoverClose render={<Button size="sm" variant="ghost" disabled={busy} />}>
-                      Cancel
-                    </PopoverClose>
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      disabled={busy}
-                      onClick={() =>
-                        void runOn(removable, (copy) =>
-                          uninstall({
-                            environmentId: copy.environmentId,
-                            input: { pluginId: plugin.id, removeData },
-                          }),
-                        )
-                      }
-                    >
-                      Remove {plugin.name}
-                    </Button>
-                  </div>
+                  <Label htmlFor={`plugin-remove-data-${plugin.id}`}>
+                    Also delete its settings and stored data
+                  </Label>
                 </div>
-              </PopoverPopup>
-            </Popover>
-          )}
+                <div className="flex justify-end gap-2">
+                  <PopoverClose render={<Button size="sm" variant="ghost" disabled={busy} />}>
+                    Cancel
+                  </PopoverClose>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    disabled={busy}
+                    onClick={() =>
+                      void runOn(copies, (copy) =>
+                        uninstall({
+                          environmentId: copy.environmentId,
+                          input: { pluginId: plugin.id, removeData },
+                        }),
+                      )
+                    }
+                  >
+                    {removeLabel} {plugin.name}
+                  </Button>
+                </div>
+              </div>
+            </PopoverPopup>
+          </Popover>
           <Switch
             checked={copies.every((copy) => copy.plugin.enabled)}
             disabled={busy || !canManage}
