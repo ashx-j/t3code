@@ -167,7 +167,8 @@ function parseStoredThemeVariants(
   return Object.keys(variants).length > 0 ? variants : undefined;
 }
 
-function parseStoredTheme(value: unknown): ThemeDefinition | null {
+// Only published themes keep `sidebarArtwork`; custom themes never show the artwork.
+function parseStoredTheme(value: unknown, published = false): ThemeDefinition | null {
   if (!isRecord(value)) return null;
   if (!isThemeId(value.id) || RESERVED_THEME_IDS.has(value.id)) return null;
   if (!isThemeLabel(value.label) || !isThemeAppearance(value.appearance)) return null;
@@ -185,13 +186,17 @@ function parseStoredTheme(value: unknown): ThemeDefinition | null {
     ...(variants ? { variants } : {}),
     ...(collection ? { collection } : {}),
     ...(value.managed === true ? { managed: true } : {}),
+    ...(published && value.sidebarArtwork === true ? { sidebarArtwork: true } : {}),
   };
 }
 
-function parseStoredThemes(storedThemes: ReadonlyArray<unknown>): ReadonlyArray<ThemeDefinition> {
+function parseStoredThemes(
+  storedThemes: ReadonlyArray<unknown>,
+  published = false,
+): ReadonlyArray<ThemeDefinition> {
   const themes: ThemeDefinition[] = [];
   for (const value of storedThemes) {
-    const theme = parseStoredTheme(value);
+    const theme = parseStoredTheme(value, published);
     if (theme && !themes.some((existing) => existing.id === theme.id)) {
       themes.push(theme);
     }
@@ -278,6 +283,7 @@ function environmentThemeDefinition(theme: EnvironmentTheme): ThemeDefinition {
     appearance: theme.appearance,
     colors: publishedThemeColors(theme, theme.appearance, theme.colors),
     ...(Object.keys(variants).length > 0 ? { variants } : {}),
+    ...(theme.sidebarArtwork === true ? { sidebarArtwork: true } : {}),
     // Only the pure seeded form is guided-generator output. An exported file,
     // or seeds carrying explicit role overrides, must open Duplicate in the
     // advanced editor -- the guided one regenerates from canvas and accent and
@@ -332,7 +338,7 @@ function readStoredEnvironmentThemes(): ReadonlyArray<ThemeDefinition> {
     const parsed: unknown = JSON.parse(
       window.localStorage.getItem(ENVIRONMENT_THEMES_STORAGE_KEY) ?? "null",
     );
-    return Array.isArray(parsed) ? parseStoredThemes(parsed) : EMPTY_CUSTOM_THEMES;
+    return Array.isArray(parsed) ? parseStoredThemes(parsed, true) : EMPTY_CUSTOM_THEMES;
   } catch {
     return EMPTY_CUSTOM_THEMES;
   }
@@ -1251,12 +1257,13 @@ export function getThemeDefinition(theme: ThemePreference): ThemeDefinition | nu
   );
 }
 
+/** Built-in themes and published ones, such as a plugin's, can allow it; custom themes can't. */
 export function themeAllowsSidebarArtwork(theme: ThemePreference): boolean {
   const themeId = themeIdFromPreference(theme);
-  return (
-    BUILT_IN_THEME_DEFINITIONS.find((definition) => definition.id === themeId)?.sidebarArtwork ===
-    true
-  );
+  const definition =
+    BUILT_IN_THEME_DEFINITIONS.find((candidate) => candidate.id === themeId) ??
+    getEnvironmentThemes().find((candidate) => candidate.id === themeId);
+  return definition?.sidebarArtwork === true;
 }
 
 /** Every selection path must check single-appearance themes to keep mix and appearance tiles in sync. */

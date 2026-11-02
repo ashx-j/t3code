@@ -31,6 +31,7 @@ import {
   installCustomTheme,
   invalidateCustomThemes,
   publishedThemeDefinitions,
+  themeAllowsSidebarArtwork,
 } from "../themePalette";
 
 const NIGHTFALL_THEME = {
@@ -101,9 +102,12 @@ describe("environment themes", () => {
   it("resolves published themes without a React subscriber mounted", () => {
     publish(appAtomRegistry, [NIGHTFALL_THEME]);
     expect(getThemeDefinition("nightfall")?.label).toBe("Nightfall");
+    expect(themeAllowsSidebarArtwork("nightfall")).toBe(false);
 
-    publish(appAtomRegistry, [{ ...NIGHTFALL_THEME, name: "Nightfall 2" }]);
+    // A published theme, such as a plugin's, can keep the sidebar artwork.
+    publish(appAtomRegistry, [{ ...NIGHTFALL_THEME, name: "Nightfall 2", sidebarArtwork: true }]);
     expect(getThemeDefinition("nightfall")?.label).toBe("Nightfall 2");
+    expect(themeAllowsSidebarArtwork("nightfall")).toBe(true);
   });
 
   it("lets a theme the user saved win an id collision", () => {
@@ -137,7 +141,7 @@ describe("environment themes", () => {
     const store = new Map([
       [
         ENVIRONMENT_THEMES_STORAGE_KEY,
-        JSON.stringify(publishedThemeDefinitions([NIGHTFALL_THEME])),
+        JSON.stringify(publishedThemeDefinitions([{ ...NIGHTFALL_THEME, sidebarArtwork: true }])),
       ],
     ]);
     vi.stubGlobal("window", {
@@ -156,6 +160,7 @@ describe("environment themes", () => {
     const stop = startEnvironmentThemeRepaint();
     try {
       expect(palette.getThemeDefinition("nightfall")?.label).toBe("Nightfall");
+      expect(palette.themeAllowsSidebarArtwork("nightfall")).toBe(true);
 
       // The plugin that published it is gone: the server's first themes event is empty.
       publish(registry, []);
