@@ -36,13 +36,14 @@ const picked = (path: string, text: string) =>
   });
 
 describe("plugin folders", () => {
-  it("reads every batch of every dropped folder and leaves out git history", async () => {
+  it("reads every batch of every dropped folder and leaves out git history and dependencies", async () => {
     const files = await drop(
       folder("surface", [
         file("t3-plugin.json", "{}"),
         file("web.js", "draw()"),
         folder("themes", [file("a.json", "a"), file("b.json", "b"), file("c.json", "c")]),
         folder(".git", [file("HEAD", "ref")]),
+        folder("node_modules", [folder("react", [file("index.js", "react")])]),
       ]),
     ).read();
     expect(files.map((entry) => entry.path)).toEqual([
@@ -60,6 +61,7 @@ describe("plugin folders", () => {
       picked("surface/t3-plugin.json", "{}"),
       picked("surface/themes/dark.json", "dark"),
       picked("surface/.git/HEAD", "ref"),
+      picked("surface/node_modules/react/index.js", "react"),
     ]);
     expect(folder?.name).toBe("surface");
     expect((await folder!.read()).map((entry) => entry.path)).toEqual([

@@ -20,20 +20,30 @@ interface FolderFile {
   readonly file: File;
 }
 
-// Version control history is never part of a plugin.
-const isGitPath = (path: string) => path.split("/").includes(".git");
+// Version control history and installed dependencies are never part of a built plugin.
+const LEFT_OUT = new Set([".git", "node_modules"]);
+const isLeftOut = (path: string) => path.split("/").some((segment) => LEFT_OUT.has(segment));
 
 const notAPlugin = (name: string) =>
   new Error(`${name} has no ${MANIFEST_FILE}, so it is not a T3 Code plugin.`);
-const tooLarge = (name: string) =>
-  new Error(
-    `${name} is too large. A plugin folder can have up to ${PLUGIN_UPLOAD_MAX_FILES} files and ${PLUGIN_UPLOAD_MAX_BYTES / 1024 / 1024} MB.`,
+
+// Names the top-level entry holding the most bytes, which is usually the reason.
+const tooLarge = (name: string, files: ReadonlyArray<FolderFile>) => {
+  const bytesByEntry = new Map<string, number>();
+  for (const { path, file } of files) {
+    const entry = path.split("/")[0] ?? path;
+    bytesByEntry.set(entry, (bytesByEntry.get(entry) ?? 0) + file.size);
+  }
+  const [largest] = [...bytesByEntry].toSorted((a, b) => b[1] - a[1]);
+  return new Error(
+    `${name} is too large. A plugin folder can have up to ${PLUGIN_UPLOAD_MAX_FILES} files and ${PLUGIN_UPLOAD_MAX_BYTES / 1024 / 1024} MB${largest === undefined ? "" : `, and most of it is in ${largest[0]}`}. Build the plugin and add the folder with only what it needs.`,
   );
+};
 
 async function readFiles(name: string, files: ReadonlyArray<FolderFile>) {
   const bytes = files.reduce((total, { file }) => total + file.size, 0);
   if (files.length > PLUGIN_UPLOAD_MAX_FILES || bytes > PLUGIN_UPLOAD_MAX_BYTES) {
-    throw tooLarge(name);
+    throw tooLarge(name, files);
   }
   return Promise.all(
     files.map(async ({ path, file }) => ({
@@ -65,11 +75,11 @@ async function readDroppedFolder(folder: FileSystemDirectoryEntry) {
   const files: Array<FolderFile> = [];
   let bytes = 0;
   const visit = async (entries: ReadonlyArray<FileSystemEntry>, prefix: string, depth: number) => {
-    if (depth > MAX_DEPTH) throw tooLarge(folder.name);
+    if (depth > MAX_DEPTH) throw tooLarge(folder.name, files);
     for (const entry of entries) {
       const path = `${prefix}${entry.name}`;
       if (entry.isDirectory) {
-        if (isGitPath(path)) continue;
+        if (isLeftOut(path)) continue;
         await visit(await entriesOf(entry as FileSystemDirectoryEntry), `${path}/`, depth + 1);
         continue;
       }
@@ -79,7 +89,7 @@ async function readDroppedFolder(folder: FileSystemDirectoryEntry) {
       bytes += file.size;
       // Checked while walking, so a huge folder stops early.
       if (files.length >= PLUGIN_UPLOAD_MAX_FILES || bytes > PLUGIN_UPLOAD_MAX_BYTES) {
-        throw tooLarge(folder.name);
+        throw tooLarge(folder.name, [...files, { path, file }]);
       }
       files.push({ path, file });
     }
@@ -107,7 +117,7 @@ export function pickedFolder(files: ReadonlyArray<File>): PluginFolder | undefin
     read: async () => {
       const inside = files
         .map((file) => ({ path: file.webkitRelativePath.slice(name.length + 1), file }))
-        .filter(({ path }) => !isGitPath(path));
+        .filter(({ path }) => !isLeftOut(path));
       if (!inside.some(({ path }) => path === MANIFEST_FILE)) throw notAPlugin(name);
       return readFiles(name, inside);
     },

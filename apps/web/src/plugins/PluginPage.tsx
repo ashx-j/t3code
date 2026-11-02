@@ -1,16 +1,37 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useNavigate } from "@tanstack/react-router";
 
 import { RenderErrorBoundary } from "../components/RenderErrorBoundary";
-import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
+import { useNavigateToMainApp } from "../components/sidebar/mainAppLocation";
+import { Button } from "../components/ui/button";
 import { SidebarInset } from "../components/ui/sidebar";
+import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { isElectron } from "../env";
 import { pluginPageAtom, pluginPageKey } from "./pluginRegistry";
 
-const unavailable = (
-  <p className="p-6 text-muted-foreground text-sm">
-    This page is not available. Its plugin may be turned off or still loading.
-  </p>
-);
+function PageUnavailable() {
+  const navigateToMainApp = useNavigateToMainApp();
+  const navigate = useNavigate();
+  return (
+    <div className="space-y-3 p-6">
+      <p className="text-muted-foreground text-sm">
+        This page is not available. Its plugin may be turned off or still loading.
+      </p>
+      <div className="flex gap-2">
+        <Button size="sm" variant="outline" onClick={() => void navigateToMainApp()}>
+          Back
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => void navigate({ to: "/settings/plugins" })}
+        >
+          Open Plugins settings
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 /** A plugin's page at `/plugins/<pluginId>/<name>`, beside the sidebar in place of the thread. */
 export function PluginPage(props: { readonly pluginId: string; readonly name: string }) {
@@ -23,11 +44,11 @@ export function PluginPage(props: { readonly pluginId: string; readonly name: st
       </WorkspacePageHeader>
       <div className="min-h-0 flex-1 overflow-auto">
         {page && Page ? (
-          <RenderErrorBoundary resetKeys={[page]} fallback={unavailable}>
+          <RenderErrorBoundary resetKeys={[page]} fallback={<PageUnavailable />}>
             <Page />
           </RenderErrorBoundary>
         ) : (
-          unavailable
+          <PageUnavailable />
         )}
       </div>
     </SidebarInset>

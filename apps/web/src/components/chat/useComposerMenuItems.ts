@@ -297,14 +297,20 @@ export function useComposerMenuItems({
       const visibleProviderSlashCommandItems = providerSlashCommandItems.filter(
         (item) => item.command.name !== "compact" || compactSlashCommandAvailable,
       );
-      const pluginSlashCommandItems = pluginSlashCommands.map((command) => ({
-        id: `plugin-slash-command:${command.pluginId}:${command.name}`,
-        type: "plugin-slash-command" as const,
-        command: { name: command.name },
-        run: command.run,
-        label: `/${command.name}`,
-        description: `${command.description} · ${command.pluginName}`,
-      }));
+      // A provider's command of the same name wins; that list already has server plugins' commands.
+      const providerCommandNames = new Set(
+        visibleProviderSlashCommandItems.map((item) => item.command.name),
+      );
+      const pluginSlashCommandItems = pluginSlashCommands
+        .filter((command) => !providerCommandNames.has(command.name))
+        .map((command) => ({
+          id: `plugin-slash-command:${command.pluginId}:${command.name}`,
+          type: "plugin-slash-command" as const,
+          command: { name: command.name },
+          run: command.run,
+          label: `/${command.name}`,
+          description: `${command.description} · ${command.pluginName}`,
+        }));
       const slashCommandItems = slashCommandItemsForPromptPosition(
         [
           ...builtInSlashCommandItems,
