@@ -10,7 +10,6 @@ import {
   PluginId,
   PluginManifest,
   PluginInstallSource,
-  PLUGIN_UPLOAD_MAX_BYTES,
   type PluginState,
   type PluginUploadFile,
   type PluginStatus,
@@ -1155,19 +1154,13 @@ const make = Effect.gen(function* () {
     installInHost({ source }, undefined).pipe(Effect.forkIn(hostScope), Effect.flatMap(Fiber.join)),
   );
 
+  // `PluginInstallFilesInput` bounds the folder's size before it gets here.
   const installFiles: PluginHost["Service"]["installFiles"] = Effect.fn("PluginHost.installFiles")(
-    function* (files) {
-      const bytes = files.reduce((total, file) => total + file.contents.byteLength, 0);
-      if (bytes > PLUGIN_UPLOAD_MAX_BYTES) {
-        return yield* new PluginInstallError({
-          reason: `The folder is larger than ${PLUGIN_UPLOAD_MAX_BYTES / 1024 / 1024} MB.`,
-        });
-      }
-      return yield* installInHost({ files }, undefined).pipe(
+    (files) =>
+      installInHost({ files }, undefined).pipe(
         Effect.forkIn(hostScope),
         Effect.flatMap(Fiber.join),
-      );
-    },
+      ),
   );
 
   const update: PluginHost["Service"]["update"] = Effect.fn("PluginHost.update")(

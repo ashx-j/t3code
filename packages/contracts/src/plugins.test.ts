@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { PluginInstallFilesInput, PluginManifest } from "./plugins.ts";
+import { PLUGIN_UPLOAD_MAX_BYTES, PluginInstallFilesInput, PluginManifest } from "./plugins.ts";
 
 const decodeManifest = Schema.decodeUnknownSync(PluginManifest);
 
@@ -45,6 +45,8 @@ describe("PluginManifest", () => {
   });
 });
 
+const decodeFileTypes = Schema.decodeUnknownSync(Schema.toType(PluginInstallFilesInput));
+
 describe("PluginInstallFilesInput", () => {
   const decodeFiles = Schema.decodeUnknownSync(PluginInstallFilesInput);
 
@@ -56,5 +58,14 @@ describe("PluginInstallFilesInput", () => {
     for (const path of ["../outside.js", "/etc/passwd", "C:/plugin/web.js", "dist\\web.js"]) {
       expect(() => decodeFiles({ files: [{ path, contents: "" }] })).toThrow();
     }
+  });
+
+  it("refuses a folder over the size limit with a reason", () => {
+    const half = new Uint8Array(PLUGIN_UPLOAD_MAX_BYTES / 2 + 1);
+    const files = [
+      { path: "a.bin", contents: half },
+      { path: "b.bin", contents: half },
+    ];
+    expect(() => decodeFileTypes({ files })).toThrow("A plugin folder can have up to 25 MB.");
   });
 });

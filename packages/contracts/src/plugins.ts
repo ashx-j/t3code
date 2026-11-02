@@ -183,7 +183,17 @@ export const PluginUploadFile = Schema.Struct({
 export type PluginUploadFile = typeof PluginUploadFile.Type;
 
 export const PluginInstallFilesInput = Schema.Struct({
-  files: Schema.Array(PluginUploadFile).check(Schema.isMaxLength(PLUGIN_UPLOAD_MAX_FILES)),
+  files: Schema.Array(PluginUploadFile).check(
+    Schema.isMaxLength(PLUGIN_UPLOAD_MAX_FILES, {
+      message: `A plugin folder can have up to ${PLUGIN_UPLOAD_MAX_FILES} files.`,
+    }),
+    Schema.makeFilter(
+      (files) =>
+        files.reduce((total, file) => total + file.contents.byteLength, 0) <=
+        PLUGIN_UPLOAD_MAX_BYTES,
+      { message: `A plugin folder can have up to ${PLUGIN_UPLOAD_MAX_BYTES / 1024 / 1024} MB.` },
+    ),
+  ),
 });
 export type PluginInstallFilesInput = typeof PluginInstallFilesInput.Type;
 

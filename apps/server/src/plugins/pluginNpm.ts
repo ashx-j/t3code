@@ -12,6 +12,7 @@ const REGISTRY = "https://registry.npmjs.org";
 const MAX_TARBALL_BYTES = 32 * 1024 * 1024;
 // Install runs in the host's scope where no client can cancel it, so every request has a limit.
 const REQUEST_TIMEOUT = Duration.seconds(60);
+const EXACT_VERSION = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?$/;
 
 export class PluginNpmError extends Schema.TaggedError<PluginNpmError>()("PluginNpmError", {
   reason: Schema.String,
@@ -54,7 +55,13 @@ const readRelease = Effect.fnUntraced(function* (name: string, version: string |
   const wanted = version ?? document["dist-tags"]?.latest;
   const release = wanted === undefined ? undefined : document.versions[wanted];
   if (wanted === undefined || release === undefined) {
-    return yield* new PluginNpmError({ reason: `${name}@${version ?? "latest"} does not exist.` });
+    // Ranges and tags such as ^1.0.0 or next are not resolved, so say what is accepted.
+    return yield* new PluginNpmError({
+      reason:
+        version === undefined || EXACT_VERSION.test(version)
+          ? `${name}@${version ?? "latest"} does not exist.`
+          : `"${version}" is not an exact version. Use one such as 1.2.3, or leave the version out for the latest.`,
+    });
   }
   return { version: wanted, release };
 });

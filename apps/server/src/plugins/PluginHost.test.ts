@@ -1152,6 +1152,10 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           const fromNpm = yield* host.install({ type: "npm", name: "npm-hello" });
           assert.include(fromNpm, { id: PluginId.make("npm-hello"), status: "active" });
           assert.isUndefined(stateOf(yield* host.checkUpdates, "npm-hello")?.availableUpdate);
+          const ranged = yield* host
+            .install({ type: "npm", name: "npm-hello", version: "^1.0.0" })
+            .pipe(Effect.flip);
+          assert.match(ranged.message, /not an exact version\. Use one such as 1\.2\.3/);
           npmLatest = "1.1.0";
           assert.deepStrictEqual(stateOf(yield* host.checkUpdates, "npm-hello")?.availableUpdate, {
             version: "1.1.0",
