@@ -13,12 +13,12 @@ import { timelineAwayFromEndAtom } from "./useTimelineFollow";
 const threadRef = scopeThreadRef(EnvironmentId.make("environment:fold"), ThreadId.make("thread"));
 const awayFromEnd = timelineAwayFromEndAtom(scopedThreadKey(threadRef));
 
-function Composer({ wideScreen }: { wideScreen: boolean }) {
+function Composer({ wideScreen, canFold = true }: { wideScreen: boolean; canFold?: boolean }) {
   const formRef = useRef<HTMLFormElement>(null);
-  const fold = useComposerCollapseOnScroll({ wideScreen, threadRef, formRef });
+  const fold = useComposerCollapseOnScroll({ wideScreen, threadRef, formRef, canFold });
   return (
     <form ref={formRef}>
-      <input aria-label="Message" />
+      <div role="textbox" aria-label="Message" contentEditable suppressContentEditableWarning />
       <p>{fold.awayFromEnd ? "Folded" : "Open"}</p>
     </form>
   );
@@ -45,6 +45,18 @@ describe("useComposerCollapseOnScroll", () => {
 
     appAtomRegistry.set(awayFromEnd, false);
     await expect.element(page.getByText("Open")).toBeVisible();
+
+    // A composer that cannot fold, such as one holding a multi-line prompt, keeps its caret.
+    await screen.rerender(
+      <AppAtomRegistryProvider>
+        <Composer wideScreen canFold={false} />
+      </AppAtomRegistryProvider>,
+    );
+    await userEvent.click(message);
+    appAtomRegistry.set(awayFromEnd, true);
+    await expect.element(page.getByText("Folded")).toBeVisible();
+    expect(document.activeElement).toBe(message.element());
+    appAtomRegistry.set(awayFromEnd, false);
 
     // Phones fold on their own when the composer loses focus.
     await screen.rerender(
