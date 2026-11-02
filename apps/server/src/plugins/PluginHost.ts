@@ -530,7 +530,7 @@ const make = Effect.gen(function* () {
     );
 
   // Aborts first so handlers and iterators stop, then runs cleanups newest first. Teardown also
-  // runs as an interrupt finalizer, so the deadline gets an interruptible region to cut.
+  // runs where interruption is off, so the deadline gets an interruptible region to cut.
   const teardown = Effect.fnUntraced(function* (pluginId: PluginId, activation: PluginActivation) {
     activation.controller.abort();
     const timedOut = yield* Effect.forEach(
@@ -714,30 +714,36 @@ const make = Effect.gen(function* () {
       context,
       services,
     });
-    const activated = yield* Effect.tryPromise({
-      try: () => Promise.resolve().then(() => definition.value.activate(api)),
-      catch: (cause) => new PluginCodeError({ cause }),
-    }).pipe(
-      Effect.timeoutOption(ACTIVATE_DEADLINE),
-      Effect.onInterrupt(() => teardown(plugin.id, activation)),
-      Effect.exit,
+    // Only `activate` can be interrupted. A stop that lands after it waits until the record holds
+    // the activation, so `stopPlugin` always finds what to tear down.
+    yield* Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        const activated = yield* restore(
+          Effect.tryPromise({
+            try: () => Promise.resolve().then(() => definition.value.activate(api)),
+            catch: (cause) => new PluginCodeError({ cause }),
+          }).pipe(Effect.timeoutOption(ACTIVATE_DEADLINE)),
+        ).pipe(Effect.exit);
+        if (activated._tag === "Success" && Option.isSome(activated.value)) {
+          yield* prepareAgentFolder(plugin, manifest.name);
+          yield* setRecord(plugin.id, { status: "active", activation, revision: nextRevision() });
+          return yield* Effect.logInfo("plugin activated", { pluginId: plugin.id });
+        }
+        yield* teardown(plugin.id, activation);
+        // Whatever stopped the activation sets the plugin's next status.
+        if (activated._tag === "Failure" && Cause.hasInterruptsOnly(activated.cause)) return;
+        yield* setRecord(plugin.id, {
+          status: "failed",
+          failure: {
+            stage: "activate",
+            message:
+              activated._tag === "Failure"
+                ? errorText(Cause.squash(activated.cause))
+                : `activate did not finish within ${Duration.toSeconds(ACTIVATE_DEADLINE)} seconds.`,
+          },
+        });
+      }),
     );
-    if (activated._tag === "Failure" || Option.isNone(activated.value)) {
-      yield* teardown(plugin.id, activation);
-      return yield* setRecord(plugin.id, {
-        status: "failed",
-        failure: {
-          stage: "activate",
-          message:
-            activated._tag === "Failure"
-              ? errorText(Cause.squash(activated.cause))
-              : `activate did not finish within ${Duration.toSeconds(ACTIVATE_DEADLINE)} seconds.`,
-        },
-      });
-    }
-    yield* prepareAgentFolder(plugin, manifest.name);
-    yield* setRecord(plugin.id, { status: "active", activation, revision: nextRevision() });
-    yield* Effect.logInfo("plugin activated", { pluginId: plugin.id });
   });
 
   /**

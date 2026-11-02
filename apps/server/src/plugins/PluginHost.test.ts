@@ -180,6 +180,15 @@ const layerHost = (services: typeof layerUnusedServices = layerUnusedServices) =
     ),
   );
 
+/** The real file system with some of its methods replaced, for the host's layer. */
+const layerFileSystemWith = (
+  replace: (fs: FileSystem.FileSystem) => Partial<FileSystem.FileSystem>,
+) =>
+  Layer.effect(
+    FileSystem.FileSystem,
+    FileSystem.FileSystem.use((fs) => Effect.succeed({ ...fs, ...replace(fs) })),
+  );
+
 const writeFile = Effect.fn(function* (filePath: string, contents: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -645,6 +654,48 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
       }).pipe(Effect.provide(layerHost()));
       Reflect.deleteProperty(globalThis, "__t3PluginHostCleanupStarted");
       Reflect.deleteProperty(globalThis, "__t3PluginHostCleanupGate");
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("tears down a plugin turned off while its skills are copied for agents", () =>
+    Effect.gen(function* () {
+      const id = PluginId.make("held");
+      const rootDir = yield* writeInstalledPlugin(
+        id,
+        `module.exports = { activate(api) { api.slashCommands.register({ name: "held" }, () => undefined); } };`,
+      );
+      yield* writeFile(`${rootDir}/skills/notes/SKILL.md`, "---\nname: notes\n---\nTake notes.\n");
+      yield* writePluginsConfig({ enabled: { [id]: true } });
+      const copying = yield* Deferred.make<void>();
+      const released = yield* Deferred.make<void>();
+      // Holds the skills copy until the disable has saved plugins.json (its temporary folder is
+      // removed last). The release is scheduled, so the disable asks the activation to stop first.
+      const layerHeldCopy = layerFileSystemWith((fs) => ({
+        copy: (from, to, options) =>
+          (from.endsWith("skills")
+            ? Deferred.succeed(copying, undefined).pipe(Effect.andThen(Deferred.await(released)))
+            : Effect.void
+          ).pipe(Effect.andThen(fs.copy(from, to, options))),
+        remove: (target, options) =>
+          fs
+            .remove(target, options)
+            .pipe(
+              Effect.tap(() =>
+                target.includes("plugins.json.")
+                  ? Effect.forkDetach(Deferred.succeed(released, undefined))
+                  : Effect.void,
+              ),
+            ),
+      }));
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const hooks = yield* PluginHooks.PluginHooks;
+        yield* Deferred.await(copying);
+
+        yield* host.setEnabled(id, false);
+        assert.deepStrictEqual(yield* hooks.currentSlashCommands, []);
+        assert.include(yield* host.setEnabled(id, true), { status: "active" });
+      }).pipe(Effect.provide(layerHost().pipe(Layer.provide(layerHeldCopy))));
     }).pipe(Effect.provide(layerConfig())),
   );
 
