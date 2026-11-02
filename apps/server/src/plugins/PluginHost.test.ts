@@ -895,16 +895,36 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           ],
           yield* hooks.currentSlashCommands,
         );
-        const listed = [
-          {
-            name: "deploy",
-            description: "Deploy to an environment",
-            input: { hint: "environment" },
-          },
-          { name: "status", description: "Show the deploy status" },
-        ];
-        assert.deepStrictEqual(provider?.slashCommands, [{ name: "review" }, ...listed]);
-        assert.deepStrictEqual(provider?.workspaceSnapshots?.[0]?.slashCommands, listed);
+        const deploy = {
+          name: "deploy",
+          description: "Deploy to an environment",
+          input: { hint: "environment" },
+        };
+        const status = { name: "status", description: "Show the deploy status" };
+        // A provider's own command of the same name wins, in its lists and when sent to it.
+        assert.deepStrictEqual(provider?.slashCommands, [
+          { name: "deploy", description: "Provider deploy" },
+          { name: "review" },
+          status,
+        ]);
+        assert.deepStrictEqual(provider?.workspaceSnapshots?.[0]?.slashCommands, [deploy, status]);
+        yield* hooks.setProviderSlashCommands((instanceId) =>
+          Effect.succeed(instanceId === "claudeAgent" ? ["deploy"] : []),
+        );
+        const sendTo = (instanceId: string) =>
+          hooks.beforeDispatch(
+            {
+              threadId,
+              messageId: "message:workbench",
+              text: "/deploy staging",
+              createdBy: "user",
+              attachments: [],
+            },
+            notAccepted,
+            Effect.succeed(instanceId),
+          );
+        assert.strictEqual(yield* sendTo("claudeAgent"), "/deploy staging");
+        assert.strictEqual(yield* sendTo("codex"), "Deploy to staging and report back.");
 
         const request = (id: string, kind: string) => ({
           id,

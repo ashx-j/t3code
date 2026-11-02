@@ -782,6 +782,12 @@ const make = Effect.gen(function* () {
               Effect.map(Option.isSome),
               Effect.orElseSucceed(() => false),
             ),
+            command.modelSelection === undefined
+              ? orchestrator.getThreadRecords(command.threadId, []).pipe(
+                  Effect.map((projection) => projection.thread.modelSelection.instanceId),
+                  Effect.orElseSucceed(() => undefined),
+                )
+              : Effect.succeed(command.modelSelection.instanceId),
           )
           .pipe(
             Effect.map((result): OrchestrationV2ServerCommand => {

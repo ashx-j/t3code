@@ -1417,6 +1417,16 @@ const make = Effect.gen(function* () {
         ),
       ),
   });
+  yield* services.hooks.setProviderSlashCommands((instanceId) =>
+    services.providers.getProviders.pipe(
+      Effect.map(
+        (providers) =>
+          providers
+            .find((provider) => provider.instanceId === instanceId)
+            ?.slashCommands.map((command) => command.name) ?? [],
+      ),
+    ),
+  );
   // Agents reach these through the `t3_plugins_*` tools, which MCP already gates as writes, so
   // the call carries operate access.
   yield* services.mcpTools.setHostActions({
