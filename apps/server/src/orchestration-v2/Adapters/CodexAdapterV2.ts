@@ -6646,6 +6646,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         });
 
         // Plugin skill folders, sent only when they change; nothing is sent while no plugin has any.
+        // A refusal counts as sent too: an app server without the method would refuse every turn.
         const appliedPluginSkillRoots = yield* Ref.make<ReadonlyArray<string>>([]);
         const applyPluginSkillRoots = Effect.fnUntraced(function* (roots: ReadonlyArray<string>) {
           const applied = yield* Ref.get(appliedPluginSkillRoots);
@@ -6657,10 +6658,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               extraRoots: roots,
             })
             .pipe(
-              Effect.andThen(Ref.set(appliedPluginSkillRoots, roots)),
               Effect.catchCause((cause) =>
                 Effect.logWarning("Codex did not accept plugin skill folders.", { cause }),
               ),
+              Effect.andThen(Ref.set(appliedPluginSkillRoots, roots)),
             );
         });
 

@@ -1735,11 +1735,9 @@ export const layerWsRpc = (
         readonly workspaceSnapshotsOnDemand: boolean;
       }) {
         const keybindingsConfig = yield* keybindings.loadConfigState;
-        const currentProviders = PluginHooks.withPluginSkills(
-          PluginHooks.withPluginSlashCommands(
-            yield* providerRegistry.getProviders,
-            yield* pluginHooks.currentSlashCommands,
-          ),
+        const currentProviders = PluginHooks.withPluginItems(
+          yield* providerRegistry.getProviders,
+          yield* pluginHooks.currentSlashCommands,
           yield* pluginHooks.currentSkills,
         );
         const commandProviders = options.usageLimitsCommand
@@ -2365,11 +2363,9 @@ export const layerWsRpc = (
                 providers = yield* providerRegistry.refreshInstance(instance.instanceId);
               }
             }
-            const pluginProviders = PluginHooks.withPluginSkills(
-              PluginHooks.withPluginSlashCommands(
-                providers,
-                yield* pluginHooks.currentSlashCommands,
-              ),
+            const pluginProviders = PluginHooks.withPluginItems(
+              providers,
+              yield* pluginHooks.currentSlashCommands,
               yield* pluginHooks.currentSkills,
             );
             if (input.workspaceSnapshotsOnDemand !== true) return { providers: pluginProviders };
@@ -3145,10 +3141,7 @@ export const layerWsRpc = (
                   ),
                   Stream.zipLatest(pluginHooks.slashCommands, pluginHooks.skills),
                   (providers, [commands, skills]) =>
-                    PluginHooks.withPluginSkills(
-                      PluginHooks.withPluginSlashCommands(providers, commands),
-                      skills,
-                    ),
+                    PluginHooks.withPluginItems(providers, commands, skills),
                 ),
                 usageLimitSources.streamChanges.pipe(
                   Stream.changesWith(

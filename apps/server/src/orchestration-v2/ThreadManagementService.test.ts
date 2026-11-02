@@ -249,6 +249,8 @@ it.effect(
       );
 
       yield* threads.dispatch(message("command", undefined, "/goal clear"));
+      // Only starts with a slash: not a command, so hooks see it.
+      yield* threads.dispatch(message("path", undefined, "/etc/hosts is broken"));
 
       expect(texts).toEqual([
         "Fix the build.\n\nProject uses pnpm.",
@@ -257,6 +259,7 @@ it.effect(
         "/deploy staging",
         "Fix the build.",
         "/goal clear",
+        "/etc/hosts is broken\n\nProject uses pnpm.",
       ]);
     }).pipe(Effect.provide(layerTest));
   },

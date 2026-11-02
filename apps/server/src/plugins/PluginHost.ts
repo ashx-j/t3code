@@ -199,7 +199,6 @@ export class PluginHost extends Context.Service<
       Schema.JsonObject,
       PluginNotFoundError | PluginNotActiveError | PluginSettingsError
     >;
-    /** `scopes` are the caller's; methods the plugin registered as writes need the operate scope. */
     /**
      * Copies or clones a plugin into the plugins folder, enables it and starts it. It is staged
      * first and swapped in with a rename, so a failed install leaves the previous version.
@@ -221,6 +220,7 @@ export class PluginHost extends Context.Service<
       pluginId: PluginId,
       removeData: boolean,
     ) => Effect.Effect<void, PluginInstallError | PluginNotFoundError | PluginConfigError>;
+    /** `scopes` are the caller's; methods the plugin registered as writes need the operate scope. */
     readonly invoke: (input: {
       readonly pluginId: PluginId;
       readonly method: string;
@@ -304,6 +304,14 @@ const shownSource = (source: PluginInstallSource): PluginInstallSource => {
   url.username = "***";
   url.password = "";
   return { ...source, url: url.toString() };
+};
+
+// Git output can carry the URL's credentials too, with or without its scheme
+// (`unable to look up user:token@host`).
+const withoutCredentials = (text: string, source: PluginInstallSource) => {
+  if (source.type !== "git") return text;
+  const userinfo = /^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)@/i.exec(source.url)?.[1];
+  return userinfo === undefined ? text : text.replaceAll(`${userinfo}@`, "***@");
 };
 
 const toState = (
@@ -410,6 +418,9 @@ const make = Effect.gen(function* () {
   const changes = yield* PubSub.sliding<ReadonlyArray<PluginState>>(1);
   const lifecycle = yield* Semaphore.make(1);
   const publishLock = yield* Semaphore.make(1);
+  // Update checks write plugins.json outside the lifecycle lock, so every read that is written
+  // back, or kept as the current config, holds this one.
+  const configLock = yield* Semaphore.make(1);
   const activations = yield* FiberMap.make<PluginId>();
   const hostScope = yield* Effect.scope;
 
@@ -497,7 +508,7 @@ const make = Effect.gen(function* () {
       Effect.mapError((cause) => new PluginConfigError({ path: configPath, cause })),
     );
     yield* Ref.set(pluginsConfig, next);
-  });
+  }, configLock.withPermits(1));
 
   const writeEnabled = (pluginId: PluginId, enabled: boolean) =>
     writeConfig((current) => ({
@@ -530,7 +541,7 @@ const make = Effect.gen(function* () {
     );
 
   // Aborts first so handlers and iterators stop, then runs cleanups newest first. Teardown also
-  // runs as an interrupt finalizer, so the deadline gets an interruptible region to cut.
+  // runs where interruption is off, so the deadline gets an interruptible region to cut.
   const teardown = Effect.fnUntraced(function* (pluginId: PluginId, activation: PluginActivation) {
     activation.controller.abort();
     const timedOut = yield* Effect.forEach(
@@ -714,30 +725,36 @@ const make = Effect.gen(function* () {
       context,
       services,
     });
-    const activated = yield* Effect.tryPromise({
-      try: () => Promise.resolve().then(() => definition.value.activate(api)),
-      catch: (cause) => new PluginCodeError({ cause }),
-    }).pipe(
-      Effect.timeoutOption(ACTIVATE_DEADLINE),
-      Effect.onInterrupt(() => teardown(plugin.id, activation)),
-      Effect.exit,
+    // Only `activate` can be interrupted. A stop that lands after it waits until the record holds
+    // the activation, so `stopPlugin` always finds what to tear down.
+    yield* Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        const activated = yield* restore(
+          Effect.tryPromise({
+            try: () => Promise.resolve().then(() => definition.value.activate(api)),
+            catch: (cause) => new PluginCodeError({ cause }),
+          }).pipe(Effect.timeoutOption(ACTIVATE_DEADLINE)),
+        ).pipe(Effect.exit);
+        if (activated._tag === "Success" && Option.isSome(activated.value)) {
+          yield* prepareAgentFolder(plugin, manifest.name);
+          yield* setRecord(plugin.id, { status: "active", activation, revision: nextRevision() });
+          return yield* Effect.logInfo("plugin activated", { pluginId: plugin.id });
+        }
+        yield* teardown(plugin.id, activation);
+        // Whatever stopped the activation sets the plugin's next status.
+        if (activated._tag === "Failure" && Cause.hasInterruptsOnly(activated.cause)) return;
+        yield* setRecord(plugin.id, {
+          status: "failed",
+          failure: {
+            stage: "activate",
+            message:
+              activated._tag === "Failure"
+                ? errorText(Cause.squash(activated.cause))
+                : `activate did not finish within ${Duration.toSeconds(ACTIVATE_DEADLINE)} seconds.`,
+          },
+        });
+      }),
     );
-    if (activated._tag === "Failure" || Option.isNone(activated.value)) {
-      yield* teardown(plugin.id, activation);
-      return yield* setRecord(plugin.id, {
-        status: "failed",
-        failure: {
-          stage: "activate",
-          message:
-            activated._tag === "Failure"
-              ? errorText(Cause.squash(activated.cause))
-              : `activate did not finish within ${Duration.toSeconds(ACTIVATE_DEADLINE)} seconds.`,
-        },
-      });
-    }
-    yield* prepareAgentFolder(plugin, manifest.name);
-    yield* setRecord(plugin.id, { status: "active", activation, revision: nextRevision() });
-    yield* Effect.logInfo("plugin activated", { pluginId: plugin.id });
   });
 
   /**
@@ -766,17 +783,21 @@ const make = Effect.gen(function* () {
   // Startup tolerates an unreadable plugins.json; an explicit reload reports it instead.
   const discover = Effect.fnUntraced(function* (lenient: boolean) {
     const emptyConfig: PluginsConfigFile = {};
-    const current = lenient
-      ? yield* readConfig.pipe(
-          Effect.catchTags({
-            PluginConfigError: (error) =>
-              Effect.logWarning("ignoring unreadable plugins.json", { path: error.path }).pipe(
-                Effect.as(emptyConfig),
-              ),
-          }),
-        )
-      : yield* readConfig;
-    yield* Ref.set(pluginsConfig, current);
+    const current = yield* (
+      lenient
+        ? readConfig.pipe(
+            Effect.catchTags({
+              PluginConfigError: (error) =>
+                Effect.logWarning("ignoring unreadable plugins.json", { path: error.path }).pipe(
+                  Effect.as(emptyConfig),
+                ),
+            }),
+          )
+        : readConfig
+    ).pipe(
+      Effect.tap((config) => Ref.set(pluginsConfig, config)),
+      configLock.withPermits(1),
+    );
     const plugins = yield* discoverPlugins({ pluginsDir, devPaths: current.devPaths ?? [] }).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
@@ -878,7 +899,6 @@ const make = Effect.gen(function* () {
       yield* runLifecycle(
         Effect.gen(function* () {
           const { plugins, enabled } = yield* discover(false);
-          const fresh = plugins.find((plugin) => plugin.id === pluginId);
           yield* stopPlugin(pluginId);
           // Plugins whose folders are gone are stopped too, or they would keep running unlisted.
           const vanished = (yield* Ref.get(records)).filter(
@@ -899,9 +919,11 @@ const make = Effect.gen(function* () {
             ...added.map((plugin) => initialRecord(plugin, enabled[plugin.id] === true)),
           ]);
           yield* publishStates;
-          if (fresh === undefined) return yield* new PluginNotFoundError({ pluginId });
           for (const plugin of added) {
             if (enabled[plugin.id] === true && "manifest" in plugin) yield* startPlugin(plugin);
+          }
+          if (!plugins.some((plugin) => plugin.id === pluginId)) {
+            return yield* new PluginNotFoundError({ pluginId });
           }
         }),
       );
@@ -912,6 +934,16 @@ const make = Effect.gen(function* () {
 
   const installFailed = (reason: string) => (cause: unknown) =>
     new PluginInstallError({ reason, cause });
+
+  const readSourceManifest = (folder: string) =>
+    fs.readFileString(path.join(folder, "t3-plugin.json")).pipe(
+      Effect.mapError(installFailed("The source has no t3-plugin.json.")),
+      Effect.flatMap((raw) =>
+        decodeManifestJson(raw).pipe(
+          Effect.mapError(installFailed("The source's t3-plugin.json is not a valid manifest.")),
+        ),
+      ),
+    );
 
   // Prompts off, and only transports that cannot run commands (no `ext::`).
   const runGit = (args: ReadonlyArray<string>) =>
@@ -936,6 +968,8 @@ const make = Effect.gen(function* () {
       if (info.type !== "Directory") {
         return yield* new PluginInstallError({ reason: `${source.path} is not a folder.` });
       }
+      // Before copying, so a folder that is not a plugin (a home folder) is never copied.
+      yield* readSourceManifest(from);
       // Copied rather than linked: the installed plugin never changes when the source does.
       yield* fs
         .copy(from, into)
@@ -969,7 +1003,7 @@ const make = Effect.gen(function* () {
     ]).pipe(Effect.mapError(installFailed("Could not run git.")));
     if (result.code !== 0) {
       return yield* new PluginInstallError({
-        reason: `git clone failed: ${result.stderr.trim().slice(-300) || `exit ${result.code}`}`,
+        reason: `git clone failed: ${withoutCredentials(result.stderr.trim(), source).slice(-300) || `exit ${result.code}`}`,
       });
     }
     const head = yield* runGit(["-C", into, "rev-parse", "HEAD"]).pipe(Effect.option);
@@ -1002,13 +1036,7 @@ const make = Effect.gen(function* () {
       .pipe(Effect.mapError(installFailed("Could not create the staging folder.")));
     const { manifest, fetched } = yield* Effect.gen(function* () {
       const fetched = yield* fetchSource(source, staged);
-      const raw = yield* fs
-        .readFileString(path.join(staged, "t3-plugin.json"))
-        .pipe(Effect.mapError(installFailed("The source has no t3-plugin.json.")));
-      const manifest = yield* decodeManifestJson(raw).pipe(
-        Effect.mapError(installFailed("The source's t3-plugin.json is not a valid manifest.")),
-      );
-      return { manifest, fetched };
+      return { manifest: yield* readSourceManifest(staged), fetched };
     }).pipe(
       Effect.tapError(() =>
         fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore),
@@ -1108,7 +1136,7 @@ const make = Effect.gen(function* () {
             if (previous !== undefined) found[pluginId] = previous;
             return Effect.logWarning("plugin update check failed", {
               pluginId,
-              cause: Cause.pretty(cause).slice(0, 500),
+              cause: withoutCredentials(Cause.pretty(cause), source).slice(0, 500),
             });
           }),
         ),

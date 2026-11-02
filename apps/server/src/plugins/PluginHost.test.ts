@@ -180,6 +180,15 @@ const layerHost = (services: typeof layerUnusedServices = layerUnusedServices) =
     ),
   );
 
+/** The real file system with some of its methods replaced, for the host's layer. */
+const layerFileSystemWith = (
+  replace: (fs: FileSystem.FileSystem) => Partial<FileSystem.FileSystem>,
+) =>
+  Layer.effect(
+    FileSystem.FileSystem,
+    FileSystem.FileSystem.use((fs) => Effect.succeed({ ...fs, ...replace(fs) })),
+  );
+
 const writeFile = Effect.fn(function* (filePath: string, contents: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -556,7 +565,7 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
         `const marker = require("node:path").join(__dirname, "..", "..", "goes-cleaned");
 module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").writeFileSync(marker, "")); } };`,
       );
-      yield* writePluginsConfig({ enabled: { stays: true, goes: true } });
+      yield* writePluginsConfig({ enabled: { stays: true, goes: true, arrives: true } });
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
         const fs = yield* FileSystem.FileSystem;
@@ -567,6 +576,14 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
 
         assert.isTrue(yield* fs.exists(`${stays}/../../goes-cleaned`));
         assert.isUndefined(stateOf(yield* host.list, "goes"));
+
+        // Reloading a plugin that is gone still starts the plugins the rescan found.
+        yield* writeInstalledPlugin("arrives", `module.exports = { activate() {} };`);
+        const missing = yield* host.reload(PluginId.make("goes")).pipe(Effect.flip);
+        assert.strictEqual(missing._tag, "PluginNotFoundError");
+        assert.include(yield* host.setEnabled(PluginId.make("arrives"), true), {
+          status: "active",
+        });
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
@@ -645,6 +662,48 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
       }).pipe(Effect.provide(layerHost()));
       Reflect.deleteProperty(globalThis, "__t3PluginHostCleanupStarted");
       Reflect.deleteProperty(globalThis, "__t3PluginHostCleanupGate");
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("tears down a plugin turned off while its skills are copied for agents", () =>
+    Effect.gen(function* () {
+      const id = PluginId.make("held");
+      const rootDir = yield* writeInstalledPlugin(
+        id,
+        `module.exports = { activate(api) { api.slashCommands.register({ name: "held" }, () => undefined); } };`,
+      );
+      yield* writeFile(`${rootDir}/skills/notes/SKILL.md`, "---\nname: notes\n---\nTake notes.\n");
+      yield* writePluginsConfig({ enabled: { [id]: true } });
+      const copying = yield* Deferred.make<void>();
+      const released = yield* Deferred.make<void>();
+      // Holds the skills copy until the disable has saved plugins.json (its temporary folder is
+      // removed last). The release is scheduled, so the disable asks the activation to stop first.
+      const layerHeldCopy = layerFileSystemWith((fs) => ({
+        copy: (from, to, options) =>
+          (from.endsWith("skills")
+            ? Deferred.succeed(copying, undefined).pipe(Effect.andThen(Deferred.await(released)))
+            : Effect.void
+          ).pipe(Effect.andThen(fs.copy(from, to, options))),
+        remove: (target, options) =>
+          fs
+            .remove(target, options)
+            .pipe(
+              Effect.tap(() =>
+                target.includes("plugins.json.")
+                  ? Effect.forkDetach(Deferred.succeed(released, undefined))
+                  : Effect.void,
+              ),
+            ),
+      }));
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const hooks = yield* PluginHooks.PluginHooks;
+        yield* Deferred.await(copying);
+
+        yield* host.setEnabled(id, false);
+        assert.deepStrictEqual(yield* hooks.currentSlashCommands, []);
+        assert.include(yield* host.setEnabled(id, true), { status: "active" });
+      }).pipe(Effect.provide(layerHost().pipe(Layer.provide(layerHeldCopy))));
     }).pipe(Effect.provide(layerConfig())),
   );
 
@@ -1039,9 +1098,25 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         const { stateDir } = yield* ServerConfig.ServerConfig;
         const broken = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-plugin-broken-" });
         yield* writeFile(`${broken}/t3-plugin.json`, JSON.stringify({ id: "hello-plugin" }));
+        const notPlugin = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-plugin-none-" });
+        yield* writeFile(`${notPlugin}/notes.txt`, "Not a plugin.");
+        const copiedFrom: Array<string> = [];
+        const layerCopies = layerFileSystemWith((real) => ({
+          copy: (from, to, options) =>
+            Effect.sync(() => copiedFrom.push(from)).pipe(
+              Effect.andThen(real.copy(from, to, options)),
+            ),
+        }));
         yield* Effect.gen(function* () {
           const host = yield* PluginHost.PluginHost;
           yield* waitForStatuses(host, {});
+
+          // A folder that is not a plugin, such as a home folder, is refused before it is copied.
+          const notInstalled = yield* host
+            .install({ type: "path", path: notPlugin })
+            .pipe(Effect.flip);
+          assert.strictEqual(notInstalled.message, "The source has no t3-plugin.json.");
+          assert.notInclude(copiedFrom, notPlugin);
 
           const source = { type: "path" as const, path: `${fixturesDir}hello-plugin` };
           const installed = yield* host.install(source);
@@ -1106,7 +1181,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           assert.deepStrictEqual((yield* fs.readDirectory(`${stateDir}/plugins`)).toSorted(), [
             "npm-hello",
           ]);
-        }).pipe(Effect.provide(layerHost()));
+        }).pipe(Effect.provide(layerHost().pipe(Layer.provide(layerCopies))));
       }).pipe(Effect.provide(layerConfig())),
   );
 
@@ -1389,6 +1464,22 @@ it.live("lists a project's git worktrees for a plugin", () =>
       );
     }).pipe(Effect.provide(layerHost(services)));
   }).pipe(Effect.provide(layerConfig()), Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("keeps a git URL's credentials out of a failed install's reason", () =>
+  Effect.gen(function* () {
+    const host = yield* PluginHost.PluginHost;
+    // Git prints `user:token@host` for a git:// URL it cannot reach.
+    const failed = yield* host
+      .install({ type: "git", url: "git://ash:secret-token@127.0.0.1:1/plugin.git" })
+      .pipe(Effect.flip);
+    assert.match(failed.message, /^git clone failed: /);
+    assert.notInclude(failed.message, "secret-token");
+  }).pipe(
+    Effect.provide(
+      layerHost().pipe(Layer.provideMerge(layerConfig()), Layer.provideMerge(NodeServices.layer)),
+    ),
+  ),
 );
 
 it.live("runs a turn with the ACP agent a plugin registers by its command", () =>
