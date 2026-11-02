@@ -78,6 +78,7 @@ export const PluginManifest = Schema.Struct({
 });
 export type PluginManifest = typeof PluginManifest.Type;
 
+/** `dev` is a folder loaded where it is: one in `devPaths` or installed with `link`. */
 export const PluginSource = Schema.Literals(["installed", "dev"]);
 export type PluginSource = typeof PluginSource.Type;
 
@@ -101,7 +102,12 @@ export type PluginFailure = typeof PluginFailure.Type;
 
 /** Where `plugins.install` gets a plugin: a folder on the server, a git repository or npm. */
 export const PluginInstallSource = Schema.Union([
-  Schema.Struct({ type: Schema.Literal("path"), path: TrimmedNonEmptyString }),
+  Schema.Struct({
+    type: Schema.Literal("path"),
+    path: TrimmedNonEmptyString,
+    /** Loads the folder where it is instead of copying it; removing the plugin only unlinks it. */
+    link: Schema.optionalKey(Schema.Boolean),
+  }),
   Schema.Struct({
     type: Schema.Literal("git"),
     url: TrimmedNonEmptyString,

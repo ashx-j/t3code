@@ -301,31 +301,33 @@ const make = Effect.gen(function* () {
   const loggedCollisions = new Set<string>();
   const providerHas = (
     command: PluginSlashCommand,
-    providerInstanceId: Effect.Effect<string | undefined>,
-  ) =>
-    providerInstanceId.pipe(
-      Effect.flatMap((instanceId) =>
-        instanceId === undefined
-          ? Effect.succeed(false)
-          : Ref.get(providerCommands).pipe(
-              Effect.flatMap((names) => names(instanceId)),
-              Effect.map((names) => names.includes(command.name)),
-              Effect.tap((has) => {
-                const key = `${instanceId}/${command.name}`;
-                if (!has || loggedCollisions.has(key)) return Effect.void;
-                loggedCollisions.add(key);
-                return Effect.logWarning(
-                  "a provider's own slash command is used instead of a plugin's",
-                  {
-                    pluginId: command.pluginId,
-                    command: command.name,
-                    instanceId,
-                  },
-                );
-              }),
-            ),
-      ),
-    );
+    providerInstanceId: Effect.Effect<string | undefined> | undefined,
+  ): Effect.Effect<boolean> =>
+    providerInstanceId === undefined
+      ? Effect.succeed(false)
+      : providerInstanceId.pipe(
+          Effect.flatMap((instanceId) =>
+            instanceId === undefined
+              ? Effect.succeed(false)
+              : Ref.get(providerCommands).pipe(
+                  Effect.flatMap((names) => names(instanceId)),
+                  Effect.map((names) => names.includes(command.name)),
+                  Effect.tap((has) => {
+                    const key = `${instanceId}/${command.name}`;
+                    if (!has || loggedCollisions.has(key)) return Effect.void;
+                    loggedCollisions.add(key);
+                    return Effect.logWarning(
+                      "a provider's own slash command is used instead of a plugin's",
+                      {
+                        pluginId: command.pluginId,
+                        command: command.name,
+                        instanceId,
+                      },
+                    );
+                  }),
+                ),
+          ),
+        );
   // A plugin sees a message once: a replayed command id was handled when it was first accepted.
   const unlessAccepted = <A>(
     alreadyAccepted: Effect.Effect<boolean>,
@@ -362,7 +364,7 @@ const make = Effect.gen(function* () {
         Effect.tap((entry) => Ref.update(hooks, (all) => [...all, entry])),
         Effect.map((entry) => Ref.update(hooks, (all) => all.filter((other) => other !== entry))),
       ),
-    beforeDispatch: (message, alreadyAccepted, providerInstanceId = Effect.succeed(undefined)) => {
+    beforeDispatch: (message, alreadyAccepted, providerInstanceId) => {
       // Text that only starts with a slash, such as a path, is not a command.
       const match = SLASH_COMMAND.exec(message.text.trimStart());
       if (match === null) return runHooks(message, alreadyAccepted);

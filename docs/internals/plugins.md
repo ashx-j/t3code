@@ -47,7 +47,10 @@ underscores so the `plg_<id>_` prefix on plugin MCP tool names belongs to one pl
 checked lexically; code that reads or serves them must still resolve symlinks. `contributes` rejects
 unknown keys, so a plugin written for a newer T3 fails with a reason instead of losing one silently.
 Settings are validated by Effect's JSON Schema 2020-12 importer; a schema it cannot import rejects
-saves with the importer's reason.
+saves with the importer's reason. Plugins read top-level `default`s for fields nobody saved, while
+clients get only what is saved, so a form can tell a default from a choice. A save first drops
+stored keys a schema with `additionalProperties: false` no longer lists: the form cannot remove a
+key it does not show, and validating it would refuse every save.
 
 ## Clients
 
@@ -146,7 +149,10 @@ request while plugins decide: holding it back would need a change at every adapt
 
 A server plugin's slash commands are provider slash commands: the server adds them to every
 provider's lists where it adds `/usage-limits`, so every client lists them with no plugin code, and
-the `beforeDispatch` path runs the plugin's handler instead of the hooks. A handler's `reply` turns
+the `beforeDispatch` path runs the plugin's handler instead of the hooks. A provider's own command
+of the same name wins in that provider's lists and when a message goes to it, so a plugin cannot
+take `/review` from an agent that has one. T3's own names, shared with the composer, are refused
+at registration. A handler's `reply` turns
 the message into the internal `thread.command-reply.record` command under the message's command id,
 so a retry replays it. The orchestrator records the sent message and an `assistant_message` reply
 as a run that is already completed, with no provider thread, attempt or checkpoint: clients drop a
@@ -262,6 +268,12 @@ leaves the old version in staging; startup puts it back when nothing replaced it
 staging. Uninstall deletes the entry in `plugins/`, never the plugin's resolved `rootDir`, which for
 a symlinked plugin is the author's own folder. Git clones run with prompts off and
 `GIT_ALLOW_PROTOCOL` set, which blocks transports such as `ext::` that run commands.
+
+An agent writing a plugin installs its folder with `link`, which adds it to `devPaths` rather than
+copying it, so edits plus a reload are the whole loop; removing it only takes it out of
+`devPaths`. Symlinks into `plugins/` would do the same but need extra rights on Windows. Settings
+never take a typed folder path; linking is for agents through MCP. `t3_plugins_check` reads a
+plugin's files and never loads its code, so it can check a folder before anyone trusts it.
 
 Discovery takes a plugin's id from its manifest, not its folder name, because people copy plugin
 folders in by hand. A folder named after its id wins over other copies, and installs replace a

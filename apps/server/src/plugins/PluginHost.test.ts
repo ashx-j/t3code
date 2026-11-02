@@ -628,6 +628,55 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
     }).pipe(Effect.provide(layerConfig())),
   );
 
+  it.effect("links a folder in place, reloads its edits and keeps the folder when removed", () =>
+    Effect.gen(function* () {
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const folder = `${stateDir}/checkout/in-place`;
+      const plugin = (version: string) =>
+        `module.exports = { activate(api) { api.rpc.register("which", () => "${version}", { access: "read" }); } };`;
+      yield* writeFile(
+        `${folder}/t3-plugin.json`,
+        JSON.stringify({
+          id: "in-place",
+          name: "In place",
+          version: "0.1.0",
+          engines: { t3: ">=0.1.0" },
+          server: "./server.cjs",
+        }),
+      );
+      yield* writeFile(`${folder}/server.cjs`, plugin("v1"));
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const id = PluginId.make("in-place");
+        const which = host.invoke({
+          pluginId: id,
+          method: "which",
+          input: undefined,
+          scopes: operate,
+        });
+        assert.include(yield* host.install({ type: "path", path: folder, link: true }), {
+          status: "active",
+          enabled: true,
+          source: "dev",
+        });
+        assert.isFalse(yield* fs.exists(`${stateDir}/plugins/in-place`));
+        assert.strictEqual(yield* which, "v1");
+
+        yield* writeFile(`${folder}/server.cjs`, plugin("v2"));
+        yield* host.reload(id);
+        assert.strictEqual(yield* which, "v2");
+        const copy = yield* host.install({ type: "path", path: folder }).pipe(Effect.flip);
+        assert.match(copy.message, /is linked from/);
+
+        yield* host.uninstall(id, false);
+        assert.isTrue(yield* fs.exists(`${folder}/server.cjs`));
+        // Forgotten, not only stopped: a rescan does not find it again.
+        assert.isUndefined(stateOf((yield* host.rescan).plugins, "in-place"));
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
   it.effect("finishes disabling a plugin when the caller gives up during its cleanup", () =>
     Effect.gen(function* () {
       const started = Promise.withResolvers<void>();
