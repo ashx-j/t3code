@@ -159,8 +159,8 @@ them in both.
 T3's own controls as ready-made pieces to arrange, plus `original`, T3's own drawing of the part.
 The parts and their pieces are listed in `WebPluginParts`. If your component throws, T3 draws its
 own part. [`examples/classic-composer`](./examples/classic-composer) moves the composer's controls
-back to their layout from before T3's redesign.
-[`examples/settings-pages`](./examples/settings-pages) shows Settings in place of the thread
+back to their layout from before T3's redesign and folds the composer while the timeline is
+scrolled up. [`examples/settings-pages`](./examples/settings-pages) shows Settings in place of the thread
 (`app.pageFrame`'s `page`) and lists its sections in the sidebar, with Back at the bottom
 (`app.sidebar`'s `nav` and `back`). `composer.setCollapseOnScroll(true)` folds the composer to one
 line on wide screens while the timeline is scrolled up, as it does on phones. [`examples/message-extras`](./examples/message-extras) adds a word count under assistant messages,
