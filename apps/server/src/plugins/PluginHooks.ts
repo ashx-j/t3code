@@ -182,6 +182,13 @@ export const withPluginSkills = <P extends ServerProvider>(
   });
 };
 
+/** Adds plugin slash commands and skills to the provider lists clients receive. */
+export const withPluginItems = <P extends ServerProvider>(
+  providers: ReadonlyArray<P>,
+  commands: ReadonlyArray<PluginSlashCommand>,
+  skills: ReadonlyArray<PluginSkill>,
+): ReadonlyArray<P> => withPluginSkills(withPluginSlashCommands(providers, commands), skills);
+
 /** The registry behind the `PluginHooks` reference. */
 export interface PluginHooksRegistry {
   /** Adds a hook and returns the effect that removes it. */

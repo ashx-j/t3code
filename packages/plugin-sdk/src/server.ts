@@ -509,7 +509,9 @@ export interface PluginApi {
   readonly http: {
     /**
      * Serves `method path` under `/api/plugins/<pluginId>` with the same sign-in as the rest of
-     * `/api`. A path ending in `/*` answers every path below it; the longest match wins.
+     * `/api`: GET needs the `orchestration:read` scope, other methods `orchestration:operate`. A
+     * path ending in `/*` answers every path below it; the longest match wins. Handlers never see
+     * the `authorization`, `cookie` or `dpop` headers.
      */
     readonly route: (
       method: "GET" | "POST" | "PUT" | "DELETE",

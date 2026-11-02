@@ -199,7 +199,6 @@ export class PluginHost extends Context.Service<
       Schema.JsonObject,
       PluginNotFoundError | PluginNotActiveError | PluginSettingsError
     >;
-    /** `scopes` are the caller's; methods the plugin registered as writes need the operate scope. */
     /**
      * Copies or clones a plugin into the plugins folder, enables it and starts it. It is staged
      * first and swapped in with a rename, so a failed install leaves the previous version.
@@ -221,6 +220,7 @@ export class PluginHost extends Context.Service<
       pluginId: PluginId,
       removeData: boolean,
     ) => Effect.Effect<void, PluginInstallError | PluginNotFoundError | PluginConfigError>;
+    /** `scopes` are the caller's; methods the plugin registered as writes need the operate scope. */
     readonly invoke: (input: {
       readonly pluginId: PluginId;
       readonly method: string;
