@@ -377,6 +377,7 @@ import {
 } from "./scheduledTask.ts";
 import {
   PluginError,
+  PluginInstallFilesInput,
   PluginInstallInput,
   PluginInvokeInput,
   PluginInvokeResult,
@@ -386,6 +387,8 @@ import {
   PluginListInput,
   PluginCheckUpdatesInput,
   PluginListResult,
+  PluginRescanInput,
+  PluginRescanResult,
   PluginMutationResult,
   PluginReloadInput,
   PluginSetEnabledInput,
@@ -573,6 +576,8 @@ export const WS_METHODS = {
   pluginsSetEnabled: "plugins.setEnabled",
   pluginsReload: "plugins.reload",
   pluginsInstall: "plugins.install",
+  pluginsInstallFiles: "plugins.installFiles",
+  pluginsRescan: "plugins.rescan",
   pluginsUninstall: "plugins.uninstall",
   pluginsUpdate: "plugins.update",
   pluginsCheckUpdates: "plugins.checkUpdates",
@@ -2017,6 +2022,20 @@ const WsPluginsInstallRpc = Rpc.make(WS_METHODS.pluginsInstall, {
   error: PluginRpcError,
 });
 
+/** Installs a plugin folder dropped into a client, sent as its files. */
+const WsPluginsInstallFilesRpc = Rpc.make(WS_METHODS.pluginsInstallFiles, {
+  payload: PluginInstallFilesInput,
+  success: PluginMutationResult,
+  error: PluginRpcError,
+});
+
+/** Looks at the plugins folder again, so plugin folders put there since are listed. */
+const WsPluginsRescanRpc = Rpc.make(WS_METHODS.pluginsRescan, {
+  payload: PluginRescanInput,
+  success: PluginRescanResult,
+  error: PluginRpcError,
+});
+
 const WsPluginsUpdateRpc = Rpc.make(WS_METHODS.pluginsUpdate, {
   payload: PluginUpdateInput,
   success: PluginMutationResult,
@@ -2151,6 +2170,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsPluginsSetEnabledRpc,
   WsPluginsReloadRpc,
   WsPluginsInstallRpc,
+  WsPluginsInstallFilesRpc,
+  WsPluginsRescanRpc,
   WsPluginsUninstallRpc,
   WsPluginsUpdateRpc,
   WsPluginsCheckUpdatesRpc,

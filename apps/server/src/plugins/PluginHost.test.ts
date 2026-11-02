@@ -1158,17 +1158,21 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           });
           // Another source claiming an installed id is refused before anything moves.
           const impostor = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-plugin-impostor-" });
-          yield* writeFile(
-            `${impostor}/t3-plugin.json`,
-            JSON.stringify({
-              id: "npm-hello",
-              name: "Impostor",
-              version: "9.0.0",
-              engines: { t3: ">=0.1.0" },
-            }),
-          );
+          const impostorManifest = JSON.stringify({
+            id: "npm-hello",
+            name: "Impostor",
+            version: "9.0.0",
+            engines: { t3: ">=0.1.0" },
+          });
+          yield* writeFile(`${impostor}/t3-plugin.json`, impostorManifest);
           const takeover = yield* host.install({ type: "path", path: impostor }).pipe(Effect.flip);
           assert.match(takeover.message, /already installed from somewhere else/);
+          const dropped = yield* host
+            .installFiles([
+              { path: "t3-plugin.json", contents: new TextEncoder().encode(impostorManifest) },
+            ])
+            .pipe(Effect.flip);
+          assert.match(dropped.message, /already installed from somewhere else/);
           // Updating a disabled plugin keeps it disabled.
           yield* host.setEnabled(PluginId.make("npm-hello"), false);
           const npmUpdated = yield* host.update(PluginId.make("npm-hello"));
@@ -1183,6 +1187,57 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           ]);
         }).pipe(Effect.provide(layerHost().pipe(Layer.provide(layerCopies))));
       }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("installs a dropped folder and lists folders put in the plugins folder, off", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const helloFiles = yield* Effect.forEach(["t3-plugin.json", "server.cjs"], (name) =>
+        fs
+          .readFile(`${fixturesDir}hello-plugin/${name}`)
+          .pipe(Effect.map((contents) => ({ path: name, contents }))),
+      );
+      const notesManifest = (version: string) =>
+        JSON.stringify({ id: "notes", name: "Notes", version, engines: { t3: ">=0.1.0" } });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        yield* waitForStatuses(host, {});
+        // Settings points people at the plugins folder, so a rescan makes sure it exists.
+        yield* host.rescan;
+        assert.isTrue(yield* fs.exists(`${stateDir}/plugins`));
+
+        const installed = yield* host.installFiles(helloFiles);
+        assert.include(installed, { id: hello, status: "active", enabled: true });
+        assert.isUndefined(installed.installSource);
+        // The same folder dropped again replaces it.
+        const replaced = yield* host.installFiles(helloFiles);
+        assert.notStrictEqual(replaced.revision, installed.revision);
+
+        // Copied in by hand under any name, a plugin is listed on the next rescan, turned off.
+        yield* writeFile(`${stateDir}/plugins/My Notes/t3-plugin.json`, notesManifest("1.0.0"));
+        yield* writeFile(`${stateDir}/plugins/My Notes/skills/notes/SKILL.md`, "Notes.");
+        const { plugins, folder } = yield* host.rescan;
+        assert.strictEqual(folder, `${stateDir}/plugins`);
+        assert.include(stateOf(plugins, "notes"), {
+          status: "disabled",
+          enabled: false,
+          hasSkills: true,
+        });
+
+        // A dropped folder replaces a plugin copied in by hand, in the folder it was copied to.
+        yield* host.installFiles([
+          { path: "t3-plugin.json", contents: new TextEncoder().encode(notesManifest("1.1.0")) },
+        ]);
+        assert.include(stateOf(yield* host.list, "notes"), { version: "1.1.0", enabled: false });
+        assert.deepStrictEqual((yield* fs.readDirectory(`${stateDir}/plugins`)).toSorted(), [
+          "My Notes",
+          "hello-plugin",
+        ]);
+        yield* host.uninstall(PluginId.make("notes"), false);
+        assert.isFalse(yield* fs.exists(`${stateDir}/plugins/My Notes`));
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
   );
 
   it.effect("checks installed plugins for updates once a day, not at startup", () =>

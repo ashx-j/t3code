@@ -3,10 +3,12 @@ import {
   type PluginCheckUpdatesInput,
   PluginError,
   type PluginId,
+  type PluginInstallFilesInput,
   type PluginInstallInput,
   type PluginInvokeInput,
   type PluginListInput,
   type PluginReloadInput,
+  type PluginRescanInput,
   type PluginSetEnabledInput,
   type PluginSettingsGetInput,
   type PluginSettingsUpdateInput,
@@ -50,6 +52,13 @@ export const makePluginRpcHandlers = (
       Effect.map((plugin) => ({ plugin })),
       Effect.mapError((error) => new PluginError({ message: error.message })),
     ),
+  [WS_METHODS.pluginsInstallFiles]: (input: PluginInstallFilesInput) =>
+    pluginHost.installFiles(input.files).pipe(
+      Effect.map((plugin) => ({ plugin })),
+      Effect.mapError((error) => new PluginError({ message: error.message })),
+    ),
+  [WS_METHODS.pluginsRescan]: (_input: PluginRescanInput) =>
+    pluginHost.rescan.pipe(Effect.mapError((error) => new PluginError({ message: error.message }))),
   [WS_METHODS.pluginsUpdate]: (input: PluginUpdateInput) =>
     pluginHost.update(input.pluginId).pipe(
       Effect.map((plugin) => ({ plugin })),

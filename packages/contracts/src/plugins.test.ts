@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { PluginManifest } from "./plugins.ts";
+import { PluginInstallFilesInput, PluginManifest } from "./plugins.ts";
 
 const decodeManifest = Schema.decodeUnknownSync(PluginManifest);
 
@@ -42,5 +42,19 @@ describe("PluginManifest", () => {
     ["a web entry that escapes the plugin directory", { web: "dist/../../web.js" }],
   ])("rejects %s", (_name, override) => {
     expect(() => decodeManifest({ ...manifest, ...override })).toThrow();
+  });
+});
+
+describe("PluginInstallFilesInput", () => {
+  const decodeFiles = Schema.decodeUnknownSync(PluginInstallFilesInput);
+
+  it("decodes file contents from base64 and refuses paths outside the folder", () => {
+    expect(decodeFiles({ files: [{ path: "dist/web.js", contents: "aGk=" }] }).files[0]).toEqual({
+      path: "dist/web.js",
+      contents: new TextEncoder().encode("hi"),
+    });
+    for (const path of ["../outside.js", "/etc/passwd", "C:/plugin/web.js", "dist\\web.js"]) {
+      expect(() => decodeFiles({ files: [{ path, contents: "" }] })).toThrow();
+    }
   });
 });

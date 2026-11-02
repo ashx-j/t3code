@@ -42,7 +42,7 @@ cannot lose them and a dev plugin's settings never look like an installed plugin
 
 ## Ids and manifests
 
-Ids are lowercase because they name directories on case-insensitive filesystems, and have no
+Ids are lowercase because installs name directories after them on case-insensitive filesystems, and have no
 underscores so the `plg_<id>_` prefix on plugin MCP tool names belongs to one plugin. Entry paths are
 checked lexically; code that reads or serves them must still resolve symlinks. `contributes` rejects
 unknown keys, so a plugin written for a newer T3 fails with a reason instead of losing one silently.
@@ -262,6 +262,19 @@ leaves the old version in staging; startup puts it back when nothing replaced it
 staging. Uninstall deletes the entry in `plugins/`, never the plugin's resolved `rootDir`, which for
 a symlinked plugin is the author's own folder. Git clones run with prompts off and
 `GIT_ALLOW_PROTOCOL` set, which blocks transports such as `ext::` that run commands.
+
+Discovery takes a plugin's id from its manifest, not its folder name, because people copy plugin
+folders in by hand. A folder named after its id wins over other copies, and installs replace a
+plugin in the folder it was found in. There is no watcher on `plugins/`: the server reads it at
+startup, on reload and when Settings → Plugins asks with `plugins.rescan`, so an idle server pays
+nothing for it.
+
+`plugins.installFiles` takes a folder the client read from a drop or a folder picker, in one
+message, within the limits in the contract. Clients cannot hand the server a path, which would
+mean nothing on a remote environment. Sent files record no source, so they may replace only a
+plugin that has none, and a git or npm plugin cannot be taken over by dropping a folder with its id.
+Settings installs on several environments main first: plugin UI loads only from the main
+environment, so a plugin without server code or agent skills goes nowhere else.
 
 Install records the npm version or git commit it fetched in `plugins.json`. Update checks compare
 it with the registry's tag or `git ls-remote` and keep what they found there with the time of the

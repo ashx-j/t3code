@@ -40,6 +40,14 @@ export function createPluginEnvironmentAtoms<R, E>(
       label: "environment-data:plugins:install",
       tag: WS_METHODS.pluginsInstall,
     }),
+    installPluginFiles: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:plugins:install-files",
+      tag: WS_METHODS.pluginsInstallFiles,
+    }),
+    rescanPlugins: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:plugins:rescan",
+      tag: WS_METHODS.pluginsRescan,
+    }),
     updatePlugin: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:plugins:update",
       tag: WS_METHODS.pluginsUpdate,
