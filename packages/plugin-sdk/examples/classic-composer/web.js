@@ -57,14 +57,14 @@ var css = `
   gap: 1rem;
   & p {
     margin: 0;
-    font-size: 0.875rem;
+    font-size: var(--text-sm);
     font-weight: 500;
   }
   & p + p {
-    font-weight: 400;
     margin-top: 0.125rem;
-    font-size: 0.75rem;
-    opacity: 0.7;
+    color: var(--muted-foreground);
+    font-size: var(--text-xs);
+    font-weight: 400;
   }
 }
 `;

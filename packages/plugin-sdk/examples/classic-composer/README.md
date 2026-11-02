@@ -6,8 +6,8 @@ card's edges. Scrolling the timeline up rests an existing thread's composer as o
 pickers under it; focusing it or scrolling back to the end expands it. The plugin's **Settings**
 button on the Plugins page turns that off on this device.
 
-Install it from **Settings → Plugins → Add plugin** with this folder's path. Turning it off brings
-back T3's current composer.
+Install it by dragging this folder onto **Settings → Plugins**, or with **Add plugin → Choose
+folder**. Turning it off brings back T3's current composer.
 
 It uses `api.ui.replace("composer.controls", …)`, so it only arranges T3's own pickers and buttons,
 `api.composer.setCollapseOnScroll`, which turns on T3's own folded composer from phones, and
