@@ -5,6 +5,39 @@ const css = `
   --radius: 0.625rem;
   --control-radius: 0.625rem;
 
+  /* Hairlines and hover fills are translucent white, so they read the same on the canvas, cards
+     and rows. A theme only takes solid colors, so these replace the ones T3 derives from it. */
+  &.dark {
+    --secondary: rgb(255 255 255 / 4%);
+    --muted: rgb(255 255 255 / 4%);
+    --accent: rgb(255 255 255 / 5%);
+    --border: rgb(255 255 255 / 6%);
+    --input: rgb(255 255 255 / 9%);
+    --ring: rgb(255 255 255 / 32%);
+    --error-surface: rgb(233 84 79 / 12%);
+    --success: #3fb950;
+    --success-foreground: #46c157;
+    --info: #1f9fe0;
+    --info-foreground: #39acee;
+    --sidebar-control-surface: rgb(255 255 255 / 4%);
+    --sidebar-row-hover: rgb(255 255 255 / 3%);
+    --sidebar-row-active: rgb(255 255 255 / 6%);
+    --sidebar-row-selected: rgb(255 255 255 / 5%);
+  }
+  &.dark [data-app-sidebar] {
+    --background: #121212;
+    --card: #121212;
+    --accent: rgb(255 255 255 / 6%);
+    --muted: rgb(255 255 255 / 4%);
+    --border: rgb(255 255 255 / 6%);
+    --input: rgb(255 255 255 / 9%);
+    --sidebar-control-surface: rgb(255 255 255 / 4%);
+    --sidebar-row-hover: rgb(255 255 255 / 3%);
+    --sidebar-row-active: rgb(255 255 255 / 6%);
+    --sidebar-row-selected: rgb(255 255 255 / 5%);
+    --secondary-label: #6b6b6b;
+  }
+
   /* The details panel drops its frosted glass: each section is its own card, rows sit on a
      raised layer inside it, and a gap replaces the divider between sections. */
   & [data-thread-details-card] {

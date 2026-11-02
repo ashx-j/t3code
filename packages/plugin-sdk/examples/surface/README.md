@@ -1,9 +1,10 @@
 # Surface
 
 A web-only plugin with a dark theme and a stylesheet. The theme is neutral grays: a #151515
-background, #191919 cards, #1e1e1e raised rows and a near-white main button. The stylesheet rounds
-corners a little more, turns each thread details section into its own card, gives segmented tabs a
-sunken track and makes the stop button a dark square with a red icon.
+background, #191919 cards, #1e1e1e raised rows and a near-white main button. The stylesheet makes
+borders and hover fills translucent white, rounds corners a little more, turns each thread details
+section into its own card, gives segmented tabs a sunken track and makes the stop button a dark
+square with a red icon.
 
 Install it from **Settings → Plugins → Add plugin** with this folder's path, then pick **Surface**
 under **Settings → Appearance → Themes** and switch the color scheme to Dark. The stylesheet only
