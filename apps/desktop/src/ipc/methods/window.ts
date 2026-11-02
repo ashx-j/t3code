@@ -272,8 +272,10 @@ export const setWindowBackground = DesktopIpc.makeIpcMethod({
     const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
     const change = yield* appSettings.setWindowBackground(color);
     if (!change.changed) return;
-    const background = change.settings.windowBackground;
-    if (background === null) return;
+    // A theme without a palette goes back to the plain light or dark background.
+    const background =
+      change.settings.windowBackground ??
+      ((yield* (yield* ElectronTheme.ElectronTheme).shouldUseDarkColors) ? "#000000" : "#ffffff");
     const electronWindow = yield* ElectronWindow.ElectronWindow;
     yield* electronWindow.syncAllAppearance((window) =>
       Effect.sync(() => {
