@@ -74,6 +74,7 @@ var web_default = defineWebPlugin({
         }),
     });
     api.injectStyles(".hello-web-panel { border-top: 2px solid var(--color-primary); }");
+    api.composer.setCollapseOnScroll(true);
     api.rightPanel.register({
       name: "hello",
       title: "Hello panel",

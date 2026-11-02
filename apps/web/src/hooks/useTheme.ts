@@ -16,6 +16,7 @@ import {
   resolveThemeAppearance,
   resolveThemeHalf,
   subscribeToThemePreview,
+  themeCanvasHex,
   THEME_PREVIEW_ID,
   THEME_APPEARANCE_MODE_STORAGE_KEY,
   THEME_FOLLOW_SYSTEM_STORAGE_KEY,
@@ -37,6 +38,8 @@ type ThemeSnapshot = {
 };
 
 type DesktopThemeBridge = Pick<DesktopBridge, "setTheme">;
+// Undefined until the first report, so a color left from a removed theme is cleared too.
+let lastDesktopWindowBackground: string | null | undefined;
 
 const STORAGE_KEY = "t3code:theme";
 const MEDIA_QUERY = "(prefers-color-scheme: dark)";
@@ -333,11 +336,13 @@ function applyTheme(theme: Theme, { suppressTransitions = false, preservePreview
     appearanceMode,
     themeHalves,
   );
-  applyThemePalette(resolveThemeHalf(theme, themeHalves, resolvedAppearance), resolvedAppearance);
+  const appliedTheme = resolveThemeHalf(theme, themeHalves, resolvedAppearance);
+  applyThemePalette(appliedTheme, resolvedAppearance);
   document.documentElement.classList.toggle("dark", resolvedAppearance === "dark");
   lastAppliedTheme = { theme, systemDark, followSystem, appearanceMode, themeHalves };
   syncBrowserChromeTheme();
   syncDesktopTheme(theme, followSystem, appearanceMode);
+  syncDesktopWindowBackground(themeCanvasHex(appliedTheme, resolvedAppearance));
   if (suppressTransitions) {
     // Force a reflow so the no-transitions class takes effect before removal
     void document.documentElement.offsetHeight;
@@ -389,6 +394,19 @@ function syncDesktopTheme(
       }
     },
   );
+}
+
+/** New desktop windows start in the theme's canvas instead of flashing black or white. */
+function syncDesktopWindowBackground(color: string | null) {
+  if (typeof window === "undefined") return;
+  const bridge = window.desktopBridge;
+  if (typeof bridge?.setWindowBackground !== "function") return;
+  if (lastDesktopWindowBackground === color) return;
+  lastDesktopWindowBackground = color;
+  void bridge.setWindowBackground(color).catch((cause: unknown) => {
+    console.error("Could not set the desktop window background.", safeErrorLogAttributes(cause));
+    if (lastDesktopWindowBackground === color) lastDesktopWindowBackground = undefined;
+  });
 }
 
 if (typeof document !== "undefined" && typeof window !== "undefined") {

@@ -57,7 +57,9 @@ import {
   registerPluginSlashCommand,
   registerPluginToolRenderer,
   registerPluginSettingsPanel,
+  pluginContributionKey,
   pluginMentionContextId,
+  setPluginComposerCollapseOnScroll,
   setPluginMentionItems,
   setPluginThreadBadge,
   setPluginWebFailure,
@@ -231,6 +233,7 @@ function makeWebPluginApi({
   // One cleanup each for a plugin's badges and `@` items, however often it updates them.
   const badgedThreads = new Set<string>();
   let mentionCleanupTracked = false;
+  let collapseCleanupTracked = false;
   return {
     version: 1,
     id: pluginId,
@@ -374,6 +377,14 @@ function makeWebPluginApi({
       },
       addButton: (button) => {
         track(registerPluginAction("composer", pluginActionEntry(environmentId, pluginId, button)));
+      },
+      setCollapseOnScroll: (enabled) => {
+        const key = pluginContributionKey(environmentId, pluginId);
+        setPluginComposerCollapseOnScroll(key, enabled === true);
+        if (!collapseCleanupTracked) {
+          collapseCleanupTracked = true;
+          track(() => setPluginComposerCollapseOnScroll(key, false));
+        }
       },
       setMentionItems: (items) => {
         const entries = items.slice(0, 500).map((item) => {

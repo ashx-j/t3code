@@ -33,7 +33,12 @@ import {
 } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPreferences";
-import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
+import {
+  isAppModalPage,
+  isSidebarUtilityPage,
+  useCloseAppModal,
+  useNavigateToMainApp,
+} from "./mainAppLocation";
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
@@ -218,12 +223,23 @@ function SidebarUtilityItem({
   );
 }
 
-const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
+/** What the footer row starts with: T3's page buttons, a Back button, or nothing. */
+type SidebarFooterUtility = "menu" | "back" | "none";
+
+const SidebarUtilityMenu = memo(function SidebarUtilityMenu({
+  utility,
+}: {
+  utility: SidebarFooterUtility;
+}) {
   const navigate = useNavigate();
   const navigateToMainApp = useNavigateToMainApp();
+  const closeAppModal = useCloseAppModal();
   const { isMobile, setOpenMobile } = useSidebar();
   const isOnUtilityPage = useLocation({
     select: (location) => isSidebarUtilityPage(location.pathname),
+  });
+  const isOnAppModalPage = useLocation({
+    select: (location) => isAppModalPage(location.pathname),
   });
   const pullRequestsSupported = usePullRequestsSupported();
   const closeMobileSidebar = () => {
@@ -252,12 +268,12 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
 
   const handleBackClick = () => {
     closeMobileSidebar();
-    void navigateToMainApp();
+    void (isOnAppModalPage ? closeAppModal() : navigateToMainApp());
   };
 
   return (
     <SidebarMenu className="flex-row items-center">
-      {isOnUtilityPage ? (
+      {utility === "none" ? null : utility === "back" || isOnUtilityPage ? (
         <SidebarMenuItem className="min-w-0 flex-1">
           <SidebarMenuButton onClick={handleBackClick}>
             <ArrowLeftIcon />
@@ -291,12 +307,16 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   );
 });
 
-export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
+export const SidebarChromeFooter = memo(function SidebarChromeFooter({
+  utility = "menu",
+}: {
+  utility?: SidebarFooterUtility;
+}) {
   return (
     <SidebarFooter>
       <SidebarProviderUpdatePill />
       <SidebarUpdateArchitectureWarning />
-      <SidebarUtilityMenu />
+      <SidebarUtilityMenu utility={utility} />
     </SidebarFooter>
   );
 });

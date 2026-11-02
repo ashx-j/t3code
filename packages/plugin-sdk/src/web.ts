@@ -170,14 +170,41 @@ export interface WebPluginParts {
   /** The frame Settings and Usage open in. T3 draws a large window over the thread. */
   readonly "app.pageFrame": {
     readonly original: unknown;
-    /** The page itself, with its header and close button. */
+    /** The page itself, with its section list, header and close button. */
     readonly content: unknown;
-    /** The page in place of the thread, beside the sidebar. Esc goes back. */
+    /**
+     * The page in place of the thread, beside the sidebar, without its section list: draw `nav`
+     * here, or `app.sidebar`'s `nav` in the sidebar. Esc goes back.
+     */
     readonly page: unknown;
+    /** The page's section list, such as Settings' sections and search; null when it has none. */
+    readonly nav: unknown;
     /** `Settings` or `Usage`. */
     readonly label: string;
     /** Goes back to where the page was opened. */
     readonly close: () => void;
+  };
+  /**
+   * The sidebar's content, on wide screens and in the phone's sheet. To give a page shown through
+   * `app.pageFrame`'s `page` its own sidebar, draw `nav` in place of `threads` and `back` in place
+   * of `footer`.
+   */
+  readonly "app.sidebar": {
+    readonly original: unknown;
+    /** The top row: the T3 Code name, back and forward buttons, and the toggle on phones. */
+    readonly header: unknown;
+    /** The thread list with its search row, and the sections plugins added under it. */
+    readonly threads: unknown;
+    /** The bottom row: the Settings, Pull requests and Usage buttons, and T3's update button. */
+    readonly footer: unknown;
+    /** `footer` with a Back button in place of its Settings, Pull requests and Usage buttons. */
+    readonly back: unknown;
+    /** T3's update button and update notices alone; `footer` and `back` already have them. */
+    readonly update: unknown;
+    /** The open page's section list, made for the sidebar, while `page` is Settings; else null. */
+    readonly nav: unknown;
+    /** `Settings` or `Usage` while it shows through `app.pageFrame`'s `page`, otherwise null. */
+    readonly page: string | null;
   };
 }
 
@@ -232,6 +259,11 @@ export interface WebPluginApi {
     ) => void;
     /** Adds a button beside the composer's attach button. `threadId` is null in a new thread. */
     readonly addButton: (button: WebPluginAction<{ readonly threadId: string | null }>) => void;
+    /**
+     * While on, the composer on wide screens folds to one line, as it does on phones, when the
+     * timeline scrolls up away from its end. Focusing it or scrolling back to the end unfolds it.
+     */
+    readonly setCollapseOnScroll: (enabled: boolean) => void;
   };
   readonly threads: {
     /** Adds an item to the thread's actions menu, in its header and on right-click in the sidebar. */

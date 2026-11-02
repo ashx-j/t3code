@@ -264,6 +264,25 @@ export const setTheme = DesktopIpc.makeIpcMethod({
   }),
 });
 
+export const setWindowBackground = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.SET_WINDOW_BACKGROUND_CHANNEL,
+  payload: Schema.NullOr(Schema.String),
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.setWindowBackground")(function* (color) {
+    const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
+    const change = yield* appSettings.setWindowBackground(color);
+    if (!change.changed) return;
+    const background = change.settings.windowBackground;
+    if (background === null) return;
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
+    yield* electronWindow.syncAllAppearance((window) =>
+      Effect.sync(() => {
+        if (!window.isDestroyed()) window.setBackgroundColor(background);
+      }),
+    );
+  }),
+});
+
 export const showContextMenu = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.CONTEXT_MENU_CHANNEL,
   payload: ContextMenuInput,

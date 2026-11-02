@@ -40,6 +40,7 @@ import { startPluginLoader } from "./pluginLoader";
 import {
   pluginBannersAtom,
   pluginCommandsAtom,
+  pluginComposerCollapseOnScrollAtom,
   pluginContributionKey,
   pluginRightPanelAtom,
   pluginRightPanelKey,
@@ -123,6 +124,7 @@ describe("startPluginLoader", () => {
       pluginToolRendererKey(environmentId, "plg_hello-web_greet"),
     );
     expect(appAtomRegistry.get(greetRenderer)).toBeDefined();
+    expect(appAtomRegistry.get(pluginComposerCollapseOnScrollAtom)).toBe(true);
 
     stop();
     releaseHungBundle(new Response("missing", { status: 500 }));
@@ -132,6 +134,7 @@ describe("startPluginLoader", () => {
     expect(appAtomRegistry.get(pluginSlashCommandsAtom(environmentId))).toEqual([]);
     expect(appAtomRegistry.get(pluginBannersAtom(environmentId))).toEqual([]);
     expect(appAtomRegistry.get(greetRenderer)).toBeUndefined();
+    expect(appAtomRegistry.get(pluginComposerCollapseOnScrollAtom)).toBe(false);
   });
 
   it("reloads a restarted plugin and undoes what it registers after unloading", async () => {

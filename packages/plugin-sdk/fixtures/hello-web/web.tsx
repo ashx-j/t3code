@@ -45,6 +45,7 @@ export default defineWebPlugin({
       component: (props) => <p className="text-sm">👋 {props.output ?? "Greeting…"}</p>,
     });
     api.injectStyles(".hello-web-panel { border-top: 2px solid var(--color-primary); }");
+    api.composer.setCollapseOnScroll(true);
     api.rightPanel.register({ name: "hello", title: "Hello panel", component: HelloPanel });
     api.composer.registerSlashCommand({
       name: "hello",

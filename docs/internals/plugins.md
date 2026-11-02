@@ -84,6 +84,24 @@ and every timeline row. The `app.pageFrame` part's `page` piece renders Settings
 the thread kept mounted under it; `index.css` hides that thread, and the page carries
 `data-app-modal` so focus and shortcut guards treat it as they treat the window.
 
+The sidebar's header and footer render beside `ThreadSidebar` in `AppSidebarLayout` rather than
+inside it, so the `app.sidebar` part places them without edits to the thread list. `page` leaves
+Settings' section list out; the sidebar's `nav` is a second instance, loaded on demand, because the
+page's own lives in the Settings route's tree and chunk. The shown page publishes its label in an
+atom, so `nav` and `page` stay null under T3's window, where the sidebar sits under the backdrop.
+
+The composer cannot see the timeline's scroll position, which `ChatView` owns. `useTimelineFollow`
+publishes the scroll-to-end pill's state per thread, and the composer reads it only while a plugin
+asks to fold on scroll, so a composer without plugins never re-renders on scroll. A wide screen
+keeps the composer focused while the wheel scrolls, so leaving the end blurs it.
+
+Published palettes, plugin themes among them, arrive over the server config stream after the
+first paint. The client saves them in localStorage on each themes event and reads that copy until
+the server sends its own, so the boot script in `index.html` and the first paint already use a
+plugin theme; an empty event clears the copy. The desktop main process cannot read localStorage,
+so the client sends the applied palette's canvas over IPC and the desktop keeps it in its settings
+for the next window.
+
 Plugin buttons, menu items and badges belong to the plugin's environment, since they act through
 its server half. Thread menus are built and dispatched in two places (the header hook and the
 sidebar); plugin items carry `plugin:` ids that both pass to `runPluginThreadMenuItem` before

@@ -39,6 +39,8 @@ export interface DesktopSettings {
   readonly wslDistro: string | null;
   // Requires restart because the pool chooses its primary spec at layer initialization.
   readonly wslOnly: boolean;
+  /** The renderer's theme canvas as `#rrggbb`, painted before the page loads; null for #000/#fff. */
+  readonly windowBackground: string | null;
 }
 
 export interface DesktopSettingsChange {
@@ -76,6 +78,7 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   wslBackendEnabled: false,
   wslDistro: null,
   wslOnly: false,
+  windowBackground: null,
 };
 
 const DesktopWindowBoundsDocument = Schema.Struct({
@@ -99,6 +102,7 @@ const DesktopSettingsDocument = Schema.Struct({
   wslMode: Schema.optionalKey(Schema.Literals(["local", "wsl"])),
   wslDistro: Schema.optionalKey(Schema.NullOr(Schema.String)),
   wslOnly: Schema.optionalKey(Schema.Boolean),
+  windowBackground: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 
 type DesktopSettingsDocument = typeof DesktopSettingsDocument.Type;
@@ -169,6 +173,9 @@ export class DesktopAppSettings extends Context.Service<
     readonly setWslOnly: (
       enabled: boolean,
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
+    readonly setWindowBackground: (
+      color: string | null,
+    ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
     readonly applyWslWindowsFallback: Effect.Effect<
       DesktopSettingsChange,
       DesktopSettingsWriteError
@@ -192,6 +199,10 @@ function normalizeTailscaleServePort(value: unknown): number {
 
 function normalizeWslDistro(value: unknown): string | null {
   return typeof value === "string" && isValidDistroName(value) ? value : null;
+}
+
+function normalizeWindowBackground(value: unknown): string | null {
+  return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value) ? value.toLowerCase() : null;
 }
 
 export function normalizeMainWindowBounds(value: unknown): DesktopWindowBounds | null {
@@ -230,6 +241,7 @@ function normalizeDesktopSettingsDocument(
     wslBackendEnabled,
     wslDistro: normalizeWslDistro(parsed.wslDistro),
     wslOnly: parsed.wslOnly === true,
+    windowBackground: normalizeWindowBackground(parsed.windowBackground),
   };
 }
 
@@ -275,6 +287,9 @@ function toDesktopSettingsDocument(
   }
   if (settings.wslOnly !== defaults.wslOnly) {
     document.wslOnly = settings.wslOnly;
+  }
+  if (settings.windowBackground !== null) {
+    document.windowBackground = settings.windowBackground;
   }
 
   return document;
@@ -364,6 +379,13 @@ function setWslOnly(settings: DesktopSettings, enabled: boolean): DesktopSetting
         ...settings,
         wslOnly: enabled,
       };
+}
+
+function setWindowBackground(settings: DesktopSettings, color: string | null): DesktopSettings {
+  const normalized = normalizeWindowBackground(color);
+  return settings.windowBackground === normalized
+    ? settings
+    : { ...settings, windowBackground: normalized };
 }
 
 function setLocalEnvironmentEnabled(settings: DesktopSettings, enabled: boolean): DesktopSettings {
@@ -564,6 +586,11 @@ export const make = Effect.gen(function* () {
 
       return yield* persist((settings) => setWslOnly(settings, enabled));
     }),
+    setWindowBackground: Effect.fn("desktop.settings.setWindowBackground")(function* (color) {
+      yield* Effect.annotateCurrentSpan({ color: color ?? null });
+
+      return yield* persist((settings) => setWindowBackground(settings, color));
+    }),
     setLocalEnvironmentEnabled: Effect.fn("desktop.settings.setLocalEnvironmentEnabled")(
       function* (enabled) {
         yield* Effect.annotateCurrentSpan({ enabled });
@@ -628,6 +655,9 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
         }),
         setWslOnly: Effect.fn("DesktopAppSettings.setWslOnly")(function (enabled) {
           return update((settings) => setWslOnly(settings, enabled));
+        }),
+        setWindowBackground: Effect.fn("DesktopAppSettings.setWindowBackground")(function (color) {
+          return update((settings) => setWindowBackground(settings, color));
         }),
         setLocalEnvironmentEnabled: Effect.fn("DesktopAppSettings.setLocalEnvironmentEnabled")(
           function (enabled) {

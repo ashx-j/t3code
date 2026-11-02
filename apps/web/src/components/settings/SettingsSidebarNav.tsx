@@ -128,8 +128,22 @@ function SettingsSectionIcon({ to }: { to: SettingsPath }) {
   return <Icon className="size-4 shrink-0 text-(--sidebar-icon-color)" />;
 }
 
-export function SettingsSidebarNav({ pathname }: { pathname: string }) {
+/**
+ * Settings' sections and search. In the page it is a column that shrinks to an icon rail below
+ * md; a plugin can draw it in the app sidebar instead, where it fills the sidebar's width.
+ */
+export function SettingsSidebarNav({
+  pathname,
+  placement = "page",
+  onNavigate,
+}: {
+  pathname: string;
+  placement?: "page" | "sidebar";
+  /** Runs after a section or search result is picked, such as to close the phone's sheet. */
+  onNavigate?: () => void;
+}) {
   const navArea = workspaceAreaProps("settings-nav", 0, "Settings sections");
+  const rail = placement === "page";
   const navigate = useNavigate();
   const currentHash = useLocation({ select: (location) => location.hash });
   const currentSearch = useLocation({ select: (location) => location.search });
@@ -198,6 +212,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   }, [compactSearchOpen]);
 
   const handleSectionClick = (to: SettingsPath) => {
+    onNavigate?.();
     void navigate({
       to,
       hash: "",
@@ -213,6 +228,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const handleSearchResultClick = (item: SettingsSearchItem) => {
     clearSearch();
     setCompactSearchOpen(false);
+    onNavigate?.();
     const targetId = item.targetId ?? item.id;
     revealSettingsSearchTarget(targetId);
     if (pathname === item.to && currentHash.replace(/^#/, "") === targetId) {
@@ -258,8 +274,11 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       {...navArea}
       role="navigation"
       className={cn(
-        "flex w-60 shrink-0 flex-col border-e bg-sidebar text-sidebar-foreground max-md:w-14",
-        compactSearchOpen &&
+        rail
+          ? "flex w-60 shrink-0 flex-col border-e bg-sidebar text-sidebar-foreground max-md:w-14"
+          : "flex min-h-0 flex-1 flex-col",
+        rail &&
+          compactSearchOpen &&
           "max-md:absolute max-md:inset-y-0 max-md:start-0 max-md:z-10 max-md:w-full",
       )}
     >
@@ -269,7 +288,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
             <div
               className={cn(
                 "flex h-8 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
-                !compactSearchOpen && "max-md:hidden",
+                rail && !compactSearchOpen && "max-md:hidden",
               )}
             >
               <SearchIcon className="size-4 shrink-0 text-sidebar-muted-foreground/80" />
@@ -364,7 +383,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
               </SidebarMenu>
             ) : (
               <div className="flex flex-col gap-4">
-                {compactSearchOpen ? null : (
+                {compactSearchOpen || !rail ? null : (
                   <SidebarMenu className="md:hidden">
                     <SidebarMenuItem>
                       <SidebarMenuButton
@@ -387,7 +406,11 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                       key={group.heading ?? index}
                       role="group"
                       aria-label={group.heading ?? undefined}
-                      className="flex flex-col gap-1 max-md:border-t max-md:border-sidebar-border max-md:pt-4 max-md:first:border-t-0 max-md:first:pt-0"
+                      className={cn(
+                        "flex flex-col gap-1",
+                        rail &&
+                          "max-md:border-t max-md:border-sidebar-border max-md:pt-4 max-md:first:border-t-0 max-md:first:pt-0",
+                      )}
                     >
                       {group.heading ? (
                         // The group carries this label; a heading is not a valid tree child.
@@ -395,7 +418,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                           aria-hidden="true"
                           className={cn(
                             "px-2 text-xs font-medium text-sidebar-muted-foreground/80",
-                            !compactSearchOpen && "max-md:hidden",
+                            rail && !compactSearchOpen && "max-md:hidden",
                           )}
                         >
                           {group.heading}
@@ -418,7 +441,10 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                               >
                                 <Icon />
                                 <span
-                                  className={cn("truncate", !compactSearchOpen && "max-md:sr-only")}
+                                  className={cn(
+                                    "truncate",
+                                    rail && !compactSearchOpen && "max-md:sr-only",
+                                  )}
                                 >
                                   {SETTINGS_SECTION_LABELS[to]}
                                 </span>
@@ -435,7 +461,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
           </div>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="max-md:hidden">
+      <SidebarFooter className={cn(rail && "max-md:hidden")}>
         <Suspense fallback={null}>
           <T3ConnectSidebarSignIn />
         </Suspense>
