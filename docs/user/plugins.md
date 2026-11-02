@@ -19,7 +19,8 @@ The plugin is enabled and started once it is installed. If installing over an ex
 fails, the previous version keeps running.
 
 Plugin folders you copy into the `plugins` folder yourself show up, turned off, the next time you
-open **Settings → Plugins**. The page shows where that folder is.
+open **Settings → Plugins**. That folder is `~/.t3/userdata/plugins` on the environment's machine
+by default.
 
 With **All environments** selected, a plugin is installed on every connected environment that can
 run plugins. A plugin with no server code or agent skills only changes the app, so it goes to the

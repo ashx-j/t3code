@@ -191,10 +191,9 @@ export class PluginHost extends Context.Service<
     /**
      * Rescans the plugin folders without restarting anything. Plugins whose folders appeared are
      * listed, turned off unless plugins.json turns them on; ones whose folders are gone stop.
-     * `folder` is the plugins folder, where plugin folders put by hand are found.
      */
     readonly rescan: Effect.Effect<
-      { readonly plugins: ReadonlyArray<PluginState>; readonly folder: string },
+      { readonly plugins: ReadonlyArray<PluginState> },
       PluginConfigError
     >;
     readonly getSettings: (
@@ -962,10 +961,10 @@ const make = Effect.gen(function* () {
   );
 
   const rescan = Effect.fn("PluginHost.rescan")(function* () {
-    // Settings shows this folder as the place to put plugins, so it has to exist.
+    // The docs tell people to copy plugin folders here, so it has to exist.
     yield* fs.makeDirectory(pluginsDir, { recursive: true }).pipe(Effect.ignore);
     yield* runLifecycle(rediscover(undefined));
-    return { plugins: yield* currentStates, folder: pluginsDir };
+    return { plugins: yield* currentStates };
   });
 
   const installFailed = (reason: string) => (cause: unknown) =>

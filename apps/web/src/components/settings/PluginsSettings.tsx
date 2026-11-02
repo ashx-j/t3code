@@ -40,19 +40,13 @@ import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
+import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { JsonSchemaSettingsForm } from "./JsonSchemaSettingsForm";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
-
-const STATUS_BADGES = {
-  active: { variant: "success", label: "Active" },
-  loading: { variant: "info", label: "Starting" },
-  disabled: { variant: "secondary", label: "Disabled" },
-  failed: { variant: "error", label: "Failed" },
-} as const;
 
 const FAILURE_STAGES = {
   discovery: "Not found",
@@ -341,6 +335,7 @@ function EnvironmentPlugins({ environment }: { readonly environment: Environment
   const connected =
     environment.connection.phase === "connected" && environment.serverConfig !== null;
   const supported = environment.serverConfig?.environment.capabilities.plugins === true;
+  useRescanPlugins(environment.environmentId, connected && supported);
   const query = useEnvironmentQuery(
     connected && supported
       ? pluginEnvironment.pluginsLive({ environmentId: environment.environmentId, input: {} })
@@ -387,38 +382,25 @@ function EnvironmentPlugins({ environment }: { readonly environment: Environment
           />
         ))
       )}
-      <PluginsFolderNote environmentId={environment.environmentId} />
     </>
   );
 }
 
-/** Has the server look at its plugins folder again, then says where that folder is. */
-function PluginsFolderNote({ environmentId }: { readonly environmentId: EnvironmentId }) {
+/** Has the server look at its plugins folder again, so folders copied there by hand are listed. */
+function useRescanPlugins(environmentId: EnvironmentId, available: boolean) {
   const registry = useContext(RegistryContext);
   const canRescan = useAtomValue(pluginEnvironment.rescanPlugins.permissionAtom(environmentId));
-  const [folder, setFolder] = useState<string | null>(null);
+  const rescan = available && canRescan;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- The server reads its plugins folder only when asked, so opening the page asks it.
   useEffect(() => {
-    if (!canRescan) return;
-    let current = true;
+    if (!rescan) return;
     void runAtomCommand(
       registry,
       pluginEnvironment.rescanPlugins,
       { environmentId, input: {} },
       { label: "plugin folder scan", reportFailure: false, reportDefect: false },
-    ).then((result) => {
-      if (current && result._tag === "Success") setFolder(result.value.folder);
-    });
-    return () => {
-      current = false;
-    };
-  }, [registry, environmentId, canRescan]);
-  if (folder === null) return null;
-  return (
-    <p className="px-3 text-muted-foreground text-xs sm:px-4">
-      Plugin folders put in <span className="font-mono">{folder}</span> show up here, turned off.
-    </p>
-  );
+    );
+  }, [registry, environmentId, rescan]);
 }
 
 /** Checks plugins installed from git or npm now; the server also checks once a day. */
@@ -629,7 +611,6 @@ function PluginRow({
   const update = useAtomCommand(pluginEnvironment.updatePlugin, "plugin update");
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [removing, setRemoving] = useState(false);
   const [removeData, setRemoveData] = useState(false);
   const contributionKey = pluginContributionKey(environmentId, plugin.id);
   const customSettings = useAtomValue(pluginSettingsPanelAtom(contributionKey));
@@ -641,7 +622,12 @@ function PluginRow({
     await action();
     setBusy(false);
   };
-  const badge = STATUS_BADGES[plugin.status];
+  const problems = [
+    ...(plugin.failure
+      ? [`${FAILURE_STAGES[plugin.failure.stage]}: ${plugin.failure.message}`]
+      : []),
+    ...(webFailure === undefined ? [] : [`Web part failed: ${webFailure}`]),
+  ];
   return (
     <SettingsRow
       title={plugin.name}
@@ -654,26 +640,20 @@ function PluginRow({
         </>
       }
       status={
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant={badge.variant}>{badge.label}</Badge>
-          {plugin.availableUpdate === undefined ? null : (
-            <Badge variant="info">
-              Update available: {updateLabel(plugin.availableUpdate.version)}
-            </Badge>
-          )}
-          <span>
-            {plugin.version === undefined ? plugin.id : `${plugin.id} ${plugin.version}`}
-            {plugin.source === "dev" ? " · dev folder" : ""}
-          </span>
-          {plugin.failure ? (
-            <span className="text-destructive">
-              {FAILURE_STAGES[plugin.failure.stage]}: {plugin.failure.message}
-            </span>
-          ) : null}
-          {webFailure === undefined ? null : (
-            <span className="text-destructive">Web part failed: {webFailure}</span>
-          )}
-        </div>
+        plugin.availableUpdate === undefined && problems.length === 0 ? undefined : (
+          <div className="flex flex-wrap items-center gap-2">
+            {plugin.availableUpdate === undefined ? null : (
+              <Badge variant="info">
+                Update available: {updateLabel(plugin.availableUpdate.version)}
+              </Badge>
+            )}
+            {problems.map((problem) => (
+              <span key={problem} className="text-destructive">
+                {problem}
+              </span>
+            ))}
+          </div>
+        )
       }
       control={
         <>
@@ -718,16 +698,51 @@ function PluginRow({
             </Button>
           )}
           {plugin.source === "installed" ? (
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              disabled={busy || !canManage}
-              aria-label={`Remove ${plugin.name}`}
-              aria-expanded={removing}
-              onClick={() => setRemoving((open) => !open)}
-            >
-              <Trash2Icon className="size-4" />
-            </Button>
+            <Popover>
+              <PopoverTrigger
+                render={
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    disabled={busy || !canManage}
+                    aria-label={`Remove ${plugin.name}`}
+                  />
+                }
+              >
+                <Trash2Icon className="size-4" />
+              </PopoverTrigger>
+              <PopoverPopup side="top" align="end" width="md">
+                <div className="flex flex-col gap-3">
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id={`plugin-remove-data-${plugin.id}`}
+                      checked={removeData}
+                      onCheckedChange={(checked) => setRemoveData(checked === true)}
+                    />
+                    <Label htmlFor={`plugin-remove-data-${plugin.id}`}>
+                      Also delete its settings and stored data
+                    </Label>
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <PopoverClose render={<Button size="sm" variant="ghost" disabled={busy} />}>
+                      Cancel
+                    </PopoverClose>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      disabled={busy}
+                      onClick={() =>
+                        void run(() =>
+                          uninstall({ environmentId, input: { pluginId: plugin.id, removeData } }),
+                        )
+                      }
+                    >
+                      Remove {plugin.name}
+                    </Button>
+                  </div>
+                </div>
+              </PopoverPopup>
+            </Popover>
           ) : null}
           <Switch
             checked={plugin.enabled}
@@ -740,35 +755,6 @@ function PluginRow({
         </>
       }
     >
-      {removing ? (
-        <div className="mt-3 flex flex-wrap items-center gap-3 border-t pt-3">
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id={`plugin-remove-data-${plugin.id}`}
-              checked={removeData}
-              onCheckedChange={(checked) => setRemoveData(checked === true)}
-            />
-            <Label htmlFor={`plugin-remove-data-${plugin.id}`}>
-              Also delete its settings and stored data
-            </Label>
-          </div>
-          <Button
-            size="sm"
-            variant="destructive"
-            disabled={busy}
-            onClick={() =>
-              void run(() =>
-                uninstall({ environmentId, input: { pluginId: plugin.id, removeData } }),
-              )
-            }
-          >
-            Remove {plugin.name}
-          </Button>
-          <Button size="sm" variant="ghost" disabled={busy} onClick={() => setRemoving(false)}>
-            Cancel
-          </Button>
-        </div>
-      ) : null}
       {settingsOpen ? (
         customSettings === undefined ? (
           <PluginSettingsEditor environmentId={environmentId} plugin={plugin} />

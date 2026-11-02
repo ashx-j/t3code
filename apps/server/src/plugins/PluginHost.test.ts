@@ -1203,7 +1203,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
         yield* waitForStatuses(host, {});
-        // Settings points people at the plugins folder, so a rescan makes sure it exists.
+        // The docs point people at the plugins folder, so a rescan makes sure it exists.
         yield* host.rescan;
         assert.isTrue(yield* fs.exists(`${stateDir}/plugins`));
 
@@ -1217,8 +1217,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         // Copied in by hand under any name, a plugin is listed on the next rescan, turned off.
         yield* writeFile(`${stateDir}/plugins/My Notes/t3-plugin.json`, notesManifest("1.0.0"));
         yield* writeFile(`${stateDir}/plugins/My Notes/skills/notes/SKILL.md`, "Notes.");
-        const { plugins, folder } = yield* host.rescan;
-        assert.strictEqual(folder, `${stateDir}/plugins`);
+        const { plugins } = yield* host.rescan;
         assert.include(stateOf(plugins, "notes"), {
           status: "disabled",
           enabled: false,

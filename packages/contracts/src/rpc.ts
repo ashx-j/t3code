@@ -388,7 +388,6 @@ import {
   PluginCheckUpdatesInput,
   PluginListResult,
   PluginRescanInput,
-  PluginRescanResult,
   PluginMutationResult,
   PluginReloadInput,
   PluginSetEnabledInput,
@@ -2032,7 +2031,7 @@ const WsPluginsInstallFilesRpc = Rpc.make(WS_METHODS.pluginsInstallFiles, {
 /** Looks at the plugins folder again, so plugin folders put there since are listed. */
 const WsPluginsRescanRpc = Rpc.make(WS_METHODS.pluginsRescan, {
   payload: PluginRescanInput,
-  success: PluginRescanResult,
+  success: PluginListResult,
   error: PluginRpcError,
 });
 

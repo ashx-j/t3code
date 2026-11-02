@@ -190,13 +190,6 @@ export type PluginInstallFilesInput = typeof PluginInstallFilesInput.Type;
 export const PluginRescanInput = Schema.Struct({});
 export type PluginRescanInput = typeof PluginRescanInput.Type;
 
-export const PluginRescanResult = Schema.Struct({
-  plugins: ForwardCompatibleArray(PluginState),
-  /** The plugins folder on the server. Plugin folders put in it are listed, turned off. */
-  folder: Schema.String,
-});
-export type PluginRescanResult = typeof PluginRescanResult.Type;
-
 export const PluginUpdateInput = Schema.Struct({ pluginId: PluginId });
 export type PluginUpdateInput = typeof PluginUpdateInput.Type;
 
