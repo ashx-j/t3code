@@ -1,13 +1,21 @@
+import { Switch } from "@t3tools/plugin-sdk/ui";
 import { defineWebPlugin } from "@t3tools/plugin-sdk/web";
+import { useState } from "react";
 
 // Built to web.js by `vp build --config examples/classic-composer/vite.config.ts` from
 // packages/plugin-sdk.
-const chevron = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`;
-const lockOpen = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='18' height='11' x='3' y='11' rx='2' ry='2'/%3E%3Cpath d='M7 11V7a5 5 0 0 1 9.9-1'/%3E%3C/svg%3E")`;
 
+// The stylesheet only reaches the plugin's own elements. The old row sat 16px in from the card's
+// right and bottom edges, and 12px in a narrow composer with the model picker pulled 4px toward
+// the edge. T3 already insets the row by 8px.
 const css = `
-/* The old row sat 16px in from the card's right and bottom edges (12px on phones), with the
-   model picker pulled 8px toward the edge. T3's row is 8px in. */
+.classic-composer {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  container: classic-composer / inline-size;
+}
 .classic-composer-pickers {
   display: flex;
   flex: 1;
@@ -24,7 +32,7 @@ const css = `
   margin-inline: 0.5rem 0.25rem;
   margin-block-end: 0.25rem;
 }
-@media (min-width: 40rem) {
+@container classic-composer (min-width: 28rem) {
   .classic-composer-pickers {
     margin-inline-start: 0;
     margin-block-end: 0.5rem;
@@ -35,81 +43,67 @@ const css = `
   }
 }
 
-.classic-composer-pickers > button[aria-label^="Permissions"] {
-  padding-inline-start: 0.5rem;
-}
-
-/* The old pickers ended in a chevron. */
-.classic-composer-pickers > button[aria-haspopup]::after {
-  content: "";
-  width: 0.625rem;
-  height: 0.875rem;
-  flex-shrink: 0;
-  background-color: var(--muted-foreground);
-  mask: ${chevron} center / 0.875rem no-repeat;
-}
-
-/* Full access showed an open lock before the redesign. */
-svg.lucide-shield-off {
-  background-color: currentColor;
-  mask: ${lockOpen} center / contain no-repeat;
-  & > * {
-    display: none;
+.classic-composer-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  & p {
+    margin: 0;
+    font-size: 0.875rem;
+    font-weight: 500;
   }
-}
-
-/* A new thread's workspace and branch sat in a drawer tucked under the card, with chevrons. The
-   row already names the permissions, so the drawer does not repeat them. */
-[data-slot="composer-context-strip"] {
-  isolation: isolate;
-  width: auto;
-  margin: -1rem var(--chat-composer-drawer-inset, 1.375rem) 0;
-  padding: 1.25rem 0.5rem 0.25rem;
-  gap: 0.25rem;
-  &::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    z-index: -1;
-    border: 1px solid var(--chat-composer-outline);
-    border-radius: 0 0 var(--radius-2xl) var(--radius-2xl);
-    background-color: var(--chat-composer-glass-surface);
-    /* The top 15px sit under the card. */
-    mask-image: linear-gradient(transparent 15px, black 15px);
+  & p + p {
+    font-weight: 400;
+    margin-top: 0.125rem;
+    font-size: 0.75rem;
+    opacity: 0.7;
   }
-  & button[aria-haspopup]:not([aria-label^="Permissions"])::after {
-    content: "";
-    width: 0.75rem;
-    height: 0.75rem;
-    flex-shrink: 0;
-    background-color: currentColor;
-    mask: ${chevron} center / contain no-repeat;
-  }
-  & button[aria-label^="Permissions"] {
-    display: none;
-  }
-}
-.dark [data-slot="composer-context-strip"]::before {
-  background-color: color-mix(
-    in oklab,
-    var(--chat-composer-glass-surface) var(--glass-opacity, 100%),
-    transparent
-  );
-  background-image:
-    linear-gradient(transparent 16px, rgb(0 0 0 / 18%) 16px, transparent 26px),
-    linear-gradient(rgb(255 255 255 / 1%), rgb(255 255 255 / 1%));
-  -webkit-backdrop-filter: blur(var(--glass-blur, 0)) saturate(var(--glass-saturation, 1));
-  backdrop-filter: blur(var(--glass-blur, 0)) saturate(var(--glass-saturation, 1));
 }
 `;
+
+const COLLAPSE_KEY = "classic-composer:collapse-on-scroll";
+
+/** Whether the composer folds while the timeline is scrolled up. On until turned off here. */
+const collapseOnScroll = () => localStorage.getItem(COLLAPSE_KEY) !== "off";
+
+function CollapseSetting(props: { readonly onChange: (on: boolean) => void }) {
+  const [on, setOn] = useState(collapseOnScroll);
+  return (
+    <div className="classic-composer-setting">
+      <div>
+        <p>Collapse composer on scroll</p>
+        <p>
+          Rests an existing thread's composer as one line while you scroll up the conversation.
+          Focus it or scroll back to the end to expand it again.
+        </p>
+      </div>
+      <Switch
+        aria-label="Collapse composer on scroll"
+        checked={on}
+        onCheckedChange={(checked) => {
+          setOn(checked);
+          props.onChange(checked);
+        }}
+      />
+    </div>
+  );
+}
 
 export default defineWebPlugin({
   activate(api) {
     api.injectStyles(css);
-    // Scrolling the timeline up folds the composer to one line, as it did before the redesign.
-    api.composer.setCollapseOnScroll(true);
+    api.composer.setCollapseOnScroll(collapseOnScroll());
+    api.settings.registerPanel(() => (
+      <CollapseSetting
+        onChange={(on) => {
+          localStorage.setItem(COLLAPSE_KEY, on ? "on" : "off");
+          api.composer.setCollapseOnScroll(on);
+        }}
+      />
+    ));
     api.ui.replace("composer.controls", (pieces) => (
-      <>
+      <div className="classic-composer">
         <div className="classic-composer-pickers">
           {pieces.model}
           {pieces.effort}
@@ -120,7 +114,7 @@ export default defineWebPlugin({
           {pieces.attach}
           {pieces.actions}
         </div>
-      </>
+      </div>
     ));
   },
 });
