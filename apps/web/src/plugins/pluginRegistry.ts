@@ -2,6 +2,7 @@ import type {
   ComposerContextId,
   ContextMenuItem,
   EnvironmentId,
+  LocalApi,
   PLUGIN_COMMAND_PATTERN,
   UnknownContextRecord,
 } from "@t3tools/contracts";
@@ -39,7 +40,7 @@ export interface PluginSlashCommandEntry {
   readonly pluginName: string;
   readonly name: string;
   readonly description: string;
-  readonly run: (context: { readonly threadId: string }) => void;
+  readonly run: (context: { readonly threadId: string | null }) => void;
 }
 
 export interface PluginBannerEntry {
@@ -304,6 +305,7 @@ export type PluginPartProps<Part extends PluginPartName> = WebPluginParts[Part];
 export interface PluginOwner {
   readonly environmentId: EnvironmentId;
   readonly pluginId: string;
+  readonly pluginName: string;
 }
 
 export interface PluginReplacementEntry<Part extends PluginPartName> extends PluginOwner {
@@ -458,6 +460,16 @@ export function withPluginThreadMenuItems<Id extends string>(
       separatorBefore: index === 0,
     })),
   ];
+}
+
+/** `api.contextMenu.show` for a thread menu, with the environment's plugin items after T3's own. */
+export function showThreadMenu<Id extends string>(
+  api: Pick<LocalApi, "contextMenu">,
+  items: ReadonlyArray<ContextMenuItem<Id>>,
+  position: { readonly x: number; readonly y: number } | undefined,
+  environmentId: EnvironmentId,
+) {
+  return api.contextMenu.show(withPluginThreadMenuItems(items, environmentId), position);
 }
 
 /** Runs the plugin item a thread menu returned; false when `menuId` is not a plugin item. */

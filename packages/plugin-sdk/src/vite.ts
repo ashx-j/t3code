@@ -60,12 +60,30 @@ export function t3PluginWeb(options: T3PluginWebOptions = {}) {
           entry: options.entry ?? "web.tsx",
           formats: ["es" as const],
           fileName: () => "web.js",
+          // Named so the stylesheet check below explains itself, not Vite's package.json error.
+          cssFileName: "web",
         },
         outDir: options.outDir ?? "dist",
       },
     }),
     configResolved: (config: { readonly root: string }) => {
       root = config.root;
+    },
+    // T3 loads only `web.js`, so a stylesheet Vite writes beside it would never apply. Runs last,
+    // after Vite's own CSS step has added it.
+    generateBundle: {
+      order: "post" as const,
+      handler(
+        this: { readonly error: (message: string) => never },
+        _options: unknown,
+        bundle: Readonly<Record<string, { readonly fileName: string }>>,
+      ) {
+        const stylesheet = Object.values(bundle).find((output) => output.fileName.endsWith(".css"));
+        if (stylesheet === undefined) return;
+        this.error(
+          `The build wrote ${stylesheet.fileName}, which T3 never loads. Import the CSS with \`?inline\`, as in \`import css from "./web.css?inline"\`, and pass it to \`api.injectStyles(css)\` in \`activate\`.`,
+        );
+      },
     },
     resolveId: (source: string) => (source in HOST_MODULES ? HOST_PREFIX + source : undefined),
     load: (id: string) => {

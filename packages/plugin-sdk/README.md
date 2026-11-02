@@ -147,10 +147,10 @@ tools, renderers for fenced code languages, styles, assets, navigation and toast
 Plugins can also add buttons and menu items to T3's own toolbars and menus: under each message
 (`messages.addAction`), in the thread header (`threads.addHeaderButton`), beside the composer's
 attach button (`composer.addButton`) and in the thread actions menu (`threads.addMenuItem`).
-`threads.setBadge` shows a short badge on a thread's sidebar row and header, and
-`composer.setMentionItems` offers items in the composer's `@` menu; a picked item shows as a chip,
-and the agent gets its text with the message.
-[`examples/review-flags`](./examples/review-flags) uses all of them.
+`threads.setBadge` shows a short badge on a thread's sidebar row and header.
+[`examples/review-flags`](./examples/review-flags) uses all of them. `composer.setMentionItems`
+offers items in the composer's `@` menu; a picked item shows as a chip, and the agent gets its text
+with the message. [`examples/quick-notes`](./examples/quick-notes) offers its notes that way.
 
 `pages.register` adds a full page at `/plugins/<pluginId>/<name>`, shown beside the sidebar in place
 of the thread; a `t3code://plugins/<pluginId>/<name>` link opens the desktop app on it, and `sidebar.addSection` adds a titled section under the thread list.
@@ -217,7 +217,7 @@ An agent writing a plugin installs its folder in place with `t3_plugins_install`
 and unlinking leaves the folder alone. `t3_plugins_check` lists what will stop the plugin from
 loading and what is likely to break in a T3 update. These tools appear once an environment has a
 plugin. Without an agent, add the folder to `devPaths` in `plugins.json` in the T3 Code data
-directory and use **Reload** on the Plugins page.
+directory, turn the plugin on in Settings → Plugins, and use **Reload** after each change.
 
 To install a finished plugin, drag its folder onto Settings → Plugins, or use **Add plugin** with a
 folder, a git repository or an npm package.

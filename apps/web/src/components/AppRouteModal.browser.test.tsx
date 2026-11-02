@@ -35,6 +35,7 @@ describe("AppRouteModal", () => {
       [Symbol.dispose]: registerPluginReplacement("app.pageFrame", (frame) => frame.page, {
         environmentId: EnvironmentId.make("environment:frame"),
         pluginId: "pages",
+        pluginName: "Pages",
       }),
     };
     const onCommit = vi.fn();

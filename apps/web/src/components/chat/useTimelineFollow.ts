@@ -49,7 +49,7 @@ const TIMELINE_SCROLL_CANCEL_SENTINEL = Object.freeze({});
 
 /** Whether a thread's timeline sits away from its end, while the scroll-to-end pill shows. */
 export const timelineAwayFromEndAtom = Atom.family((threadKey: string) =>
-  Atom.make(false).pipe(Atom.keepAlive, Atom.withLabel(`timeline-away-from-end:${threadKey}`)),
+  Atom.make(false).pipe(Atom.withLabel(`timeline-away-from-end:${threadKey}`)),
 );
 
 interface TimelineAnchor {

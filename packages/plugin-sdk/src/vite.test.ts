@@ -1,4 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { build } from "vite-plus";
@@ -28,5 +30,25 @@ describe("t3PluginWeb", () => {
     for (const key of ["react", "jsxRuntime", "ui"]) {
       expect(chunk?.code).toContain(`globalThis.__t3PluginHost.${key}`);
     }
+  });
+
+  it("refuses a stylesheet T3 would never load", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-plugin-css-"));
+    await using _root = { [Symbol.asyncDispose]: () => NodeFSP.rm(root, { recursive: true }) };
+    await NodeFSP.writeFile(NodePath.join(root, "web.css"), "p { color: red; }");
+    await NodeFSP.writeFile(
+      NodePath.join(root, "web.tsx"),
+      'import "./web.css";\nexport default {};\n',
+    );
+
+    await expect(
+      build({
+        root,
+        configFile: false,
+        logLevel: "silent",
+        plugins: [t3PluginWeb()],
+        build: { write: false, minify: false },
+      }),
+    ).rejects.toThrow("which T3 never loads");
   });
 });

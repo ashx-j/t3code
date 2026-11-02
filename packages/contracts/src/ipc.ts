@@ -1115,8 +1115,10 @@ export interface DesktopBridge {
   checkSystemPermission: (pane: SystemSettingsPane) => Promise<boolean>;
   probeRemoteEditors: () => Promise<readonly EditorId[]>;
   pasteAsText: () => Promise<void>;
-  /** Replaces the plugin commands in the app menu and their global shortcuts. */
-  /** Resolves with the commands whose global shortcut the OS refused, usually because another app holds it. */
+  /**
+   * Replaces the plugin commands in the app menu and their global shortcuts. Resolves with the
+   * commands whose shortcut the OS refused, usually because another app holds it.
+   */
   setPluginCommands: (commands: readonly DesktopPluginCommand[]) => Promise<readonly string[]>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   onSnapShotEvent: (listener: (event: DesktopSnapShotEvent) => void) => () => void;

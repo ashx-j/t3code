@@ -12,7 +12,11 @@ import {
 } from "./pluginRegistry";
 
 const original = <p>T3 controls</p>;
-const owner = { environmentId: EnvironmentId.make("environment:parts"), pluginId: "restyle" };
+const owner = {
+  environmentId: EnvironmentId.make("environment:parts"),
+  pluginId: "restyle",
+  pluginName: "Restyle",
+};
 
 const controls = () => (
   <AppAtomRegistryProvider>
@@ -76,6 +80,6 @@ describe("PluginReplaceable", () => {
       appAtomRegistry.get(
         pluginWebFailureAtom(pluginContributionKey(owner.environmentId, owner.pluginId)),
       ),
-    ).toContain("composer.controls part stopped with an error (boom)");
+    ).toContain("(composer.controls) stopped with an error: boom.");
   });
 });

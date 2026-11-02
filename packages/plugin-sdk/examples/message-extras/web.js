@@ -14,14 +14,14 @@ var css = `
   margin: 0;
   max-height: 20rem;
   overflow: auto;
-  border-radius: 0.375rem;
-  background: #0c0c0c;
+  border-radius: var(--radius-md);
+  background: var(--terminal-background);
   padding: 0.5rem 0.75rem;
-  color: #d4d4d4;
+  color: var(--terminal-foreground);
   font: 0.75rem/1.5 var(--font-mono, monospace);
   white-space: pre-wrap;
 }
-.message-extras-terminal b { color: #7ee787; font-weight: 400; }
+.message-extras-terminal b { color: var(--success-foreground); font-weight: 400; }
 .message-extras-diff { display: flex; min-height: 0; flex: 1; flex-direction: column; }
 .message-extras-diff-summary { padding: 0.25rem 0.75rem; font-size: 0.6875rem; color: var(--muted-foreground); }
 `;

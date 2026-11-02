@@ -50,8 +50,11 @@ export interface WebPluginSlashCommand {
   /** Typed after `/` in the composer: lowercase letters, digits and hyphens. */
   readonly name: string;
   readonly description: string;
-  /** Runs when the user picks the command; the typed `/name` is removed from the composer first. */
-  readonly run: (context: { readonly threadId: string }) => void | Promise<void>;
+  /**
+   * Runs when the user picks the command; the typed `/name` is removed from the composer first.
+   * `threadId` is null in a new thread, which the server doesn't know until its first message.
+   */
+  readonly run: (context: { readonly threadId: string | null }) => void | Promise<void>;
 }
 
 export interface WebPluginBanner {

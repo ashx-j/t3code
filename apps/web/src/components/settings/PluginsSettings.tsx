@@ -378,21 +378,30 @@ const pluginListsAtom = Atom.family((environmentIdsKey: string) => {
 });
 
 /**
- * Copies of a plugin on different environments share a row. A copy that failed discovery, such as
- * one shadowed by another folder with the same plugin, keeps its own.
+ * Copies of a plugin on different environments share a row. A copy that failed discovery keeps its
+ * own. One that another copy with its id shadows is `shadowed`: actions send only the id, so they
+ * would reach the copy that is used instead.
  */
 function pluginRows(copies: ReadonlyArray<PluginCopy>) {
   const rows = new Map<
     string,
-    { readonly first: PluginCopy; readonly copies: Array<PluginCopy> }
+    { readonly first: PluginCopy; readonly copies: Array<PluginCopy>; readonly shadowed: boolean }
   >();
   copies.forEach((copy, index) => {
-    const key =
-      copy.plugin.failure?.stage === "discovery"
-        ? `${copy.environmentId}:${index}`
-        : `${copy.plugin.id}:${copy.plugin.source}`;
+    const failedDiscovery = copy.plugin.failure?.stage === "discovery";
+    const key = failedDiscovery
+      ? `${copy.environmentId}:${index}`
+      : `${copy.plugin.id}:${copy.plugin.source}`;
+    const shadowed =
+      failedDiscovery &&
+      copies.some(
+        (other) =>
+          other !== copy &&
+          other.environmentId === copy.environmentId &&
+          other.plugin.id === copy.plugin.id,
+      );
     const row = rows.get(key);
-    if (row === undefined) rows.set(key, { first: copy, copies: [copy] });
+    if (row === undefined) rows.set(key, { first: copy, copies: [copy], shadowed });
     else row.copies.push(copy);
   });
   return Array.from(rows, ([key, row]) => ({ key, ...row }));
@@ -457,6 +466,7 @@ function PluginList({
             environmentId={main.environmentId}
             first={row.first}
             copies={row.copies}
+            shadowed={row.shadowed}
             labelled={several}
           />
         ))
@@ -689,12 +699,15 @@ function PluginRow({
   environmentId,
   first,
   copies,
+  shadowed,
   labelled,
 }: {
   /** The main environment in view. Its permissions decide which actions are offered. */
   readonly environmentId: EnvironmentId;
   readonly first: PluginCopy;
   readonly copies: ReadonlyArray<PluginCopy>;
+  /** Another copy of this plugin is used instead, so the row only explains why. */
+  readonly shadowed: boolean;
   /** Problems name their environment, because several are in view. */
   readonly labelled: boolean;
 }) {
@@ -761,113 +774,115 @@ function PluginRow({
         )
       }
       control={
-        <>
-          {hasSettings ? (
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              aria-label={`Settings for ${plugin.name}`}
-              aria-expanded={settingsOpen}
-              onClick={() => setSettingsOpen((open) => !open)}
-            >
-              <SlidersHorizontalIcon className="size-4" />
-            </Button>
-          ) : null}
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            disabled={busy || !canManage}
-            aria-label={`Reload ${plugin.name}`}
-            onClick={() =>
-              void runOn(copies, (copy) =>
-                reload({ environmentId: copy.environmentId, input: { pluginId: plugin.id } }),
-              )
-            }
-          >
-            <RotateCwIcon className="size-4" />
-          </Button>
-          {source === undefined ? null : (
+        shadowed ? undefined : (
+          <>
+            {hasSettings ? (
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label={`Settings for ${plugin.name}`}
+                aria-expanded={settingsOpen}
+                onClick={() => setSettingsOpen((open) => !open)}
+              >
+                <SlidersHorizontalIcon className="size-4" />
+              </Button>
+            ) : null}
             <Button
               size="icon-sm"
               variant="ghost"
               disabled={busy || !canManage}
-              aria-label={`Update ${plugin.name}`}
-              title={
-                availableUpdate === undefined
-                  ? `Update from ${installSourceLabel(source)}`
-                  : `Update to ${updateLabel(availableUpdate.version)} from ${installSourceLabel(source)}`
-              }
+              aria-label={`Reload ${plugin.name}`}
               onClick={() =>
-                void runOn(updatable, (copy) =>
-                  update({ environmentId: copy.environmentId, input: { pluginId: plugin.id } }),
+                void runOn(copies, (copy) =>
+                  reload({ environmentId: copy.environmentId, input: { pluginId: plugin.id } }),
                 )
               }
             >
-              <DownloadIcon className="size-4" />
+              <RotateCwIcon className="size-4" />
             </Button>
-          )}
-          <Popover>
-            <PopoverTrigger
-              render={
-                <Button
-                  size="icon-sm"
-                  variant="ghost"
-                  disabled={busy || !canManage}
-                  aria-label={`${removeLabel} ${plugin.name}`}
-                />
-              }
-            >
-              <Trash2Icon className="size-4" />
-            </PopoverTrigger>
-            <PopoverPopup side="top" align="end" width="md">
-              <div className="flex flex-col gap-3">
-                <div className="flex items-center gap-2">
-                  <Checkbox
-                    id={`plugin-remove-data-${plugin.id}`}
-                    checked={removeData}
-                    onCheckedChange={(checked) => setRemoveData(checked === true)}
-                  />
-                  <Label htmlFor={`plugin-remove-data-${plugin.id}`}>
-                    Also delete its settings and stored data
-                  </Label>
-                </div>
-                <div className="flex justify-end gap-2">
-                  <PopoverClose render={<Button size="sm" variant="ghost" disabled={busy} />}>
-                    Cancel
-                  </PopoverClose>
+            {source === undefined ? null : (
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                disabled={busy || !canManage}
+                aria-label={`Update ${plugin.name}`}
+                title={
+                  availableUpdate === undefined
+                    ? `Update from ${installSourceLabel(source)}`
+                    : `Update to ${updateLabel(availableUpdate.version)} from ${installSourceLabel(source)}`
+                }
+                onClick={() =>
+                  void runOn(updatable, (copy) =>
+                    update({ environmentId: copy.environmentId, input: { pluginId: plugin.id } }),
+                  )
+                }
+              >
+                <DownloadIcon className="size-4" />
+              </Button>
+            )}
+            <Popover>
+              <PopoverTrigger
+                render={
                   <Button
-                    size="sm"
-                    variant="destructive"
-                    disabled={busy}
-                    onClick={() =>
-                      void runOn(copies, (copy) =>
-                        uninstall({
-                          environmentId: copy.environmentId,
-                          input: { pluginId: plugin.id, removeData },
-                        }),
-                      )
-                    }
-                  >
-                    {removeLabel} {plugin.name}
-                  </Button>
+                    size="icon-sm"
+                    variant="ghost"
+                    disabled={busy || !canManage}
+                    aria-label={`${removeLabel} ${plugin.name}`}
+                  />
+                }
+              >
+                <Trash2Icon className="size-4" />
+              </PopoverTrigger>
+              <PopoverPopup side="top" align="end" width="md">
+                <div className="flex flex-col gap-3">
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id={`plugin-remove-data-${first.environmentId}-${plugin.id}`}
+                      checked={removeData}
+                      onCheckedChange={(checked) => setRemoveData(checked === true)}
+                    />
+                    <Label htmlFor={`plugin-remove-data-${first.environmentId}-${plugin.id}`}>
+                      Also delete its settings and stored data
+                    </Label>
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <PopoverClose render={<Button size="sm" variant="ghost" disabled={busy} />}>
+                      Cancel
+                    </PopoverClose>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      disabled={busy}
+                      onClick={() =>
+                        void runOn(copies, (copy) =>
+                          uninstall({
+                            environmentId: copy.environmentId,
+                            input: { pluginId: plugin.id, removeData },
+                          }),
+                        )
+                      }
+                    >
+                      {removeLabel} {plugin.name}
+                    </Button>
+                  </div>
                 </div>
-              </div>
-            </PopoverPopup>
-          </Popover>
-          <Switch
-            checked={copies.every((copy) => copy.plugin.enabled)}
-            disabled={busy || !canManage}
-            aria-label={`Enable ${plugin.name}`}
-            onCheckedChange={(enabled) =>
-              void runOn(copies, (copy) =>
-                setEnabled({
-                  environmentId: copy.environmentId,
-                  input: { pluginId: plugin.id, enabled },
-                }),
-              )
-            }
-          />
-        </>
+              </PopoverPopup>
+            </Popover>
+            <Switch
+              checked={copies.every((copy) => copy.plugin.enabled)}
+              disabled={busy || !canManage}
+              aria-label={`Enable ${plugin.name}`}
+              onCheckedChange={(enabled) =>
+                void runOn(copies, (copy) =>
+                  setEnabled({
+                    environmentId: copy.environmentId,
+                    input: { pluginId: plugin.id, enabled },
+                  }),
+                )
+              }
+            />
+          </>
+        )
       }
     >
       {settingsOpen ? (

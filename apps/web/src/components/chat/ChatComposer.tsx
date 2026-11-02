@@ -1919,7 +1919,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
       if (applied) {
         setComposerHighlightedItemId(null);
-        item.run({ threadId: routeThreadRef.threadId });
+        item.run({ threadId: routeKind === "server" ? routeThreadRef.threadId : null });
       }
       return;
     }

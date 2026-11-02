@@ -70,7 +70,7 @@ export type ComposerCommandItem =
       id: string;
       type: "plugin-slash-command";
       command: { readonly name: string };
-      run: (context: { readonly threadId: string }) => void;
+      run: (context: { readonly threadId: string | null }) => void;
       label: string;
       description: string;
     }

@@ -1,5 +1,5 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { runPluginThreadMenuItem, withPluginThreadMenuItems } from "../plugins/pluginRegistry";
+import { runPluginThreadMenuItem, showThreadMenu } from "../plugins/pluginRegistry";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
 import { openGuestShareDialog } from "../components/chat/guestShareDialogState";
 import {
@@ -151,7 +151,7 @@ export function useThreadActionMenu(input: {
         canTurnIntoProject: canTurnThreadIntoProject(threadRef),
       });
       const clicked = await settlePromise(() =>
-        api.contextMenu.show(withPluginThreadMenuItems(items, threadRef.environmentId), position),
+        showThreadMenu(api, items, position, threadRef.environmentId),
       );
       if (clicked._tag === "Failure" || clicked.value === null) return;
       const action: ThreadActionMenuId = clicked.value;

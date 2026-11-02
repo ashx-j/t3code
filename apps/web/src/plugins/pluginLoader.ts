@@ -328,7 +328,9 @@ function makeWebPluginApi({
               : { globalShortcut: command.desktop.globalShortcut }),
           };
           if (!isDesktopPluginCommand(desktopCommand)) {
-            throw new TypeError(`Command "${command.id}" has an invalid desktop shortcut.`);
+            throw new TypeError(
+              `Command "${command.id}" can't go in the desktop menus: it needs a title of up to 200 characters and a shortcut such as CommandOrControl+Shift+Y.`,
+            );
           }
           track(registerDesktopPluginCommand(desktopCommand, run));
         }
@@ -520,7 +522,13 @@ function makeWebPluginApi({
     },
     ui: {
       replace: (part, component) => {
-        track(registerPluginReplacement(part, component, { environmentId, pluginId }));
+        track(
+          registerPluginReplacement(part, component, {
+            environmentId,
+            pluginId,
+            pluginName: plugin.name,
+          }),
+        );
       },
     },
     injectStyles: (css) => {
@@ -616,6 +624,9 @@ export function startPluginLoader(
   const load = async (plugin: PluginState) => {
     const entry: LoadedPlugin = { key: loadKey(plugin), cleanups: new Set(), disposed: false };
     loaded.set(plugin.id, entry);
+    // Cleared here rather than once `activate` resolves, so a part that throws while it awaits
+    // keeps its note.
+    setPluginWebFailure(environmentId, plugin.id, undefined);
     // Registrations that arrive after unload, from a slow `activate` or a later callback, are
     // undone at once instead of outliving the plugin.
     const track = (cleanup: () => void) => {
@@ -648,7 +659,6 @@ export function startPluginLoader(
         ),
         "Starting the web half",
       );
-      if (!entry.disposed) setPluginWebFailure(environmentId, plugin.id, undefined);
     } catch (error) {
       // A load that was replaced or stopped meanwhile has nothing to report.
       if (entry.disposed) return;

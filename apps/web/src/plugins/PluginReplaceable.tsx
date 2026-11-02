@@ -12,6 +12,16 @@ import {
 
 const toastedFailures = new WeakSet<PluginOwner>();
 
+const PART_NAMES: { readonly [Part in PluginPartName]: string } = {
+  "composer.controls": "the composer's controls",
+  "message.assistant": "agent messages",
+  "message.user": "your messages",
+  "timeline.item": "work details",
+  "diff.view": "diffs",
+  "app.pageFrame": "Settings and Usage",
+  "app.sidebar": "the sidebar",
+};
+
 // Shown on the plugin's row until it reloads, and once as a toast, since T3's own part quietly
 // takes its place.
 const reportFailure = (part: PluginPartName, owner: PluginOwner, error: unknown) => {
@@ -19,14 +29,14 @@ const reportFailure = (part: PluginPartName, owner: PluginOwner, error: unknown)
   setPluginWebFailure(
     owner.environmentId,
     owner.pluginId,
-    `Its ${part} part stopped with an error (${reason}), so T3 shows its own until the plugin reloads.`,
+    `Its version of ${PART_NAMES[part]} (${part}) stopped with an error: ${reason}. T3 shows its own until the plugin reloads.`,
   );
   if (toastedFailures.has(owner)) return;
   toastedFailures.add(owner);
   toastManager.add({
     type: "error",
-    title: `The ${owner.pluginId} plugin stopped drawing ${part}`,
-    description: `T3 shows its own until the plugin reloads. ${reason}`,
+    title: `${owner.pluginName} stopped changing ${PART_NAMES[part]}`,
+    description: "T3 shows its own until the plugin reloads.",
   });
 };
 
