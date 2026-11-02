@@ -6,17 +6,24 @@ access to your files, threads and credentials as T3 Code itself. Install only pl
 
 ## Add a plugin
 
-Open **Settings → Plugins**, choose **Add plugin**, and pick a source:
+Open **Settings → Plugins** and drag a plugin's folder onto the page. **Add plugin** also lets you
+choose the folder in a file window, or install from:
 
-- **Folder on the server**: a folder on the machine that runs the environment, containing a
-  `t3-plugin.json`. T3 Code copies it, so later changes to that folder do not affect the installed
-  plugin.
 - **Git repository**: a repository URL, with an optional branch or tag.
 - **npm package**: a package name, with an optional version. T3 Code checks the download against
   the registry's integrity hash before installing it.
 
+T3 Code copies a plugin folder into the environment's `plugins` folder, so later changes to your
+copy do not affect the installed plugin. To update it, add the new version's folder the same way.
 The plugin is enabled and started once it is installed. If installing over an existing version
 fails, the previous version keeps running.
+
+Plugin folders you copy into the `plugins` folder yourself show up, turned off, the next time you
+open **Settings → Plugins**. The page shows where that folder is.
+
+With **All environments** selected, a plugin is installed on every connected environment that can
+run plugins. A plugin with no server code or agent skills only changes the app, so it goes to the
+app's main environment only.
 
 Once an environment has a plugin, agents can also install, remove, turn on and off, and call
 plugins when you ask them to. Only an agent in a thread set to **Full access**, and not in Plan
@@ -27,8 +34,9 @@ tools, so the first plugin comes from Settings.
 
 ## Update a plugin
 
-Plugins added from Settings have **Update** on their row. It installs the plugin again from the
-same folder, repository or package, and keeps the current version running if that fails. An npm
+Plugins installed from a git repository or npm have **Update** on their row. It installs the
+plugin again from the same repository or package, and keeps the current version running if that
+fails. An npm
 plugin without a pinned version updates to the package's latest version.
 
 T3 Code checks plugins added from a git repository or npm once a day and marks the ones with a

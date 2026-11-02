@@ -135,6 +135,8 @@ export const PluginState = Schema.Struct({
   availableUpdate: Schema.optionalKey(Schema.Struct({ version: Schema.String })),
   hasServer: Schema.Boolean,
   hasWeb: Schema.Boolean,
+  /** Has a `skills` folder, whose skills agents on this environment get while it runs. */
+  hasSkills: Schema.optionalKey(Schema.Boolean),
   settingsSchema: Schema.optionalKey(Schema.JsonObject),
   contributes: Schema.optionalKey(PluginContributions),
 });
@@ -168,6 +170,32 @@ export type PluginReloadInput = typeof PluginReloadInput.Type;
 
 export const PluginInstallInput = Schema.Struct({ source: PluginInstallSource });
 export type PluginInstallInput = typeof PluginInstallInput.Type;
+
+/** Limits on a folder sent with `plugins.installFiles`, which travels as one message. */
+export const PLUGIN_UPLOAD_MAX_FILES = 1_000;
+export const PLUGIN_UPLOAD_MAX_BYTES = 25 * 1024 * 1024;
+
+/** One file of a plugin folder dropped into a client, by its path inside that folder. */
+export const PluginUploadFile = Schema.Struct({
+  path: TrimmedNonEmptyString.check(Schema.isMaxLength(1024), isInsidePluginDirectory),
+  contents: Schema.Uint8ArrayFromBase64,
+});
+export type PluginUploadFile = typeof PluginUploadFile.Type;
+
+export const PluginInstallFilesInput = Schema.Struct({
+  files: Schema.Array(PluginUploadFile).check(Schema.isMaxLength(PLUGIN_UPLOAD_MAX_FILES)),
+});
+export type PluginInstallFilesInput = typeof PluginInstallFilesInput.Type;
+
+export const PluginRescanInput = Schema.Struct({});
+export type PluginRescanInput = typeof PluginRescanInput.Type;
+
+export const PluginRescanResult = Schema.Struct({
+  plugins: ForwardCompatibleArray(PluginState),
+  /** The plugins folder on the server. Plugin folders put in it are listed, turned off. */
+  folder: Schema.String,
+});
+export type PluginRescanResult = typeof PluginRescanResult.Type;
 
 export const PluginUpdateInput = Schema.Struct({ pluginId: PluginId });
 export type PluginUpdateInput = typeof PluginUpdateInput.Type;

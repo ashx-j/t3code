@@ -32,12 +32,17 @@ const causeMessage = (cause: Cause.Cause<unknown>) => {
 interface PluginLocation {
   readonly id: PluginId;
   readonly rootDir: string;
+  /** The folder as listed, before links resolve. Installed ones are inside the plugins folder. */
+  readonly folder: string;
   readonly source: PluginSource;
 }
 
 /** A plugin directory, with its manifest when it could be read and decoded. */
 export type DiscoveredPlugin = PluginLocation &
-  ({ readonly manifest: PluginManifest } | { readonly failure: PluginFailure });
+  (
+    | { readonly manifest: PluginManifest; readonly hasSkills: boolean }
+    | { readonly failure: PluginFailure }
+  );
 
 const failed = (location: PluginLocation, failure: PluginFailure): DiscoveredPlugin => ({
   ...location,
@@ -45,8 +50,9 @@ const failed = (location: PluginLocation, failure: PluginFailure): DiscoveredPlu
 });
 
 /**
- * Lists installed plugins (`<pluginsDir>/<id>/t3-plugin.json`) and dev plugins (`devPaths`).
- * An installed plugin wins over a dev plugin with the same id, which is reported as failed.
+ * Lists installed plugins (`<pluginsDir>/<any folder>/t3-plugin.json`) and dev plugins
+ * (`devPaths`). Each id is used once: an installed plugin wins over a dev plugin, and a folder
+ * named after its plugin's id over other copies. The copies that lose are reported as failed.
  */
 export const discoverPlugins = Effect.fn("PluginDiscovery.discover")(function* (input: {
   readonly pluginsDir: string;
@@ -81,7 +87,7 @@ export const discoverPlugins = Effect.fn("PluginDiscovery.discover")(function* (
     if (manifest._tag !== "Read") {
       if (fallbackId === undefined) return undefined;
       return failed(
-        { id: fallbackId, rootDir, source },
+        { id: fallbackId, rootDir, folder: location, source },
         {
           stage: "discovery",
           message:
@@ -93,13 +99,23 @@ export const discoverPlugins = Effect.fn("PluginDiscovery.discover")(function* (
     }
     const decoded = decodeManifest(manifest.raw);
     if (decoded._tag === "Success") {
-      return { id: decoded.value.id, rootDir, source, manifest: decoded.value } as const;
+      const hasSkills = yield* fs
+        .exists(path.join(rootDir, "skills"))
+        .pipe(Effect.orElseSucceed(() => false));
+      return {
+        id: decoded.value.id,
+        rootDir,
+        folder: location,
+        source,
+        manifest: decoded.value,
+        hasSkills,
+      } as const;
     }
     const looseId = decodeLooseId(manifest.raw);
     const id = looseId._tag === "Some" ? looseId.value.id : fallbackId;
     if (id === undefined) return undefined;
     return failed(
-      { id, rootDir, source },
+      { id, rootDir, folder: location, source },
       {
         stage: "manifest",
         message: `Invalid ${PLUGIN_MANIFEST_FILE}: ${causeMessage(decoded.cause)}`,
@@ -123,33 +139,44 @@ export const discoverPlugins = Effect.fn("PluginDiscovery.discover")(function* (
   const entries = yield* fs
     .readDirectory(input.pluginsDir)
     .pipe(Effect.orElseSucceed((): Array<string> => []));
+  // People copy plugin folders in by hand, so the manifest names the plugin, not the folder.
+  const installed: Array<DiscoveredPlugin> = [];
   for (const entry of entries.toSorted()) {
     if (entry.startsWith(".")) continue;
-    const rootDir = path.join(input.pluginsDir, entry);
-    const info = yield* fs.stat(rootDir).pipe(Effect.option);
+    const folder = path.join(input.pluginsDir, entry);
+    const info = yield* fs.stat(folder).pipe(Effect.option);
     if (info._tag === "None" || info.value.type !== "Directory") continue;
-    if (!isPluginId(entry)) {
-      yield* Effect.logWarning("ignoring plugin folder whose name is not a plugin id", {
-        path: rootDir,
-      });
+    if (!(yield* underLimit(input.pluginsDir))) break;
+    const plugin = yield* inspect(folder, "installed", isPluginId(entry) ? entry : undefined);
+    if (plugin === undefined) {
+      yield* Effect.logWarning("ignoring plugin folder without a plugin id", { path: folder });
       continue;
     }
-    if (!(yield* underLimit(input.pluginsDir))) break;
-    const plugin = yield* inspect(rootDir, "installed", entry);
-    if (plugin === undefined) continue;
-    seen.add(entry);
+    installed.push(plugin);
+  }
+  const namedAfterId = (plugin: DiscoveredPlugin) => path.basename(plugin.folder) === plugin.id;
+  const used = new Map<PluginId, DiscoveredPlugin>();
+  for (const plugin of installed) {
+    const current = used.get(plugin.id);
+    if (current === undefined || (!namedAfterId(current) && namedAfterId(plugin))) {
+      used.set(plugin.id, plugin);
+    }
+  }
+  // Losing copies go last: the host finds a plugin's record by id and takes the first.
+  for (const plugin of installed) {
+    if (used.get(plugin.id) === plugin) plugins.push(plugin);
+  }
+  for (const plugin of installed) {
+    const winner = used.get(plugin.id);
+    if (winner === undefined || winner === plugin) continue;
     plugins.push(
-      "manifest" in plugin && plugin.manifest.id !== entry
-        ? failed(
-            { id: entry, rootDir, source: "installed" },
-            {
-              stage: "manifest",
-              message: `The manifest id "${plugin.manifest.id}" does not match the folder name "${entry}".`,
-            },
-          )
-        : plugin,
+      failed(plugin, {
+        stage: "discovery",
+        message: `Another copy of this plugin, in the "${path.basename(winner.folder)}" folder, is used instead.`,
+      }),
     );
   }
+  for (const id of used.keys()) seen.add(id);
 
   for (const devPath of input.devPaths) {
     const rootDir = path.resolve(devPath);

@@ -102,6 +102,8 @@ describe("command permissions", () => {
     WS_METHODS.pluginsSetEnabled,
     WS_METHODS.pluginsReload,
     WS_METHODS.pluginsInstall,
+    WS_METHODS.pluginsInstallFiles,
+    WS_METHODS.pluginsRescan,
     WS_METHODS.pluginsUninstall,
     WS_METHODS.pluginsUpdate,
     WS_METHODS.pluginsCheckUpdates,
