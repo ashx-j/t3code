@@ -55,6 +55,8 @@ Installed plugins are in the `plugins` folder of the environment's T3 Code data 
 folder per plugin. Their settings are in `plugin-data`, and `plugins.json` records which ones are
 enabled.
 
-Plugins that draw web UI load in the web and desktop apps. In the desktop app a plugin can also
+Plugins that draw web UI load in the web and desktop apps, from the app's main environment: the
+desktop app's own server, or the server the web app was opened from. Plugins on other environments
+you connect show in **Settings → Plugins**, but their UI doesn't load. In the desktop app a plugin can also
 add commands under **Plugins** in the menu bar or to a tray icon's menu, and shortcuts that work
 while T3 Code is in the background. The tray icon shows only while a plugin uses it. The mobile app shows plugin themes, but not plugin UI or plugin settings.

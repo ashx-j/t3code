@@ -7,7 +7,7 @@ import {
   useAtomValue,
 } from "@effect/atom-react";
 import type { PreparedHttpAuthorization } from "@t3tools/client-runtime/connection";
-import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { ThreadId, type EnvironmentId, type PluginState } from "@t3tools/contracts";
 import {
@@ -208,8 +208,10 @@ const pluginActionEntry = <Place extends PluginActionPlace>(
 interface WebPluginApiContext {
   readonly environmentId: EnvironmentId;
   readonly plugin: PluginState;
-  /** Keeps a cleanup for unload, or runs it at once when the plugin is already unloaded. */
-  /** Returns the function that forgets the cleanup without running it. */
+  /**
+   * Keeps a cleanup for unload, or runs it at once when the plugin is already unloaded. Returns the
+   * function that forgets the cleanup without running it.
+   */
   readonly track: (cleanup: () => void) => () => void;
   /** One dispatcher scope shared by every plugin; commands add and remove their own entries. */
   readonly shortcutHandlers: () => CommandHandlers;
@@ -245,7 +247,13 @@ function makeWebPluginApi({
           { reportFailure: false },
         );
         if (result._tag === "Success") return result.value.output;
-        throw new Error(`${pluginId}.${method} failed.`);
+        // The server's reason, so the plugin's UI can say why its own call failed.
+        const failure = squashAtomCommandFailure(result);
+        throw new Error(
+          failure instanceof Error && failure.message !== ""
+            ? failure.message
+            : `${pluginId}.${method} failed.`,
+        );
       },
       subscribe: (channel, onValue) => {
         const atom = pluginEnvironment.pluginChannel({
@@ -652,9 +660,8 @@ export function startPluginLoader(
     for (const plugin of plugins) {
       if (!wanted.has(plugin.id)) setPluginWebFailure(environmentId, plugin.id, undefined);
     }
-    for (const plugin of wanted.values()) {
-      if (!loaded.has(plugin.id)) await load(plugin);
-    }
+    // In parallel, so one plugin that hangs until its deadline does not hold the others back.
+    await Promise.all([...wanted.values()].filter((plugin) => !loaded.has(plugin.id)).map(load));
   };
 
   const stopFollowing = appAtomRegistry.subscribe(

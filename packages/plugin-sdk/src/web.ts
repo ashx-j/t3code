@@ -188,7 +188,10 @@ export interface WebPluginApi {
   /** The environment whose server this plugin was loaded from. */
   readonly environmentId: string;
   readonly rpc: {
-    /** Calls a method the plugin's server half registered. */
+    /**
+     * Calls a method the plugin's server half registered. A failure rejects with the server's
+     * reason, such as the message the handler threw.
+     */
     readonly invoke: (method: string, input?: JsonValue) => Promise<JsonValue>;
     /** Follows a channel the plugin's server half publishes to; returns the unsubscribe function. */
     readonly subscribe: (channel: string, onValue: (value: JsonValue) => void) => () => void;

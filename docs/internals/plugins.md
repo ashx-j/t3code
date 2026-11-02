@@ -14,8 +14,8 @@ that throws or hangs while loading or activating is marked failed, one that thro
 that call, hung cleanups are abandoned after a deadline, and none of them stops the server. Enable,
 disable, reload and install run in the host's scope, so a client that disconnects mid-change never
 leaves a plugin half torn down. A newly found plugin starts disabled; the user enables it. The web
-loader gives each bundle 30 seconds to load and to activate, and undoes anything a plugin registers
-after it unloads, so one stuck or slow plugin cannot hold the others.
+loader starts bundles in parallel, gives each 30 seconds to load and to activate, and undoes
+anything a plugin registers after it unloads, so one stuck or slow plugin cannot hold the others.
 
 ## The plugin API is plain JavaScript
 
@@ -66,8 +66,9 @@ drivers, MCP toolkits), plugins add an entry beside the built-ins: a `plugin` ri
 provider slash command variant does not fit plugins, because it inserts text for the provider to
 read while a plugin command runs plugin code. Where T3 has a server-supplied open variant (dynamic
 tool items, themes), plugins use it. Registries are module-level `Map`s behind one version atom,
-read through atoms derived from it: React Compiler would cache a plain lookup. Hot paths such as
-timeline and sidebar rows re-render on that one version, never through a per-row subscription.
+read through atoms derived from it: React Compiler would cache a plain lookup. Rows in hot paths,
+such as timeline and sidebar rows, each read that one shared version; with no plugins it never
+changes, so rows never re-render because of plugins.
 Chat code blocks read their own atom of code block renderers instead, so a banner or panel change
 never re-renders them, and only `plg_` tool rows look up a tool renderer. A
 plugin right panel stores its title on the surface so tab titles need no lookup, and renders
