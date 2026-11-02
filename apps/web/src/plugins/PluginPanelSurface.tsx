@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { PuzzleIcon } from "lucide-react";
+import { BlocksIcon } from "lucide-react";
 
 import { RenderErrorBoundary } from "../components/RenderErrorBoundary";
 import { Button } from "../components/ui/button";
@@ -23,7 +23,7 @@ function PluginPanelNotice(props: {
     <Empty>
       <EmptyHeader>
         <EmptyMedia variant="icon">
-          <PuzzleIcon />
+          <BlocksIcon />
         </EmptyMedia>
         <EmptyTitle>{props.title}</EmptyTitle>
         <EmptyDescription>{props.description}</EmptyDescription>

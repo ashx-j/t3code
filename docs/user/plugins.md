@@ -24,7 +24,8 @@ by default.
 
 With **All environments** selected, a plugin is installed on every connected environment that can
 run plugins. A plugin with no server code or agent skills only changes the app, so it goes to the
-app's main environment only.
+app's main environment only. The list then shows each plugin once, and turning it on or off,
+changing its settings, updating or removing it applies to every environment that has it.
 
 Once an environment has a plugin, agents can also install, remove, turn on and off, and call
 plugins when you ask them to. Only an agent in a thread set to **Full access**, and not in Plan

@@ -73,7 +73,7 @@ import {
   SquarePenIcon,
   TextSearchIcon,
   UserPlusIcon,
-  PuzzleIcon,
+  BlocksIcon,
 } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
 import {
@@ -1657,7 +1657,7 @@ function OpenCommandPaletteDialog(props: {
       searchTerms: [command.pluginName, ...command.keywords],
       title: command.title,
       description: command.pluginName,
-      icon: <PuzzleIcon className={ITEM_ICON_CLASS} />,
+      icon: <BlocksIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: command.command,
       run: async () => command.run(),
     });

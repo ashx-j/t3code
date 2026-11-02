@@ -8,7 +8,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { PuzzleIcon, WifiOffIcon } from "lucide-react";
+import { BlocksIcon, WifiOffIcon } from "lucide-react";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { environmentCatalog } from "../../connection/catalog";
 import { ConnectionDiagnosisHeadline } from "../settings/ConnectionDiagnosisDetails";
@@ -266,7 +266,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
       items.push({
         id: `plugin:${banner.key}`,
         variant: banner.variant,
-        icon: <PuzzleIcon />,
+        icon: <BlocksIcon />,
         title: banner.title,
         ...(banner.description === undefined ? {} : { description: banner.description }),
         onDismiss: banner.dismiss,

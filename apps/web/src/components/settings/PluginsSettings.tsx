@@ -4,10 +4,11 @@ import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtim
 import type { EnvironmentId, PluginInstallSource, PluginState } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
 import type * as Schema from "effect/Schema";
+import { AsyncResult, Atom } from "effect/reactivity";
 import {
   DownloadIcon,
   FolderDownIcon,
-  PuzzleIcon,
+  BlocksIcon,
   RotateCwIcon,
   SlidersHorizontalIcon,
   Trash2Icon,
@@ -24,7 +25,7 @@ import {
 } from "../../plugins/pluginRegistry";
 import { pluginEnvironment } from "../../state/plugins";
 import { RenderErrorBoundary } from "../RenderErrorBoundary";
-import { useEnvironmentQuery } from "../../state/query";
+import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Badge } from "../ui/badge";
 import { Checkbox } from "../ui/checkbox";
@@ -86,7 +87,7 @@ export function PluginsSettings() {
           <Empty>
             <EmptyHeader>
               <EmptyMedia variant="icon">
-                <PuzzleIcon />
+                <BlocksIcon />
               </EmptyMedia>
               <EmptyTitle>No environment selected</EmptyTitle>
               <EmptyDescription>Connect an environment to manage its plugins.</EmptyDescription>
@@ -103,7 +104,17 @@ const runsPlugins = (environment: EnvironmentPresentation) =>
   environment.connection.phase === "connected" &&
   environment.serverConfig?.environment.capabilities.plugins === true;
 
-/** Lists each environment's plugins. Plugin folders dropped anywhere on it are installed. */
+interface PluginTarget {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+}
+
+/** A plugin as one environment in view has it. */
+interface PluginCopy extends PluginTarget {
+  readonly plugin: PluginState;
+}
+
+/** Lists the plugins in view. Plugin folders dropped anywhere on it are installed. */
 function PluginsPage({
   environments,
 }: {
@@ -112,14 +123,13 @@ function PluginsPage({
   // Labels tell apart environments with the same name, as the scope picker does.
   const labelOf = (environment: EnvironmentPresentation) =>
     settingsScopeEnvironmentLabel(environment, environments);
-  const targets = environments.filter(runsPlugins).map((environment) => ({
+  const targets = environments.filter(runsPlugins).map((environment): PluginTarget => ({
     environmentId: environment.environmentId,
     label: labelOf(environment),
   }));
   const installer = usePluginInstaller(targets);
   const [adding, setAdding] = useState(false);
   const [dragActive, setDragActive] = useState(false);
-  const several = environments.length > 1;
   const [main] = targets;
   const isFileDrag = (event: DragEvent) => event.dataTransfer.types.includes("Files");
   return (
@@ -185,19 +195,12 @@ function PluginsPage({
               <InstallProblems problems={installer.problems} />
             </SettingsRow>
           )}
-          {several ? null : <EnvironmentPlugins environment={environments[0]!} />}
+          {main === undefined ? (
+            <PluginsUnavailable environments={environments} />
+          ) : (
+            <PluginList main={main} targets={targets} />
+          )}
         </SettingsSection>
-        {several
-          ? environments.map((environment) => (
-              <SettingsSection
-                key={environment.environmentId}
-                title={labelOf(environment)}
-                variant="plain"
-              >
-                <EnvironmentPlugins environment={environment} />
-              </SettingsSection>
-            ))
-          : null}
         {main === undefined ? null : (
           <AddPluginDialog
             open={adding}
@@ -252,9 +255,7 @@ function InstallProblems({ problems }: { readonly problems: ReadonlyArray<string
  * the main environment, so a plugin without server code or agent skills changes nothing on the
  * others and is installed on the main one only.
  */
-function usePluginInstaller(
-  targets: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly label: string }>,
-) {
+function usePluginInstaller(targets: ReadonlyArray<PluginTarget>) {
   const installSource = useAtomCommand(pluginEnvironment.installPlugin, {
     label: "plugin install",
     reportFailure: false,
@@ -273,7 +274,7 @@ function usePluginInstaller(
     const [main, ...others] = targets;
     if (main === undefined) return report("No environment here can run plugins.");
     const reportFailure = (
-      target: (typeof targets)[number],
+      target: PluginTarget,
       result: { readonly cause: Cause.Cause<unknown> },
     ) => {
       const error = squashAtomCommandFailure(result);
@@ -331,54 +332,127 @@ function usePluginInstaller(
   };
 }
 
-function EnvironmentPlugins({ environment }: { readonly environment: EnvironmentPresentation }) {
-  const connected =
-    environment.connection.phase === "connected" && environment.serverConfig !== null;
-  const supported = environment.serverConfig?.environment.capabilities.plugins === true;
-  useRescanPlugins(environment.environmentId, connected && supported);
-  const query = useEnvironmentQuery(
-    connected && supported
-      ? pluginEnvironment.pluginsLive({ environmentId: environment.environmentId, input: {} })
-      : null,
-  );
-  if (!connected) {
-    return (
-      <SettingsRow
-        title="Environment disconnected"
-        description={`Reconnect ${environment.label} to manage its plugins.`}
-      />
-    );
-  }
-  if (!supported) {
+function PluginsUnavailable({
+  environments,
+}: {
+  readonly environments: ReadonlyArray<EnvironmentPresentation>;
+}) {
+  const [only, ...others] = environments;
+  if (only === undefined || others.length > 0) {
     return (
       <SettingsRow
         title="Plugins are not available"
-        description={`${environment.label} runs a T3 Code server without plugin support.`}
+        description="None of these environments runs a T3 Code server with plugin support."
       />
     );
   }
-  if (query.error) return <SettingsRow title="Could not load plugins" description={query.error} />;
-  const plugins = query.data?.plugins;
-  if (!plugins) return <SettingsRow title="Loading plugins…" role="status" />;
+  if (only.connection.phase !== "connected" || only.serverConfig === null) {
+    return (
+      <SettingsRow
+        title="Environment disconnected"
+        description={`Reconnect ${only.label} to manage its plugins.`}
+      />
+    );
+  }
+  return (
+    <SettingsRow
+      title="Plugins are not available"
+      description={`${only.label} runs a T3 Code server without plugin support.`}
+    />
+  );
+}
+
+// Keyed by the JSON list of environment ids, so one value holds every environment's plugins.
+const pluginListsAtom = Atom.family((environmentIdsKey: string) => {
+  const environmentIds = JSON.parse(environmentIdsKey) as ReadonlyArray<EnvironmentId>;
+  return Atom.make((get) =>
+    environmentIds.map((environmentId) =>
+      get(pluginEnvironment.pluginsLive({ environmentId, input: {} })),
+    ),
+  ).pipe(Atom.withLabel(`web-plugin-lists:${environmentIdsKey}`));
+});
+
+/**
+ * Copies of a plugin on different environments share a row. A copy that failed discovery, such as
+ * one shadowed by another folder with the same plugin, keeps its own.
+ */
+function pluginRows(copies: ReadonlyArray<PluginCopy>) {
+  const rows = new Map<
+    string,
+    { readonly first: PluginCopy; readonly copies: Array<PluginCopy> }
+  >();
+  copies.forEach((copy, index) => {
+    const key =
+      copy.plugin.failure?.stage === "discovery"
+        ? `${copy.environmentId}:${index}`
+        : `${copy.plugin.id}:${copy.plugin.source}`;
+    const row = rows.get(key);
+    if (row === undefined) rows.set(key, { first: copy, copies: [copy] });
+    else row.copies.push(copy);
+  });
+  return Array.from(rows, ([key, row]) => ({ key, ...row }));
+}
+
+const fromGitOrNpm = (copy: PluginCopy) =>
+  copy.plugin.installSource !== undefined && copy.plugin.installSource.type !== "path";
+
+/**
+ * Each plugin once, however many of `targets` have it, and actions on a row apply to every copy.
+ * `main` comes first in `targets` and decides which actions are offered.
+ */
+function PluginList({
+  main,
+  targets,
+}: {
+  readonly main: PluginTarget;
+  readonly targets: ReadonlyArray<PluginTarget>;
+}) {
+  const lists = useAtomValue(
+    pluginListsAtom(JSON.stringify(targets.map((target) => target.environmentId))),
+  );
+  const several = targets.length > 1;
+  const loaded = targets.map((target, index) => {
+    const result = lists[index] ?? AsyncResult.initial(true);
+    return {
+      target,
+      plugins: AsyncResult.getOrElse(result, () => null)?.plugins ?? null,
+      error: result._tag === "Failure" ? formatEnvironmentQueryError(result.cause) : null,
+    };
+  });
+  const copies = loaded.flatMap(({ target, plugins }) =>
+    (plugins ?? []).map((plugin): PluginCopy => ({ ...target, plugin })),
+  );
+  const rows = pluginRows(copies);
+  const errors = loaded.flatMap(({ target, error }) =>
+    error === null ? [] : [several ? `${target.label}: ${error}` : error],
+  );
+  const updatable = copies.filter(fromGitOrNpm);
   return (
     <>
-      {plugins.some(
-        (plugin) => plugin.installSource !== undefined && plugin.installSource.type !== "path",
-      ) ? (
-        <CheckPluginUpdates environmentId={environment.environmentId} plugins={plugins} />
-      ) : null}
-      {plugins.length === 0 ? (
+      {targets.map((target) => (
+        <ScanPluginsFolder key={target.environmentId} environmentId={target.environmentId} />
+      ))}
+      {errors.map((error) => (
+        <SettingsRow key={error} title="Could not load plugins" description={error} />
+      ))}
+      {updatable.length === 0 ? null : (
+        <CheckPluginUpdates environmentId={main.environmentId} copies={updatable} />
+      )}
+      {loaded.every(({ plugins, error }) => plugins === null && error === null) ? (
+        <SettingsRow title="Loading plugins…" role="status" />
+      ) : rows.length === 0 && errors.length === 0 ? (
         <SettingsRow
           title="No plugins installed"
           description="Drop a plugin folder on this page to add it."
         />
       ) : (
-        // A shadowed copy of a plugin shares its id and is listed as failed during discovery.
-        plugins.map((plugin) => (
+        rows.map((row) => (
           <PluginRow
-            key={`${plugin.id}:${plugin.source}:${plugin.failure?.stage ?? "ok"}`}
-            environmentId={environment.environmentId}
-            plugin={plugin}
+            key={row.key}
+            environmentId={main.environmentId}
+            first={row.first}
+            copies={row.copies}
+            labelled={several}
           />
         ))
       )}
@@ -387,35 +461,40 @@ function EnvironmentPlugins({ environment }: { readonly environment: Environment
 }
 
 /** Has the server look at its plugins folder again, so folders copied there by hand are listed. */
-function useRescanPlugins(environmentId: EnvironmentId, available: boolean) {
+function ScanPluginsFolder({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const registry = useContext(RegistryContext);
   const canRescan = useAtomValue(pluginEnvironment.rescanPlugins.permissionAtom(environmentId));
-  const rescan = available && canRescan;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- The server reads its plugins folder only when asked, so opening the page asks it.
   useEffect(() => {
-    if (!rescan) return;
+    if (!canRescan) return;
     void runAtomCommand(
       registry,
       pluginEnvironment.rescanPlugins,
       { environmentId, input: {} },
       { label: "plugin folder scan", reportFailure: false, reportDefect: false },
     );
-  }, [registry, environmentId, rescan]);
+  }, [registry, environmentId, canRescan]);
+  return null;
 }
 
 /** Checks plugins installed from git or npm now; the server also checks once a day. */
 function CheckPluginUpdates({
   environmentId,
-  plugins,
+  copies,
 }: {
   readonly environmentId: EnvironmentId;
-  readonly plugins: ReadonlyArray<PluginState>;
+  /** Plugins installed from git or npm. */
+  readonly copies: ReadonlyArray<PluginCopy>;
 }) {
   const canCheck = useAtomValue(pluginEnvironment.checkPluginUpdates.permissionAtom(environmentId));
   const check = useAtomCommand(pluginEnvironment.checkPluginUpdates, "plugin update check");
   const [busy, setBusy] = useState(false);
   const [checked, setChecked] = useState(false);
-  const updates = plugins.filter((plugin) => plugin.availableUpdate !== undefined).length;
+  const updates = new Set(
+    copies
+      .filter((copy) => copy.plugin.availableUpdate !== undefined)
+      .map((copy) => copy.plugin.id),
+  ).size;
   return (
     <SettingsRow
       title="Updates"
@@ -433,9 +512,13 @@ function CheckPluginUpdates({
           disabled={busy || !canCheck}
           onClick={async () => {
             setBusy(true);
-            const result = await check({ environmentId, input: {} });
+            const results = await Promise.all(
+              [...new Set(copies.map((copy) => copy.environmentId))].map((target) =>
+                check({ environmentId: target, input: {} }),
+              ),
+            );
             setBusy(false);
-            setChecked(result._tag === "Success");
+            setChecked(results.every((result) => result._tag === "Success"));
           }}
         >
           {busy ? "Checking…" : "Check for updates"}
@@ -599,11 +682,18 @@ function AddPluginDialog({
 
 function PluginRow({
   environmentId,
-  plugin,
+  first,
+  copies,
+  labelled,
 }: {
+  /** The main environment in view. Its permissions decide which actions are offered. */
   readonly environmentId: EnvironmentId;
-  readonly plugin: PluginState;
+  readonly first: PluginCopy;
+  readonly copies: ReadonlyArray<PluginCopy>;
+  /** Problems name their environment, because several are in view. */
+  readonly labelled: boolean;
 }) {
+  const { plugin } = first;
   const canManage = useAtomValue(pluginEnvironment.setPluginEnabled.permissionAtom(environmentId));
   const setEnabled = useAtomCommand(pluginEnvironment.setPluginEnabled, "plugin enabled");
   const reload = useAtomCommand(pluginEnvironment.reloadPlugin, "plugin reload");
@@ -612,20 +702,31 @@ function PluginRow({
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [removeData, setRemoveData] = useState(false);
+  // Plugin UI loads from the main environment only, so its settings panel and web failure do too.
   const contributionKey = pluginContributionKey(environmentId, plugin.id);
   const customSettings = useAtomValue(pluginSettingsPanelAtom(contributionKey));
   const webFailure = useAtomValue(pluginWebFailureAtom(contributionKey));
   const hasSettings =
     customSettings !== undefined || pluginSettingsForm(plugin.settingsSchema).kind !== "none";
-  const run = async (action: () => Promise<unknown>) => {
+  const runOn = async (
+    on: ReadonlyArray<PluginCopy>,
+    action: (copy: PluginCopy) => Promise<unknown>,
+  ) => {
     setBusy(true);
-    await action();
+    await Promise.all(on.map(action));
     setBusy(false);
   };
+  const updatable = copies.filter((copy) => copy.plugin.installSource !== undefined);
+  const removable = copies.filter((copy) => copy.plugin.source === "installed");
+  const source = updatable[0]?.plugin.installSource;
+  const availableUpdate = copies.find((copy) => copy.plugin.availableUpdate !== undefined)?.plugin
+    .availableUpdate;
   const problems = [
-    ...(plugin.failure
-      ? [`${FAILURE_STAGES[plugin.failure.stage]}: ${plugin.failure.message}`]
-      : []),
+    ...copies.flatMap(({ label, plugin: { failure } }) =>
+      failure === undefined
+        ? []
+        : [`${labelled ? `${label}: ` : ""}${FAILURE_STAGES[failure.stage]}: ${failure.message}`],
+    ),
     ...(webFailure === undefined ? [] : [`Web part failed: ${webFailure}`]),
   ];
   return (
@@ -640,12 +741,10 @@ function PluginRow({
         </>
       }
       status={
-        plugin.availableUpdate === undefined && problems.length === 0 ? undefined : (
+        availableUpdate === undefined && problems.length === 0 ? undefined : (
           <div className="flex flex-wrap items-center gap-2">
-            {plugin.availableUpdate === undefined ? null : (
-              <Badge variant="info">
-                Update available: {updateLabel(plugin.availableUpdate.version)}
-              </Badge>
+            {availableUpdate === undefined ? null : (
+              <Badge variant="info">Update available: {updateLabel(availableUpdate.version)}</Badge>
             )}
             {problems.map((problem) => (
               <span key={problem} className="text-destructive">
@@ -674,30 +773,34 @@ function PluginRow({
             disabled={busy || !canManage}
             aria-label={`Reload ${plugin.name}`}
             onClick={() =>
-              void run(() => reload({ environmentId, input: { pluginId: plugin.id } }))
+              void runOn(copies, (copy) =>
+                reload({ environmentId: copy.environmentId, input: { pluginId: plugin.id } }),
+              )
             }
           >
             <RotateCwIcon className="size-4" />
           </Button>
-          {plugin.installSource === undefined ? null : (
+          {source === undefined ? null : (
             <Button
               size="icon-sm"
               variant="ghost"
               disabled={busy || !canManage}
               aria-label={`Update ${plugin.name}`}
               title={
-                plugin.availableUpdate === undefined
-                  ? `Update from ${installSourceLabel(plugin.installSource)}`
-                  : `Update to ${updateLabel(plugin.availableUpdate.version)} from ${installSourceLabel(plugin.installSource)}`
+                availableUpdate === undefined
+                  ? `Update from ${installSourceLabel(source)}`
+                  : `Update to ${updateLabel(availableUpdate.version)} from ${installSourceLabel(source)}`
               }
               onClick={() =>
-                void run(() => update({ environmentId, input: { pluginId: plugin.id } }))
+                void runOn(updatable, (copy) =>
+                  update({ environmentId: copy.environmentId, input: { pluginId: plugin.id } }),
+                )
               }
             >
               <DownloadIcon className="size-4" />
             </Button>
           )}
-          {plugin.source === "installed" ? (
+          {removable.length === 0 ? null : (
             <Popover>
               <PopoverTrigger
                 render={
@@ -732,8 +835,11 @@ function PluginRow({
                       variant="destructive"
                       disabled={busy}
                       onClick={() =>
-                        void run(() =>
-                          uninstall({ environmentId, input: { pluginId: plugin.id, removeData } }),
+                        void runOn(removable, (copy) =>
+                          uninstall({
+                            environmentId: copy.environmentId,
+                            input: { pluginId: plugin.id, removeData },
+                          }),
                         )
                       }
                     >
@@ -743,13 +849,18 @@ function PluginRow({
                 </div>
               </PopoverPopup>
             </Popover>
-          ) : null}
+          )}
           <Switch
-            checked={plugin.enabled}
+            checked={copies.every((copy) => copy.plugin.enabled)}
             disabled={busy || !canManage}
             aria-label={`Enable ${plugin.name}`}
             onCheckedChange={(enabled) =>
-              void run(() => setEnabled({ environmentId, input: { pluginId: plugin.id, enabled } }))
+              void runOn(copies, (copy) =>
+                setEnabled({
+                  environmentId: copy.environmentId,
+                  input: { pluginId: plugin.id, enabled },
+                }),
+              )
             }
           />
         </>
@@ -757,7 +868,7 @@ function PluginRow({
     >
       {settingsOpen ? (
         customSettings === undefined ? (
-          <PluginSettingsEditor environmentId={environmentId} plugin={plugin} />
+          <PluginSettingsEditor first={first} copies={copies} labelled={labelled} />
         ) : (
           <PluginCustomSettings panel={customSettings} />
         )
@@ -785,42 +896,52 @@ function PluginCustomSettings(props: { readonly panel: ComponentType }) {
   );
 }
 
+/** Shows the first copy's settings. Saving writes the same change to every copy. */
 function PluginSettingsEditor({
-  environmentId,
-  plugin,
+  first,
+  copies,
+  labelled,
 }: {
-  readonly environmentId: EnvironmentId;
-  readonly plugin: PluginState;
+  readonly first: PluginCopy;
+  readonly copies: ReadonlyArray<PluginCopy>;
+  readonly labelled: boolean;
 }) {
   const query = useEnvironmentQuery(
-    pluginEnvironment.pluginSettings({ environmentId, input: { pluginId: plugin.id } }),
+    pluginEnvironment.pluginSettings({
+      environmentId: first.environmentId,
+      input: { pluginId: first.plugin.id },
+    }),
   );
   if (query.error) return <p className="py-2 text-xs text-destructive">{query.error}</p>;
   if (!query.data) return <p className="py-2 text-xs text-muted-foreground">Loading settings…</p>;
   return (
     <PluginSettingsFormView
-      environmentId={environmentId}
-      plugin={plugin}
+      first={first}
+      copies={copies}
+      labelled={labelled}
       initialSettings={query.data.settings}
     />
   );
 }
 
 function PluginSettingsFormView({
-  environmentId,
-  plugin,
+  first,
+  copies,
+  labelled,
   initialSettings,
 }: {
-  readonly environmentId: EnvironmentId;
-  readonly plugin: PluginState;
+  readonly first: PluginCopy;
+  readonly copies: ReadonlyArray<PluginCopy>;
+  readonly labelled: boolean;
   readonly initialSettings: Schema.JsonObject;
 }) {
+  const { plugin } = first;
   const update = useAtomCommand(pluginEnvironment.updatePluginSettings, {
     label: "plugin settings",
     reportFailure: false,
   });
   const canSave = useAtomValue(
-    pluginEnvironment.updatePluginSettings.permissionAtom(environmentId),
+    pluginEnvironment.updatePluginSettings.permissionAtom(first.environmentId),
   );
   return (
     <JsonSchemaSettingsForm
@@ -830,12 +951,25 @@ function PluginSettingsFormView({
       settings={initialSettings}
       canSave={canSave}
       onSave={async (patch) => {
-        const result = await update({ environmentId, input: { pluginId: plugin.id, patch } });
-        if (result._tag === "Success") return { settings: result.value.settings };
-        const error = squashAtomCommandFailure(result);
-        return {
-          problem: error instanceof Error ? error.message : "Could not save the settings.",
-        };
+        const saved = await Promise.all(
+          copies.map(async (copy) => ({
+            copy,
+            result: await update({
+              environmentId: copy.environmentId,
+              input: { pluginId: plugin.id, patch },
+            }),
+          })),
+        );
+        const problems = saved.flatMap(({ copy, result }) => {
+          if (result._tag === "Success") return [];
+          const error = squashAtomCommandFailure(result);
+          const message = error instanceof Error ? error.message : "Could not save the settings.";
+          return [labelled ? `${copy.label}: ${message}` : message];
+        });
+        const [mine] = saved;
+        return problems.length === 0 && mine?.result._tag === "Success"
+          ? { settings: mine.result.value.settings }
+          : { problem: problems.join(" ") };
       }}
     />
   );
