@@ -919,6 +919,16 @@ const make = Effect.gen(function* () {
   const installFailed = (reason: string) => (cause: unknown) =>
     new PluginInstallError({ reason, cause });
 
+  const readSourceManifest = (folder: string) =>
+    fs.readFileString(path.join(folder, "t3-plugin.json")).pipe(
+      Effect.mapError(installFailed("The source has no t3-plugin.json.")),
+      Effect.flatMap((raw) =>
+        decodeManifestJson(raw).pipe(
+          Effect.mapError(installFailed("The source's t3-plugin.json is not a valid manifest.")),
+        ),
+      ),
+    );
+
   // Prompts off, and only transports that cannot run commands (no `ext::`).
   const runGit = (args: ReadonlyArray<string>) =>
     processRunner.run({
@@ -942,6 +952,8 @@ const make = Effect.gen(function* () {
       if (info.type !== "Directory") {
         return yield* new PluginInstallError({ reason: `${source.path} is not a folder.` });
       }
+      // Before copying, so a folder that is not a plugin (a home folder) is never copied.
+      yield* readSourceManifest(from);
       // Copied rather than linked: the installed plugin never changes when the source does.
       yield* fs
         .copy(from, into)
@@ -1008,13 +1020,7 @@ const make = Effect.gen(function* () {
       .pipe(Effect.mapError(installFailed("Could not create the staging folder.")));
     const { manifest, fetched } = yield* Effect.gen(function* () {
       const fetched = yield* fetchSource(source, staged);
-      const raw = yield* fs
-        .readFileString(path.join(staged, "t3-plugin.json"))
-        .pipe(Effect.mapError(installFailed("The source has no t3-plugin.json.")));
-      const manifest = yield* decodeManifestJson(raw).pipe(
-        Effect.mapError(installFailed("The source's t3-plugin.json is not a valid manifest.")),
-      );
-      return { manifest, fetched };
+      return { manifest: yield* readSourceManifest(staged), fetched };
     }).pipe(
       Effect.tapError(() =>
         fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore),

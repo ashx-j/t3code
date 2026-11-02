@@ -1090,9 +1090,25 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         const { stateDir } = yield* ServerConfig.ServerConfig;
         const broken = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-plugin-broken-" });
         yield* writeFile(`${broken}/t3-plugin.json`, JSON.stringify({ id: "hello-plugin" }));
+        const notPlugin = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-plugin-none-" });
+        yield* writeFile(`${notPlugin}/notes.txt`, "Not a plugin.");
+        const copiedFrom: Array<string> = [];
+        const layerCopies = layerFileSystemWith((real) => ({
+          copy: (from, to, options) =>
+            Effect.sync(() => copiedFrom.push(from)).pipe(
+              Effect.andThen(real.copy(from, to, options)),
+            ),
+        }));
         yield* Effect.gen(function* () {
           const host = yield* PluginHost.PluginHost;
           yield* waitForStatuses(host, {});
+
+          // A folder that is not a plugin, such as a home folder, is refused before it is copied.
+          const notInstalled = yield* host
+            .install({ type: "path", path: notPlugin })
+            .pipe(Effect.flip);
+          assert.strictEqual(notInstalled.message, "The source has no t3-plugin.json.");
+          assert.notInclude(copiedFrom, notPlugin);
 
           const source = { type: "path" as const, path: `${fixturesDir}hello-plugin` };
           const installed = yield* host.install(source);
@@ -1157,7 +1173,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           assert.deepStrictEqual((yield* fs.readDirectory(`${stateDir}/plugins`)).toSorted(), [
             "npm-hello",
           ]);
-        }).pipe(Effect.provide(layerHost()));
+        }).pipe(Effect.provide(layerHost().pipe(Layer.provide(layerCopies))));
       }).pipe(Effect.provide(layerConfig())),
   );
 
