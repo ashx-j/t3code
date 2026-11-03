@@ -111,6 +111,8 @@ export function latestUnheldRun(
   let latest: OrchestrationV2Run | null = null;
   for (const run of runs) {
     if (run.status === "queued" && run.queueHeld === true) continue;
+    // A command reply sent mid-turn must not stand in for the turn still running.
+    if (isCommandReplyRun(run)) continue;
     if (latest === null || run.ordinal > latest.ordinal) latest = run;
   }
   return latest;
