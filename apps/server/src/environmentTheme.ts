@@ -53,7 +53,8 @@ export class EnvironmentThemeService extends Context.Service<
 
     /**
      * Theme folders of active plugins, read after the environment's own folder. The first theme
-     * with an id wins, so a plugin cannot replace a theme the user published.
+     * with an id wins, so a plugin cannot replace a theme the user published. Every call reads
+     * the folders again, so a plugin that restarts with edited files publishes them.
      */
     readonly setPluginThemeDirectories: (directories: ReadonlyArray<string>) => Effect.Effect<void>;
   }
@@ -216,8 +217,7 @@ const make = Effect.gen(function* () {
     current: Effect.map(refresh, (state) => state.themes),
     setPluginThemeDirectories: Effect.fn("EnvironmentThemeService.setPluginThemeDirectories")(
       function* (directories) {
-        const previous = yield* Ref.getAndSet(pluginDirectories, directories);
-        if (Equal.equals(previous, directories)) return;
+        yield* Ref.set(pluginDirectories, directories);
         yield* refresh;
       },
     ),

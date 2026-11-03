@@ -1,5 +1,4 @@
 import {
-  CommandId,
   ProviderApprovalDecision,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2RuntimeRequest,
@@ -24,6 +23,7 @@ import * as Stream from "effect/Stream";
 
 import type * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import type * as ThreadManagementService from "../../orchestration-v2/ThreadManagementService.ts";
+import { newCommandId } from "./facade.ts";
 
 // The user sees the request the whole time and may answer first, so a plugin gets a short window.
 const RUNTIME_REQUEST_DEADLINE = Duration.seconds(10);
@@ -221,9 +221,7 @@ export const makeRuntimeRequestHooks = (input: {
         });
         continue;
       }
-      const commandId = CommandId.make(
-        `command:plugin:${hook.pluginId}:${yield* input.crypto.randomUUIDv4().pipe(Effect.orDie)}`,
-      );
+      const commandId = yield* newCommandId(hook.pluginId, input.crypto);
       const refusal = yield* threads
         .dispatch({
           type: "runtime-request.respond",

@@ -79,6 +79,9 @@ const PROVIDER_RUNTIME: PluginProviderRuntime = {
 };
 
 const isDriverKind = Schema.is(ProviderDriverKind);
+// The registry holds its lock while `create` runs, so one that never finishes would stop every
+// provider change. Shorter than the activate deadline, since `registerDriver` waits for it.
+const CREATE_DEADLINE = Duration.seconds(20);
 
 const errorText = (error: unknown) => {
   try {
@@ -145,7 +148,7 @@ const withClient = (instance: ProviderInstance, client: ProviderClient): Provide
  * The plugin's driver with every failure of its own code turned into a driver error: the
  * registry reports those as an unavailable instance, while a defect would stop a reconcile.
  */
-const guardedDriver = <Config>(
+export const guardedDriver = <Config>(
   driver: PluginProviderDriver<Config>,
   client: ProviderClient,
 ): AnyProviderDriver<PluginProviderDriverEnv> => ({
@@ -176,6 +179,17 @@ const guardedDriver = <Config>(
           }),
         ),
       ),
+      Effect.timeoutOrElse({
+        duration: CREATE_DEADLINE,
+        orElse: () =>
+          Effect.fail(
+            new ProviderDriverError({
+              driver: driver.driverKind,
+              instanceId: input.instanceId,
+              detail: `The plugin's create did not finish within ${Duration.toSeconds(CREATE_DEADLINE)} seconds.`,
+            }),
+          ),
+      }),
     ),
 });
 

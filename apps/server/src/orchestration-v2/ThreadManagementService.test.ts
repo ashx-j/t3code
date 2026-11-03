@@ -15,6 +15,7 @@ import {
   type OrchestrationV2ThreadProjection,
   ProjectId,
   ProviderInstanceId,
+  NodeId,
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -102,11 +103,32 @@ const layerDispatchChokepointTest =
                   model: "test",
                 },
               },
+              // A message already sent, whose run is queued.
+              messages: [
+                {
+                  id: MessageId.make("message:thread-management:hooks-sent"),
+                  text: "Fix the build.\n\nProject uses pnpm.",
+                  createdBy: "user",
+                  attachments: [],
+                },
+              ],
+              runs: [
+                {
+                  id: RunId.make("run:thread-management:hooks-queued"),
+                  userMessageId: MessageId.make("message:thread-management:hooks-sent"),
+                  modelSelection: {
+                    instanceId: ProviderInstanceId.make("codex_work"),
+                    model: "test",
+                  },
+                },
+              ],
             } as unknown as OrchestrationV2ThreadProjection),
           dispatch: (command) =>
             Effect.sync(() => {
               dispatched.push(command.type);
               if (command.type === "message.dispatch") texts.push(command.text);
+              if (command.type === "queued-run.edit") texts.push(`edited ${command.text}`);
+              if (command.type === "delegated_task.request") texts.push(`task ${command.task}`);
               if (command.type === "thread.command-reply.record") {
                 texts.push(`${command.commandId} replied ${command.reply.text}`);
               }
@@ -176,7 +198,7 @@ it.effect(
       id: string,
       notification?: OrchestrationV2Notification,
       text = "Fix the build.",
-    ): OrchestrationV2ServerCommand => ({
+    ): Extract<OrchestrationV2ServerCommand, { readonly type: "message.dispatch" }> => ({
       type: "message.dispatch",
       commandId: CommandId.make(`command:thread-management:hooks-${id}`),
       threadId,
@@ -251,6 +273,37 @@ it.effect(
       yield* threads.dispatch(message("command", undefined, "/goal clear"));
       // Only starts with a slash: not a command, so hooks see it.
       yield* threads.dispatch(message("path", undefined, "/etc/hosts is broken"));
+      // A steer that missed its turn sends the recorded message again under a new command id.
+      yield* threads.dispatch({
+        ...message("steer-again", undefined, "Fix the build.\n\nProject uses pnpm."),
+        messageId: MessageId.make("message:thread-management:hooks-sent"),
+      });
+      // A queued message's edit and a delegated task's prompt pass the hooks too.
+      const edit = (id: string, text: string): OrchestrationV2ServerCommand => ({
+        type: "queued-run.edit",
+        commandId: CommandId.make(`command:thread-management:hooks-${id}`),
+        threadId,
+        runId: RunId.make("run:thread-management:hooks-queued"),
+        text,
+      });
+      yield* threads.dispatch(edit("edit", "Fix the tests."));
+      const editBlocked = yield* Effect.flip(
+        threads.dispatch(edit("edit-blocked", "Use token abc.")),
+      );
+      expect(userFacingDispatchErrorMessage(editBlocked)).toBe("Guard: Remove the token first.");
+      yield* threads.dispatch({
+        type: "delegated_task.request",
+        commandId: CommandId.make("command:thread-management:hooks-delegated"),
+        parentThreadId: threadId,
+        parentRunId: RunId.make("run:thread-management:hooks-queued"),
+        parentNodeId: NodeId.make("node:thread-management:hooks-parent"),
+        task: "Check the tests.",
+        modelSelection: { instanceId, model: "test" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy: "agent",
+        creationSource: "server",
+      });
 
       expect(texts).toEqual([
         "Fix the build.\n\nProject uses pnpm.",
@@ -260,6 +313,9 @@ it.effect(
         "Fix the build.",
         "/goal clear",
         "/etc/hosts is broken\n\nProject uses pnpm.",
+        "Fix the build.\n\nProject uses pnpm.",
+        "edited Fix the tests.\n\nProject uses pnpm.",
+        "task Check the tests.\n\nProject uses pnpm.",
       ]);
     }).pipe(Effect.provide(layerTest));
   },

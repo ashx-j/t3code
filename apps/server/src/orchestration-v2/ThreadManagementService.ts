@@ -58,7 +58,7 @@ import * as Stream from "effect/Stream";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
-import * as PluginHooks from "../plugins/PluginHooks.ts";
+import { makePluginSendHooks } from "../plugins/pluginSendHooks.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { projectedRowEncodedBytes } from "./threadHistoryPaging.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -570,13 +570,13 @@ const isForceStopThreadError = Schema.is(OrchestrationV2ForceStopThreadError);
 const make = Effect.gen(function* () {
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
-  const pluginHooks = yield* PluginHooks.PluginHooks;
   const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
   const layerScope = yield* Effect.scope;
   const agentScope = yield* AgentScope;
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+  const withPluginHooks = yield* makePluginSendHooks;
 
   const assertProviderInstanceEnabled: ThreadManagementServiceShape["assertProviderInstanceEnabled"] =
     (input) =>
@@ -747,91 +747,6 @@ const make = Effect.gen(function* () {
         return Effect.void;
     }
   };
-
-  // Plugins see user and agent messages before orchestration records them, may change or block
-  // them, and handle their own slash commands. Notifications and guest messages are not the
-  // sender's own text, so they skip plugins, and a replayed command id goes out as accepted.
-  const withPluginHooks = (command: OrchestrationV2ServerCommand) =>
-    command.type === "message.dispatch" &&
-    command.notification === undefined &&
-    command.guestMessageId === undefined &&
-    command.createdBy !== "system"
-      ? pluginHooks
-          .beforeDispatch(
-            {
-              threadId: command.threadId,
-              messageId: command.messageId,
-              text: command.text,
-              createdBy: command.createdBy,
-              attachments: command.attachments.map((attachment) => ({
-                type: attachment.type,
-                name: attachment.name,
-                mimeType: attachment.mimeType,
-                sizeBytes: attachment.sizeBytes,
-              })),
-              ...(command.modelSelection === undefined
-                ? {}
-                : {
-                    model: {
-                      instanceId: command.modelSelection.instanceId,
-                      model: command.modelSelection.model,
-                    },
-                  }),
-            },
-            receipts.getByCommandId(command.commandId).pipe(
-              Effect.map(Option.isSome),
-              Effect.orElseSucceed(() => false),
-            ),
-            command.modelSelection === undefined
-              ? orchestrator.getThreadRecords(command.threadId, []).pipe(
-                  Effect.map((projection) => projection.thread.modelSelection.instanceId),
-                  Effect.orElseSucceed(() => undefined),
-                )
-              : Effect.succeed(command.modelSelection.instanceId),
-          )
-          .pipe(
-            Effect.map((result): OrchestrationV2ServerCommand => {
-              if (typeof result === "string") {
-                return result === command.text ? command : { ...command, text: result };
-              }
-              // Same command id, so a retry of the message replays the recorded reply.
-              return {
-                type: "thread.command-reply.record",
-                commandId: command.commandId,
-                threadId: command.threadId,
-                messageId: command.messageId,
-                text: command.text,
-                ...(command.context === undefined ? {} : { context: command.context }),
-                attachments: command.attachments,
-                ...(command.modelSelection === undefined
-                  ? {}
-                  : { modelSelection: command.modelSelection }),
-                createdBy: command.createdBy,
-                creationSource: command.creationSource,
-                ...(command.scheduledTaskId === undefined
-                  ? {}
-                  : { scheduledTaskId: command.scheduledTaskId }),
-                ...(command.senderThreadId === undefined
-                  ? {}
-                  : { senderThreadId: command.senderThreadId }),
-                reply: {
-                  messageId: MessageId.make(`${command.messageId}:reply`),
-                  text: result.reply,
-                },
-              };
-            }),
-            // A rejected command is one every caller already handles; its cause carries the
-            // plugin's reason, which is what clients show.
-            Effect.mapError(
-              (blocked) =>
-                new Orchestrator.OrchestratorCommandRejectedError({
-                  commandId: command.commandId,
-                  commandType: command.type,
-                  cause: blocked,
-                }),
-            ),
-          )
-      : Effect.succeed(command);
 
   const dispatch: ThreadManagementServiceShape["dispatch"] = (command) =>
     ensureCommandTranscripts(command).pipe(

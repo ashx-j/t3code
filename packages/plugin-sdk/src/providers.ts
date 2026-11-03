@@ -116,7 +116,10 @@ export interface PluginSourceControlRuntime {
 
 /** An ACP agent T3 Code runs by its command, with the shared ACP adapter. */
 export interface PluginAcpAgent {
-  /** The provider driver kind: letters, digits and `-`, unique among drivers. */
+  /**
+   * The provider driver kind: a letter, then letters, digits, `_` or `-`, at most 64 characters,
+   * unique among drivers.
+   */
   readonly kind: string;
   readonly label: string;
   /** An executable on the server and its arguments; users can change both per instance. */
