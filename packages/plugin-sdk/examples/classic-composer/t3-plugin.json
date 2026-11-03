@@ -1,7 +1,7 @@
 {
   "id": "classic-composer",
   "name": "Classic composer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "The composer row from before T3's redesign: model, effort and permissions pickers on the left, attach and send on the right.",
   "engines": { "t3": ">=0.1.5" },
   "web": "./web.js"
