@@ -153,8 +153,7 @@ svg.lucide-shield-off {
 
 /* 4. Hook: data-slot="composer-context-strip", with data-composer-context-control and
       data-slot="combobox-trigger" on its pickers. A new thread's workspace and branch sat in a
-      drawer tucked under the card, with chevrons. The row already names the permissions, so the
-      drawer doesn't repeat them; the strip's permissions chip is marked only by its label. */
+      drawer tucked under the card, with chevrons. */
 [data-slot="composer-context-strip"] {
   isolation: isolate;
   width: auto;
@@ -171,22 +170,9 @@ svg.lucide-shield-off {
     z-index: -1;
     border: 1px solid var(--chat-composer-outline);
     border-radius: 0 0 var(--radius-2xl) var(--radius-2xl);
-    background-color: color-mix(
-      in oklab,
-      var(--chat-composer-glass-surface) var(--glass-opacity, 100%),
-      transparent
-    );
-    background-image:
-      linear-gradient(transparent 16px, rgb(0 0 0 / 18%) 16px, transparent 26px),
-      linear-gradient(rgb(255 255 255 / 1%), rgb(255 255 255 / 1%));
-    background-origin: border-box;
-    -webkit-backdrop-filter: blur(var(--glass-blur, 0)) saturate(var(--glass-saturation, 1));
-    backdrop-filter: blur(var(--glass-blur, 0)) saturate(var(--glass-saturation, 1));
+    background-color: var(--chat-composer-glass-surface);
     /* The top 15px sit under the card. */
     mask-image: linear-gradient(transparent 15px, black 15px);
-  }
-  & [data-composer-context-control][aria-label^="Permissions"] {
-    display: none;
   }
   & button:is([data-composer-context-control], [data-slot="combobox-trigger"])::after {
     content: "";
@@ -204,10 +190,41 @@ svg.lucide-shield-off {
     }
   }
 }
+/* In dark, the drawer is glass like the card, the card casts a shadow onto it, and it has a faint
+   white fill. In light it is solid. */
+.dark [data-slot="composer-context-strip"]::before {
+  background-color: color-mix(
+    in oklab,
+    var(--chat-composer-glass-surface) var(--glass-opacity, 100%),
+    transparent
+  );
+  -webkit-backdrop-filter: blur(var(--glass-blur, 0)) saturate(var(--glass-saturation, 1));
+  backdrop-filter: blur(var(--glass-blur, 0)) saturate(var(--glass-saturation, 1));
+  background-image:
+    linear-gradient(transparent 16px, rgb(0 0 0 / 18%) 16px, transparent 26px),
+    linear-gradient(rgb(255 255 255 / 1%), rgb(255 255 255 / 1%));
+  background-origin: border-box;
+}
+/* While the row shows its own pickers, the drawer doesn't repeat the permissions, and a folder
+   without git, which leaves the drawer nothing else, shows no drawer. T3's own row, which the
+   narrowest composer hands over to, leaves the permissions to the drawer. The strip's permissions
+   chip is marked only by its label. */
+[data-slot="composer-shell"]:has(.classic-composer-pickers) [data-slot="composer-context-strip"] {
+  & [data-composer-context-control][aria-label^="Permissions"] {
+    display: none;
+  }
+  &:not(:has(> :not([aria-label^="Permissions"]))) {
+    display: none;
+  }
+}
 /* The card's outline opens where the drawer joins it, so no hairline crosses the join, and its fill
    lets the drawer's side edges run up into the card's last pixel. Hook: data-context-row, which T3
-   sets on the shell while the drawer shows, and the outline and fill on the card's own elements. */
-[data-slot="composer-shell"][data-context-row] {
+   sets on the shell while the drawer shows, and the outline and fill on the card's own elements.
+   Only while the drawer shows: it holds more than the permissions, or T3's row leaves them there. */
+[data-slot="composer-shell"][data-context-row]:is(
+    :has([data-slot="composer-context-strip"] > :not([aria-label^="Permissions"])),
+    :not(:has(.classic-composer-pickers))
+  ) {
   & :is([data-slot="composer-host"], [data-chat-composer-main-surface])::after {
     clip-path: polygon(
       0 0,
