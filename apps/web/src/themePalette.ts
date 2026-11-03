@@ -1742,6 +1742,12 @@ function applyPublishedThemeExtras(
   palette: ThemeDefinition | null,
   mode: ThemeAppearance,
 ) {
+  // Custom themes win an id collision, so only the published definition itself counts.
+  if (palette !== null && getEnvironmentThemes().includes(palette)) {
+    root.dataset.themePublished = "";
+  } else {
+    delete root.dataset.themePublished;
+  }
   const set = (variable: string, value: string | undefined) => {
     if (value === undefined) root.style.removeProperty(variable);
     else root.style.setProperty(variable, value);

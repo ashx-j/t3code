@@ -1586,12 +1586,17 @@ html[data-theme-id] [data-app-sidebar] {
   --sidebar-row-selected: var(--app-theme-sidebar-row-selected);
   --sidebar-border: var(--app-theme-sidebar-border);
   --sidebar-stage-fade: var(--app-theme-sidebar);
-  --secondary-label: var(--app-theme-secondary-label);
   border-color: color-mix(in srgb, var(--contrast-sidebar-foreground) 10%, transparent);
 
   @variant dark {
     border-color: color-mix(in srgb, var(--contrast-sidebar-foreground) 8%, transparent);
   }
+}
+
+/* A published theme, such as a plugin's, also colors the sidebar's row metadata, like thread
+   times. Built-in themes keep the sidebar's own step below read titles. */
+html[data-theme-published] [data-app-sidebar] {
+  --secondary-label: var(--app-theme-secondary-label);
 }
 
 /* T3 Chat's panel divider is deliberately pink, and its resize affordance
