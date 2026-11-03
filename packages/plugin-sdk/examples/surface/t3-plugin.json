@@ -1,9 +1,10 @@
 {
   "id": "surface",
   "name": "Surface",
-  "version": "0.2.0",
-  "description": "A calm dark theme: neutral grays, translucent hairlines and color only where something needs attention.",
+  "version": "0.3.0",
+  "description": "A calm dark theme: neutral grays, cards, rounder corners and color only where something needs attention.",
   "engines": {
     "t3": ">=0.1.5"
-  }
+  },
+  "web": "./web.js"
 }
