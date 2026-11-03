@@ -133,7 +133,8 @@ export interface PluginMcpToolEntry {
   readonly name: string;
   readonly description: string;
   readonly inputSchema: Schema.JsonObject;
-  readonly access: PluginRpcAccess;
+  /** Picked per call by a tool that changes nothing but reads more with write access. */
+  readonly access: PluginRpcAccess | ((input: Schema.JsonObject) => PluginRpcAccess);
   readonly call: (
     input: Schema.JsonObject,
     caller: { readonly threadId: string | null },
@@ -383,7 +384,8 @@ const make = () => {
       },
       additionalProperties: false,
     },
-    access: "read",
+    // A path can name any folder on the server, which a read-only client must not probe.
+    access: (input) => (input.path === undefined ? "read" : "write"),
     call: (input) =>
       decodeCheckInput(input).pipe(
         Effect.mapError(() => invalidInput({ message: "Give either pluginId or path." })),

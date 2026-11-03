@@ -256,21 +256,23 @@ export class PluginHost extends Context.Service<
       target: { readonly pluginId: PluginId } | { readonly path: string },
     ) => Effect.Effect<PluginCheckReport, PluginNotFoundError>;
     /**
-     * Keeps the latest web failure a client reported for the plugin's current start, in memory;
-     * `null` clears it. A report about an earlier start is ignored.
+     * Keeps the latest web failure a client reported for the plugin's current start, in memory.
+     * A report about an earlier start is ignored.
      */
     readonly reportWebFailure: (input: {
       readonly pluginId: PluginId;
       readonly revision: number;
-      readonly message: string | null;
+      readonly message: string;
     }) => Effect.Effect<void, PluginNotFoundError>;
     /**
      * Stops a plugin and deletes its folder, or for a linked folder only forgets it;
-     * `removeData` also deletes its settings.
+     * `removeData` also deletes its settings. `linkedFolder` names one linked copy, which is only
+     * forgotten when another copy with its id is in use.
      */
     readonly uninstall: (
       pluginId: PluginId,
       removeData: boolean,
+      linkedFolder?: string,
     ) => Effect.Effect<void, PluginInstallError | PluginNotFoundError | PluginConfigError>;
     /** `scopes` are the caller's; methods the plugin registered as writes need the operate scope. */
     readonly invoke: (input: {
@@ -514,12 +516,11 @@ const make = Effect.gen(function* () {
   // every client and provider stream rebuild what it already shows.
   let published: ReadonlyArray<PluginState> | undefined;
   // Reading and publishing under one lock, so a slower fiber cannot publish an older list last.
-  const publishStates = publishLock.withPermits(1)(
+  const publishUnderLock = publishLock.withPermits(1)(
     Effect.gen(function* () {
       const all = yield* Ref.get(records);
       const states = yield* currentStates;
       if (published !== undefined && Equal.equals(states, published)) return;
-      published = states;
       yield* services.mcpTools.setInstalledPlugins(states);
       const active = all.flatMap((record, index) =>
         states[index]?.status === "active" ? [record.plugin] : [],
@@ -541,8 +542,11 @@ const make = Effect.gen(function* () {
         )).flat(),
       );
       yield* PubSub.publish(changes, states);
+      published = states;
     }),
   );
+  // A caller that disconnects mid-publish must not leave a change it made unsent.
+  const publishStates = Effect.uninterruptible(publishUnderLock);
   const findRecord = (pluginId: string) =>
     Ref.get(records).pipe(Effect.map((all) => all.find((record) => record.plugin.id === pluginId)));
   const stateOf = (pluginId: PluginId) =>
@@ -858,6 +862,12 @@ const make = Effect.gen(function* () {
     "failure" in plugin
       ? { plugin, status: "failed", failure: plugin.failure }
       : { plugin, status: enabled ? "loading" : "disabled" };
+  // A shadowed copy keeps its manifest for its row, but started it would take over the record
+  // of the copy in use, which shares its id.
+  const startsAtDiscovery = (
+    plugin: DiscoveredPlugin,
+    enabled: Readonly<Record<string, boolean>>,
+  ) => enabled[plugin.id] === true && !("failure" in plugin);
 
   // Startup tolerates an unreadable plugins.json; an explicit reload reports it instead.
   const discover = Effect.fnUntraced(function* (lenient: boolean) {
@@ -928,7 +938,7 @@ const make = Effect.gen(function* () {
       yield* publishStates;
       // Each plugin activates in its own fiber, so a slow one delays nobody else.
       for (const plugin of plugins) {
-        if (enabled[plugin.id] === true && "manifest" in plugin) yield* startPlugin(plugin);
+        if (startsAtDiscovery(plugin, enabled)) yield* startPlugin(plugin);
       }
     }),
   );
@@ -995,7 +1005,7 @@ const make = Effect.gen(function* () {
     ]);
     yield* publishStates;
     for (const plugin of added) {
-      if (enabled[plugin.id] === true && "manifest" in plugin) yield* startPlugin(plugin);
+      if (startsAtDiscovery(plugin, enabled)) yield* startPlugin(plugin);
     }
     return plugins;
   });
@@ -1228,6 +1238,20 @@ const make = Effect.gen(function* () {
         reason: `${manifest.id} is already linked from ${existing.plugin.folder}. Unlink it first.`,
       });
     }
+    // Discovery lists what is in the plugins folder as installed, and that copy wins, so removing
+    // the plugin would delete the folder instead of unlinking it.
+    const realPath = (target: string) =>
+      fs.realPath(target).pipe(Effect.orElseSucceed(() => target));
+    const fromPlugins = path.relative(yield* realPath(pluginsDir), yield* realPath(from));
+    const outside =
+      fromPlugins === ".." ||
+      fromPlugins.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(fromPlugins);
+    if (!outside) {
+      return yield* new PluginInstallError({
+        reason: `${folder} is already in the plugins folder, so T3 finds it there without a link, and removing it deletes it. To keep the folder when removing the plugin, link one outside ${pluginsDir}.`,
+      });
+    }
     yield* writeConfig((current) => ({
       ...current,
       devPaths: [...(current.devPaths ?? []).filter((entry) => path.resolve(entry) !== from), from],
@@ -1334,10 +1358,38 @@ const make = Effect.gen(function* () {
     );
   });
 
+  // Forgets a linked copy that another copy with its id shadows; the copy in use keeps running.
+  const unlinkShadowed = (pluginId: PluginId, folder: string) =>
+    runLifecycle(
+      Effect.gen(function* () {
+        yield* writeConfig((current) => ({
+          ...current,
+          devPaths: (current.devPaths ?? []).filter((entry) => path.resolve(entry) !== folder),
+        }));
+        yield* Ref.update(records, (all) =>
+          all.filter(
+            ({ plugin }) =>
+              plugin.id !== pluginId || plugin.source !== "dev" || plugin.folder !== folder,
+          ),
+        );
+        yield* publishStates;
+      }),
+    );
+
   const uninstall: PluginHost["Service"]["uninstall"] = Effect.fn("PluginHost.uninstall")(
-    function* (pluginId, removeData) {
+    function* (pluginId, removeData, linkedFolder) {
       const record = yield* findRecord(pluginId);
       if (record === undefined) return yield* new PluginNotFoundError({ pluginId });
+      if (linkedFolder !== undefined) {
+        const folder = path.resolve(linkedFolder);
+        const copies = (yield* Ref.get(records)).filter(({ plugin }) => plugin.id === pluginId);
+        const link = copies.findIndex(
+          ({ plugin }) => plugin.source === "dev" && plugin.folder === folder,
+        );
+        if (link === -1) return yield* new PluginNotFoundError({ pluginId });
+        // The first copy is the one in use, and the others share its settings and storage.
+        if (link > 0) return yield* unlinkShadowed(pluginId, folder);
+      }
       const { folder, source } = record.plugin;
       const settingsSchema = manifestOf(record.plugin)?.settingsSchema;
       yield* runLifecycle(
@@ -1482,18 +1534,12 @@ const make = Effect.gen(function* () {
         return yield* new PluginNotFoundError({ pluginId: report.pluginId });
       }
       if (record.revision !== report.revision) return;
-      yield* Ref.update(webFailures, (all) => {
-        const next = new Map(all);
-        if (report.message === null) {
-          next.delete(report.pluginId);
-        } else {
-          next.set(report.pluginId, {
-            revision: report.revision,
-            message: report.message.slice(0, MAX_WEB_FAILURE_CHARS),
-          });
-        }
-        return next;
-      });
+      yield* Ref.update(webFailures, (all) =>
+        new Map(all).set(report.pluginId, {
+          revision: report.revision,
+          message: report.message.slice(0, MAX_WEB_FAILURE_CHARS),
+        }),
+      );
       yield* publishStates;
     }),
     getSettings: Effect.fn("PluginHost.getSettings")(function* (pluginId) {

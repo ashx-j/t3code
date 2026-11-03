@@ -144,7 +144,8 @@ decoded for the plugin; several types share one stream so events stay in sequenc
 buffer means a slow plugin loses old events rather than stalling the server; plugins resume by
 `sequence`. `turns.afterRunCompleted` reads the same events through a stream that waits instead of
 dropping, because a dropped run would be lost for good once the saved position moves past it. It
-saves the sequence in the plugin's storage when the plugin first subscribes and after each run,
+saves the sequence in the plugin's storage, under the `t3.` prefix that the plugin's own `list`
+skips and its writes refuse, when the plugin first subscribes and after each run,
 with the last 256 ended runs: runs that end while a plugin is off arrive when it starts, even
 before it has handled one, and a run updated again after it ended (a checkpoint landing on an
 interrupted run) is not delivered twice. Hooks skip slash commands, whose meaning changed
@@ -289,9 +290,13 @@ a symlinked plugin is the author's own folder. Git clones run with prompts off a
 
 An agent writing a plugin installs its folder with `link`, which adds it to `devPaths` rather than
 copying it, so edits plus a reload are the whole loop; removing it only takes it out of
-`devPaths`. Symlinks into `plugins/` would do the same but need extra rights on Windows. Settings
-never take a typed folder path; linking is for agents through MCP. `t3_plugins_check` reads a
-plugin's files and never loads its code, so it can check a folder before anyone trusts it.
+`devPaths`. Symlinks into `plugins/` would do the same but need extra rights on Windows. A folder
+inside `plugins/` cannot be linked: discovery lists it as installed and that copy wins, so removing
+the plugin would delete the folder. A link shadowed by another copy with its id never starts, and
+Settings removes it by its folder, which leaves the copy in use alone. Settings never take a typed
+folder path; linking is for agents through MCP. `t3_plugins_check` reads a
+plugin's files and never loads its code, so it can check a folder before anyone trusts it. A
+`path` needs write access, because it can name any folder on the server.
 
 Discovery takes a plugin's id from its manifest, not its folder name, because people copy plugin
 folders in by hand. A folder named after its id wins over other copies, and installs replace a

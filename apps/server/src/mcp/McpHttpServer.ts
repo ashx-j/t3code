@@ -1163,19 +1163,26 @@ export const layerPluginTools = Layer.effectDiscard(
     const plugins = yield* PluginMcpTools.PluginMcpTools;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     yield* plugins.attach((entry) => {
-      const call = McpToolAccess.dynamic(entry.access, (input: Schema.JsonObject) =>
-        McpInvocationContext.McpInvocationContext.pipe(
-          Effect.flatMap((scope) =>
-            entry.call(input, { threadId: scope.thread?.threadId ?? null }),
+      const checked = (access: "read" | "write") =>
+        McpToolAccess.dynamic(access, (input: Schema.JsonObject) =>
+          McpInvocationContext.McpInvocationContext.pipe(
+            Effect.flatMap((scope) =>
+              entry.call(input, { threadId: scope.thread?.threadId ?? null }),
+            ),
           ),
-        ),
-      );
+        );
+      const reads = checked("read");
+      const writes = checked("write");
+      const call = (input: Schema.JsonObject) =>
+        (typeof entry.access === "function" ? entry.access(input) : entry.access) === "read"
+          ? reads(input)
+          : writes(input);
       return server.addTool({
         tool: new McpSchema.Tool({
           name: entry.name,
           description: entry.description,
           inputSchema: entry.inputSchema,
-          annotations: { readOnlyHint: entry.access === "read" },
+          annotations: { readOnlyHint: entry.access !== "write" },
         }),
         annotations: Context.empty(),
         handle: (payload) =>
