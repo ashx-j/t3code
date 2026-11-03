@@ -216,19 +216,16 @@ const make = () => {
   const pluginsList: PluginMcpToolEntry = {
     name: PLUGINS_LIST_TOOL,
     description:
-      "List the plugins installed in this T3 Code environment, with each one's status, whether it is enabled, and why its web half failed in the browser, if it did.",
+      "List the plugins installed in this T3 Code environment, with each one's status, whether it is enabled, why its last start or its web half in the browser failed, if either did, and the linkedFolder of each copy loaded from a folder with link: true.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     access: "read",
     call: () =>
       (hostActions?.slashCommands ?? Effect.succeed([])).pipe(
         Effect.map((commands) => ({
           plugins: installed.map((plugin) => ({
-            id: plugin.id,
+            ...toolState(plugin),
             name: plugin.name,
             version: plugin.version ?? null,
-            status: plugin.status,
-            enabled: plugin.enabled,
-            ...(plugin.webFailure === undefined ? {} : { webFailure: plugin.webFailure }),
             slashCommands: commands
               .filter((command) => command.pluginId === plugin.id)
               .map((command) => `/${command.name}`),

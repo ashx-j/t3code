@@ -5,6 +5,7 @@ import type {
   SourceControlDriverServices,
 } from "@t3tools/source-control-core/server/driver";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -75,13 +76,15 @@ export const makePluginDrivers = Effect.gen(function* () {
         return yield* taken("another plugin provides it.");
       }
       const childScope = yield* Scope.fork(scope);
+      // The captured context holds the layer's own scope, so the child goes into it. A plugin's
+      // `make` can fail in ways its type does not admit; whatever stops it closes what it opened.
       const instance = yield* driver.make.pipe(
-        Effect.provideContext(context),
-        Effect.provideService(Scope.Scope, childScope),
-        Effect.catchDefect((defect) =>
-          Scope.close(childScope, Exit.void).pipe(
-            Effect.andThen(Effect.fail(taken(`its driver failed to start: ${String(defect)}`))),
-          ),
+        Effect.provideContext(Context.add(context, Scope.Scope, childScope)),
+        Effect.onError(() => Scope.close(childScope, Exit.void)),
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.fail(taken(`its driver failed to start: ${String(Cause.squash(cause))}`)),
         ),
       );
       const unregister = yield* Effect.try({

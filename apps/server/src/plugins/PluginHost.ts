@@ -13,6 +13,7 @@ import {
   type PluginState,
   type PluginUploadFile,
   type PluginStatus,
+  type ThreadId,
 } from "@t3tools/contracts";
 import type { PluginDefinition } from "@t3tools/plugin-sdk/server";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
@@ -267,7 +268,8 @@ export class PluginHost extends Context.Service<
     /**
      * Stops a plugin and deletes its folder, or for a linked folder only forgets it;
      * `removeData` also deletes its settings. `linkedFolder` names one linked copy, which is only
-     * forgotten when another copy with its id is in use.
+     * forgotten when another copy with its id is in use; that copy keeps the data, so
+     * `removeData` is refused for it.
      */
     readonly uninstall: (
       pluginId: PluginId,
@@ -525,14 +527,15 @@ const make = Effect.gen(function* () {
       const active = all.flatMap((record, index) =>
         states[index]?.status === "active" ? [record.plugin] : [],
       );
-      // Starting ones too: a window that connects while a slow `activate` runs would otherwise
-      // paint T3's colors, forget the saved theme, then switch back once the plugin is up.
+      // Every enabled plugin that has not failed, so a starting or restarting one keeps its themes:
+      // windows would otherwise paint T3's colors, forget the saved theme, then switch back.
       yield* environmentThemes.setPluginThemeDirectories(
-        all.flatMap((record, index) =>
-          states[index]?.status === "active" || states[index]?.status === "loading"
+        all.flatMap((record, index) => {
+          const state = states[index];
+          return state?.enabled === true && state.status !== "failed"
             ? [path.join(record.plugin.rootDir, "themes")]
-            : [],
-        ),
+            : [];
+        }),
       );
       const withSkills = yield* Effect.filter(
         active.map((plugin) => {
@@ -699,7 +702,8 @@ const make = Effect.gen(function* () {
         .pipe(Effect.orDie);
     yield* register("/web.js", () => path.join(plugin.rootDir, entry), plugin.rootDir);
     const assetsDir = yield* fs.realPath(path.join(plugin.rootDir, "assets")).pipe(Effect.option);
-    if (Option.isSome(assetsDir)) {
+    // A symlinked `assets` folder outside the plugin would serve whatever it points at.
+    if (Option.isSome(assetsDir) && assetsDir.value.startsWith(`${plugin.rootDir}${path.sep}`)) {
       yield* register(
         "/assets/*",
         (requestPath) =>
@@ -1011,10 +1015,17 @@ const make = Effect.gen(function* () {
         yield* stopPlugin(record.plugin.id);
       }
     }
-    // In discovery's order, which puts the copy in use before the copies it shadows.
+    // In discovery's order, which puts the copy in use before the copies it shadows. A kept copy
+    // that runs nothing takes discovery's reason, which names the copy now in use.
     yield* Ref.set(
       records,
-      next.map(({ plugin, kept }) => kept ?? initialRecord(plugin, enabled[plugin.id] === true)),
+      next.map(({ plugin, kept }) =>
+        kept === undefined
+          ? initialRecord(plugin, enabled[plugin.id] === true)
+          : "failure" in plugin
+            ? { ...kept, plugin, failure: plugin.failure }
+            : kept,
+      ),
     );
     yield* publishStates;
     for (const { plugin, kept } of next) {
@@ -1193,6 +1204,16 @@ const make = Effect.gen(function* () {
     const previous = path.join(stagingDir, "previous");
     yield* runLifecycle(
       Effect.gen(function* () {
+        // A folder put there by hand holds another plugin, or none, which the swap would delete.
+        if (
+          existing === undefined &&
+          (yield* fs.exists(target).pipe(Effect.orElseSucceed(() => true)))
+        ) {
+          const owner = (yield* Ref.get(records)).find((record) => record.plugin.folder === target);
+          return yield* new PluginInstallError({
+            reason: `The plugins folder already has a ${manifest.id} folder${owner === undefined ? "" : ` holding ${owner.plugin.id}`}. Move it, then install again.`,
+          });
+        }
         yield* stopPlugin(manifest.id);
         yield* fs
           .makeDirectory(pluginsDir, { recursive: true })
@@ -1399,8 +1420,17 @@ const make = Effect.gen(function* () {
         const link = copies.findIndex(
           ({ plugin }) => plugin.source === "dev" && plugin.folder === folder,
         );
-        if (link === -1) return yield* new PluginNotFoundError({ pluginId });
+        if (link === -1) {
+          return yield* new PluginInstallError({
+            reason: `No copy of ${pluginId} is linked from ${linkedFolder}.`,
+          });
+        }
         // The first copy is the one in use, and the others share its settings and storage.
+        if (link > 0 && removeData) {
+          return yield* new PluginInstallError({
+            reason: `${linkedFolder} is not the copy of ${pluginId} in use, and the copy in use keeps the data. Unlink it without removing data.`,
+          });
+        }
         if (link > 0) return yield* unlinkShadowed(pluginId, folder);
       }
       const { folder, source } = record.plugin;
@@ -1422,9 +1452,10 @@ const make = Effect.gen(function* () {
               .pipe(Effect.mapError(installFailed(`Could not delete ${folder}.`)));
           }
           yield* removeFromConfig(pluginId);
-          // Stopping replaces the record, so match it by id and source rather than identity.
+          // Stopping replaces the record, so match it by folder rather than identity: a copy it
+          // shadowed may share its source.
           yield* Ref.update(records, (all) =>
-            all.filter((entry) => entry.plugin.id !== pluginId || entry.plugin.source !== source),
+            all.filter((entry) => entry.plugin.id !== pluginId || entry.plugin.folder !== folder),
           );
           // A copy it shadowed takes its place, found afresh rather than left as the shadow.
           if ((yield* Ref.get(records)).some((entry) => entry.plugin.id === pluginId)) {
@@ -1640,15 +1671,26 @@ const make = Effect.gen(function* () {
         ),
       ),
   });
-  yield* services.hooks.setProviderSlashCommands((instanceId) =>
-    services.providers.getProviders.pipe(
-      Effect.map(
-        (providers) =>
-          providers
-            .find((provider) => provider.instanceId === instanceId)
-            ?.slashCommands.map((command) => command.name) ?? [],
-      ),
-    ),
+  // The composer lists the commands of the thread's folder, where a repository adds its own.
+  const workspaceOf = Effect.fnUntraced(function* (threadId: ThreadId) {
+    const shell = yield* threads.getThreadShell(threadId);
+    if (shell === null) return undefined;
+    if (shell.worktreePath !== null) return shell.worktreePath;
+    const project = yield* services.projectService.getById(shell.projectId);
+    return Option.isSome(project) ? project.value.workspaceRoot : undefined;
+  });
+  yield* services.hooks.setProviderSlashCommands((instanceId, threadId) =>
+    Effect.gen(function* () {
+      const provider = (yield* services.providers.getProviders).find(
+        (candidate) => candidate.instanceId === instanceId,
+      );
+      if (provider === undefined) return [];
+      const cwd = yield* workspaceOf(threadId).pipe(Effect.orElseSucceed(() => undefined));
+      const workspace = provider.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd);
+      return [...provider.slashCommands, ...(workspace?.slashCommands ?? [])].map(
+        (command) => command.name,
+      );
+    }),
   );
   // Agents reach these through the `t3_plugins_*` tools, which MCP already gates as writes, so
   // the call carries operate access.

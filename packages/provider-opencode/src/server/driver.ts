@@ -125,7 +125,15 @@ function selectOpenCodeRuntimeTextGeneration(
   v1: ProviderTextGeneration,
   v2: ProviderTextGeneration,
 ): ProviderTextGeneration {
+  const { generateText: v1Text } = v1;
+  const { generateText: v2Text } = v2;
   return {
+    ...(v1Text === undefined || v2Text === undefined
+      ? {}
+      : {
+          generateText: (input) =>
+            byOpenCodeRuntime(probe.get, { v1: v1Text(input), v2: v2Text(input) }),
+        }),
     generateCommitMessage: (input) =>
       byOpenCodeRuntime(probe.get, {
         v1: v1.generateCommitMessage(input),
