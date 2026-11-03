@@ -199,12 +199,15 @@ type ProviderSlashCommandNames = (
 
 /** The registry behind the `PluginHooks` reference. */
 export interface PluginHooksRegistry {
-  /** Adds a hook and returns the effect that removes it. */
-  readonly addBeforeDispatch: (hook: BeforeDispatchHook) => Effect.Effect<Effect.Effect<void>>;
+  /** Adds a plugin's hook and returns the effect that removes it. */
+  readonly addBeforeDispatch: (
+    pluginId: string,
+    hook: BeforeDispatchHook,
+  ) => Effect.Effect<Effect.Effect<void>>;
   /**
    * The text to send, or a plugin's reply to record instead. A plugin's slash command runs its
    * handler instead of the hooks; other slash commands pass unchanged. Otherwise every hook sees
-   * the message in order, and a block stops the rest.
+   * the message in plugin id order, and a block stops the rest.
    */
   readonly beforeDispatch: (
     message: PluginOutgoingMessage,
@@ -237,8 +240,9 @@ export interface PluginHooksRegistry {
     handler: SlashCommandHandler,
   ) => Effect.Effect<Effect.Effect<void>, PluginSlashCommandTakenError>;
   readonly currentSlashCommands: Effect.Effect<ReadonlyArray<PluginSlashCommand>>;
-  /** Adds a generator that T3 asks before its own, and returns the effect that removes it. */
+  /** Adds a plugin's generator, asked before T3's own, and returns the effect that removes it. */
   readonly addTextGenerator: (
+    pluginId: string,
     kind: PluginTextGenerationKind,
     generator: TextGenerator,
   ) => Effect.Effect<Effect.Effect<void>>;
@@ -254,7 +258,7 @@ export interface PluginHooksRegistry {
   readonly skills: Stream.Stream<ReadonlyArray<PluginSkill>>;
   /** Nothing while no plugin gives agents anything, so turns stay as they were. */
   readonly agentContext: Effect.Effect<PluginAgentContext | undefined>;
-  /** The generators for `kind`, in the order plugins added them. */
+  /** The generators for `kind`, in plugin id order. */
   readonly textGenerators: (
     kind: PluginTextGenerationKind,
   ) => Effect.Effect<ReadonlyArray<TextGenerator>>;
@@ -307,6 +311,18 @@ type SlashCommandEntry = {
   readonly run: SlashCommandHandler;
 };
 
+/**
+ * Adds `entry` among other plugins' entries in id order, after the plugin's own, so the order in
+ * which plugins finished starting never decides which one runs first.
+ */
+export const inPluginOrder = <E extends { readonly pluginId: string }>(
+  all: ReadonlyArray<E>,
+  entry: E,
+): ReadonlyArray<E> => {
+  const after = all.findIndex((other) => other.pluginId > entry.pluginId);
+  return after === -1 ? [...all, entry] : [...all.slice(0, after), entry, ...all.slice(after)];
+};
+
 /** The commands that handle their names: of plugins sharing one, the id that sorts first. */
 const handling = (all: ReadonlyArray<SlashCommandEntry>) =>
   all.filter(
@@ -319,12 +335,18 @@ const handling = (all: ReadonlyArray<SlashCommandEntry>) =>
   );
 
 const make = Effect.gen(function* () {
-  const hooks = yield* Ref.make<ReadonlyArray<{ readonly run: BeforeDispatchHook }>>([]);
+  const hooks = yield* Ref.make<
+    ReadonlyArray<{ readonly pluginId: string; readonly run: BeforeDispatchHook }>
+  >([]);
   const instructions = yield* Ref.make<ReadonlyArray<{ readonly text: string }>>([]);
   const skillFolders = yield* Ref.make<ReadonlyArray<SkillFolder>>([]);
   const skills = yield* SubscriptionRef.make<ReadonlyArray<PluginSkill>>([]);
   const generators = yield* Ref.make<
-    ReadonlyArray<{ readonly kind: PluginTextGenerationKind; readonly run: TextGenerator }>
+    ReadonlyArray<{
+      readonly pluginId: string;
+      readonly kind: PluginTextGenerationKind;
+      readonly run: TextGenerator;
+    }>
   >([]);
   const commands = yield* SubscriptionRef.make<ReadonlyArray<SlashCommandEntry>>([]);
   const providerCommands = yield* Ref.make<ProviderSlashCommandNames>(() => Effect.succeed([]));
@@ -391,9 +413,9 @@ const make = Effect.gen(function* () {
       ),
     );
   return {
-    addBeforeDispatch: (hook) =>
-      Effect.sync(() => ({ run: hook })).pipe(
-        Effect.tap((entry) => Ref.update(hooks, (all) => [...all, entry])),
+    addBeforeDispatch: (pluginId, hook) =>
+      Effect.sync(() => ({ pluginId, run: hook })).pipe(
+        Effect.tap((entry) => Ref.update(hooks, (all) => inPluginOrder(all, entry))),
         Effect.map((entry) => Ref.update(hooks, (all) => all.filter((other) => other !== entry))),
       ),
     beforeDispatch: (message, alreadyAccepted, providerInstanceId) => {
@@ -470,9 +492,9 @@ const make = Effect.gen(function* () {
           ] as const),
         );
       }),
-    addTextGenerator: (kind, generator) =>
-      Effect.sync(() => ({ kind, run: generator })).pipe(
-        Effect.tap((entry) => Ref.update(generators, (all) => [...all, entry])),
+    addTextGenerator: (pluginId, kind, generator) =>
+      Effect.sync(() => ({ pluginId, kind, run: generator })).pipe(
+        Effect.tap((entry) => Ref.update(generators, (all) => inPluginOrder(all, entry))),
         Effect.map((entry) =>
           Ref.update(generators, (all) => all.filter((other) => other !== entry)),
         ),

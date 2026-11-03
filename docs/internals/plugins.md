@@ -61,8 +61,8 @@ whole config. Once the app is idle, a small starter follows that stream on serve
 Bare `import(url)` cannot send credentials, so the loader fetches each bundle with
 the connection's bearer token, cookie or, over T3 Connect, a DPoP proof signed for that one URL,
 and imports a `blob:` URL; the desktop CSP allows `blob:` scripts. Bundles reach React and the UI kit through `globalThis.__t3PluginHost`, not an
-import map. Mobile release builds cannot load code at all, so mobile renders settings from the
-manifest's JSON Schema and declarative contributions only.
+import map. Mobile release builds cannot load code at all, and the mobile app shows no plugin UI,
+settings or themes.
 
 Where T3 has a closed union and a `switch` (right panel kinds, settings paths, keybinding commands,
 drivers, MCP toolkits), plugins add an entry beside the built-ins: a `plugin` right panel kind, a
@@ -177,9 +177,13 @@ winner, and the other keeps the rest of its commands. A handler's `reply` turns
 the message into the internal `thread.command-reply.record` command under the message's command id,
 so a retry replays it. The orchestrator records the sent message and an `assistant_message` reply
 as a run that is already completed, with no provider thread, attempt or checkpoint: clients drop a
-sent message once a user message with its id exists, and paged clients drop run-less items. Web
-takes a message's revert target from the previous run's checkpoint, so the first message after a
-reply has no revert button, while the command itself still reverts to before it. When a new
+sent message once a user message with its id exists, and paged clients drop run-less items. A
+reply takes the next ordinal even while a turn runs, so the thread shell leaves reply runs out
+like idle compactions (`isSilentRunForShell` and its SQL twin), and `latestExecutedRun` and its
+SQL twins skip them; otherwise a reply sent mid-turn would become the thread's status and hide
+the turn's failure. Web takes a message's revert target from
+the previous run's checkpoint, so the first message after a reply has no revert button, while the
+command itself still reverts to before it. When a new
 thread's first message gets a reply, `ThreadLaunchService` prepares the workspace as for a launch
 without a message.
 
@@ -275,8 +279,10 @@ Mobile has no provider settings form for any driver.
 code. It uses the shared ACP adapter with the base ACP capabilities, like the `fx` driver, not
 the ACP Registry driver: that driver's instances carry its own kind, so clients would show the
 registry's card, and its status check opens a session, which background checks must not do. An
-ACP agent's snapshot is therefore "ready" with unknown sign-in until a turn runs, and it writes
-no text for T3 (titles and commit messages fall back to other providers).
+ACP agent's snapshot is therefore "ready" with unknown sign-in until a turn runs. It writes no
+text for T3 and says so with `supportsTextGeneration: false`, which keeps it out of the text
+generation pickers and the usage-limit fallback: the router switches providers only on a usage
+limit, so a selected provider that cannot write fails every title and commit message.
 
 ## Source control hosts
 
@@ -297,8 +303,9 @@ never sees a half-written plugin. Only the swap (old version aside, new version 
 the lifecycle lock, so a slow clone does not block other plugins. A crash between the 2 renames
 leaves the old version in staging; startup puts it back when nothing replaced it, then clears
 staging. Uninstall deletes the entry in `plugins/`, never the plugin's resolved `rootDir`, which for
-a symlinked plugin is the author's own folder. Git clones run with prompts off and
-`GIT_ALLOW_PROTOCOL` set, which blocks transports such as `ext::` that run commands.
+a symlinked plugin is the author's own folder. Git clones and update checks run with T3's
+background git environment, which turns off every credential prompt, and `GIT_ALLOW_PROTOCOL` set,
+which blocks transports such as `ext::` that run commands.
 
 An agent writing a plugin installs its folder with `link`, which adds it to `devPaths` rather than
 copying it, so edits plus a reload are the whole loop; removing it only takes it out of

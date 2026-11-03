@@ -1510,6 +1510,10 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           const updated = yield* host.update(hello);
           assert.include(updated, { status: "active" });
           assert.notStrictEqual(updated.revision, installed.revision);
+          // The same folder written another way is the same source.
+          assert.include(yield* host.install({ ...source, path: `${source.path}/` }), {
+            status: "active",
+          });
           assert.include(installed, {
             id: hello,
             status: "active",
@@ -1587,6 +1591,9 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           const npmUpdated = yield* host.update(PluginId.make("npm-hello"));
           assert.include(npmUpdated, { enabled: false });
           assert.isUndefined(npmUpdated.availableUpdate);
+          // So is the same package with a version pinned.
+          const pinned = { type: "npm" as const, name: "npm-hello", version: "1.0.0" };
+          assert.deepStrictEqual((yield* host.install(pinned)).installSource, pinned);
           const tampered = yield* host
             .install({ type: "npm", name: "npm-tampered" })
             .pipe(Effect.flip);
@@ -1984,6 +1991,7 @@ it.live("runs a turn with the ACP agent a plugin registers by its command", () =
       assert.include(yield* instance!.snapshot.getSnapshot, {
         displayName: "Echo ACP",
         status: "ready",
+        supportsTextGeneration: false,
       });
 
       const threadId = ThreadId.make("thread:echo-acp");

@@ -88,7 +88,9 @@ session while the plugin is on. Its skills appear in the composer's `$` menu wit
 for those agents. Other agents don't get them yet.
 
 A plugin can give agents new tools. Agents in threads started after you turn the plugin on see
-them; a thread that is already running keeps the tools it started with.
+them; a thread that is already running keeps the tools it started with. Tools that only read work
+in any thread. Tools that change things work only in a thread set to **Full access** and not in
+Plan mode, the same as the plugin management tools above.
 
 A plugin can also write the text T3 Code usually generates with a model: thread titles, commit
 messages, pull request titles and descriptions, branch names and review guides. When it has
@@ -115,4 +117,5 @@ Plugins that draw web UI load in the web and desktop apps, from the app's main e
 desktop app's own server, or the server the web app was opened from. Plugins on other environments
 you connect show in **Settings → Plugins**, but their UI doesn't load. In the desktop app a plugin can also
 add commands under **Plugins** in the menu bar or to a tray icon's menu, and shortcuts that work
-while T3 Code is in the background. The tray icon shows only while a plugin uses it. The mobile app shows plugin themes, but not plugin UI or plugin settings.
+while T3 Code is in the background. The tray icon shows only while a plugin uses it. The mobile app doesn't show plugin UI, settings
+or themes.

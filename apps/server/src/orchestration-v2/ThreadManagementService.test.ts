@@ -214,7 +214,7 @@ it.effect(
     return Effect.gen(function* () {
       const hooks = yield* PluginHooks.PluginHooks;
       yield* hooks
-        .addBeforeDispatch((outgoing) =>
+        .addBeforeDispatch("guard", (outgoing) =>
           Effect.succeed(
             outgoing.text.includes("token")
               ? { block: "Remove the token first.", pluginName: "Guard" }

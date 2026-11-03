@@ -23,6 +23,7 @@ import * as Stream from "effect/Stream";
 
 import type * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import type * as ThreadManagementService from "../../orchestration-v2/ThreadManagementService.ts";
+import { inPluginOrder } from "../PluginHooks.ts";
 import { newCommandId } from "./facade.ts";
 
 // The user sees the request the whole time and may answer first, so a plugin gets a short window.
@@ -58,7 +59,7 @@ export interface RuntimeRequestHook {
 
 /** Shared by every plugin. Its reactor follows events only while at least one hook is registered. */
 export interface RuntimeRequestHooks {
-  /** Adds a hook after the existing ones and returns the function that removes it. */
+  /** Adds a hook in plugin id order and returns the function that removes it. */
   readonly add: (hook: RuntimeRequestHook) => () => void;
 }
 
@@ -161,9 +162,9 @@ const candidateOf = (
 };
 
 /**
- * Asks plugins about approvals and questions an agent raises, in hook order, and sends the first
- * answer through `runtime-request.respond` like a client would. Adapters record the request and
- * its turn item in either order, so both events are watched and a request is asked about once
+ * Asks plugins about approvals and questions an agent raises, in plugin id order, and sends the
+ * first answer through `runtime-request.respond` like a client would. Adapters record the request
+ * and its turn item in either order, so both events are watched and a request is asked about once
  * both exist. No answer leaves the request to the user, who sees it the whole time.
  */
 export const makeRuntimeRequestHooks = (input: {
@@ -314,7 +315,7 @@ export const makeRuntimeRequestHooks = (input: {
 
   return {
     add: (hook) => {
-      hooks = [...hooks, hook];
+      hooks = inPluginOrder(hooks, hook);
       reactor ??= Effect.runForkWith(context)(react);
       return () => {
         hooks = hooks.filter((other) => other !== hook);

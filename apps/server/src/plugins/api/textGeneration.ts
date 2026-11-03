@@ -53,7 +53,7 @@ export const makeTextGenerationApi = (
     }
     if (!isKind(kind)) throw new TypeError(`"${kind}" is not a kind of text T3 Code generates.`);
     const remove = Effect.runSyncWith(facade.context)(
-      services.hooks.addTextGenerator(kind, (input) =>
+      services.hooks.addTextGenerator(pluginId, kind, (input) =>
         Effect.tryPromise((signal) =>
           Promise.resolve().then(() =>
             // withPluginTextGeneration builds each kind's input to match its task type.

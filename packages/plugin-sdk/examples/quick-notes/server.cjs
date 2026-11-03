@@ -1,3 +1,5 @@
+const { randomUUID } = require("node:crypto");
+
 /** @type {import("@t3tools/plugin-sdk/server").PluginDefinition} */
 module.exports = {
   activate(api) {
@@ -6,10 +8,17 @@ module.exports = {
       const notes = await api.storage.get("notes");
       return Array.isArray(notes) ? notes : [];
     };
-    const save = async (notes) => {
-      await api.storage.set("notes", notes);
-      api.rpc.publish("notes", notes);
-      return notes;
+    // Each change waits for the one before it, so two quick adds never drop a note.
+    let changing = Promise.resolve();
+    const change = (update) => {
+      const changed = changing.then(async () => {
+        const notes = update(await read());
+        await api.storage.set("notes", notes);
+        api.rpc.publish("notes", notes);
+        return notes;
+      });
+      changing = changed.catch(() => undefined);
+      return changed;
     };
     api.rpc.register("list", read, { access: "read" });
     api.rpc.register(
@@ -17,14 +26,14 @@ module.exports = {
       async (input) => {
         const text = typeof input?.text === "string" ? input.text.trim().slice(0, 500) : "";
         if (text === "") return read();
-        const note = { id: Date.now().toString(36), text, at: new Date().toISOString() };
-        return save([...(await read()), note].slice(-200));
+        const note = { id: randomUUID(), text, at: new Date().toISOString() };
+        return change((notes) => [...notes, note].slice(-200));
       },
       { access: "write" },
     );
     api.rpc.register(
       "remove",
-      async (input) => save((await read()).filter((note) => note.id !== input?.id)),
+      async (input) => change((notes) => notes.filter((note) => note.id !== input?.id)),
       { access: "write" },
     );
   },

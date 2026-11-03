@@ -4390,6 +4390,36 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       });
       yield* applyRun("failed");
       yield* assertSummary("Plan limit reached.", "usage_limit");
+      // A plugin command's reply sent after the failure never ran an agent, so it is not latest.
+      yield* store.apply({
+        id: EventId.make("event:limit-shell:run:ended"),
+        type: "run.updated",
+        threadId,
+        occurredAt: now,
+        payload: { ...original, status: "failed", completedAt: now },
+      });
+      const replyRunId = RunId.make("run:limit-shell:command-reply");
+      const repliedAt = DateTime.add(now, { seconds: 1 });
+      yield* store.apply({
+        id: EventId.make("event:limit-shell:command-reply"),
+        type: "run.created",
+        threadId,
+        runId: replyRunId,
+        providerInstanceId,
+        occurredAt: repliedAt,
+        payload: {
+          ...original,
+          id: replyRunId,
+          ordinal: original.ordinal + 4,
+          rootNodeId: null,
+          providerThreadId: null,
+          userMessageId: MessageId.make("message:limit-shell:command-reply"),
+          status: "completed",
+          startedAt: repliedAt,
+          completedAt: repliedAt,
+        },
+      });
+      yield* assertSummary("Plan limit reached.", "usage_limit");
       const queuedRunId = RunId.make("run:limit-shell:queued");
       yield* store.apply({
         id: EventId.make("event:limit-shell:queued"),
@@ -6608,7 +6638,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           modelSelection,
           providerThreadId: null,
           userMessageId: MessageId.make("message:watched-pull-request"),
-          rootNodeId: null,
+          rootNodeId: NodeId.make("node:watched-pull-request"),
           activeAttemptId: null,
           status: "completed",
           requestedAt: at,

@@ -57,6 +57,7 @@ import * as SourceControlDrivers from "../sourceControl/builtInDrivers.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { NON_INTERACTIVE_GIT_ENV } from "../vcs/GitVcsDriverCore.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { forkParked } from "../serverActivation.ts";
 import {
@@ -74,7 +75,7 @@ import {
   type PluginCheckReport,
 } from "./pluginCheck.ts";
 import { fetchNpmPackage, resolveNpmVersion } from "./pluginNpm.ts";
-import { commitFromLsRemote } from "./pluginUpdates.ts";
+import { commitFromLsRemote, lsRemotePatterns } from "./pluginUpdates.ts";
 import * as PluginHooks from "./PluginHooks.ts";
 import * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
 import * as PluginMcpTools from "./PluginMcpTools.ts";
@@ -1078,7 +1079,7 @@ const make = Effect.gen(function* () {
       timeout: "2 minutes",
       env: {
         ...process.env,
-        GIT_TERMINAL_PROMPT: "0",
+        ...NON_INTERACTIVE_GIT_ENV,
         GIT_ALLOW_PROTOCOL: "https:http:ssh:git:file",
       },
     });
@@ -1144,6 +1145,25 @@ const make = Effect.gen(function* () {
     return Option.isSome(head) && head.value.code === 0 ? head.value.stdout.trim() : undefined;
   });
 
+  /**
+   * Whether `next` installs from where `recorded` did: the same folder however it is written, the
+   * same repository or the same package, whatever ref or version each names.
+   */
+  const sameSource = (
+    recorded: PluginInstallSource | undefined,
+    next: PluginInstallSource | undefined,
+  ) => {
+    if (recorded === undefined || next === undefined) return recorded === next;
+    switch (next.type) {
+      case "path":
+        return recorded.type === "path" && path.resolve(recorded.path) === path.resolve(next.path);
+      case "git":
+        return recorded.type === "git" && recorded.url === next.url;
+      case "npm":
+        return recorded.type === "npm" && recorded.name === next.name;
+    }
+  };
+
   /** The npm version or git commit installing `source` would fetch now; nothing for a folder. */
   const remoteVersion = Effect.fnUntraced(function* (source: PluginInstallSource) {
     if (source.type === "path") return undefined;
@@ -1152,8 +1172,8 @@ const make = Effect.gen(function* () {
         Effect.provideService(HttpClient.HttpClient, http),
       );
     }
-    const result = yield* runGit(["ls-remote", "--", source.url, source.ref ?? "HEAD"]);
-    return result.code === 0 ? commitFromLsRemote(result.stdout) : undefined;
+    const result = yield* runGit(["ls-remote", "--", source.url, ...lsRemotePatterns(source.ref)]);
+    return result.code === 0 ? commitFromLsRemote(result.stdout, source.ref) : undefined;
   });
 
   const installInHost = Effect.fnUntraced(function* (
@@ -1190,7 +1210,7 @@ const make = Effect.gen(function* () {
         ? `${manifest.id} is linked from ${existing.plugin.folder}. Unlink it first.`
         : expectedId !== undefined && manifest.id !== expectedId
           ? `The source now provides ${manifest.id}, not ${expectedId}.`
-          : existing !== undefined && !Equal.equals(recorded, source)
+          : existing !== undefined && !sameSource(recorded, source)
             ? `${manifest.id} is already installed from somewhere else. Remove it first to replace it.`
             : undefined;
     if (refusal !== undefined) {
