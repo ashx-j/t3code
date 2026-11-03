@@ -1,6 +1,7 @@
 import { DesktopPluginCommandSchema } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Electron from "electron";
@@ -36,7 +37,7 @@ export const installPluginCommands = Effect.fn("desktop.ipc.installPluginCommand
   };
   let registered: Array<string> = [];
   // Each window load sends an empty list first, so an unchanged list skips the menu rebuild.
-  let current = "[]";
+  let current: ReadonlyArray<typeof DesktopPluginCommandSchema.Type> = [];
   const unregisterAll = () => {
     for (const accelerator of registered) Electron.globalShortcut.unregister(accelerator);
     registered = [];
@@ -57,9 +58,8 @@ export const installPluginCommands = Effect.fn("desktop.ipc.installPluginCommand
         ) {
           return [];
         }
-        const next = JSON.stringify(commands);
-        if (next === current) return [];
-        current = next;
+        if (Equal.equals(commands, current)) return [];
+        current = commands;
         yield* menu.setPluginCommands(commands);
         const trayCommands = commands.filter((entry) => entry.tray === true);
         if (trayCommands.length === 0) {
