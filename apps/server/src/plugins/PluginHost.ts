@@ -525,8 +525,14 @@ const make = Effect.gen(function* () {
       const active = all.flatMap((record, index) =>
         states[index]?.status === "active" ? [record.plugin] : [],
       );
+      // Starting ones too: a window that connects while a slow `activate` runs would otherwise
+      // paint T3's colors, forget the saved theme, then switch back once the plugin is up.
       yield* environmentThemes.setPluginThemeDirectories(
-        active.map((plugin) => path.join(plugin.rootDir, "themes")),
+        all.flatMap((record, index) =>
+          states[index]?.status === "active" || states[index]?.status === "loading"
+            ? [path.join(record.plugin.rootDir, "themes")]
+            : [],
+        ),
       );
       const withSkills = yield* Effect.filter(
         active.map((plugin) => {
@@ -987,25 +993,32 @@ const make = Effect.gen(function* () {
   const rediscover = Effect.fnUntraced(function* (restart: PluginId | undefined) {
     const { plugins, enabled } = yield* discover(false);
     if (restart !== undefined) yield* stopPlugin(restart);
-    // Plugins whose folders are gone are stopped too, or they would keep running unlisted.
-    const vanished = (yield* Ref.get(records)).filter(
-      (record) => !plugins.some((plugin) => plugin.id === record.plugin.id),
-    );
-    for (const record of vanished) yield* stopPlugin(record.plugin.id);
     const known = yield* Ref.get(records);
-    const kept = known.filter(
-      (record) => record.plugin.id !== restart && plugins.some((p) => p.id === record.plugin.id),
+    // A record survives only while discovery still finds the same copy the same way. One whose copy
+    // changed, such as a link that was shadowed until the installed copy went, starts over.
+    const sameCopy = (record: (typeof known)[number], plugin: (typeof plugins)[number]) =>
+      record.plugin.id === plugin.id &&
+      record.plugin.folder === plugin.folder &&
+      "failure" in record.plugin === "failure" in plugin;
+    const next = plugins.map((plugin) => {
+      const kept =
+        plugin.id === restart ? undefined : known.find((record) => sameCopy(record, plugin));
+      return { plugin, kept };
+    });
+    // Copies that are gone or changed stop, or they would keep running unlisted.
+    for (const record of known) {
+      if (!next.some(({ kept }) => kept === record) && !("failure" in record.plugin)) {
+        yield* stopPlugin(record.plugin.id);
+      }
+    }
+    // In discovery's order, which puts the copy in use before the copies it shadows.
+    yield* Ref.set(
+      records,
+      next.map(({ plugin, kept }) => kept ?? initialRecord(plugin, enabled[plugin.id] === true)),
     );
-    const added = plugins.filter(
-      (plugin) => plugin.id === restart || !known.some((record) => record.plugin.id === plugin.id),
-    );
-    yield* Ref.set(records, [
-      ...kept,
-      ...added.map((plugin) => initialRecord(plugin, enabled[plugin.id] === true)),
-    ]);
     yield* publishStates;
-    for (const plugin of added) {
-      if (startsAtDiscovery(plugin, enabled)) yield* startPlugin(plugin);
+    for (const { plugin, kept } of next) {
+      if (kept === undefined && startsAtDiscovery(plugin, enabled)) yield* startPlugin(plugin);
     }
     return plugins;
   });
@@ -1413,7 +1426,12 @@ const make = Effect.gen(function* () {
           yield* Ref.update(records, (all) =>
             all.filter((entry) => entry.plugin.id !== pluginId || entry.plugin.source !== source),
           );
-          yield* publishStates;
+          // A copy it shadowed takes its place, found afresh rather than left as the shadow.
+          if ((yield* Ref.get(records)).some((entry) => entry.plugin.id === pluginId)) {
+            yield* rediscover(undefined);
+          } else {
+            yield* publishStates;
+          }
         }),
       );
       if (removeData) {

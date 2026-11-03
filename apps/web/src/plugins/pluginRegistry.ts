@@ -22,6 +22,7 @@ export interface PluginRightPanelEntry {
   readonly name: string;
   readonly title: string;
   readonly component: ComponentType<{ readonly threadId: string }>;
+  readonly owner: PluginOwner;
 }
 
 export interface PluginCommandEntry {
@@ -58,6 +59,7 @@ export interface PluginToolRendererEntry {
   /** The MCP tool name agents see: `plg_<pluginId>_<tool>`. */
   readonly toolName: string;
   readonly component: ComponentType<PluginToolRendererProps>;
+  readonly owner: PluginOwner;
 }
 
 export interface PluginToolRendererProps {
@@ -269,27 +271,27 @@ export const pluginToolRendererAtom = Atom.family((key: string) =>
   }),
 );
 
-export type PluginCodeBlockComponent = ComponentType<{ readonly code: string }>;
+export interface PluginCodeBlockEntry {
+  readonly component: ComponentType<{ readonly code: string }>;
+  readonly owner: PluginOwner;
+}
 
 // Its own atom rather than the shared version: every chat code block reads it, so it changes only
 // when a code block renderer does.
-export const pluginCodeBlockRenderersAtom = Atom.make<
-  ReadonlyMap<string, PluginCodeBlockComponent>
->(new Map()).pipe(Atom.keepAlive);
+export const pluginCodeBlockRenderersAtom = Atom.make<ReadonlyMap<string, PluginCodeBlockEntry>>(
+  new Map(),
+).pipe(Atom.keepAlive);
 
 /** Draws fenced code of `language` in chat messages; returns the function that removes it. */
-export function registerPluginCodeBlock(
-  language: string,
-  component: PluginCodeBlockComponent,
-): () => void {
+export function registerPluginCodeBlock(language: string, entry: PluginCodeBlockEntry): () => void {
   const current = appAtomRegistry.get(pluginCodeBlockRenderersAtom);
   if (current.has(language)) {
     throw new Error(`A renderer for \`${language}\` code blocks is already registered.`);
   }
-  appAtomRegistry.set(pluginCodeBlockRenderersAtom, new Map(current).set(language, component));
+  appAtomRegistry.set(pluginCodeBlockRenderersAtom, new Map(current).set(language, entry));
   return () => {
     const latest = appAtomRegistry.get(pluginCodeBlockRenderersAtom);
-    if (latest.get(language) !== component) return;
+    if (latest.get(language) !== entry) return;
     const next = new Map(latest);
     next.delete(language);
     appAtomRegistry.set(pluginCodeBlockRenderersAtom, next);
@@ -310,8 +312,9 @@ export interface PluginOwner {
   readonly report?: (message: string) => void;
 }
 
-export interface PluginReplacementEntry<Part extends PluginPartName> extends PluginOwner {
+export interface PluginReplacementEntry<Part extends PluginPartName> {
   readonly component: ComponentType<PluginPartProps<Part>>;
+  readonly owner: PluginOwner;
 }
 
 // Each part keeps every replacement, so unloading the newest brings back the one before it.
@@ -357,7 +360,7 @@ export function registerPluginReplacement<Part extends PluginPartName>(
     throw new TypeError(`"${part}" is not a part plugins can replace.`);
   }
   const list = replacements[part];
-  const entry = { component, ...owner };
+  const entry = { component, owner };
   list.push(entry);
   appAtomRegistry.set(replacementsVersionAtom, appAtomRegistry.get(replacementsVersionAtom) + 1);
   return () => {
@@ -390,6 +393,7 @@ export interface PluginActionEntry<Place extends PluginActionPlace> {
   readonly title: string;
   readonly icon: ComponentType | undefined;
   readonly run: (context: PluginActionContexts[Place]) => void;
+  readonly owner: PluginOwner;
 }
 
 const actions: { [Place in PluginActionPlace]: Map<string, PluginActionEntry<Place>> } = {
@@ -521,6 +525,7 @@ export const pluginThreadBadgesAtom = Atom.family((threadKey: string) =>
 export interface PluginPageEntry {
   readonly title: string;
   readonly component: ComponentType;
+  readonly owner: PluginOwner;
 }
 
 // Keyed by plugin id and page name; a stack, so the same plugin loaded from two environments
@@ -555,6 +560,7 @@ export interface PluginSidebarSectionEntry {
   readonly key: string;
   readonly title: string;
   readonly component: ComponentType;
+  readonly owner: PluginOwner;
 }
 
 const sidebarSections = new Map<string, PluginSidebarSectionEntry>();

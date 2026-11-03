@@ -753,7 +753,9 @@ function PluginRow({
     ...copies.flatMap(({ label, plugin: { failure } }) =>
       failure === undefined
         ? []
-        : [`${labelled ? `${label}: ` : ""}${FAILURE_STAGES[failure.stage]}: ${failure.message}`],
+        : [
+            `${labelled ? `${label}: ` : ""}${shadowed ? "Not used" : FAILURE_STAGES[failure.stage]}: ${failure.message}`,
+          ],
     ),
     ...(webFailure === undefined ? [] : [`Web part failed: ${webFailure}`]),
   ];

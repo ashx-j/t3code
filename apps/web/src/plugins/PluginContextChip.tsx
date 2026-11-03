@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
-import { PuzzleIcon } from "lucide-react";
+import { BlocksIcon } from "lucide-react";
 
 import { ContextChip, ContextChipLabel } from "../components/ContextChip";
 import { UnresolvedChip } from "../components/contextChipParts";
@@ -29,7 +29,7 @@ function PluginContextChip(props: {
             aria-label={`Plugin item, ${props.label}`}
             data-markdown-copy={props.copyMarkdown}
           >
-            <PuzzleIcon />
+            <BlocksIcon />
             <ContextChipLabel>{props.label}</ContextChipLabel>
           </ContextChip>
         }

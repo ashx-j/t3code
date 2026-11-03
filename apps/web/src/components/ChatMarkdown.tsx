@@ -192,6 +192,7 @@ import { MarkdownCodeBlock, SuspenseShikiCodeBlock } from "./chat/MarkdownCodeBl
 import { createMarkdownRenderer } from "./chat/markdownRenderer";
 import { splitMarkdownBlocks } from "./chat/markdownStreamBlocks";
 import { MarkdownMermaidCodeBlock } from "./chat/MarkdownMermaidCodeBlock";
+import { PluginRenderBoundary } from "../plugins/PluginRenderBoundary";
 import { pluginCodeBlockRenderersAtom } from "../plugins/pluginRegistry";
 import { MarkdownTable } from "./chat/MarkdownTable";
 import { MarkdownDetails } from "./chat/MarkdownDetails";
@@ -1639,15 +1640,18 @@ const CHAT_MARKDOWN_COMPONENTS = {
       </MarkdownCodeBlock>
     );
     // A plugin draws only closed fences, so streaming text renders exactly as before.
-    const PluginCodeBlock = pluginCodeBlocks.get(language);
-    if (PluginCodeBlock && (!isStreaming || isClosedCodeFence(node, text, codeBlock.code))) {
+    const pluginCodeBlock = pluginCodeBlocks.get(language);
+    if (pluginCodeBlock && (!isStreaming || isClosedCodeFence(node, text, codeBlock.code))) {
+      const PluginCodeBlock = pluginCodeBlock.component;
       return (
-        <RenderErrorBoundary
-          resetKeys={[codeBlock.code, PluginCodeBlock]}
+        <PluginRenderBoundary
+          owner={pluginCodeBlock.owner}
+          what={`Its view of ${language} code blocks`}
+          resetKeys={[codeBlock.code, pluginCodeBlock]}
           fallback={genericCodeBlock}
         >
           <PluginCodeBlock code={codeBlock.code} />
-        </RenderErrorBoundary>
+        </PluginRenderBoundary>
       );
     }
     return genericCodeBlock;

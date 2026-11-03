@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 
-import { RenderErrorBoundary } from "../components/RenderErrorBoundary";
+import { PluginRenderBoundary } from "./PluginRenderBoundary";
 import { pluginToolNameOf, pluginToolRendererAtom, pluginToolRendererKey } from "./pluginRegistry";
 
 /**
@@ -24,8 +24,13 @@ export function PluginToolBody(props: {
   if (renderer === undefined) return props.fallback;
   const Renderer = renderer.component;
   return (
-    <RenderErrorBoundary resetKeys={[renderer]} fallback={props.fallback}>
+    <PluginRenderBoundary
+      owner={renderer.owner}
+      what={`Its view of the ${toolName} tool`}
+      resetKeys={[renderer]}
+      fallback={props.fallback}
+    >
       <Renderer input={props.input} output={props.output} status={props.status} />
-    </RenderErrorBoundary>
+    </PluginRenderBoundary>
   );
 }

@@ -255,9 +255,14 @@ describe("ChatMarkdown streaming", () => {
   it("lets a plugin draw closed code fences of its language", async () => {
     setup();
     using _renderer = {
-      [Symbol.dispose]: registerPluginCodeBlock("hello-chart", (props) => (
-        <p>Chart of {props.code}</p>
-      )),
+      [Symbol.dispose]: registerPluginCodeBlock("hello-chart", {
+        component: (props) => <p>Chart of {props.code}</p>,
+        owner: {
+          environmentId: EnvironmentId.make("environment:chart"),
+          pluginId: "hello-chart",
+          pluginName: "Hello chart",
+        },
+      }),
     };
     const message = (text: string, isStreaming = false) => (
       <AppAtomRegistryProvider>

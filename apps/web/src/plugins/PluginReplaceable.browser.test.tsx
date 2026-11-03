@@ -80,6 +80,6 @@ describe("PluginReplaceable", () => {
       appAtomRegistry.get(
         pluginWebFailureAtom(pluginContributionKey(owner.environmentId, owner.pluginId)),
       ),
-    ).toContain("(composer.controls) stopped with an error: boom.");
+    ).toContain("(composer.controls) stopped with an error: boom");
   });
 });

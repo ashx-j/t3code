@@ -201,6 +201,7 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
     const tools = yield* PluginMcpTools.PluginMcpTools;
     const invoked: Array<unknown> = [];
     const checked: Array<unknown> = [];
+    const uninstalled: Array<unknown> = [];
     yield* tools.setHostActions({
       invoke: (pluginId, method, input) =>
         Effect.sync(() => {
@@ -209,7 +210,10 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
         }),
       setEnabled: (pluginId, enabled) => Effect.succeed({ ...installed, id: pluginId, enabled }),
       install: () => Effect.succeed(installed),
-      uninstall: () => Effect.void,
+      uninstall: (pluginId, removeData, linkedFolder) =>
+        Effect.sync(() => {
+          uninstalled.push({ pluginId, removeData, linkedFolder });
+        }),
       reload: (pluginId) =>
         Effect.succeed({
           ...installed,
@@ -274,5 +278,13 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
       (yield* call("t3_plugins_check", readOnlyClient, { pluginId: "mcp-plugin" })).isError,
     );
     assert.deepStrictEqual(checked, [folder, { pluginId: "mcp-plugin" }]);
+    // One linked copy that isn't in use is unlinked by its folder, as Settings does it.
+    yield* call("t3_plugins_uninstall", fullAccessClient, {
+      pluginId: "mcp-plugin",
+      linkedFolder: "/home/user/plugin",
+    });
+    assert.deepStrictEqual(uninstalled, [
+      { pluginId: "mcp-plugin", removeData: false, linkedFolder: "/home/user/plugin" },
+    ]);
   }).pipe(Effect.provide(layerTest)),
 );

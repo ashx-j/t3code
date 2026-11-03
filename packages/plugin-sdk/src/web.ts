@@ -104,7 +104,7 @@ export interface WebPluginAction<Context> {
   readonly id: string;
   /** The menu item's label, or the button's tooltip and accessible name. */
   readonly title: string;
-  /** The button's icon, about 16px. Buttons without one show a puzzle piece. Menus ignore it. */
+  /** The button's icon, about 16px. Buttons without one show T3's plugin icon. Menus ignore it. */
   readonly icon?: WebPluginComponent;
   readonly run: (context: Context) => void | Promise<void>;
 }

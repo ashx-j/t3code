@@ -83,6 +83,7 @@ export interface PluginMcpHostActions {
   readonly uninstall: (
     pluginId: PluginId,
     removeData: boolean,
+    linkedFolder?: string,
   ) => Effect.Effect<void, { readonly message: string }>;
   readonly check: (
     target: { readonly pluginId: PluginId } | { readonly path: string },
@@ -107,7 +108,11 @@ const decodeInstallInput = Schema.decodeUnknownEffect(
   Schema.Struct({ source: PluginInstallSource }),
 );
 const decodeUninstallInput = Schema.decodeUnknownEffect(
-  Schema.Struct({ pluginId: PluginId, removeData: Schema.optional(Schema.Boolean) }),
+  Schema.Struct({
+    pluginId: PluginId,
+    removeData: Schema.optional(Schema.Boolean),
+    linkedFolder: Schema.optional(Schema.String),
+  }),
 );
 const decodeReloadInput = Schema.decodeUnknownEffect(Schema.Struct({ pluginId: PluginId }));
 const decodeCheckInput = Schema.decodeUnknownEffect(
@@ -126,6 +131,7 @@ const toolState = (state: PluginState) => ({
     ? {}
     : { failure: `${state.failure.stage}: ${state.failure.message}` }),
   ...(state.webFailure === undefined ? {} : { webFailure: state.webFailure }),
+  ...(state.linkedFolder === undefined ? {} : { linkedFolder: state.linkedFolder }),
 });
 
 /** One tool as `/mcp` advertises it. `call` runs it; McpHttpServer checks `access` first. */
@@ -335,10 +341,14 @@ const make = () => {
   const pluginsUninstall: PluginMcpToolEntry = {
     name: PLUGINS_UNINSTALL_TOOL,
     description:
-      "Remove an installed plugin. Set removeData to also delete its settings and stored data.",
+      "Remove an installed plugin, or unlink one installed with link: true. Set removeData to also delete its settings and stored data. When a linked copy is not the one in use, pass its linkedFolder from t3_plugins_list to unlink only that copy.",
     inputSchema: {
       type: "object",
-      properties: { pluginId: { type: "string" }, removeData: { type: "boolean" } },
+      properties: {
+        pluginId: { type: "string" },
+        removeData: { type: "boolean" },
+        linkedFolder: { type: "string" },
+      },
       required: ["pluginId"],
       additionalProperties: false,
     },
@@ -347,7 +357,9 @@ const make = () => {
       decodeUninstallInput(input).pipe(
         Effect.mapError(invalidInput),
         Effect.flatMap((request) =>
-          withHost((actions) => actions.uninstall(request.pluginId, request.removeData === true)),
+          withHost((actions) =>
+            actions.uninstall(request.pluginId, request.removeData === true, request.linkedFolder),
+          ),
         ),
         Effect.as({ removed: true }),
       ),

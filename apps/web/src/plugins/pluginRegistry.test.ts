@@ -22,6 +22,7 @@ import {
 
 const environmentId = EnvironmentId.make("environment:plugin-menu");
 const otherEnvironmentId = EnvironmentId.make("environment:other");
+const owner = { environmentId, pluginId: "notes", pluginName: "Notes" };
 
 describe("plugin thread menu items", () => {
   it("adds only the thread environment's items after a separator and runs the one picked", () => {
@@ -32,6 +33,7 @@ describe("plugin thread menu items", () => {
         environmentId,
         title: "Clear flag",
         icon: undefined,
+        owner,
         run: (thread) => ran.push(thread.threadId),
       }),
     };
@@ -68,8 +70,8 @@ describe("plugin thread badges", () => {
 describe("plugin pages", () => {
   it("keeps a page while the same plugin from another environment still has it", () => {
     const key = pluginPageKey("notes", "all");
-    const local = { title: "Notes (local)", component: () => null };
-    const remote = { title: "Notes (remote)", component: () => null };
+    const local = { title: "Notes (local)", component: () => null, owner };
+    const remote = { title: "Notes (remote)", component: () => null, owner };
     const unregisterLocal = registerPluginPage(key, local);
     using _remote = { [Symbol.dispose]: registerPluginPage(key, remote) };
 

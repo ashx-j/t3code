@@ -1,22 +1,20 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
 
-import { RenderErrorBoundary } from "../components/RenderErrorBoundary";
 import { useNavigateToMainApp } from "../components/sidebar/mainAppLocation";
 import { Button } from "../components/ui/button";
 import { SidebarInset } from "../components/ui/sidebar";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { isElectron } from "../env";
+import { PluginRenderBoundary } from "./PluginRenderBoundary";
 import { pluginPageAtom, pluginPageKey } from "./pluginRegistry";
 
-function PageUnavailable() {
+function PageUnavailable({ reason }: { readonly reason: string }) {
   const navigateToMainApp = useNavigateToMainApp();
   const navigate = useNavigate();
   return (
     <div className="space-y-3 p-6">
-      <p className="text-muted-foreground text-sm">
-        This page is not available. Its plugin may be turned off or still loading.
-      </p>
+      <p className="text-muted-foreground text-sm">{reason}</p>
       <div className="flex gap-2">
         <Button size="sm" variant="outline" onClick={() => void navigateToMainApp()}>
           Back
@@ -44,11 +42,18 @@ export function PluginPage(props: { readonly pluginId: string; readonly name: st
       </WorkspacePageHeader>
       <div className="min-h-0 flex-1 overflow-auto">
         {page && Page ? (
-          <RenderErrorBoundary resetKeys={[page]} fallback={<PageUnavailable />}>
+          <PluginRenderBoundary
+            owner={page.owner}
+            what={`Its page ${page.title}`}
+            resetKeys={[page]}
+            fallback={
+              <PageUnavailable reason="This page stopped with an error. Settings → Plugins shows why." />
+            }
+          >
             <Page />
-          </RenderErrorBoundary>
+          </PluginRenderBoundary>
         ) : (
-          <PageUnavailable />
+          <PageUnavailable reason="This page is not available. Its plugin may be turned off or still loading." />
         )}
       </div>
     </SidebarInset>

@@ -1,17 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 
-import { RenderErrorBoundary } from "../components/RenderErrorBoundary";
-import { toastManager } from "../components/ui/toast";
+import { PluginRenderBoundary } from "./PluginRenderBoundary";
 import {
-  type PluginOwner,
   pluginReplacementAtoms,
   type PluginPartName,
   type PluginPartProps,
-  setPluginWebFailure,
 } from "./pluginRegistry";
-
-// One report per replacement: a broken part in every timeline row would otherwise send one each.
-const reportedFailures = new WeakSet<PluginOwner>();
 
 const PART_NAMES: { readonly [Part in PluginPartName]: string } = {
   "composer.controls": "the composer's controls",
@@ -23,25 +17,9 @@ const PART_NAMES: { readonly [Part in PluginPartName]: string } = {
   "app.sidebar": "the sidebar",
 };
 
-// Shown on the plugin's row until it reloads, and as a toast, since T3's own part quietly takes its
-// place.
-const reportFailure = (part: PluginPartName, owner: PluginOwner, error: unknown) => {
-  if (reportedFailures.has(owner)) return;
-  reportedFailures.add(owner);
-  const reason = error instanceof Error ? error.message : String(error);
-  const message = `Its version of ${PART_NAMES[part]} (${part}) stopped with an error: ${reason}. T3 shows its own until the plugin reloads.`;
-  setPluginWebFailure(owner.environmentId, owner.pluginId, message);
-  owner.report?.(message);
-  toastManager.add({
-    type: "error",
-    title: `${owner.pluginName} stopped changing ${PART_NAMES[part]}`,
-    description: "T3 shows its own until the plugin reloads.",
-  });
-};
-
 /**
  * Draws a plugin's version of `part` when one is registered, and T3's `pieces.original`
- * otherwise or when the plugin's throws. Unused pieces are elements that never render.
+ * otherwise or where the plugin's throws. Unused pieces are elements that never render.
  */
 export function PluginReplaceable<Part extends PluginPartName>(props: {
   readonly part: Part;
@@ -51,12 +29,13 @@ export function PluginReplaceable<Part extends PluginPartName>(props: {
   if (replacement === undefined) return props.pieces.original;
   const Replacement = replacement.component;
   return (
-    <RenderErrorBoundary
+    <PluginRenderBoundary
+      owner={replacement.owner}
+      what={`Its version of ${PART_NAMES[props.part]} (${props.part})`}
       resetKeys={[replacement]}
       fallback={props.pieces.original}
-      onError={(error) => reportFailure(props.part, replacement, error)}
     >
       <Replacement {...props.pieces} />
-    </RenderErrorBoundary>
+    </PluginRenderBoundary>
   );
 }

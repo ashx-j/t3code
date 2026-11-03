@@ -12,7 +12,6 @@ import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtim
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { ThreadId, type EnvironmentId, type PluginState } from "@t3tools/contracts";
 import {
-  defineWebPlugin,
   type HOST_ATOM_REACT_EXPORTS,
   type HOST_UI_EXPORTS,
   type WebPluginAction,
@@ -66,6 +65,7 @@ import {
   type PluginActionContexts,
   type PluginActionEntry,
   type PluginActionPlace,
+  type PluginOwner,
 } from "./pluginRegistry";
 import { isLoadableWebPlugin } from "./pluginWatch";
 
@@ -95,7 +95,6 @@ const installHostModules = () =>
       useAtomSubscribe,
       useAtomValue,
     } satisfies Record<(typeof HOST_ATOM_REACT_EXPORTS)[number], unknown>,
-    sdk: { defineWebPlugin },
     ui: {
       Badge,
       Button,
@@ -201,17 +200,17 @@ const runReportingFailure = (label: string, run: () => void | Promise<void>) => 
 
 // Builds a toolbar or menu entry from a plugin's action; `run` reports failures as toasts.
 const pluginActionEntry = <Place extends PluginActionPlace>(
-  environmentId: EnvironmentId,
-  pluginId: string,
+  owner: PluginOwner,
   action: WebPluginAction<PluginActionContexts[Place]>,
 ): PluginActionEntry<Place> => {
   if (!COMMAND_ID.test(action.id)) throw new TypeError(`"${action.id}" is not a valid action id.`);
   if (typeof action.title !== "string") throw new TypeError(`"${action.id}" needs a text title.`);
   return {
-    key: `plugin:${pluginId}:${action.id}`,
-    environmentId,
+    key: `plugin:${owner.pluginId}:${action.id}`,
+    environmentId: owner.environmentId,
     title: action.title,
     icon: action.icon,
+    owner,
     run: (context) => runReportingFailure(action.title, () => action.run(context)),
   };
 };
@@ -241,6 +240,13 @@ function makeWebPluginApi({
   let bannerCount = 0;
   // One cleanup each for a plugin's badges and `@` items, however often it updates them.
   const badgedThreads = new Set<string>();
+  // Shared by everything the plugin draws, so a render failure reaches its row and agents once.
+  const owner: PluginOwner = {
+    environmentId,
+    pluginId,
+    pluginName: plugin.name,
+    report: (message) => reportWebFailure(environmentId, plugin, message),
+  };
   let badgesTracked = false;
   let mentionCleanupTracked = false;
   let collapseCleanupTracked = false;
@@ -291,8 +297,8 @@ function makeWebPluginApi({
     },
     rightPanel: {
       register: (panel) => {
-        if (!PANEL_NAME.test(panel.name)) {
-          throw new TypeError(`"${panel.name}" is not a valid panel name.`);
+        if (!PANEL_NAME.test(panel.name) || typeof panel.title !== "string") {
+          throw new TypeError(`"${panel.name}" needs a valid name and a text title.`);
         }
         track(
           registerPluginRightPanel({
@@ -301,6 +307,7 @@ function makeWebPluginApi({
             name: panel.name,
             title: panel.title,
             component: panel.component,
+            owner,
           }),
         );
       },
@@ -312,8 +319,16 @@ function makeWebPluginApi({
     },
     commands: {
       register: (command) => {
-        if (!COMMAND_ID.test(command.id)) {
-          throw new TypeError(`"${command.id}" is not a valid command id.`);
+        if (
+          !COMMAND_ID.test(command.id) ||
+          typeof command.title !== "string" ||
+          (command.keywords !== undefined &&
+            (!Array.isArray(command.keywords) ||
+              !command.keywords.every((keyword) => typeof keyword === "string")))
+        ) {
+          throw new TypeError(
+            `"${command.id}" needs a valid id, a text title and keywords that are text.`,
+          );
         }
         const keybindingCommand = `plugin.${pluginId}.${command.id}` as const;
         const run = () => runReportingFailure(command.title, command.run);
@@ -358,6 +373,12 @@ function makeWebPluginApi({
     },
     composer: {
       showBanner: (banner) => {
+        if (
+          typeof banner.title !== "string" ||
+          (banner.description !== undefined && typeof banner.description !== "string")
+        ) {
+          throw new TypeError("A banner needs a text title, and its description must be text.");
+        }
         bannerCount += 1;
         const hide: () => void = registerPluginBanner({
           key: `${pluginId}:${bannerCount}`,
@@ -390,7 +411,7 @@ function makeWebPluginApi({
         );
       },
       addButton: (button) => {
-        track(registerPluginAction("composer", pluginActionEntry(environmentId, pluginId, button)));
+        track(registerPluginAction("composer", pluginActionEntry(owner, button)));
       },
       setCollapseOnScroll: (enabled) => {
         const key = pluginContributionKey(environmentId, pluginId);
@@ -431,12 +452,10 @@ function makeWebPluginApi({
     },
     threads: {
       addMenuItem: (item) => {
-        track(registerPluginAction("threadMenu", pluginActionEntry(environmentId, pluginId, item)));
+        track(registerPluginAction("threadMenu", pluginActionEntry(owner, item)));
       },
       addHeaderButton: (button) => {
-        track(
-          registerPluginAction("threadHeader", pluginActionEntry(environmentId, pluginId, button)),
-        );
+        track(registerPluginAction("threadHeader", pluginActionEntry(owner, button)));
       },
       setBadge: (threadId, badge) => {
         const threadKey = scopedThreadKey(scopeThreadRef(environmentId, ThreadId.make(threadId)));
@@ -469,6 +488,7 @@ function makeWebPluginApi({
           registerPluginPage(pluginPageKey(pluginId, page.name), {
             title: page.title,
             component: page.component,
+            owner,
           }),
         );
       },
@@ -483,13 +503,14 @@ function makeWebPluginApi({
             key: `${environmentId}\u0000${pluginId}\u0000${section.id}`,
             title: section.title,
             component: section.component,
+            owner,
           }),
         );
       },
     },
     messages: {
       addAction: (action) => {
-        track(registerPluginAction("message", pluginActionEntry(environmentId, pluginId, action)));
+        track(registerPluginAction("message", pluginActionEntry(owner, action)));
       },
     },
     assetUrl: (name) => {
@@ -518,7 +539,7 @@ function makeWebPluginApi({
         if (!CODE_LANGUAGE.test(renderer.language) || BUILT_IN_LANGUAGES.has(renderer.language)) {
           throw new TypeError(`"${renderer.language}" is not a language plugins can draw.`);
         }
-        track(registerPluginCodeBlock(renderer.language, renderer.component));
+        track(registerPluginCodeBlock(renderer.language, { component: renderer.component, owner }));
       },
     },
     timeline: {
@@ -528,20 +549,14 @@ function makeWebPluginApi({
             environmentId,
             toolName: `plg_${pluginId}_${renderer.tool}`,
             component: renderer.component,
+            owner,
           }),
         );
       },
     },
     ui: {
       replace: (part, component) => {
-        track(
-          registerPluginReplacement(part, component, {
-            environmentId,
-            pluginId,
-            pluginName: plugin.name,
-            report: (message) => reportWebFailure(environmentId, plugin, message),
-          }),
-        );
+        track(registerPluginReplacement(part, component, owner));
       },
     },
     injectStyles: (css) => {
@@ -649,11 +664,13 @@ export function startPluginLoader(
         entry.cleanups.delete(cleanup);
       };
     };
+    let downloaded = false;
     try {
       const bundle = await withDeadline(
         fetchPluginFile(environmentId, plugin, "/web.js").then((response) => response.text()),
         "Loading the web bundle",
       );
+      downloaded = true;
       if (entry.disposed) return;
       // A bundle's top-level `await` can hang too.
       const definition = await withDeadline(importBundle(bundle), "Loading the web bundle");
@@ -675,10 +692,13 @@ export function startPluginLoader(
     } catch (error) {
       // A load that was replaced or stopped meanwhile has nothing to report.
       if (entry.disposed) return;
-      // Stays in `loaded`, so it is tried again only when the plugin restarts, not on every change.
       entry.disposed = true;
       runCleanups(entry.cleanups);
       entry.cleanups.clear();
+      // A failed download, such as one bad gateway over T3 Connect, is tried again on the next
+      // plugin update. A bundle that downloaded and then failed stays in `loaded`, so it waits for
+      // the plugin to restart instead of failing again on every change.
+      if (!downloaded) loaded.delete(plugin.id);
       setPluginWebFailure(environmentId, plugin.id, errorText(error));
       reportWebFailure(environmentId, plugin, errorText(error));
     }

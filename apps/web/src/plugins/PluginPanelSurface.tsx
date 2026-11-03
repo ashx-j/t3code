@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { BlocksIcon } from "lucide-react";
 
-import { RenderErrorBoundary } from "../components/RenderErrorBoundary";
+import { PluginRenderBoundary } from "./PluginRenderBoundary";
 import { Button } from "../components/ui/button";
 import {
   Empty,
@@ -59,7 +59,9 @@ export function PluginPanelSurface(props: {
   }
   const Panel = entry.component;
   return (
-    <RenderErrorBoundary
+    <PluginRenderBoundary
+      owner={entry.owner}
+      what={`Its panel ${entry.title}`}
       resetKeys={[entry]}
       fallback={
         <PluginPanelNotice
@@ -70,6 +72,6 @@ export function PluginPanelSurface(props: {
       }
     >
       <Panel threadId={props.threadId} />
-    </RenderErrorBoundary>
+    </PluginRenderBoundary>
   );
 }

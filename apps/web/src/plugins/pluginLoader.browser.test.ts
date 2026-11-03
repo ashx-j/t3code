@@ -85,7 +85,9 @@ describe("startPluginLoader", () => {
           ? hungBundle
           : String(input).includes("/hello-web/")
             ? new Response(helloWebSource)
-            : new Response("missing", { status: 500 }),
+            : String(input).includes("/no-activate-web/")
+              ? new Response("export default {};")
+              : new Response("missing", { status: 500 }),
       );
     const environmentId = EnvironmentId.make("environment:plugin-loader");
     const helloPanel = pluginRightPanelAtom(
@@ -101,6 +103,7 @@ describe("startPluginLoader", () => {
           webPlugin("hung-web"),
           webPlugin("hello-web"),
           { ...webPlugin("broken-web"), revision: 3 },
+          webPlugin("no-activate-web"),
         ],
       }),
     );
@@ -147,18 +150,25 @@ describe("startPluginLoader", () => {
     expect(appAtomRegistry.get(greetRenderer)).toBeDefined();
     expect(appAtomRegistry.get(pluginComposerCollapseOnScrollAtom)).toBe(true);
 
-    // Turning a plugin off takes effect while another still hangs, and a failed one isn't retried.
-    const brokenFetches = () =>
-      fetchSpy.mock.calls.filter(([input]) => String(input).includes("/broken-web/")).length;
-    expect(brokenFetches()).toBe(1);
+    // Turning a plugin off takes effect while another still hangs. A failed download is tried
+    // again on that change; a bundle that downloaded and then failed waits for a restart.
+    const fetches = (pluginId: string) =>
+      fetchSpy.mock.calls.filter(([input]) => String(input).includes(`/${pluginId}/`)).length;
+    expect(fetches("broken-web")).toBe(1);
+    expect(fetches("no-activate-web")).toBe(1);
     appAtomRegistry.set(
       live,
       AsyncResult.success({
-        plugins: [webPlugin("hung-web"), { ...webPlugin("broken-web"), revision: 3 }],
+        plugins: [
+          webPlugin("hung-web"),
+          { ...webPlugin("broken-web"), revision: 3 },
+          webPlugin("no-activate-web"),
+        ],
       }),
     );
     await vi.waitFor(() => expect(appAtomRegistry.get(helloPanel)).toBeUndefined());
-    expect(brokenFetches()).toBe(1);
+    await vi.waitFor(() => expect(fetches("broken-web")).toBe(2));
+    expect(fetches("no-activate-web")).toBe(1);
 
     stop();
     releaseHungBundle(new Response("missing", { status: 500 }));

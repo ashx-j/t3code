@@ -141,7 +141,8 @@ export const makePluginApi = (input: {
       return call(services.storage.set(id, key, value));
     },
   };
-  const isT3Key = (key: string) => key.startsWith(T3_STORAGE_PREFIX);
+  // Plain-JS plugins can pass any key; a non-text one must reject like other bad calls, not throw.
+  const isT3Key = (key: unknown) => typeof key === "string" && key.startsWith(T3_STORAGE_PREFIX);
   const refuseT3Key = () =>
     Promise.reject(
       new TypeError(`Storage keys starting with "${T3_STORAGE_PREFIX}" belong to T3.`),

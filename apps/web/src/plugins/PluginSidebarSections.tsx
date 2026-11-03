@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 
-import { RenderErrorBoundary } from "../components/RenderErrorBoundary";
+import { PluginRenderBoundary } from "./PluginRenderBoundary";
 import { pluginSidebarSectionsAtom } from "./pluginRegistry";
 
 /** Plugin sections between the thread list and the sidebar's footer; nothing without plugins. */
@@ -16,9 +16,14 @@ export function PluginSidebarSections() {
             <h3 className="px-2 pb-1 font-medium text-2xs text-muted-foreground">
               {section.title}
             </h3>
-            <RenderErrorBoundary resetKeys={[section]} fallback={null}>
+            <PluginRenderBoundary
+              owner={section.owner}
+              what={`Its sidebar section ${section.title}`}
+              resetKeys={[section]}
+              fallback={null}
+            >
               <Section />
-            </RenderErrorBoundary>
+            </PluginRenderBoundary>
           </section>
         );
       })}

@@ -748,6 +748,21 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         assert.strictEqual(yield* which, "installed");
         assert.deepStrictEqual(yield* storage.get(id, "kept"), Option.some(true));
         assert.isTrue(yield* fs.exists(`${folder}/server.cjs`));
+
+        // The other way round: removing the installed copy lists the link afresh, turned off like
+        // any newly found copy, not stuck as the shadowed copy it was.
+        yield* host.uninstall(id, false);
+        yield* host.install({ type: "path", path: folder, link: true });
+        yield* writeInstalledPlugin("in-place", plugin("installed"));
+        yield* host.reload(id);
+        yield* host.uninstall(id, false);
+        const left = (yield* host.list).filter((state) => state.id === "in-place");
+        assert.deepStrictEqual(
+          left.map((state) => [state.source, state.status, state.failure]),
+          [["dev", "disabled", undefined]],
+        );
+        yield* host.setEnabled(id, true);
+        assert.strictEqual(yield* which, "v2");
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );

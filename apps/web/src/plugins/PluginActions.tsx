@@ -1,11 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { PuzzleIcon } from "lucide-react";
+import { BlocksIcon } from "lucide-react";
 
 import { cn } from "../lib/utils";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
+import { PluginRenderBoundary } from "./PluginRenderBoundary";
 import {
   pluginActionAtoms,
   pluginThreadBadgesAtom,
@@ -19,7 +20,7 @@ function PluginActionButton<Place extends PluginActionPlace>(props: {
   readonly context: PluginActionContexts[Place];
   readonly size: "icon-xs" | "icon-sm";
 }) {
-  const Icon = props.entry.icon ?? PuzzleIcon;
+  const Icon = props.entry.icon ?? BlocksIcon;
   return (
     <Tooltip>
       <TooltipTrigger
@@ -33,7 +34,14 @@ function PluginActionButton<Place extends PluginActionPlace>(props: {
           />
         }
       >
-        <Icon />
+        <PluginRenderBoundary
+          owner={props.entry.owner}
+          what={`Its icon for ${props.entry.title}`}
+          resetKeys={[Icon]}
+          fallback={<BlocksIcon />}
+        >
+          <Icon />
+        </PluginRenderBoundary>
       </TooltipTrigger>
       <TooltipPopup side="top">{props.entry.title}</TooltipPopup>
     </Tooltip>

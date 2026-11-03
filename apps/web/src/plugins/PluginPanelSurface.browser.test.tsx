@@ -13,6 +13,7 @@ describe("PluginPanelSurface", () => {
     const unregister = registerPluginRightPanel({
       environmentId,
       pluginId: "hello-web",
+      owner: { environmentId, pluginId: "hello-web", pluginName: "Hello web" },
       name: "hello",
       title: "Hello panel",
       component: (props) => <p>Panel for {props.threadId}</p>,

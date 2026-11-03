@@ -8,6 +8,7 @@ import { PluginToolBody } from "./PluginToolBody";
 import { registerPluginToolRenderer } from "./pluginRegistry";
 
 const environmentId = EnvironmentId.make("environment:plugin-tool");
+const owner = { environmentId, pluginId: "hello-web", pluginName: "Hello web" };
 
 const body = (toolName: string) => (
   <AppAtomRegistryProvider>
@@ -27,6 +28,7 @@ describe("PluginToolBody", () => {
     const unregister = registerPluginToolRenderer({
       environmentId,
       toolName: "plg_hello-web_echo",
+      owner,
       component: (props) => <p>Echoed {props.output}</p>,
     });
     using _renderer = { [Symbol.dispose]: unregister };
@@ -45,6 +47,7 @@ describe("PluginToolBody", () => {
       [Symbol.dispose]: registerPluginToolRenderer({
         environmentId,
         toolName: "plg_hello-web_fail",
+        owner,
         component: () => {
           throw new Error("boom");
         },
