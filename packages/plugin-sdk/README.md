@@ -37,7 +37,9 @@ Vite preset below.
   folder is served to the web half when the plugin has one. T3 Code remembers the published
   themes, so the boot screen and the desktop window start in the active theme's colors. A theme
   that sets `"sidebarArtwork": true` keeps the nightly and dev artwork in the sidebar, which T3
-  otherwise swaps for a label.
+  otherwise swaps for a label; the send button stays plain. `"radius"`, such as `"0.625rem"`, sets
+  T3's corner radius, and `success`, `successForeground`, `info` and `infoForeground` in a theme's
+  `colors` or `variants` set its status colors.
 - A `skills/` folder of `<name>/SKILL.md` skills reaches Claude and Codex agents while the plugin
   is active, and the composer's `$` menu lists them for those agents with the plugin's name. Claude
   invokes one as `<plugin id>:<folder>`, Codex by the `name` in its frontmatter. Nothing else in

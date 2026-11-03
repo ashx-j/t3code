@@ -572,6 +572,14 @@ const environmentThemeFields = {
   ),
   /** Keeps the nightly and dev artwork in the sidebar, which T3 otherwise swaps for a label. */
   sidebarArtwork: Schema.optional(Schema.Boolean),
+  /** T3's corner radius while the theme is on, such as `0.625rem`. */
+  radius: Schema.optional(
+    TrimmedNonEmptyString.check(
+      Schema.isPattern(/^(?:0|\d{1,2}(?:\.\d{1,3})?(?:px|rem))$/, {
+        expected: "a length such as 0.625rem or 10px",
+      }),
+    ),
+  ),
 };
 
 export const EnvironmentThemeFile = Schema.Struct(environmentThemeFields);

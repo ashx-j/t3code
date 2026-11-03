@@ -31,6 +31,7 @@ import {
   installCustomTheme,
   invalidateCustomThemes,
   publishedThemeDefinitions,
+  themeAllowsComposerArtwork,
   themeAllowsSidebarArtwork,
 } from "../themePalette";
 
@@ -104,10 +105,25 @@ describe("environment themes", () => {
     expect(getThemeDefinition("nightfall")?.label).toBe("Nightfall");
     expect(themeAllowsSidebarArtwork("nightfall")).toBe(false);
 
-    // A published theme, such as a plugin's, can keep the sidebar artwork.
-    publish(appAtomRegistry, [{ ...NIGHTFALL_THEME, name: "Nightfall 2", sidebarArtwork: true }]);
-    expect(getThemeDefinition("nightfall")?.label).toBe("Nightfall 2");
+    // A published theme, such as a plugin's, can keep the sidebar artwork, but not on the send
+    // button, and can set T3's corner radius and status colors.
+    publish(appAtomRegistry, [
+      {
+        ...NIGHTFALL_THEME,
+        name: "Nightfall 2",
+        sidebarArtwork: true,
+        radius: "0.625rem",
+        colors: { success: "#3fb950", info: "not-a-color" },
+        variants: { light: { info: "#0969da" } },
+      },
+    ]);
+    expect(getThemeDefinition("nightfall")).toMatchObject({
+      label: "Nightfall 2",
+      radius: "0.625rem",
+      statusColors: { dark: { success: "#3fb950" }, light: { info: "#0969da" } },
+    });
     expect(themeAllowsSidebarArtwork("nightfall")).toBe(true);
+    expect(themeAllowsComposerArtwork("nightfall")).toBe(false);
   });
 
   it("lets a theme the user saved win an id collision", () => {
@@ -141,7 +157,16 @@ describe("environment themes", () => {
     const store = new Map([
       [
         ENVIRONMENT_THEMES_STORAGE_KEY,
-        JSON.stringify(publishedThemeDefinitions([{ ...NIGHTFALL_THEME, sidebarArtwork: true }])),
+        JSON.stringify(
+          publishedThemeDefinitions([
+            {
+              ...NIGHTFALL_THEME,
+              sidebarArtwork: true,
+              radius: "10px",
+              colors: { info: "#0969da" },
+            },
+          ]),
+        ),
       ],
     ]);
     vi.stubGlobal("window", {
@@ -161,6 +186,10 @@ describe("environment themes", () => {
     try {
       expect(palette.getThemeDefinition("nightfall")?.label).toBe("Nightfall");
       expect(palette.themeAllowsSidebarArtwork("nightfall")).toBe(true);
+      expect(palette.getThemeDefinition("nightfall")).toMatchObject({
+        radius: "10px",
+        statusColors: { dark: { info: "#0969da" } },
+      });
 
       // The plugin that published it is gone: the server's first themes event is empty.
       publish(registry, []);
