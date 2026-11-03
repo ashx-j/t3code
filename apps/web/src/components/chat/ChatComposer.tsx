@@ -1032,6 +1032,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     threadRef: routeThreadRef,
     formRef: composerFormRef,
     canFold: !forceExpandedOnMobile && !hasMultilinePrompt && pendingUserInputs.length === 0,
+    focused: isComposerFocused,
   });
   // A pending question stays expanded: its card moves into the banner dock,
   // so collapsing would leave the surface empty and squashed beneath it.

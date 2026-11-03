@@ -1,6 +1,6 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { describe, expect, it } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -15,9 +15,10 @@ const awayFromEnd = timelineAwayFromEndAtom(scopedThreadKey(threadRef));
 
 function Composer({ wideScreen, canFold = true }: { wideScreen: boolean; canFold?: boolean }) {
   const formRef = useRef<HTMLFormElement>(null);
-  const fold = useComposerCollapseOnScroll({ wideScreen, threadRef, formRef, canFold });
+  const [focused, setFocused] = useState(false);
+  const fold = useComposerCollapseOnScroll({ wideScreen, threadRef, formRef, canFold, focused });
   return (
-    <form ref={formRef}>
+    <form ref={formRef} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}>
       <div role="textbox" aria-label="Message" contentEditable suppressContentEditableWarning />
       <p>{fold.awayFromEnd ? "Folded" : "Open"}</p>
     </form>
@@ -42,6 +43,12 @@ describe("useComposerCollapseOnScroll", () => {
     appAtomRegistry.set(awayFromEnd, true);
     await expect.element(page.getByText("Folded")).toBeVisible();
     expect(document.activeElement).not.toBe(message.element());
+
+    // Focusing it opens it until the reader's next scroll, so a later blur can't fold it.
+    await userEvent.click(message);
+    await expect.element(page.getByText("Open")).toBeVisible();
+    appAtomRegistry.set(awayFromEnd, true);
+    await expect.element(page.getByText("Folded")).toBeVisible();
 
     appAtomRegistry.set(awayFromEnd, false);
     await expect.element(page.getByText("Open")).toBeVisible();

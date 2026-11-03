@@ -293,6 +293,7 @@ export function SettingsSidebarNav({
     <nav
       {...navArea}
       role="navigation"
+      aria-label="Settings sections"
       className={cn(
         rail
           ? "flex w-60 shrink-0 flex-col border-e bg-sidebar text-sidebar-foreground max-md:w-14"
@@ -481,7 +482,8 @@ export function SettingsSidebarNav({
           </div>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className={cn(rail && "max-md:hidden")}>
+      {/* Empty once the avatar moves beside Back and there is no sign-in prompt. */}
+      <SidebarFooter className={cn(rail && "max-md:hidden", "empty:hidden")}>
         <Suspense fallback={null}>
           <T3ConnectSidebarSignIn />
         </Suspense>

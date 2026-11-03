@@ -31,6 +31,7 @@ import * as FiberMap from "effect/FiberMap";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
@@ -437,6 +438,7 @@ const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const platform = yield* HostProcess.Platform;
   const context = yield* Effect.context<never>();
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const eventStore = yield* OrchestrationEventStore.OrchestrationEventStore;
@@ -1149,6 +1151,11 @@ const make = Effect.gen(function* () {
    * Whether `next` installs from where `recorded` did: the same folder however it is written, the
    * same repository or the same package, whatever ref or version each names.
    */
+  // Windows and macOS volumes ignore case in paths by default.
+  const folderKey = (folder: string) =>
+    platform === "win32" || platform === "darwin"
+      ? path.resolve(folder).toLowerCase()
+      : path.resolve(folder);
   const sameSource = (
     recorded: PluginInstallSource | undefined,
     next: PluginInstallSource | undefined,
@@ -1156,7 +1163,7 @@ const make = Effect.gen(function* () {
     if (recorded === undefined || next === undefined) return recorded === next;
     switch (next.type) {
       case "path":
-        return recorded.type === "path" && path.resolve(recorded.path) === path.resolve(next.path);
+        return recorded.type === "path" && folderKey(recorded.path) === folderKey(next.path);
       case "git":
         return recorded.type === "git" && recorded.url === next.url;
       case "npm":

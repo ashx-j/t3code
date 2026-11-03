@@ -252,7 +252,7 @@ it.effect("preserves pull request context without inheriting any watches", () =>
   }),
 );
 
-it.effect("rejects in-progress and rolled-back fork sources", () =>
+it.effect("rejects in-progress, rolled-back and plugin reply fork sources", () =>
   Effect.gen(function* () {
     for (const status of ["running", "rolled_back"] as const) {
       const sourceRun = makeSourceRun(status);
@@ -262,6 +262,9 @@ it.effect("rejects in-progress and rolled-back fork sources", () =>
       assert.equal(error.targetThreadId, targetThreadId);
       assert.equal(error.cause, ThreadForkService.forkableSourceRunStatusError(sourceRun));
     }
+    const reply = { ...makeSourceRun("completed"), providerThreadId: null };
+    const replyError = yield* planFork(reply).pipe(Effect.flip);
+    assert.equal(replyError.cause, ThreadForkService.commandReplyForkSourceError(reply));
   }),
 );
 

@@ -49,8 +49,8 @@ const TIMELINE_SCROLL_CANCEL_SENTINEL = Object.freeze({});
 
 /**
  * Whether the reader scrolled a thread's timeline away from its end during this visit, while the
- * scroll-to-end pill shows. A position restored on arrival or a jump, such as to a find result,
- * doesn't count.
+ * scroll-to-end pill shows. A restored position or a jump, such as to a find result, doesn't
+ * count. The composer clears it when the reader reopens it, and their next scroll sets it again.
  */
 export const timelineAwayFromEndAtom = Atom.family((threadKey: string) =>
   Atom.make(false).pipe(Atom.withLabel(`timeline-away-from-end:${threadKey}`)),
@@ -217,7 +217,11 @@ export function useTimelineFollow(input: TimelineFollowInput) {
   const [readerScrolledVisit, setReaderScrolledVisit] = useState<TimelineFollowVisit | null>(null);
   const tellComposer = collapseRequested && showScrollToBottom && readerScrolledVisit === visit;
   const noteReaderScroll = () => {
-    if (collapseRequested && readerScrolledVisit !== visit) setReaderScrolledVisit(visit);
+    if (!collapseRequested) return;
+    if (readerScrolledVisit !== visit) return setReaderScrolledVisit(visit);
+    // A composer the reader reopened folds again on their next scroll.
+    const away = timelineAwayFromEndAtom(routeThreadKey);
+    if (tellComposer && !appAtomRegistry.get(away)) appAtomRegistry.set(away, true);
   };
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the thread's composer, which lives outside this hook, that the reader left the end
   useEffect(() => {
@@ -393,10 +397,13 @@ export function useTimelineFollow(input: TimelineFollowInput) {
       awayFromEnd,
     });
     if (releases) releaseFollowForNavigation();
-    // Commands, such as a minimap click or a find jump, aren't the reader scrolling.
+    // Only the reader's own input. A minimap click or a find jump arrives as a command and
+    // then as an unmarked "scroll", so neither counts.
     if (
-      navigation.source !== "command" &&
-      (navigation.source !== "pointer" || navigation.onScrollbar)
+      navigation.source === "wheel" ||
+      navigation.source === "key" ||
+      navigation.source === "touch" ||
+      (navigation.source === "pointer" && navigation.onScrollbar)
     )
       noteReaderScroll();
   };
