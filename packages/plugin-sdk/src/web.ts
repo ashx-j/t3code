@@ -33,13 +33,21 @@ export interface WebPluginCommand {
   readonly keywords?: ReadonlyArray<string>;
   /** Desktop app only; ignored in a browser. */
   readonly desktop?: {
-    /** Lists the command under Plugins in the app menu. */
+    /**
+     * Lists the command under Plugins in the macOS menu bar. Windows and Linux show no app menu, so
+     * there the command palette is the way in.
+     */
     readonly menu?: boolean;
-    /** Lists the command in a tray icon's menu. The icon shows only while some command asks for it. */
+    /**
+     * Lists the command in a tray icon's menu, which brings T3 Code to the front when picked. The
+     * icon shows only while some command asks for it.
+     */
     readonly tray?: boolean;
     /**
-     * Runs the command from anywhere, even while T3 Code is in the background, as an Electron
-     * accelerator such as `CommandOrControl+Shift+Y`. Skipped when another app already holds it.
+     * Runs the command from any app, as an Electron accelerator such as `CommandOrControl+Shift+Y`.
+     * T3 Code stays in the background unless it has no window open. It needs Ctrl, Alt, Command or
+     * Super, unless the key types nothing, such as F13 to F24 or a media key. Skipped with a notice
+     * when another app or the user's SnapShot shortcut holds it, and on Linux Wayland sessions.
      */
     readonly globalShortcut?: string;
   };

@@ -3,6 +3,7 @@ import {
   DesktopAppBrandingSchema,
   DesktopEnvironmentBootstrapSchema,
   DesktopThemeSchema,
+  DesktopWindowBackgroundSchema,
   EDITORS,
   EditorId,
   PickedThemeFileSchema,
@@ -38,6 +39,7 @@ import * as ElectronTheme from "../../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as Electron from "electron";
 import * as MacPermissions from "../../permissions/MacPermissions.ts";
+import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import { safariPermissionCheck } from "../../preview/BrowserImport/SafariPermission.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
@@ -266,22 +268,12 @@ export const setTheme = DesktopIpc.makeIpcMethod({
 
 export const setWindowBackground = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.SET_WINDOW_BACKGROUND_CHANNEL,
-  payload: Schema.NullOr(Schema.String),
+  payload: DesktopWindowBackgroundSchema,
   result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.window.setWindowBackground")(function* (color) {
+  handler: Effect.fn("desktop.ipc.window.setWindowBackground")(function* (background) {
     const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
-    const change = yield* appSettings.setWindowBackground(color);
-    if (!change.changed) return;
-    // A theme without a palette goes back to the plain light or dark background.
-    const background =
-      change.settings.windowBackground ??
-      ((yield* (yield* ElectronTheme.ElectronTheme).shouldUseDarkColors) ? "#000000" : "#ffffff");
-    const electronWindow = yield* ElectronWindow.ElectronWindow;
-    yield* electronWindow.syncAllAppearance((window) =>
-      Effect.sync(() => {
-        if (!window.isDestroyed()) window.setBackgroundColor(background);
-      }),
-    );
+    const change = yield* appSettings.setWindowBackground(background);
+    if (change.changed) yield* (yield* DesktopWindow.DesktopWindow).syncAppearance;
   }),
 });
 
