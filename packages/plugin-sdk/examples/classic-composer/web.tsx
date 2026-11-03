@@ -5,8 +5,12 @@ import { useLayoutEffect, useRef, useState } from "react";
 // Built to web.js by `vp build --config examples/classic-composer/vite.config.ts` from
 // packages/plugin-sdk.
 
-const chevron = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`;
-const lockOpen = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='18' height='11' x='3' y='11' rx='2' ry='2'/%3E%3Cpath d='M7 11V7a5 5 0 0 1 9.9-1'/%3E%3C/svg%3E")`;
+// T3 draws its icons at stroke 1.75. The row's pickers drew their chevron bolder, at 2.25.
+const chevronSvg = (stroke: number) =>
+  `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='${stroke}' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`;
+const chevron = chevronSvg(2.25);
+const drawerChevron = chevronSvg(1.75);
+const lockOpen = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='18' height='11' x='3' y='11' rx='2' ry='2'/%3E%3Cpath d='M7 11V7a5 5 0 0 1 9.9-1'/%3E%3C/svg%3E")`;
 
 // The plugin's own elements. The old row sat 16px in from the card's right and bottom edges, and
 // 12px in a narrow composer with the model picker pulled 4px toward the edge. T3 already insets
@@ -175,6 +179,7 @@ svg.lucide-shield-off {
     background-image:
       linear-gradient(transparent 16px, rgb(0 0 0 / 18%) 16px, transparent 26px),
       linear-gradient(rgb(255 255 255 / 1%), rgb(255 255 255 / 1%));
+    background-origin: border-box;
     -webkit-backdrop-filter: blur(var(--glass-blur, 0)) saturate(var(--glass-saturation, 1));
     backdrop-filter: blur(var(--glass-blur, 0)) saturate(var(--glass-saturation, 1));
     /* The top 15px sit under the card. */
@@ -189,7 +194,7 @@ svg.lucide-shield-off {
     height: 0.75rem;
     flex-shrink: 0;
     background-color: currentColor;
-    mask: ${chevron} center / contain no-repeat;
+    mask: ${drawerChevron} center / contain no-repeat;
   }
   /* The branch picker's icons sat 2px into its padding. */
   & [data-slot="combobox-trigger"] {
@@ -198,6 +203,53 @@ svg.lucide-shield-off {
       margin-inline: -0.125rem;
     }
   }
+}
+/* The card's outline opens where the drawer joins it, so no hairline crosses the join, and its fill
+   lets the drawer's side edges run up into the card's last pixel. Hook: data-context-row, which T3
+   sets on the shell while the drawer shows, and the outline and fill on the card's own elements. */
+[data-slot="composer-shell"][data-context-row] {
+  & :is([data-slot="composer-host"], [data-chat-composer-main-surface])::after {
+    clip-path: polygon(
+      0 0,
+      100% 0,
+      100% 100%,
+      calc(100% - 1.375rem) 100%,
+      calc(100% - 1.375rem) calc(100% - 2px),
+      1.375rem calc(100% - 2px),
+      1.375rem 100%,
+      0 100%
+    );
+  }
+  & [data-slot="composer-host"]::before {
+    clip-path: polygon(
+      0 0,
+      100% 0,
+      100% 100%,
+      calc(100% - 1.375rem) 100%,
+      calc(100% - 1.375rem) calc(100% - 1px),
+      calc(100% - 1.375rem - 1px) calc(100% - 1px),
+      calc(100% - 1.375rem - 1px) 100%,
+      calc(1.375rem + 1px) 100%,
+      calc(1.375rem + 1px) calc(100% - 1px),
+      1.375rem calc(100% - 1px),
+      1.375rem 100%,
+      0 100%
+    );
+  }
+}
+
+/* 5. Hook: data-chat-composer-body, which T3's resting animation reads. The prompt sat 12px in on
+      a narrow screen, like the row. */
+@media (width < 40rem) {
+  [data-chat-composer-body] {
+    padding-inline: 0.75rem;
+  }
+}
+
+/* 6. Hook: the Lucide class on the attach icon, inside this plugin's row. The paperclip sat 1px
+      higher before T3 nudged it down. */
+.classic-composer svg.lucide-paperclip {
+  translate: none;
 }
 `;
 
@@ -208,40 +260,65 @@ svg.lucide-shield-off {
 const FOLDS = ["full", "access-icon", "icons", "menu"] as const;
 type Fold = (typeof FOLDS)[number];
 
+/** The text of the pickers, which changes with the model, effort or permissions picked. */
+const pickerLabels = (area: Element) =>
+  Array.from(
+    area.querySelectorAll("[data-chat-provider-model-picker], [data-composer-shortcut]"),
+    (picker) => picker.textContent,
+  ).join("\n");
+
 /** The classic row: pickers on the left, attach and send on the right. */
 function ClassicRow({ pieces }: { readonly pieces: WebPluginParts["composer.controls"] }) {
   const [row, setRow] = useState<HTMLDivElement | null>(null);
   const [fold, setFold] = useState<Fold>("full");
-  // The row width each fold needed when it last overflowed, so the row unfolds only once it fits.
-  const needed = useRef<Partial<Record<Fold, number>>>({});
+  // How far each fold's pickers overflowed when the row last folded past it.
+  const overflows = useRef(new Map<Fold, number>());
+  // The room each fold needs, and the pickers' labels then, taken when the next tighter fold first
+  // shows. That fold measures in its own terms, since T3's row has other margins than ours.
+  const needs = useRef(new Map<Fold, { readonly room: number; readonly labels: string }>());
 
   useLayoutEffect(() => {
     if (!row) return;
     const pickers = row.querySelector<HTMLElement>(".classic-composer-pickers");
+    // Our pickers, or T3's controls in its own row, take the width attach and send leave.
+    const area =
+      pickers ?? row.querySelector<HTMLElement>('[data-chat-composer-controls="footer"]') ?? row;
     const index = FOLDS.indexOf(fold);
+    // A fold unfolds once its pickers have the room it lacked, or retries when their labels
+    // change, such as after picking a shorter model.
     const measure = () => {
-      const width = row.clientWidth;
+      const room = area.clientWidth;
+      const labels = pickerLabels(area);
+      const looser = FOLDS[index - 1];
+      const lacked = looser ? overflows.current.get(looser) : undefined;
+      if (looser && lacked !== undefined && !needs.current.has(looser)) {
+        needs.current.set(looser, { room: room + lacked, labels });
+      }
+      const need = looser ? needs.current.get(looser) : undefined;
       const overflow = pickers ? pickers.scrollWidth - pickers.clientWidth : 0;
       const tighter = FOLDS[index + 1];
       if (overflow > 0.5 && tighter) {
-        needed.current[fold] = width + overflow;
+        overflows.current.set(fold, overflow);
+        needs.current.delete(fold);
         setFold(tighter);
-        return;
-      }
-      const looser = FOLDS[index - 1];
-      if (looser && (needed.current[looser] ?? Number.POSITIVE_INFINITY) <= width) {
+      } else if (looser && (!need || need.labels !== labels || need.room <= room)) {
         setFold(looser);
       }
     };
     const resize = new ResizeObserver(measure);
     const observe = () => {
       resize.disconnect();
-      resize.observe(row);
+      resize.observe(area);
       for (const picker of pickers?.querySelectorAll("button") ?? []) resize.observe(picker);
     };
     observe();
-    const mutations = new MutationObserver(observe);
-    if (pickers) mutations.observe(pickers, { childList: true, subtree: true });
+    // Measured now too, so a row folding several steps at once paints only the last.
+    measure();
+    const mutations = new MutationObserver(() => {
+      observe();
+      measure();
+    });
+    mutations.observe(area, { childList: true, subtree: true, characterData: true });
     return () => {
       resize.disconnect();
       mutations.disconnect();
