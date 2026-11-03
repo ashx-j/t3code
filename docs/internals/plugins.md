@@ -135,7 +135,12 @@ leaves stale items. Clicks and shortcuts come back through the existing menu-act
 
 The orchestrator stays pure: `turns.beforeDispatch` hooks run in `ThreadManagementService.dispatch`,
 before the command reaches it, with a 2-second deadline each and fail-open, and skip notifications
-and guest messages. A block fails the dispatch with `OrchestratorCommandRejectedError` caused by
+and guest messages. The logic lives in `pluginSendHooks.ts` behind one call, because that file is
+one of upstream's busiest. Queued edits and delegated task prompts reach agents without a new
+message, so they run the hooks there too, or a redaction plugin could be bypassed by editing a
+queued message. A message whose id is already recorded passed the hooks when it was first sent: a
+steer that misses its turn sends it again under a new command id, and hooks would apply twice. A
+block fails the dispatch with `OrchestratorCommandRejectedError` caused by
 the plugin's reason: every caller already handles that error and releases claimed attachments, and
 clients show the deepest error message, so the sender sees the reason and keeps the draft. The hook registry is a `PluginHooks` reference with an inert default, so
 orchestration code and its tests need no plugin wiring; the server provides one registry to the
@@ -164,8 +169,11 @@ A server plugin's slash commands are provider slash commands: the server adds th
 provider's lists where it adds `/usage-limits`, so every client lists them with no plugin code, and
 the `beforeDispatch` path runs the plugin's handler instead of the hooks. A provider's own command
 of the same name wins in that provider's lists and when a message goes to it, so a plugin cannot
-take `/review` from an agent that has one. T3's own names, shared with the composer, are refused
-at registration. A handler's `reply` turns
+take `/review` from an agent that has one. That includes the commands of the thread's folder
+(its worktree, else its project root), which the composer lists from the provider's workspace
+snapshot. T3's own names, shared with the composer, are refused at registration. Two plugins may
+register one name: the one whose id sorts first handles it, so start order never picks the
+winner, and the other keeps the rest of its commands. A handler's `reply` turns
 the message into the internal `thread.command-reply.record` command under the message's command id,
 so a retry replays it. The orchestrator records the sent message and an `assistant_message` reply
 as a run that is already completed, with no provider thread, attempt or checkpoint: clients drop a
@@ -180,8 +188,10 @@ titles, commit messages, pull request content, branch names and review guides al
 first, and plugin answers get the cleanup T3 gives model output. `textGeneration.generate` runs a
 plugin's own prompt on the settings' text generation model through the router's `generateText`.
 Drivers built with `fromRunner` get it from their JSON runner, with the answer in one `text` field;
-it is optional on `ProviderTextGeneration`, so drivers that cannot run a prompt (the ACP agents,
-Muse) need no change and the router fails with `TextGenerationUnsupportedError`. Like the tasks,
+it is optional on `ProviderTextGeneration`, so drivers that cannot run a prompt (Fx, the ACP
+Registry driver, plugin ACP agents and Muse) need no change and the router fails with
+`TextGenerationUnsupportedError`. Drivers that pick a runtime per call, such as OpenCode's 1.x
+and 2 servers, must forward it, or the router sees it missing. Like the tasks,
 it moves to the fallback model when the selected one's usage limit is reached.
 
 Plugin instructions and skill folders ride on each adapter turn input, read once per turn in
@@ -247,7 +257,9 @@ Registration is a hydration service rather than a mutator method because only th
 drivers' service type concrete, so plugin drivers get the services built-ins get. A defect stops
 the reconcile that rebuilds every instance, so the registry catches defects while decoding a
 config, the host turns defects in a plugin's `create` into driver errors, and a registration
-whose rebuild still fails removes its driver so the kind stays free.
+whose rebuild still fails removes its driver so the kind stays free. The registry also holds its
+lock while `create` runs, so the host fails a plugin's `create` after 20 seconds, within the 30
+that `activate` gets while it waits on `registerDriver`.
 
 Clients pick a provider's card, icon and form from static definitions, so a plugin's driver
 declares `client.settingsSchema` (the JSON Schema subset plugin settings use) and
@@ -319,5 +331,6 @@ check, so a restart before the next check is due starts no network request.
 ## Nothing installed costs nothing
 
 Plugins activate after the server is listening, each in its own fiber. Clients show plugin UI only
-when the environment advertises `plugins`. Plugin MCP tools are registered only while a plugin is
-installed, because every agent turn pays for the advertised tool list.
+when the environment advertises `plugins`. Plugin MCP tools, the `t3_plugins_*` management
+tools among them, are registered only once a plugin is installed, because every agent turn pays
+for the advertised tool list. MCP has no tool removal, so they stay until the server restarts.

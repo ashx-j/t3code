@@ -1,6 +1,7 @@
-import type { PluginId } from "@t3tools/contracts";
+import { CommandId, type PluginId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import type * as Context from "effect/Context";
+import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Stream from "effect/Stream";
@@ -19,6 +20,13 @@ export interface FacadeContext {
   /** Exposes a stream as an iterable that ends when the plugin deactivates or `signal` aborts. */
   readonly iterate: <A, E>(stream: Stream.Stream<A, E>, signal?: AbortSignal) => AsyncIterable<A>;
 }
+
+/** A fresh id for a command a plugin causes, which names the plugin. */
+export const newCommandId = (pluginId: string, crypto: Crypto.Crypto) =>
+  crypto.randomUUIDv4().pipe(
+    Effect.orDie,
+    Effect.map((id) => CommandId.make(`command:plugin:${pluginId}:${id}`)),
+  );
 
 class PluginApiCallError extends Error {
   readonly code: string;

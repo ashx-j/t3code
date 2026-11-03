@@ -115,12 +115,12 @@ const layerUnusedServices = Layer.mergeAll(
   Layer.mock(ServerSettings.ServerSettingsService)({}),
 );
 
-// The last theme folders the host published, for the web files case.
-let publishedThemeDirectories: ReadonlyArray<string> = [];
+// Every list of theme folders the host published, for the web files case.
+const publishedThemeDirectories: Array<ReadonlyArray<string>> = [];
 const layerThemes = Layer.mock(EnvironmentTheme.EnvironmentThemeService)({
   setPluginThemeDirectories: (directories) =>
     Effect.sync(() => {
-      publishedThemeDirectories = directories;
+      publishedThemeDirectories.push(directories);
     }),
 });
 
@@ -397,6 +397,12 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
         assert.isTrue(yield* fs.exists(`${agentFolder}/skills/release-notes/SKILL.md`));
 
         // The `$` picker lists the skill for the providers that receive it, by each one's name.
+        // A provider's own skill of that name stays.
+        const ownSkill = {
+          name: "release-notes",
+          path: "/home/user/.codex/skills/release-notes",
+          enabled: true,
+        };
         const listed = PluginHooks.withPluginSkills(
           [
             {
@@ -406,6 +412,7 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
             },
             { driver: "codex", skills: [] },
             { driver: "cursor", skills: [] },
+            { driver: "codex", skills: [ownSkill] },
           ] as unknown as ReadonlyArray<ServerProvider>,
           yield* hooks.currentSkills,
         );
@@ -419,7 +426,7 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
         const claudeSkill = { name: "skills-plugin:release-notes", ...skill };
         assert.deepStrictEqual(
           listed.map((provider) => provider.skills),
-          [[claudeSkill], [{ name: "release-notes", ...skill }], []],
+          [[claudeSkill], [{ name: "release-notes", ...skill }], [], [ownSkill]],
         );
         assert.deepStrictEqual(listed[0]?.workspaceSnapshots?.[0]?.skills, [claudeSkill]);
 
@@ -512,6 +519,24 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
           ),
         ),
       );
+      // A driver that fails to start, as plugin code can whatever its type says, closes what it
+      // opened.
+      let closed = false;
+      const failing = yield* pluginDrivers
+        .add({
+          kind: "failinggit",
+          make: Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              closed = true;
+            }),
+          ).pipe(Effect.andThen(Effect.fail("no credentials"))),
+        } as unknown as Parameters<typeof pluginDrivers.add>[0])
+        .pipe(Effect.match({ onFailure: (error) => error.message, onSuccess: () => "added" }));
+      assert.strictEqual(
+        failing,
+        "Cannot add the source control host 'failinggit': its driver failed to start: no credentials",
+      );
+      assert.isTrue(closed);
       const services = Layer.mergeAll(
         layerUnusedServices,
         Layer.succeed(SourceControlDrivers.SourceControlPluginDrivers, pluginDrivers),
@@ -666,6 +691,30 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         yield* writeFile(`${realDir}/server.cjs`, plugin("v2"));
         yield* host.reload(id);
         assert.strictEqual(yield* which, "v2");
+
+        // An `assets` folder linked out of the plugin is not served.
+        yield* writeFile(`${stateDir}/checkout/outside/secret.txt`, "Not the plugin's.");
+        yield* fs.symlink(`${stateDir}/checkout/outside`, `${realDir}/assets`);
+        yield* writeFile(`${realDir}/web.js`, "export default {};");
+        yield* writeFile(
+          `${realDir}/t3-plugin.json`,
+          JSON.stringify({
+            id: "linked",
+            name: "Linked",
+            version: "0.1.0",
+            engines: { t3: ">=0.1.0" },
+            server: "./server.cjs",
+            web: "./web.js",
+          }),
+        );
+        yield* host.reload(id);
+        const routes = yield* PluginHttpRoutes.PluginHttpRoutes;
+        const request = { method: "GET", path: "/web.js", query: {}, headers: {}, body: "" };
+        assert.strictEqual((yield* routes.handle({ pluginId: id, request })).status, 200);
+        const outside = yield* routes
+          .handle({ pluginId: id, request: { ...request, path: "/assets/secret.txt" } })
+          .pipe(Effect.flip);
+        assert.strictEqual(outside._tag, "PluginHttpRouteNotFoundError");
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
@@ -739,7 +788,9 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         yield* writeInstalledPlugin("in-place", plugin("installed"));
         yield* host.reload(id);
         yield* storage.set(id, "kept", true);
-        yield* host.uninstall(id, true, folder);
+        const keepsData = yield* host.uninstall(id, true, folder).pipe(Effect.flip);
+        assert.include(keepsData.message, "Unlink it without removing data.");
+        yield* host.uninstall(id, false, folder);
         const copies = (yield* host.rescan).plugins.filter((state) => state.id === "in-place");
         assert.deepStrictEqual(
           copies.map((state) => state.source),
@@ -763,6 +814,39 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         );
         yield* host.setEnabled(id, true);
         assert.strictEqual(yield* which, "v2");
+
+        const notLinked = yield* host
+          .uninstall(id, false, `${stateDir}/elsewhere`)
+          .pipe(Effect.flip);
+        assert.strictEqual(
+          notLinked.message,
+          `No copy of in-place is linked from ${stateDir}/elsewhere.`,
+        );
+
+        // Three copies in the plugins folder, which share a source: removing the one in use lists
+        // the next afresh, and the last one names that copy as the one used instead.
+        const threeCopies = PluginId.make("three-copies");
+        for (const name of ["three-copies", "three-copies-a", "three-copies-b"]) {
+          yield* writeFile(
+            `${stateDir}/plugins/${name}/t3-plugin.json`,
+            JSON.stringify({ id: threeCopies, name, version: "0.1.0", engines: { t3: ">=0.1.0" } }),
+          );
+        }
+        yield* host.rescan;
+        yield* host.uninstall(threeCopies, false);
+        assert.deepStrictEqual(
+          (yield* host.list)
+            .filter((state) => state.id === threeCopies)
+            .map((state) => [state.name, state.status, state.failure?.message]),
+          [
+            ["three-copies-a", "disabled", undefined],
+            [
+              "three-copies-b",
+              "failed",
+              'Another copy of this plugin, in the "three-copies-a" folder, is used instead.',
+            ],
+          ],
+        );
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
@@ -958,6 +1042,8 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
       const prompted: Array<TextGeneration.TextGenerationInput> = [];
       const textModel = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "haiku" };
       const projectUpdates: Array<unknown> = [];
+      // Empty except while the slash command case runs, so new threads keep the project's model.
+      let providers: ReadonlyArray<ServerProvider> = [];
       const services = Layer.mergeAll(
         Layer.mock(ThreadLaunchService.ThreadLaunchService)({
           launch: (input) =>
@@ -974,7 +1060,9 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
               return { ...project, pinnedAt: "2026-10-31T00:00:00.000Z" };
             }),
         }),
-        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.sync(() => providers),
+        }),
         Layer.mock(ProviderDriverRegistration.ProviderDriverRegistration)({}),
         Layer.mock(SourceControlDrivers.SourceControlPluginDrivers)({ current: () => [] }),
         Layer.mock(GitVcsDriver.GitVcsDriver)({}),
@@ -996,7 +1084,8 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         }),
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           listProjectThreads: () => Effect.succeed([]),
-          getThreadShell: () => Effect.succeed({ id: threadId, projectId } as never),
+          getThreadShell: () =>
+            Effect.succeed({ id: threadId, projectId, worktreePath: null } as never),
           settleThread: (input) =>
             Effect.sync(() => {
               dispatched.push({ type: "thread.settle", ...input } as never);
@@ -1051,6 +1140,10 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           threadId,
           title: "Renamed by a plugin",
         });
+        // A blank title is refused, not stored.
+        const blankTitle = yield* Effect.flip(call("renameThread", { threadId, title: "  " }));
+        assert.strictEqual(blankTitle._tag, "PluginHandlerError");
+        assert.lengthOf(dispatched, 1);
 
         yield* call("noteThread", { threadId });
         assert.deepInclude(dispatched[1], {
@@ -1130,9 +1223,21 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           status,
         ]);
         assert.deepStrictEqual(provider?.workspaceSnapshots?.[0]?.slashCommands, [deploy, status]);
-        yield* hooks.setProviderSlashCommands((instanceId) =>
-          Effect.succeed(instanceId === "claudeAgent" ? ["deploy"] : []),
-        );
+        // Its own command wins when the message goes to it, whether every folder has it or the
+        // repository of the thread's project adds it.
+        providers = [
+          { instanceId: "claudeAgent", slashCommands: [{ name: "deploy" }] },
+          {
+            instanceId: "cursor",
+            slashCommands: [],
+            workspaceSnapshots: [{ cwd: "/repo", slashCommands: [{ name: "deploy" }] }],
+          },
+          {
+            instanceId: "codex",
+            slashCommands: [],
+            workspaceSnapshots: [{ cwd: "/elsewhere", slashCommands: [{ name: "deploy" }] }],
+          },
+        ] as unknown as ReadonlyArray<ServerProvider>;
         const sendTo = (instanceId: string) =>
           hooks.beforeDispatch(
             {
@@ -1146,7 +1251,36 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
             Effect.succeed(instanceId),
           );
         assert.strictEqual(yield* sendTo("claudeAgent"), "/deploy staging");
+        assert.strictEqual(yield* sendTo("cursor"), "/deploy staging");
         assert.strictEqual(yield* sendTo("codex"), "Deploy to staging and report back.");
+        providers = [];
+
+        // Plugins sharing a name: the id that sorts first handles it, whichever started first,
+        // and the other plugin keeps the rest of its commands.
+        const removeEarlier = yield* hooks.addSlashCommand(
+          { pluginId: "aaa-plugin", pluginName: "Earlier", name: "deploy" },
+          () => Effect.succeed({ reply: "Deployed by the earlier plugin." }),
+        );
+        const removeLater = yield* hooks.addSlashCommand(
+          { pluginId: "zzz-plugin", pluginName: "Later", name: "status" },
+          () => Effect.succeed({ reply: "Status from the later plugin." }),
+        );
+        assert.deepStrictEqual(yield* outgoing("/deploy staging"), {
+          reply: "Deployed by the earlier plugin.",
+        });
+        assert.deepStrictEqual(yield* outgoing("/status"), { reply: "**staging** is up to date." });
+        assert.deepStrictEqual(
+          (yield* hooks.currentSlashCommands).map(
+            (command) => `${command.pluginId}/${command.name}`,
+          ),
+          ["workbench-plugin/status", "aaa-plugin/deploy"],
+        );
+        yield* removeEarlier;
+        yield* removeLater;
+        assert.strictEqual(
+          yield* outgoing("/deploy staging"),
+          "Deploy to staging and report back.",
+        );
 
         const request = (id: string, kind: string) => ({
           id,
@@ -1313,7 +1447,17 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         const response = yield* routes.handle({ pluginId: helloWeb, request });
         assert.strictEqual(response.status, 200);
         assert.strictEqual(response.headers["content-type"], "text/javascript; charset=utf-8");
-        assert.deepStrictEqual(publishedThemeDirectories, [`${fixturesDir}hello-web/themes`]);
+        const themes = `${fixturesDir}hello-web/themes`;
+        assert.deepStrictEqual(publishedThemeDirectories.at(-1), [themes]);
+        // A reload publishes its folder again, so its files are read again, without dropping it
+        // first: windows would flash T3's colors.
+        publishedThemeDirectories.length = 0;
+        yield* host.reload(helloWeb);
+        assert.isNotEmpty(publishedThemeDirectories);
+        assert.deepStrictEqual(
+          publishedThemeDirectories.filter((directories) => !directories.includes(themes)),
+          [],
+        );
         const asset = yield* routes.handle({
           pluginId: helloWeb,
           request: { ...request, path: "/assets/hello.txt" },
@@ -1327,7 +1471,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         yield* host.setEnabled(helloWeb, false);
         const missing = yield* routes.handle({ pluginId: helloWeb, request }).pipe(Effect.flip);
         assert.strictEqual(missing._tag, "PluginHttpRouteNotFoundError");
-        assert.deepStrictEqual(publishedThemeDirectories, []);
+        assert.deepStrictEqual(publishedThemeDirectories.at(-1), []);
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
@@ -1389,6 +1533,25 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           yield* host.uninstall(hello, false);
           assert.isFalse(yield* fs.exists(`${stateDir}/plugins/hello-plugin`));
           assert.isTrue(yield* fs.exists(`${fixturesDir}hello-plugin/server.cjs`));
+
+          // A plugin copied by hand into the folder an install would use is not replaced.
+          yield* writeFile(
+            `${stateDir}/plugins/hello-plugin/t3-plugin.json`,
+            JSON.stringify({
+              id: "hand-copied",
+              name: "Hand copied",
+              version: "0.1.0",
+              engines: { t3: ">=0.1.0" },
+            }),
+          );
+          yield* host.rescan;
+          const occupied = yield* host.install(source).pipe(Effect.flip);
+          assert.strictEqual(
+            occupied.message,
+            "The plugins folder already has a hello-plugin folder holding hand-copied. Move it, then install again.",
+          );
+          assert.include(stateOf(yield* host.list, "hand-copied"), { status: "disabled" });
+          yield* host.uninstall(PluginId.make("hand-copied"), false);
 
           npmLatest = "1.0.0";
           const fromNpm = yield* host.install({ type: "npm", name: "npm-hello" });

@@ -1,4 +1,5 @@
-import { EnvironmentId, PluginId, type PluginState } from "@t3tools/contracts";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { EnvironmentId, PluginId, ThreadId, type PluginState } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -55,6 +56,7 @@ import {
   pluginSlashCommandsAtom,
   pluginToolRendererAtom,
   pluginToolRendererKey,
+  pluginThreadBadgesAtom,
   pluginWebFailureAtom,
 } from "./pluginRegistry";
 
@@ -103,7 +105,7 @@ describe("startPluginLoader", () => {
           webPlugin("hung-web"),
           webPlugin("hello-web"),
           { ...webPlugin("broken-web"), revision: 3 },
-          webPlugin("no-activate-web"),
+          { ...webPlugin("no-activate-web"), revision: 4 },
         ],
       }),
     );
@@ -116,15 +118,21 @@ describe("startPluginLoader", () => {
         ),
       ).toBe("The request for /web.js failed with 500.");
     });
-    // Agents' plugin tools hear about it through the server, tied to the start that failed.
-    expect(reportWebFailure).toHaveBeenCalledWith({
-      environmentId,
-      input: {
-        pluginId: "broken-web",
-        revision: 3,
-        message: "The request for /web.js failed with 500.",
-      },
-    });
+    // Agents' plugin tools hear about the plugin's own failures through the server, tied to the
+    // start that failed. A failed download is this client's network, so it stays here.
+    await vi.waitFor(() =>
+      expect(reportWebFailure).toHaveBeenCalledWith({
+        environmentId,
+        input: {
+          pluginId: "no-activate-web",
+          revision: 4,
+          message: "The web bundle does not export a plugin with an activate function.",
+        },
+      }),
+    );
+    expect(reportWebFailure).not.toHaveBeenCalledWith(
+      expect.objectContaining({ input: expect.objectContaining({ pluginId: "broken-web" }) }),
+    );
     expect(String(fetchSpy.mock.calls[1]?.[0])).toBe(
       "http://plugins.test/api/plugins/hello-web/web.js?v=0.1.0",
     );
@@ -162,7 +170,7 @@ describe("startPluginLoader", () => {
         plugins: [
           webPlugin("hung-web"),
           { ...webPlugin("broken-web"), revision: 3 },
-          webPlugin("no-activate-web"),
+          { ...webPlugin("no-activate-web"), revision: 4 },
         ],
       }),
     );
@@ -224,6 +232,51 @@ describe("startPluginLoader", () => {
         pluginRightPanelAtom(pluginRightPanelKey(environmentId, "slow-web", "slow")),
       ),
     ).toBeUndefined();
+  });
+
+  it("gives a shared slash command to the plugin whose id sorts first, and ignores a plugin's calls after it unloads", async () => {
+    const source = (id: string) => `export default { activate(api) {
+      globalThis.__api_${id} = api;
+      api.composer.registerSlashCommand({ name: "notes", description: "${id}", run() {} });
+      api.commands.register({ id: "open", title: "Open ${id}", run() {} });
+    } };`;
+    using _fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(
+        async (input) =>
+          new Response(source(String(input).includes("/first-web/") ? "first" : "second")),
+      );
+    const environmentId = EnvironmentId.make("environment:plugin-loader-clash");
+    const stop = startPluginLoader(environmentId, vi.fn());
+    using _loader = { [Symbol.dispose]: stop };
+
+    appAtomRegistry.set(
+      live,
+      AsyncResult.success({ plugins: [webPlugin("first-web"), webPlugin("second-web")] }),
+    );
+    // Both start, whatever order they finish in, and `/notes` belongs to first-web.
+    await vi.waitFor(() =>
+      expect(appAtomRegistry.get(pluginCommandsAtom(environmentId))).toHaveLength(2),
+    );
+    expect(
+      appAtomRegistry.get(pluginSlashCommandsAtom(environmentId)).map((entry) => entry.pluginId),
+    ).toEqual(["first-web"]);
+
+    // A timer the plugin left running changes nothing once it is off.
+    const api = Reflect.get(globalThis, "__api_first") as {
+      readonly threads: { readonly setBadge: (threadId: string, badge: object) => void };
+    };
+    appAtomRegistry.set(live, AsyncResult.success({ plugins: [webPlugin("second-web")] }));
+    await vi.waitFor(() =>
+      expect(appAtomRegistry.get(pluginCommandsAtom(environmentId))).toHaveLength(1),
+    );
+    // Without first-web, second-web's `/notes` takes over.
+    expect(
+      appAtomRegistry.get(pluginSlashCommandsAtom(environmentId)).map((entry) => entry.pluginId),
+    ).toEqual(["second-web"]);
+    api.threads.setBadge("thread-1", { label: "Late" });
+    const threadKey = scopedThreadKey(scopeThreadRef(environmentId, ThreadId.make("thread-1")));
+    expect(appAtomRegistry.get(pluginThreadBadgesAtom(threadKey))).toEqual([]);
   });
 
   it("starts a channel the plugin subscribes to and hands it the values", async () => {

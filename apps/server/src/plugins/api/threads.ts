@@ -1,5 +1,5 @@
 import {
-  CommandId,
+  type CommandId,
   IsoDateTime,
   MessageId,
   ModelSelection,
@@ -15,6 +15,7 @@ import {
   ProviderInteractionMode,
   RuntimeMode,
   ThreadId,
+  TrimmedNonEmptyString,
   TurnItemId,
 } from "@t3tools/contracts";
 import type { PluginApi } from "@t3tools/plugin-sdk/server";
@@ -33,7 +34,7 @@ import type * as ThreadManagementService from "../../orchestration-v2/ThreadMana
 import type * as ProjectService from "../../project/ProjectService.ts";
 import type * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import type * as ServerSettings from "../../serverSettings.ts";
-import type { FacadeContext } from "./facade.ts";
+import { type FacadeContext, newCommandId } from "./facade.ts";
 
 const encodeThreadShell = Schema.encodeUnknownEffect(
   Schema.toCodecJson(OrchestrationV2ThreadShell),
@@ -56,6 +57,15 @@ const decodeLaunch = Schema.decodeUnknownEffect(
   }),
 );
 const decodeSnoozedUntil = Schema.decodeUnknownEffect(IsoDateTime);
+const decodeTitle = Schema.decodeUnknownEffect(TrimmedNonEmptyString);
+const decodeSend = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    text: TrimmedNonEmptyString,
+    mode: Schema.optional(Schema.Literals(["auto", "queue", "steer"])),
+  }),
+);
+const MAX_NOTE_SUMMARY_CHARS = 200;
+const MAX_NOTE_DETAIL_CHARS = 20_000;
 const decodeProjectCreate = Schema.decodeUnknownEffect(Schema.toCodecJson(ProjectCreatePayload));
 const decodeProjectUpdate = Schema.decodeUnknownEffect(Schema.toCodecJson(ProjectUpdatePayload));
 const encodeProject = Schema.encodeUnknownEffect(Schema.toCodecJson(Project));
@@ -104,9 +114,7 @@ export const makeThreadsApi = (
 ): PluginApi["threads"] => {
   const { threads, crypto } = services;
   const newId = crypto.randomUUIDv4().pipe(Effect.orDie);
-  const newCommandId = newId.pipe(
-    Effect.map((id) => CommandId.make(`command:plugin:${facade.pluginId}:${id}`)),
-  );
+  const commandId = newCommandId(facade.pluginId, crypto);
   /** Dispatches the command clients send for the same change, after checking the thread exists. */
   const organize = (
     threadId: string,
@@ -119,7 +127,7 @@ export const makeThreadsApi = (
       Effect.gen(function* () {
         const shell = yield* shellOf(threadId);
         yield* threads.dispatch(
-          yield* command({ commandId: yield* newCommandId, threadId: shell.id }),
+          yield* command({ commandId: yield* commandId, threadId: shell.id }),
         );
       }),
     );
@@ -151,14 +159,15 @@ export const makeThreadsApi = (
       facade.call(
         Effect.gen(function* () {
           const shell = yield* shellOf(input.threadId);
+          const { text, mode } = yield* decodeSend(input);
           yield* threads.sendToThread({
             projectId: shell.projectId,
-            commandId: CommandId.make(`command:plugin:${facade.pluginId}:${yield* newId}`),
+            commandId: yield* commandId,
             threadId: shell.id,
             messageId: MessageId.make(yield* newId),
-            text: input.text,
+            text,
             attachments: [],
-            mode: input.mode ?? "auto",
+            mode: mode ?? "auto",
             createdBy: "agent",
             creationSource: "server",
           });
@@ -176,10 +185,17 @@ export const makeThreadsApi = (
           });
           yield* threads.dispatch({
             type: "thread.notification.record",
-            commandId: CommandId.make(`command:plugin:${facade.pluginId}:${yield* newId}`),
+            commandId: yield* commandId,
             threadId: shell.id,
             turnItemId: TurnItemId.make(`turn-item:plugin:${facade.pluginId}:${yield* newId}`),
-            notification: { ...notification, summary: `${pluginName}: ${notification.summary}` },
+            // Every client keeps a thread's notes in memory, so a note stays a note.
+            notification: {
+              ...notification,
+              summary: `${pluginName}: ${notification.summary.slice(0, MAX_NOTE_SUMMARY_CHARS)}`,
+              ...(notification.detail === undefined
+                ? {}
+                : { detail: notification.detail.slice(0, MAX_NOTE_DETAIL_CHARS) }),
+            },
           });
         }),
       ),
@@ -189,7 +205,7 @@ export const makeThreadsApi = (
           const shell = yield* shellOf(threadId);
           yield* threads.interruptThread({
             projectId: shell.projectId,
-            commandId: CommandId.make(`command:plugin:${facade.pluginId}:${yield* newId}`),
+            commandId: yield* commandId,
             threadId: shell.id,
           });
         }),
@@ -233,10 +249,10 @@ export const makeThreadsApi = (
               )?.supportedRuntimeModes,
             },
           );
-          const commandId = yield* newCommandId;
+          const launchCommandId = yield* commandId;
           const result = yield* services.launches.launch({
-            commandId,
-            threadId: ThreadId.make(commandId),
+            commandId: launchCommandId,
+            threadId: ThreadId.make(launchCommandId),
             projectId: launch.projectId,
             title: launch.title,
             modelSelection,
@@ -269,7 +285,7 @@ export const makeThreadsApi = (
         Effect.gen(function* () {
           const shell = yield* shellOf(threadId);
           yield* threads.settleThread({
-            commandId: yield* newCommandId,
+            commandId: yield* commandId,
             threadId: shell.id,
             byOwnAgent: false,
           });
@@ -295,9 +311,9 @@ export const makeThreadsApi = (
           const shell = yield* shellOf(threadId);
           yield* threads.dispatch({
             type: "thread.metadata.update",
-            commandId: CommandId.make(`command:plugin:${facade.pluginId}:${yield* newId}`),
+            commandId: yield* commandId,
             threadId: shell.id,
-            title,
+            title: yield* decodeTitle(title),
           });
         }),
       ),
@@ -316,9 +332,7 @@ export const makeProjectsApi = (
     facade.call(
       Effect.gen(function* () {
         const payload = yield* decodeProjectCreate(input);
-        const commandId = CommandId.make(
-          `command:plugin:${facade.pluginId}:${yield* services.crypto.randomUUIDv4().pipe(Effect.orDie)}`,
-        );
+        const commandId = yield* newCommandId(facade.pluginId, services.crypto);
         const project = yield* services.projectService.create({
           ...payload,
           commandId,
@@ -334,9 +348,7 @@ export const makeProjectsApi = (
         const project = yield* services.projectService.update({
           ...payload,
           projectId: yield* decodeProjectId(projectId),
-          commandId: CommandId.make(
-            `command:plugin:${facade.pluginId}:${yield* services.crypto.randomUUIDv4().pipe(Effect.orDie)}`,
-          ),
+          commandId: yield* newCommandId(facade.pluginId, services.crypto),
         });
         return asJsonObject(yield* encodeProject(project));
       }),

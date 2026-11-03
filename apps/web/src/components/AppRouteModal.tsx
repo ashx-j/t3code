@@ -59,6 +59,7 @@ export function AppRouteModal({
   // On close, leave focus alone; returning it to the opener paints a focus ring.
   const popupRef = useRef<HTMLDivElement>(null);
   const content = <AppRouteNavContext value={nav}>{children}</AppRouteNavContext>;
+  const close = () => void closeAppModal();
 
   const modal = (
     <DialogPrimitive.Root
@@ -109,7 +110,8 @@ export function AppRouteModal({
       part="app.pageFrame"
       pieces={{
         original: modal,
-        content,
+        // Outside T3's window there is no dialog for the close button to close.
+        content: <AppRoutePageCloseContext value={close}>{content}</AppRoutePageCloseContext>,
         page: (
           <AppRoutePage page={page} label={label}>
             {children}
@@ -118,7 +120,7 @@ export function AppRouteModal({
         nav,
         kind: page,
         label,
-        close: () => void closeAppModal(),
+        close,
       }}
     />
   );

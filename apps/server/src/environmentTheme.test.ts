@@ -116,6 +116,22 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
           ],
         );
 
+        // The same folders read again, so a plugin restarted with edited files reaches windows.
+        const seen = yield* Queue.unbounded<ReadonlyArray<{ readonly name: string }>>();
+        yield* Stream.runForEach(environmentTheme.streamChanges, (themes) =>
+          Queue.offer(seen, themes),
+        ).pipe(Effect.forkScoped);
+        yield* Queue.take(seen);
+        yield* fs.writeFileString(
+          path.join(pluginThemes, "shared-light.json"),
+          encodeThemeFile({ ...SHARED_THEME, name: "Shared Light Edited" }),
+        );
+        yield* environmentTheme.setPluginThemeDirectories([pluginThemes]);
+        assert.deepEqual(
+          (yield* Queue.take(seen)).map((theme) => theme.name),
+          ["Nightfall", "Shared Light Edited"],
+        );
+
         yield* environmentTheme.setPluginThemeDirectories([]);
         assert.deepEqual(
           (yield* currentThemes).map((theme) => theme.id),

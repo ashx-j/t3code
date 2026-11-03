@@ -72,6 +72,7 @@ import { isLoadableWebPlugin } from "./pluginWatch";
 const PANEL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
 const COMMAND_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const BADGE_TONES = new Set(["info", "success", "warning", "error"]);
+const TOAST_TYPES = new Set(["info", "success", "warning", "error"]);
 const CODE_LANGUAGE = /^[a-z0-9][a-z0-9+#.-]{0,31}$/;
 const MENTION_TEXT_MAX_CHARS = 30_000;
 // Languages the app already draws itself.
@@ -226,6 +227,8 @@ interface WebPluginApiContext {
   /** One dispatcher scope shared by every plugin; commands add and remove their own entries. */
   readonly shortcutHandlers: () => CommandHandlers;
   readonly navigate: (path: string) => void;
+  /** False once the plugin unloaded: a timer or callback it left behind must change nothing. */
+  readonly active: () => boolean;
 }
 
 function makeWebPluginApi({
@@ -234,12 +237,16 @@ function makeWebPluginApi({
   track,
   shortcutHandlers,
   navigate,
+  active,
 }: WebPluginApiContext): WebPluginApi {
   const pluginId = plugin.id;
   const assetUrls = new Map<string, Promise<string>>();
   let bannerCount = 0;
   // One cleanup each for a plugin's badges and `@` items, however often it updates them.
   const badgedThreads = new Set<string>();
+  let badgesTracked = false;
+  let mentionCleanupTracked = false;
+  let collapseCleanupTracked = false;
   // Shared by everything the plugin draws, so a render failure reaches its row and agents once.
   const owner: PluginOwner = {
     environmentId,
@@ -247,9 +254,6 @@ function makeWebPluginApi({
     pluginName: plugin.name,
     report: (message) => reportWebFailure(environmentId, plugin, message),
   };
-  let badgesTracked = false;
-  let mentionCleanupTracked = false;
-  let collapseCleanupTracked = false;
   return {
     version: 1,
     id: pluginId,
@@ -314,7 +318,7 @@ function makeWebPluginApi({
     },
     settings: {
       registerPanel: (component) => {
-        track(registerPluginSettingsPanel(environmentId, pluginId, component));
+        track(registerPluginSettingsPanel({ component, owner }));
       },
     },
     commands: {
@@ -414,6 +418,7 @@ function makeWebPluginApi({
         track(registerPluginAction("composer", pluginActionEntry(owner, button)));
       },
       setCollapseOnScroll: (enabled) => {
+        if (!active()) return;
         const key = pluginContributionKey(environmentId, pluginId);
         setPluginComposerCollapseOnScroll(key, enabled === true);
         if (!collapseCleanupTracked) {
@@ -422,6 +427,7 @@ function makeWebPluginApi({
         }
       },
       setMentionItems: (items) => {
+        if (!active()) return;
         const entries = items.slice(0, 500).map((item) => {
           const description = item.description ?? "";
           if (
@@ -458,6 +464,7 @@ function makeWebPluginApi({
         track(registerPluginAction("threadHeader", pluginActionEntry(owner, button)));
       },
       setBadge: (threadId, badge) => {
+        if (!active()) return;
         const threadKey = scopedThreadKey(scopeThreadRef(environmentId, ThreadId.make(threadId)));
         if (badge === null) {
           badgedThreads.delete(threadKey);
@@ -571,6 +578,14 @@ function makeWebPluginApi({
       navigate(path);
     },
     toast: (message) => {
+      if (
+        typeof message.title !== "string" ||
+        (message.description !== undefined && typeof message.description !== "string") ||
+        (message.type !== undefined && !TOAST_TYPES.has(message.type))
+      ) {
+        throw new TypeError("A toast needs a text title, text description and a known type.");
+      }
+      if (!active()) return;
       toastManager.add({
         type: message.type ?? "info",
         title: message.title,
@@ -684,6 +699,7 @@ export function startPluginLoader(
               track,
               shortcutHandlers: claimShortcutHandlers,
               navigate,
+              active: () => !stopped && !entry.disposed,
             }),
           ),
         ),
@@ -700,7 +716,9 @@ export function startPluginLoader(
       // the plugin to restart instead of failing again on every change.
       if (!downloaded) loaded.delete(plugin.id);
       setPluginWebFailure(environmentId, plugin.id, errorText(error));
-      reportWebFailure(environmentId, plugin, errorText(error));
+      // Only the plugin's own failures reach agents. A failed download is this client's network,
+      // and clients that each report a different one would republish the list back and forth.
+      if (downloaded) reportWebFailure(environmentId, plugin, errorText(error));
     }
   };
 

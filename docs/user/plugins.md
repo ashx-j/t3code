@@ -77,7 +77,9 @@ stays in the composer, so you can edit it and send it again.
 
 Plugins can add slash commands. They appear in the composer's `/` menu with the agent's own
 commands, in every app. A plugin's command runs on the server. It can send the agent a message the
-plugin prepares, stop with a reason, or answer you in the thread without asking the agent.
+plugin prepares, stop with a reason, or answer you in the thread without asking the agent. The
+agent's own command wins over a plugin's with the same name, and when two plugins use one name,
+the plugin whose id comes first alphabetically gets it.
 
 A plugin can give Claude and Codex agents extra instructions and skills, from their next turn or
 session while the plugin is on. Its skills appear in the composer's `$` menu with the plugin's name

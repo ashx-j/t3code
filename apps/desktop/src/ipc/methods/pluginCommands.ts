@@ -1,4 +1,8 @@
-import { DesktopPluginCommandSchema } from "@t3tools/contracts";
+import {
+  DesktopPluginCommandSchema,
+  DesktopPluginShortcutRefusalSchema,
+  type DesktopPluginShortcutRefusal,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -47,7 +51,7 @@ export const installPluginCommands = Effect.fn("desktop.ipc.installPluginCommand
     DesktopIpc.makeIpcMethod({
       channel: SET_PLUGIN_COMMANDS_CHANNEL,
       payload: Schema.Array(DesktopPluginCommandSchema).check(Schema.isMaxLength(500)),
-      result: Schema.Array(Schema.String),
+      result: Schema.Array(DesktopPluginShortcutRefusalSchema),
       handler: Effect.fn("desktop.ipc.setPluginCommands")(function* (commands, event) {
         const electronWindow = yield* ElectronWindow.ElectronWindow;
         const window = yield* electronWindow.main;
@@ -100,17 +104,17 @@ export const installPluginCommands = Effect.fn("desktop.ipc.installPluginCommand
           );
         }
         unregisterAll();
-        const refused: Array<string> = [];
+        const refused: Array<DesktopPluginShortcutRefusal> = [];
         for (const { command, globalShortcut } of commands) {
           if (globalShortcut === undefined) continue;
           const run = () => runCommand(command);
           // Throws on an accelerator Electron can't parse; returns false when another app holds it.
           const added = yield* Effect.try(() =>
             Electron.globalShortcut.register(globalShortcut, run),
-          ).pipe(Effect.orElseSucceed(() => false));
-          if (added) registered.push(globalShortcut);
+          ).pipe(Effect.orElseSucceed(() => "invalid" as const));
+          if (added === true) registered.push(globalShortcut);
           else {
-            refused.push(command);
+            refused.push({ command, reason: added === false ? "taken" : "invalid" });
             yield* Effect.logWarning("Could not register a plugin's global shortcut", {
               command,
               globalShortcut,

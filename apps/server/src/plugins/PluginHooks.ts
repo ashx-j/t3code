@@ -37,7 +37,7 @@ export class PluginMessageBlockedError extends Schema.TaggedError<PluginMessageB
   }
 }
 
-/** A plugin already handles a slash command with this name. */
+/** The plugin already registered a slash command with this name. */
 export class PluginSlashCommandTakenError extends Schema.TaggedError<PluginSlashCommandTakenError>()(
   "PluginSlashCommandTakenError",
   { name: Schema.String, pluginName: Schema.String },
@@ -140,7 +140,8 @@ export const withPluginSlashCommands = <P extends ServerProvider>(
 /**
  * Adds plugin skills to the lists of the providers that receive them, under the name each one
  * invokes them by: Claude namespaces a plugin folder's skills by the folder's manifest name (the
- * plugin id) and their folder, Codex uses the frontmatter name.
+ * plugin id) and their folder, Codex uses the frontmatter name. A provider's own skill of the
+ * same name stays and the plugin's is left out, as with slash commands.
  */
 export const withPluginSkills = <P extends ServerProvider>(
   providers: ReadonlyArray<P>,
@@ -164,11 +165,10 @@ export const withPluginSkills = <P extends ServerProvider>(
   return providers.map((provider) => {
     const listed = listFor(provider.driver);
     if (listed === undefined) return provider;
-    const names = new Set(listed.map((skill) => skill.name));
-    const merge = (items: ReadonlyArray<ServerProviderSkill>) => [
-      ...items.filter((item) => !names.has(item.name)),
-      ...listed,
-    ];
+    const merge = (items: ReadonlyArray<ServerProviderSkill>) => {
+      const own = new Set(items.map((item) => item.name));
+      return [...items, ...listed.filter((skill) => !own.has(skill.name))];
+    };
     return {
       ...provider,
       skills: merge(provider.skills),
@@ -191,8 +191,11 @@ export const withPluginItems = <P extends ServerProvider>(
   skills: ReadonlyArray<PluginSkill>,
 ): ReadonlyArray<P> => withPluginSkills(withPluginSlashCommands(providers, commands), skills);
 
-/** The names of a provider instance's own slash commands. */
-type ProviderSlashCommandNames = (instanceId: string) => Effect.Effect<ReadonlyArray<string>>;
+/** The names of a provider instance's own slash commands, with those of the thread's workspace. */
+type ProviderSlashCommandNames = (
+  instanceId: string,
+  threadId: ThreadId,
+) => Effect.Effect<ReadonlyArray<string>>;
 
 /** The registry behind the `PluginHooks` reference. */
 export interface PluginHooksRegistry {
@@ -213,9 +216,22 @@ export interface PluginHooksRegistry {
      */
     providerInstanceId?: Effect.Effect<string | undefined>,
   ) => Effect.Effect<string | PluginCommandReply, PluginMessageBlockedError>;
+  /**
+   * Runs the hooks, not slash commands, on text that reaches an agent without a new message: a
+   * queued message's edit or a delegated task's prompt. `message` is read only when a hook would
+   * run, and nothing there means the text is not the sender's own, so it passes unchanged.
+   */
+  readonly beforeRewrite: (
+    text: string,
+    message: Effect.Effect<PluginOutgoingMessage | undefined>,
+    alreadyAccepted: Effect.Effect<boolean>,
+  ) => Effect.Effect<string, PluginMessageBlockedError>;
   /** Sets where `beforeDispatch` reads providers' own commands. The plugin host supplies it. */
   readonly setProviderSlashCommands: (names: ProviderSlashCommandNames) => Effect.Effect<void>;
-  /** Adds a slash command and returns the effect that removes it. */
+  /**
+   * Adds a slash command and returns the effect that removes it. When plugins share a name, the
+   * one whose id sorts first handles it, whatever order they started in.
+   */
   readonly addSlashCommand: (
     command: PluginSlashCommand,
     handler: SlashCommandHandler,
@@ -252,6 +268,7 @@ export class PluginHooks extends Context.Reference<PluginHooksRegistry>("t3/plug
   defaultValue: () => ({
     addBeforeDispatch: () => Effect.succeed(Effect.void),
     beforeDispatch: (message) => Effect.succeed(message.text),
+    beforeRewrite: (text) => Effect.succeed(text),
     setProviderSlashCommands: () => Effect.void,
     addSlashCommand: () => Effect.succeed(Effect.void),
     currentSlashCommands: Effect.succeed([]),
@@ -285,6 +302,22 @@ const applyCommandOutcome = (
     ? Effect.succeed(outcome)
     : applyOutcome(text, outcome);
 
+type SlashCommandEntry = {
+  readonly command: PluginSlashCommand;
+  readonly run: SlashCommandHandler;
+};
+
+/** The commands that handle their names: of plugins sharing one, the id that sorts first. */
+const handling = (all: ReadonlyArray<SlashCommandEntry>) =>
+  all.filter(
+    (entry) =>
+      !all.some(
+        (other) =>
+          other.command.name === entry.command.name &&
+          other.command.pluginId < entry.command.pluginId,
+      ),
+  );
+
 const make = Effect.gen(function* () {
   const hooks = yield* Ref.make<ReadonlyArray<{ readonly run: BeforeDispatchHook }>>([]);
   const instructions = yield* Ref.make<ReadonlyArray<{ readonly text: string }>>([]);
@@ -293,14 +326,13 @@ const make = Effect.gen(function* () {
   const generators = yield* Ref.make<
     ReadonlyArray<{ readonly kind: PluginTextGenerationKind; readonly run: TextGenerator }>
   >([]);
-  const commands = yield* SubscriptionRef.make<
-    ReadonlyArray<{ readonly command: PluginSlashCommand; readonly run: SlashCommandHandler }>
-  >([]);
+  const commands = yield* SubscriptionRef.make<ReadonlyArray<SlashCommandEntry>>([]);
   const providerCommands = yield* Ref.make<ProviderSlashCommandNames>(() => Effect.succeed([]));
   // `<instance>/<command>` pairs already logged, so a busy thread logs its collision once.
   const loggedCollisions = new Set<string>();
   const providerHas = (
     command: PluginSlashCommand,
+    threadId: ThreadId,
     providerInstanceId: Effect.Effect<string | undefined> | undefined,
   ): Effect.Effect<boolean> =>
     providerInstanceId === undefined
@@ -310,7 +342,7 @@ const make = Effect.gen(function* () {
             instanceId === undefined
               ? Effect.succeed(false)
               : Ref.get(providerCommands).pipe(
-                  Effect.flatMap((names) => names(instanceId)),
+                  Effect.flatMap((names) => names(instanceId, threadId)),
                   Effect.map((names) => names.includes(command.name)),
                   Effect.tap((has) => {
                     const key = `${instanceId}/${command.name}`;
@@ -370,9 +402,9 @@ const make = Effect.gen(function* () {
       if (match === null) return runHooks(message, alreadyAccepted);
       return SubscriptionRef.get(commands).pipe(
         Effect.flatMap((all) => {
-          const entry = all.find((candidate) => candidate.command.name === match[1]);
+          const entry = handling(all).find((candidate) => candidate.command.name === match[1]);
           if (entry === undefined) return Effect.succeed(message.text);
-          return providerHas(entry.command, providerInstanceId).pipe(
+          return providerHas(entry.command, message.threadId, providerInstanceId).pipe(
             Effect.flatMap((owned) =>
               owned
                 ? Effect.succeed(message.text)
@@ -390,23 +422,53 @@ const make = Effect.gen(function* () {
         }),
       );
     },
+    beforeRewrite: (text, message, alreadyAccepted) =>
+      SLASH_COMMAND.test(text.trimStart())
+        ? Effect.succeed(text)
+        : Ref.get(hooks).pipe(
+            Effect.flatMap((all) =>
+              all.length === 0
+                ? Effect.succeed(text)
+                : message.pipe(
+                    Effect.flatMap((read) =>
+                      read === undefined
+                        ? Effect.succeed(text)
+                        : runHooks({ ...read, text }, alreadyAccepted),
+                    ),
+                  ),
+            ),
+          ),
     setProviderSlashCommands: (names) => Ref.set(providerCommands, names),
     addSlashCommand: (command, handler) =>
       SubscriptionRef.modifyEffect(commands, (all) => {
-        const taken = all.find((entry) => entry.command.name === command.name);
-        if (taken !== undefined) {
+        const same = all.filter((entry) => entry.command.name === command.name);
+        if (same.some((entry) => entry.command.pluginId === command.pluginId)) {
           return Effect.fail(
             new PluginSlashCommandTakenError({
               name: command.name,
-              pluginName: taken.command.pluginName,
+              pluginName: command.pluginName,
             }),
           );
         }
         const entry = { command, run: handler };
-        return Effect.succeed([
-          SubscriptionRef.update(commands, (current) => current.filter((other) => other !== entry)),
-          [...all, entry],
-        ] as const);
+        const added = [...all, entry];
+        const used = handling(added).find((other) => other.command.name === command.name);
+        return (
+          same.length === 0
+            ? Effect.void
+            : Effect.logWarning("plugins share a slash command name; one of them handles it", {
+                command: command.name,
+                usedPluginId: used?.command.pluginId,
+                plugins: [...same, entry].map((other) => other.command.pluginId),
+              })
+        ).pipe(
+          Effect.as([
+            SubscriptionRef.update(commands, (current) =>
+              current.filter((other) => other !== entry),
+            ),
+            added,
+          ] as const),
+        );
       }),
     addTextGenerator: (kind, generator) =>
       Effect.sync(() => ({ kind, run: generator })).pipe(
@@ -438,10 +500,10 @@ const make = Effect.gen(function* () {
         Effect.map((all) => all.filter((entry) => entry.kind === kind).map((entry) => entry.run)),
       ),
     currentSlashCommands: SubscriptionRef.get(commands).pipe(
-      Effect.map((all) => all.map((entry) => entry.command)),
+      Effect.map((all) => handling(all).map((entry) => entry.command)),
     ),
     slashCommands: SubscriptionRef.changes(commands).pipe(
-      Stream.map((all) => all.map((entry) => entry.command)),
+      Stream.map((all) => handling(all).map((entry) => entry.command)),
     ),
   } satisfies PluginHooksRegistry;
 });

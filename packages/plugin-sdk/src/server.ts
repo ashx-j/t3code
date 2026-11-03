@@ -299,7 +299,8 @@ export interface PluginApi {
     }) => Promise<void>;
     /**
      * Shows a note in the thread, after its latest finished run, starting with the plugin's name.
-     * It starts no turn, isn't sent to the agent and doesn't mark the thread unread.
+     * It starts no turn, isn't sent to the agent and doesn't mark the thread unread. The summary
+     * is cut at 200 characters and the detail at 20,000.
      */
     readonly notify: (input: {
       readonly threadId: string;
@@ -423,8 +424,9 @@ export interface PluginApi {
     ) => void;
     /**
      * Sees each user or agent message before it is sent, except slash commands, after hooks
-     * registered before it and with their changes. A block stops the rest. A hook slower than
-     * 2 seconds or one that throws is skipped.
+     * registered before it and with their changes. It also sees the new text of an edited queued
+     * message and a delegated task's prompt, whose `threadId` is the task's new thread. A block
+     * stops the rest. A hook slower than 2 seconds or one that throws is skipped.
      */
     readonly beforeDispatch: (
       hook: (
@@ -435,8 +437,9 @@ export interface PluginApi {
   readonly slashCommands: {
     /**
      * Lists `/name` with every provider's commands; user and agent messages starting with it run
-     * `handler` on the server instead of being sent. Throwing or taking over 10 seconds blocks the
-     * message. Names are lowercase letters, digits and `-`, not T3 Code's or another plugin's.
+     * `handler` instead of being sent, and throwing or 10 seconds blocks the message. Names are
+     * lowercase letters, digits and `-`, not T3 Code's; a provider's own command of the name wins,
+     * and of plugins sharing one, the id that sorts first.
      */
     readonly register: (
       command: {

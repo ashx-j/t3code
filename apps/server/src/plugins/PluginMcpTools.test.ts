@@ -231,7 +231,14 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
     yield* tools.setInstalledPlugins([]);
     assert.notInclude(yield* toolNames, "t3_plugins_list");
 
-    yield* tools.setInstalledPlugins([installed]);
+    // A linked copy another copy shadows, which the uninstall tool removes by its folder.
+    const shadowedLink: PluginState = {
+      ...installed,
+      status: "failed",
+      linkedFolder: "/home/user/plugin",
+      failure: { stage: "discovery", message: "Another copy is used." },
+    };
+    yield* tools.setInstalledPlugins([installed, shadowedLink]);
     assert.includeMembers(yield* toolNames, [
       "t3_plugins_list",
       "t3_plugins_invoke",
@@ -243,7 +250,28 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
     ]);
     assert.deepStrictEqual(yield* call("t3_plugins_list", readOnlyClient), {
       isError: false,
-      text: '{"plugins":[{"id":"mcp-plugin","name":"MCP tools","version":"0.1.0","status":"active","enabled":true,"slashCommands":["/deploy"]}]}',
+      text: JSON.stringify({
+        plugins: [
+          {
+            id: "mcp-plugin",
+            status: "active",
+            enabled: true,
+            name: "MCP tools",
+            version: "0.1.0",
+            slashCommands: ["/deploy"],
+          },
+          {
+            id: "mcp-plugin",
+            status: "failed",
+            enabled: true,
+            failure: "discovery: Another copy is used.",
+            linkedFolder: "/home/user/plugin",
+            name: "MCP tools",
+            version: "0.1.0",
+            slashCommands: ["/deploy"],
+          },
+        ],
+      }),
     });
     const ping = { pluginId: "mcp-plugin", method: "ping", input: { n: 1 } };
     assert.isTrue((yield* call("t3_plugins_invoke", readOnlyClient, ping)).isError);
