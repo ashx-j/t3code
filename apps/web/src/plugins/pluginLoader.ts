@@ -154,6 +154,21 @@ async function pluginFileRequestInit(
   return { headers: { ...headers.value } };
 }
 
+class PluginFileRequestError extends Error {
+  constructor(
+    readonly status: number,
+    filePath: string,
+  ) {
+    super(`The request for ${filePath} failed with ${status}.`);
+  }
+}
+
+// A dropped connection or a gateway error, such as one bad gateway over T3 Connect, can pass.
+const isPassingDownloadFailure = (error: unknown) =>
+  error instanceof TypeError ||
+  (error instanceof PluginFileRequestError && [502, 503, 504].includes(error.status));
+const DOWNLOAD_RETRY_DELAYS_MS = [1_000, 5_000, 30_000];
+
 async function fetchPluginFile(
   environmentId: EnvironmentId,
   plugin: PluginState,
@@ -168,7 +183,7 @@ async function fetchPluginFile(
   );
   url.searchParams.set("v", plugin.version ?? "0");
   const response = await fetch(url, await pluginFileRequestInit(authorization, url));
-  if (!response.ok) throw new Error(`The request for ${filePath} failed with ${response.status}.`);
+  if (!response.ok) throw new PluginFileRequestError(response.status, filePath);
   return response;
 }
 
@@ -689,11 +704,24 @@ export function startPluginLoader(
       };
     };
     let downloaded = false;
-    try {
-      const bundle = await withDeadline(
+    const download = () =>
+      withDeadline(
         fetchPluginFile(environmentId, plugin, "/web.js").then((response) => response.text()),
         "Loading the web bundle",
       );
+    try {
+      let bundle: string | undefined;
+      for (const delay of [...DOWNLOAD_RETRY_DELAYS_MS, undefined]) {
+        try {
+          bundle = await download();
+          break;
+        } catch (error) {
+          if (delay === undefined || !isPassingDownloadFailure(error)) throw error;
+          await new Promise((resume) => setTimeout(resume, delay));
+          if (entry.disposed) return;
+        }
+      }
+      if (bundle === undefined) return;
       downloaded = true;
       if (entry.disposed) return;
       // A bundle's top-level `await` can hang too.
@@ -720,9 +748,9 @@ export function startPluginLoader(
       entry.disposed = true;
       runCleanups(entry.cleanups);
       entry.cleanups.clear();
-      // A failed download, such as one bad gateway over T3 Connect, is tried again on the next
-      // plugin update. A bundle that downloaded and then failed stays in `loaded`, so it waits for
-      // the plugin to restart instead of failing again on every change.
+      // A download that still fails after its retries is tried again on the next plugin update. A
+      // bundle that downloaded and then failed stays in `loaded`, so it waits for the plugin to
+      // restart instead of failing again on every change.
       if (!downloaded) loaded.delete(plugin.id);
       setPluginWebFailure(environmentId, plugin.id, errorText(error));
       // Only the plugin's own failures reach agents. A failed download is this client's network,

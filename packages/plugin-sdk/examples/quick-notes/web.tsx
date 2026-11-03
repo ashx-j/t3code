@@ -23,6 +23,13 @@ export default defineWebPlugin({
   activate(api) {
     api.injectStyles(css);
     const asNotes = (value: unknown) => (Array.isArray(value) ? (value as Array<Note>) : []);
+    // A read-only client, for one, is refused; say so instead of leaving the draft as it was.
+    const showFailure = (error: unknown) =>
+      api.toast({
+        type: "error",
+        title: "Quick notes couldn't save that",
+        description: error instanceof Error ? error.message : String(error),
+      });
 
     function useNotes() {
       const [notes, setNotes] = useState<ReadonlyArray<Note>>([]);
@@ -59,7 +66,7 @@ export default defineWebPlugin({
             <Button
               size="xs"
               variant="ghost"
-              onClick={() => api.navigate("/plugins/quick-notes/all")}
+              onClick={() => api.navigate(`/plugins/${api.id}/all`)}
             >
               {notes.length === 0 ? "Add a note" : `All notes (${notes.length})`}
             </Button>
@@ -80,7 +87,7 @@ export default defineWebPlugin({
               className="quick-notes-form"
               onSubmit={(event) => {
                 event.preventDefault();
-                void api.rpc.invoke("add", { text: draft }).then(() => setDraft(""));
+                void api.rpc.invoke("add", { text: draft }).then(() => setDraft(""), showFailure);
               }}
             >
               <Input
@@ -98,7 +105,9 @@ export default defineWebPlugin({
                   <Button
                     size="xs"
                     variant="ghost"
-                    onClick={() => void api.rpc.invoke("remove", { id: note.id })}
+                    onClick={() =>
+                      void api.rpc.invoke("remove", { id: note.id }).catch(showFailure)
+                    }
                   >
                     Remove
                   </Button>

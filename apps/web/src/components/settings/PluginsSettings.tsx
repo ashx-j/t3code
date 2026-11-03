@@ -130,7 +130,8 @@ function PluginsPage({
     environmentId: environment.environmentId,
     label: labelOf(environment),
   }));
-  const installer = usePluginInstaller(targets);
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const installer = usePluginInstaller(targets, primaryEnvironmentId);
   const [adding, setAdding] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [main] = targets;
@@ -264,7 +265,10 @@ function InstallProblems({ problems }: { readonly problems: ReadonlyArray<string
  * the main environment, so a plugin without server code or agent skills changes nothing on the
  * others and is installed on the main one only.
  */
-function usePluginInstaller(targets: ReadonlyArray<PluginTarget>) {
+function usePluginInstaller(
+  targets: ReadonlyArray<PluginTarget>,
+  primaryEnvironmentId: EnvironmentId | null,
+) {
   const installSource = useAtomCommand(pluginEnvironment.installPlugin, {
     label: "plugin install",
     reportFailure: false,
@@ -293,7 +297,15 @@ function usePluginInstaller(targets: ReadonlyArray<PluginTarget>) {
     const first = await install(main.environmentId);
     if (first._tag === "Failure") return reportFailure(main, first);
     const { plugin } = first.value;
-    if (!plugin.hasServer && plugin.hasSkills !== true) return;
+    if (!plugin.hasServer && plugin.hasSkills !== true) {
+      // Such as when the main environment is offline and another one came first.
+      if (main.environmentId !== primaryEnvironmentId) {
+        report(
+          `${plugin.name} only changes the app, and this app shows plugin changes only from your main environment, so it does nothing on ${main.label}.`,
+        );
+      }
+      return;
+    }
     const results = await Promise.all(others.map((target) => install(target.environmentId)));
     results.forEach((result, index) => {
       if (result._tag === "Failure") reportFailure(others[index]!, result);

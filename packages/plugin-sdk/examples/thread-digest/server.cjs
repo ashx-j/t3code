@@ -2,8 +2,9 @@
 module.exports = {
   activate(api) {
     api.turns.afterRunCompleted(async ({ threadId, status, run }) => {
-      // A rolled back run is hidden from the thread, so a note under it would be too.
-      if (status === "rolled_back") return;
+      // A rolled back run is hidden from the thread, so a note under it would be too. A queued
+      // message cancelled before it ran never started a turn.
+      if (status === "rolled_back" || run.startedAt == null) return;
       const settings = await api.settings.get();
       if (settings.onlyProblems === true && status === "completed") return;
       const started = Date.parse(String(run.workStartedAt ?? run.startedAt));

@@ -46,6 +46,7 @@ import { pluginComposerCollapseOnScrollAtom } from "../../plugins/pluginRegistry
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 
 const TIMELINE_SCROLL_CANCEL_SENTINEL = Object.freeze({});
+const REFOLD_SCROLL_PX = 24;
 
 /**
  * Whether the reader scrolled a thread's timeline away from its end during this visit, while the
@@ -216,13 +217,6 @@ export function useTimelineFollow(input: TimelineFollowInput) {
   const collapseRequested = useAtomValue(pluginComposerCollapseOnScrollAtom);
   const [readerScrolledVisit, setReaderScrolledVisit] = useState<TimelineFollowVisit | null>(null);
   const tellComposer = collapseRequested && showScrollToBottom && readerScrolledVisit === visit;
-  const noteReaderScroll = () => {
-    if (!collapseRequested) return;
-    if (readerScrolledVisit !== visit) return setReaderScrolledVisit(visit);
-    // A composer the reader reopened folds again on their next scroll.
-    const away = timelineAwayFromEndAtom(routeThreadKey);
-    if (tellComposer && !appAtomRegistry.get(away)) appAtomRegistry.set(away, true);
-  };
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the thread's composer, which lives outside this hook, that the reader left the end
   useEffect(() => {
     if (!tellComposer) return;
@@ -268,6 +262,24 @@ export function useTimelineFollow(input: TimelineFollowInput) {
   const anchorPending =
     timelineAnchorMessageId !== null && laidOutAnchor !== timelineAnchorMessageId;
   const viewportRef = useRef<TimelineViewport | null>(null);
+  // Where the timeline sat at the reader's first scroll after reopening the composer.
+  const refoldFromRef = useRef<number | null>(null);
+  const noteReaderScroll = () => {
+    if (!collapseRequested) return;
+    if (readerScrolledVisit !== visit) return setReaderScrolledVisit(visit);
+    const away = timelineAwayFromEndAtom(routeThreadKey);
+    const top = viewportRef.current?.scrollNode.scrollTop;
+    if (!tellComposer || appAtomRegistry.get(away) || top === undefined) {
+      refoldFromRef.current = null;
+      return;
+    }
+    // A composer the reader reopened folds again once they scroll 24px, as Surface's build does.
+    if (refoldFromRef.current === null) refoldFromRef.current = top;
+    else if (Math.abs(top - refoldFromRef.current) >= REFOLD_SCROLL_PX) {
+      refoldFromRef.current = null;
+      appAtomRegistry.set(away, true);
+    }
+  };
   const releaseFollowForNavigation = () => {
     const { before } = followStore.dispatch(visit, { type: "navigated" });
     if (before.mode === "following") viewportRef.current?.followReleased();
@@ -335,8 +347,8 @@ export function useTimelineFollow(input: TimelineFollowInput) {
   const pageScrollControllerRef = useRef<ReturnType<typeof createPageScrollController> | null>(
     null,
   );
+  // Paging from the composer doesn't fold it, since folding would take the caret it pages with.
   const handlePageScrollStart = useStableCallback((key: PageScrollKey) => {
-    noteReaderScroll();
     if ((key === "PageUp" && timelineRealContentOverflowsViewport()) || !isTimelineAtLogicalEnd()) {
       // Through the viewport, so a running position restore stops too.
       viewportRef.current?.navigate({ releasesFollow: true });

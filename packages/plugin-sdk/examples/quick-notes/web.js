@@ -29,6 +29,12 @@ var web_default = defineWebPlugin({
   activate(api) {
     api.injectStyles(css);
     const asNotes = (value) => (Array.isArray(value) ? value : []);
+    const showFailure = (error) =>
+      api.toast({
+        type: "error",
+        title: "Quick notes couldn't save that",
+        description: error instanceof Error ? error.message : String(error),
+      });
     function useNotes() {
       const [notes, setNotes] = useState([]);
       useEffect(() => {
@@ -43,7 +49,7 @@ var web_default = defineWebPlugin({
           id: note.id,
           label: note.text.slice(0, 60),
           description: "Quick note",
-          text: note.text,
+          text: `(Note: ${note.text})`,
         })),
       );
     api.rpc.invoke("list").then(offerNotes);
@@ -62,7 +68,7 @@ var web_default = defineWebPlugin({
             /* @__PURE__ */ jsx(Button, {
               size: "xs",
               variant: "ghost",
-              onClick: () => api.navigate("/plugins/quick-notes/all"),
+              onClick: () => api.navigate(`/plugins/${api.id}/all`),
               children: notes.length === 0 ? "Add a note" : `All notes (${notes.length})`,
             }),
           ],
@@ -82,7 +88,7 @@ var web_default = defineWebPlugin({
               className: "quick-notes-form",
               onSubmit: (event) => {
                 event.preventDefault();
-                api.rpc.invoke("add", { text: draft }).then(() => setDraft(""));
+                api.rpc.invoke("add", { text: draft }).then(() => setDraft(""), showFailure);
               },
               children: [
                 /* @__PURE__ */ jsx(Input, {
@@ -109,7 +115,8 @@ var web_default = defineWebPlugin({
                       /* @__PURE__ */ jsx(Button, {
                         size: "xs",
                         variant: "ghost",
-                        onClick: () => void api.rpc.invoke("remove", { id: note.id }),
+                        onClick: () =>
+                          void api.rpc.invoke("remove", { id: note.id }).catch(showFailure),
                         children: "Remove",
                       }),
                     ],

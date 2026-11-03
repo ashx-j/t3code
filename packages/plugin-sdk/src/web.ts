@@ -285,9 +285,9 @@ export interface WebPluginApi {
     readonly addButton: (button: WebPluginAction<{ readonly threadId: string | null }>) => void;
     /**
      * While on, the composer on wide screens folds to one line, as it does on phones, when the
-     * user scrolls the timeline up away from its end. A position restored on opening a thread or a
-     * jump, such as to a find result, doesn't fold it. Focusing it or scrolling back to the end
-     * unfolds it.
+     * user scrolls the timeline up away from its end. A position restored on opening a thread, a
+     * jump such as to a find result, or paging with the keyboard from the composer doesn't fold
+     * it. Focusing it unfolds it until the user scrolls again; so does scrolling back to the end.
      */
     readonly setCollapseOnScroll: (enabled: boolean) => void;
   };

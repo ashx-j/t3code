@@ -4,6 +4,7 @@ import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import helloWebSource from "../../../../packages/plugin-sdk/fixtures/hello-web/web.js?raw";
+import { fakeTimers } from "../../test/render";
 
 vi.mock(import("../state/session"), async (original) => ({
   ...(await original()),
@@ -190,6 +191,29 @@ describe("startPluginLoader", () => {
     expect(appAtomRegistry.get(pluginComposerCollapseOnScrollAtom)).toBe(false);
   });
 
+  it("tries a download again after a bad gateway", async () => {
+    let badGateways = 1;
+    using _fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () =>
+        badGateways-- > 0
+          ? new Response("bad gateway", { status: 502 })
+          : new Response(helloWebSource),
+      );
+    using _timers = fakeTimers();
+    const environmentId = EnvironmentId.make("environment:plugin-loader-retry");
+    appAtomRegistry.set(live, AsyncResult.success({ plugins: [webPlugin("hello-web")] }));
+    using _loader = { [Symbol.dispose]: startPluginLoader(environmentId, vi.fn()) };
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() =>
+      expect(appAtomRegistry.get(pluginCommandsAtom(environmentId))).toHaveLength(1),
+    );
+    expect(
+      appAtomRegistry.get(pluginWebFailureAtom(pluginContributionKey(environmentId, "hello-web"))),
+    ).toBeUndefined();
+  });
+
   it("reloads a restarted plugin and undoes what it registers after unloading", async () => {
     // The first start registers only when the test releases it, after a restart replaced it.
     const slowSource = `export default { activate(api) {
@@ -315,10 +339,10 @@ describe("startPluginLoader", () => {
       .spyOn(globalThis, "fetch")
       .mockImplementation(async () => new Response("export default { activate() {} };"));
     const environmentId = EnvironmentId.make("environment:plugin-loader:relay");
+    // Set first, so the loader's first request isn't for a plugin an earlier case left listed.
+    appAtomRegistry.set(live, AsyncResult.success({ plugins: [webPlugin("relay-web")] }));
     const stop = startPluginLoader(environmentId, vi.fn());
     using _loader = { [Symbol.dispose]: stop };
-
-    appAtomRegistry.set(live, AsyncResult.success({ plugins: [webPlugin("relay-web")] }));
 
     await vi.waitFor(() =>
       expect(fetchSpy.mock.calls[0]?.[1]).toEqual({

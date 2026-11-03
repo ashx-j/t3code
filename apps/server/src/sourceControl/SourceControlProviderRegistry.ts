@@ -280,19 +280,35 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
       Effect.forkScoped,
     );
 
+    // A host a plugin added or removed since may claim a remote the cache holds as unknown.
+    let cachedPluginKinds = "";
+    const forgetIfPluginsChanged = Effect.suspend(() => {
+      const kinds = pluginRegistrations()
+        .map((registration) => registration.kind)
+        .join("\u0000");
+      if (kinds === cachedPluginKinds) return Effect.void;
+      cachedPluginKinds = kinds;
+      return Cache.invalidateAll(unknownRemoteCache);
+    });
+
     const refineContext = (
       cwd: string,
       context: SourceControlProvider.SourceControlProviderContext | null,
     ): Effect.Effect<SourceControlProvider.SourceControlProviderContext | null> =>
       context === null || context.provider.kind !== "unknown"
         ? Effect.succeed(context)
-        : Cache.get(
-            unknownRemoteCache,
-            new UnknownRemoteLookup(
-              context,
-              refineUnknownRemoteProvider({ specs: discoverySpecs(), process, cwd, context }),
+        : forgetIfPluginsChanged.pipe(
+            Effect.andThen(
+              Cache.get(
+                unknownRemoteCache,
+                new UnknownRemoteLookup(
+                  context,
+                  refineUnknownRemoteProvider({ specs: discoverySpecs(), process, cwd, context }),
+                ),
+              ),
             ),
-          ).pipe(Effect.map(({ provider }) => (provider ? { ...context, provider } : context)));
+            Effect.map(({ provider }) => (provider ? { ...context, provider } : context)),
+          );
 
     const detectProviderContext = Effect.fn("SourceControlProviderRegistry.detectProviderContext")(
       function* (cwd: string) {

@@ -1,7 +1,7 @@
 {
   "id": "thread-digest",
   "name": "Thread digest",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Adds a note to the thread when a run ends, saying how it ended and how long it took.",
   "engines": { "t3": ">=0.1.5" },
   "server": "./server.cjs",
