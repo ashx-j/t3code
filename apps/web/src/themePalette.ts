@@ -440,9 +440,10 @@ export function startEnvironmentThemeCache(): () => void {
 }
 
 /**
- * An imported theme whose id a published theme, such as a plugin's, already uses, renamed to a copy.
- * A custom theme wins an id collision, so the import would otherwise hide the original and its
- * radius and status colors.
+ * An imported theme file whose id a published theme, such as a plugin's, already uses, renamed to a
+ * copy. A saved theme wins an id collision on purpose, so editing a published theme overrides it,
+ * but importing a plugin's own file would otherwise hide the plugin's theme and its radius and
+ * status colors.
  */
 export function asImportedThemeCopy(theme: ThemeDefinition): ThemeDefinition {
   const published = getEnvironmentThemes();

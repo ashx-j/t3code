@@ -1,5 +1,5 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
-import { PluginReplaceable } from "../plugins/PluginReplaceable";
+import { DiffViewPart } from "../plugins/DiffViewPart";
 import { useAtomValue } from "@effect/atom-react";
 import type { FileDiffContentsLoader, FileDiffMetadata } from "@pierre/diffs";
 import {
@@ -1332,146 +1332,135 @@ export default function DiffPanel({
                 </div>
               )
             ) : lazySource || renderablePatch?.kind === "files" ? (
-              <PluginReplaceable
-                part="diff.view"
-                pieces={{
-                  original: (
-                    <div className="flex min-h-0 flex-1 overflow-hidden">
-                      <div
-                        className="min-h-0 min-w-0 flex-1"
-                        onClickCapture={(event) => {
-                          const composedPath = event.nativeEvent.composedPath?.() ?? [];
-                          for (const node of composedPath) {
-                            if (!(node instanceof HTMLElement)) continue;
-                            // Header buttons own their clicks; bubbling a chevron click would toggle twice.
-                            if (
-                              node instanceof HTMLButtonElement ||
-                              node instanceof HTMLAnchorElement
-                            ) {
-                              return;
-                            }
-                          }
-                          const title = composedPath.find(
-                            (node): node is HTMLElement =>
-                              node instanceof HTMLElement && node.hasAttribute("data-title"),
-                          );
-                          const filePath = title?.textContent;
-                          if (filePath) {
-                            openDiffFile(filePath);
-                            return;
-                          }
-                          const header = composedPath.find(
-                            (node): node is HTMLElement =>
-                              node instanceof HTMLElement && node.hasAttribute("data-diffs-header"),
-                          );
-                          const headerFilePath = header?.querySelector("[data-title]")?.textContent;
-                          if (!headerFilePath) return;
-                          const file = codeViewFiles.find(
-                            (candidate) => candidate.filePath === headerFilePath,
-                          );
-                          if (file) toggleDiffFileCollapsed(file.fileKey);
-                        }}
-                        onContextMenuCapture={(event) => {
-                          const composedPath = event.nativeEvent.composedPath?.() ?? [];
-                          const title = composedPath.find(
-                            (node): node is HTMLElement =>
-                              node instanceof HTMLElement && node.hasAttribute("data-title"),
-                          );
-                          const filePath = title?.textContent?.trim();
-                          if (!filePath) return;
-                          event.preventDefault();
-                          onFileContextMenu(
-                            {
-                              environmentId: activeThread?.environmentId ?? null,
-                              filePath,
-                              workspaceRoot: activeCwd,
-                              repositoryRoot: activeRepositoryRoot,
-                            },
-                            event,
-                          );
-                        }}
-                      >
-                        <AnnotatableCodeView
-                          key={collapseScopeKey ?? reviewSectionId}
-                          viewerRef={codeViewReveal.attach}
-                          codeViewKey={`${codeViewMountKey}:${lazySource ? filePatchScope : "preview"}`}
-                          className="h-full min-h-0 overflow-auto"
-                          files={codeViewFiles}
-                          pendingFiles={pendingFiles}
-                          renderCodeViewFooter={renderLoadingBoundary}
-                          sectionId={reviewSectionId}
-                          sectionTitle={reviewSectionTitle}
-                          composerDraftTarget={composerDraftTarget}
-                          renderHeaderFilenameSuffix={(fileDiff) => {
-                            const path = resolveFileDiffPath(fileDiff);
-                            const state = fileStates.get(path);
-                            return (
-                              <DiffFileHeaderSuffix
-                                filePath={path}
-                                hasStat={fileStats.has(path)}
-                                error={state?.error ?? false}
-                                truncated={state?.truncated ?? false}
-                                onRetry={retry}
-                              />
-                            );
-                          }}
-                          {...(lazySource
-                            ? {
-                                unsafeCSSExtra:
-                                  "[data-additions-count], [data-deletions-count] { display: none; }",
-                                renderHeaderMetadata: (fileDiff: FileDiffMetadata) => {
-                                  const stat = fileStats.get(resolveFileDiffPath(fileDiff));
-                                  return stat ? (
-                                    <DiffStatLabel
-                                      additions={stat.additions}
-                                      deletions={stat.deletions}
-                                    />
-                                  ) : null;
-                                },
-                              }
-                            : {})}
-                          onRevealSearchMatch={unfoldDiffFile}
-                          renderHeaderPrefix={(fileDiff, fileKey) => {
-                            const unavailable = fileDiff.cacheKey?.endsWith(":pending") === true;
-                            return (
-                              <DiffFileCollapseToggle
-                                filePath={resolveFileDiffPath(fileDiff)}
-                                fileKey={fileKey}
-                                collapsed={unavailable || collapsedDiffFileKeys.has(fileKey)}
-                                unavailable={unavailable}
-                                onToggle={toggleDiffFileCollapsed}
-                              />
-                            );
-                          }}
-                          options={{
-                            diffStyle: diffLayout === "split" ? "split" : "unified",
-                            lineDiffType: "none",
-                            overflow: wordWrap ? "wrap" : "scroll",
-                            theme: resolveDiffThemeName(resolvedTheme),
-                            preferredHighlighter: PREFERRED_HIGHLIGHTER,
-                            themeType: resolvedTheme as DiffThemeType,
-                            stickyHeaders: true,
-                            onPostRender: codeViewReveal.flush,
-                            ...(currentLoadDiffFiles ? { loadDiffFiles } : {}),
-                          }}
+              <DiffViewPart patch={typeof selectedPatch === "string" ? selectedPatch : null}>
+                <div
+                  className="min-h-0 min-w-0 flex-1"
+                  onClickCapture={(event) => {
+                    const composedPath = event.nativeEvent.composedPath?.() ?? [];
+                    for (const node of composedPath) {
+                      if (!(node instanceof HTMLElement)) continue;
+                      // Header buttons own their clicks; bubbling a chevron click would toggle twice.
+                      if (node instanceof HTMLButtonElement || node instanceof HTMLAnchorElement) {
+                        return;
+                      }
+                    }
+                    const title = composedPath.find(
+                      (node): node is HTMLElement =>
+                        node instanceof HTMLElement && node.hasAttribute("data-title"),
+                    );
+                    const filePath = title?.textContent;
+                    if (filePath) {
+                      openDiffFile(filePath);
+                      return;
+                    }
+                    const header = composedPath.find(
+                      (node): node is HTMLElement =>
+                        node instanceof HTMLElement && node.hasAttribute("data-diffs-header"),
+                    );
+                    const headerFilePath = header?.querySelector("[data-title]")?.textContent;
+                    if (!headerFilePath) return;
+                    const file = codeViewFiles.find(
+                      (candidate) => candidate.filePath === headerFilePath,
+                    );
+                    if (file) toggleDiffFileCollapsed(file.fileKey);
+                  }}
+                  onContextMenuCapture={(event) => {
+                    const composedPath = event.nativeEvent.composedPath?.() ?? [];
+                    const title = composedPath.find(
+                      (node): node is HTMLElement =>
+                        node instanceof HTMLElement && node.hasAttribute("data-title"),
+                    );
+                    const filePath = title?.textContent?.trim();
+                    if (!filePath) return;
+                    event.preventDefault();
+                    onFileContextMenu(
+                      {
+                        environmentId: activeThread?.environmentId ?? null,
+                        filePath,
+                        workspaceRoot: activeCwd,
+                        repositoryRoot: activeRepositoryRoot,
+                      },
+                      event,
+                    );
+                  }}
+                >
+                  <AnnotatableCodeView
+                    key={collapseScopeKey ?? reviewSectionId}
+                    viewerRef={codeViewReveal.attach}
+                    codeViewKey={`${codeViewMountKey}:${lazySource ? filePatchScope : "preview"}`}
+                    className="h-full min-h-0 overflow-auto"
+                    files={codeViewFiles}
+                    pendingFiles={pendingFiles}
+                    renderCodeViewFooter={renderLoadingBoundary}
+                    sectionId={reviewSectionId}
+                    sectionTitle={reviewSectionTitle}
+                    composerDraftTarget={composerDraftTarget}
+                    renderHeaderFilenameSuffix={(fileDiff) => {
+                      const path = resolveFileDiffPath(fileDiff);
+                      const state = fileStates.get(path);
+                      return (
+                        <DiffFileHeaderSuffix
+                          filePath={path}
+                          hasStat={fileStats.has(path)}
+                          error={state?.error ?? false}
+                          truncated={state?.truncated ?? false}
+                          onRetry={retry}
                         />
-                      </div>
-                      {fileTreeOpen ? (
-                        <aside className="flex w-[min(16rem,40%)] min-w-40 shrink-0 border-l border-border/60">
-                          <DiffFileTree
-                            ariaLabel={`${reviewSectionTitle} files`}
-                            entries={fileTreeEntries}
-                            selectedPath={selectedFilePath}
-                            revealRequestId={selectedFileRevealRequestId}
-                            onSelectFile={revealDiffFile}
-                          />
-                        </aside>
-                      ) : null}
-                    </div>
-                  ),
-                  patch: typeof selectedPatch === "string" ? selectedPatch : null,
-                }}
-              />
+                      );
+                    }}
+                    {...(lazySource
+                      ? {
+                          unsafeCSSExtra:
+                            "[data-additions-count], [data-deletions-count] { display: none; }",
+                          renderHeaderMetadata: (fileDiff: FileDiffMetadata) => {
+                            const stat = fileStats.get(resolveFileDiffPath(fileDiff));
+                            return stat ? (
+                              <DiffStatLabel
+                                additions={stat.additions}
+                                deletions={stat.deletions}
+                              />
+                            ) : null;
+                          },
+                        }
+                      : {})}
+                    onRevealSearchMatch={unfoldDiffFile}
+                    renderHeaderPrefix={(fileDiff, fileKey) => {
+                      const unavailable = fileDiff.cacheKey?.endsWith(":pending") === true;
+                      return (
+                        <DiffFileCollapseToggle
+                          filePath={resolveFileDiffPath(fileDiff)}
+                          fileKey={fileKey}
+                          collapsed={unavailable || collapsedDiffFileKeys.has(fileKey)}
+                          unavailable={unavailable}
+                          onToggle={toggleDiffFileCollapsed}
+                        />
+                      );
+                    }}
+                    options={{
+                      diffStyle: diffLayout === "split" ? "split" : "unified",
+                      lineDiffType: "none",
+                      overflow: wordWrap ? "wrap" : "scroll",
+                      theme: resolveDiffThemeName(resolvedTheme),
+                      preferredHighlighter: PREFERRED_HIGHLIGHTER,
+                      themeType: resolvedTheme as DiffThemeType,
+                      stickyHeaders: true,
+                      onPostRender: codeViewReveal.flush,
+                      ...(currentLoadDiffFiles ? { loadDiffFiles } : {}),
+                    }}
+                  />
+                </div>
+                {fileTreeOpen ? (
+                  <aside className="flex w-[min(16rem,40%)] min-w-40 shrink-0 border-l border-border/60">
+                    <DiffFileTree
+                      ariaLabel={`${reviewSectionTitle} files`}
+                      entries={fileTreeEntries}
+                      selectedPath={selectedFilePath}
+                      revealRequestId={selectedFileRevealRequestId}
+                      onSelectFile={revealDiffFile}
+                    />
+                  </aside>
+                ) : null}
+              </DiffViewPart>
             ) : (
               <div className="min-h-0 flex-1 overflow-auto p-2">
                 <div className="space-y-2">

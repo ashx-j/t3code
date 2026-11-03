@@ -336,6 +336,26 @@ function makeWebPluginApi({
         }
         const keybindingCommand = `plugin.${pluginId}.${command.id}` as const;
         const run = () => runReportingFailure(command.title, command.run);
+        // Checked before anything is registered, so a plugin that catches the error is left with
+        // nothing half added.
+        const desktopCommand =
+          command.desktop === undefined
+            ? undefined
+            : {
+                command: keybindingCommand,
+                title: command.title,
+                pluginName: plugin.name,
+                menu: command.desktop.menu === true,
+                ...(command.desktop.tray === true ? { tray: true } : {}),
+                ...(command.desktop.globalShortcut === undefined
+                  ? {}
+                  : { globalShortcut: command.desktop.globalShortcut }),
+              };
+        if (desktopCommand !== undefined && !isDesktopPluginCommand(desktopCommand)) {
+          throw new TypeError(
+            `Command "${command.id}" can't go in the desktop menus: it needs a title of up to 200 characters and a shortcut such as CommandOrControl+Shift+Y.`,
+          );
+        }
         track(
           registerPluginCommand({
             environmentId,
@@ -347,22 +367,7 @@ function makeWebPluginApi({
             run,
           }),
         );
-        if (command.desktop !== undefined) {
-          const desktopCommand = {
-            command: keybindingCommand,
-            title: command.title,
-            pluginName: plugin.name,
-            menu: command.desktop.menu === true,
-            ...(command.desktop.tray === true ? { tray: true } : {}),
-            ...(command.desktop.globalShortcut === undefined
-              ? {}
-              : { globalShortcut: command.desktop.globalShortcut }),
-          };
-          if (!isDesktopPluginCommand(desktopCommand)) {
-            throw new TypeError(
-              `Command "${command.id}" can't go in the desktop menus: it needs a title of up to 200 characters and a shortcut such as CommandOrControl+Shift+Y.`,
-            );
-          }
+        if (desktopCommand !== undefined) {
           track(registerDesktopPluginCommand(desktopCommand, run));
         }
         const handlers = shortcutHandlers();
@@ -575,7 +580,7 @@ function makeWebPluginApi({
     },
     navigate: (path) => {
       if (!path.startsWith("/")) throw new TypeError(`"${path}" is not an app path.`);
-      navigate(path);
+      if (active()) navigate(path);
     },
     toast: (message) => {
       if (

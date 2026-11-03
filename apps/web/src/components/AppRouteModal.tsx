@@ -30,7 +30,11 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { WorkspacePageHeader } from "./WorkspacePageHeader";
 
 // Set inside the page frame, where no dialog exists for the close button to close.
-const AppRoutePageCloseContext = createContext<(() => void) | null>(null);
+const AppRoutePageCloseContext = createContext<{
+  readonly close: () => void;
+  /** Drawn at the window's top as its title bar row, rather than inside a plugin's own frame. */
+  readonly titleBar: boolean;
+} | null>(null);
 // The section list `AppRouteModalNav` draws; unset in the page frame, which hands it over.
 const AppRouteNavContext = createContext<ReactNode>(null);
 
@@ -111,7 +115,11 @@ export function AppRouteModal({
       pieces={{
         original: modal,
         // Outside T3's window there is no dialog for the close button to close.
-        content: <AppRoutePageCloseContext value={close}>{content}</AppRoutePageCloseContext>,
+        content: (
+          <AppRoutePageCloseContext value={{ close, titleBar: false }}>
+            {content}
+          </AppRoutePageCloseContext>
+        ),
         page: (
           <AppRoutePage page={page} label={label}>
             {children}
@@ -181,7 +189,9 @@ function AppRoutePage({
       data-app-route-page=""
       className="h-svh min-h-0 overflow-hidden overscroll-y-none md:h-dvh"
     >
-      <AppRoutePageCloseContext value={close}>{children}</AppRoutePageCloseContext>
+      <AppRoutePageCloseContext value={{ close, titleBar: true }}>
+        {children}
+      </AppRoutePageCloseContext>
     </SidebarInset>
   );
 }
@@ -201,14 +211,14 @@ export function AppRouteHeader({
   actions?: ReactNode;
   children: ReactNode;
 }) {
-  const closePage = use(AppRoutePageCloseContext);
-  if (closePage !== null) {
+  const page = use(AppRoutePageCloseContext);
+  if (page?.titleBar === true) {
     return (
       <WorkspacePageHeader electron={isElectron} className={className}>
         {children}
         <div className="ms-auto flex shrink-0 items-center gap-1">
           {actions}
-          <AppRoutePageClose close={closePage} />
+          <AppRoutePageClose close={page.close} />
         </div>
       </WorkspacePageHeader>
     );
@@ -223,10 +233,14 @@ export function AppRouteHeader({
         <Tooltip>
           <TooltipTrigger
             render={
-              <DialogPrimitive.Close
-                aria-label="Close"
-                render={<Button size="icon-sm" variant="ghost" />}
-              />
+              page === null ? (
+                <DialogPrimitive.Close
+                  aria-label="Close"
+                  render={<Button size="icon-sm" variant="ghost" />}
+                />
+              ) : (
+                <Button size="icon-sm" variant="ghost" aria-label="Close" onClick={page.close} />
+              )
             }
           >
             <XIcon />

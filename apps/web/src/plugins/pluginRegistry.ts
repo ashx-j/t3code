@@ -184,8 +184,6 @@ export const pluginCommandsAtom = Atom.family((environmentId: string) =>
   }),
 );
 
-/** Adds a plugin command to the composer's `/` menu; returns the function that removes it. */
-/** Another plugin already holds the name or language; the loader skips the contribution. */
 /**
  * When plugins claim the same slash command or code block language, the one whose id sorts first
  * gets it whatever order they started in, as on the server; the others go without.
@@ -193,9 +191,18 @@ export const pluginCommandsAtom = Atom.family((environmentId: string) =>
 const firstById = <Claim>(claims: ReadonlyArray<Claim>, pluginIdOf: (claim: Claim) => string) =>
   claims.reduce((first, claim) => (pluginIdOf(claim) < pluginIdOf(first) ? claim : first));
 
-// Adds `claim` under `key`; returns the function that removes it again.
-const addClaim = <Claim>(claims: Map<string, Array<Claim>>, key: string, claim: Claim) => {
+// Adds `claim` under `key`; returns the function that removes it again. One plugin claiming the
+// same key twice is a mistake in that plugin, so it throws.
+const addClaim = <Claim>(
+  claims: Map<string, Array<Claim>>,
+  key: string,
+  claim: Claim,
+  pluginIdOf: (claim: Claim) => string,
+) => {
   const list = claims.get(key) ?? [];
+  if (list.some((other) => pluginIdOf(other) === pluginIdOf(claim))) {
+    throw new TypeError("This plugin already registered that name.");
+  }
   list.push(claim);
   claims.set(key, list);
   return () => {
@@ -206,8 +213,14 @@ const addClaim = <Claim>(claims: Map<string, Array<Claim>>, key: string, claim: 
   };
 };
 
+/** Adds a plugin command to the composer's `/` menu; returns the function that removes it. */
 export function registerPluginSlashCommand(entry: PluginSlashCommandEntry): () => void {
-  const remove = addClaim(slashCommands, `${entry.environmentId}\u0000${entry.name}`, entry);
+  const remove = addClaim(
+    slashCommands,
+    `${entry.environmentId}\u0000${entry.name}`,
+    entry,
+    (claim) => claim.pluginId,
+  );
   bump();
   return () => {
     remove();
@@ -316,7 +329,7 @@ const publishCodeBlocks = () =>
 
 /** Draws fenced code of `language` in chat messages; returns the function that removes it. */
 export function registerPluginCodeBlock(language: string, entry: PluginCodeBlockEntry): () => void {
-  const remove = addClaim(codeBlockClaims, language, entry);
+  const remove = addClaim(codeBlockClaims, language, entry, (claim) => claim.owner.pluginId);
   publishCodeBlocks();
   return () => {
     remove();
@@ -534,6 +547,15 @@ export function setPluginThreadBadge(
   badge: Omit<PluginThreadBadge, "pluginId"> | null,
 ) {
   const current = threadBadges.get(threadKey) ?? EMPTY_BADGES;
+  const existing = current.find((entry) => entry.pluginId === pluginId);
+  // A plugin that refreshes the same badge on a timer must not re-render the row each time.
+  if (
+    badge === null
+      ? existing === undefined
+      : existing?.label === badge.label && existing.tone === badge.tone
+  ) {
+    return;
+  }
   const others = current.filter((entry) => entry.pluginId !== pluginId);
   const next = badge === null ? others : [...others, { pluginId, ...badge }];
   if (next.length === 0) threadBadges.delete(threadKey);

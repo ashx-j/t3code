@@ -248,7 +248,10 @@ function registerThreadUndoCommands(
   router: AnyRouter,
   readSidebarVisible: () => boolean,
 ): () => void {
-  const threadSidebarShown = () => !isAppModalPage(router.state.location.pathname);
+  // A plugin's page frame shows Usage beside the thread list, which then keeps its undo.
+  const threadSidebarShown = () =>
+    !isAppModalPage(router.state.location.pathname) ||
+    appAtomRegistry.get(shownAppPageAtom) === "usage";
   const unregister = registerCommands(
     {},
     {
@@ -468,7 +471,13 @@ function AppSidebarContent({ routeReveal }: { routeReveal: SidebarRouteReveal })
 }
 
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
-  const sidebarArea = workspaceAreaProps("sidebar", 0, "Threads");
+  // A plugin's page frame can put Settings' sections in the sidebar.
+  const shownPage = useAtomValue(shownAppPageAtom);
+  const sidebarArea = workspaceAreaProps(
+    "sidebar",
+    0,
+    shownPage === "settings" ? "Settings" : "Threads",
+  );
   const [sidebarRouteReveal] = useState<SidebarRouteReveal>(() => ({
     observedKey: null,
     pendingKey: null,
