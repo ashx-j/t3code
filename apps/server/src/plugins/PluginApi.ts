@@ -35,7 +35,7 @@ import { makeSlashCommandsApi } from "./api/slashCommands.ts";
 import { makeSourceControlApi } from "./api/sourceControl.ts";
 import { makeGenerateText, makeTextGenerationApi } from "./api/textGeneration.ts";
 import { makeProjectsApi, makeThreadsApi } from "./api/threads.ts";
-import { makeTurnsApi } from "./api/turns.ts";
+import { makeTurnsApi, T3_STORAGE_PREFIX } from "./api/turns.ts";
 import { makeWorktreesApi } from "./api/worktrees.ts";
 import type * as PluginHooks from "./PluginHooks.ts";
 import type * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
@@ -134,14 +134,24 @@ export const makePluginApi = (input: {
       );
     };
 
-  const storage: PluginApi["storage"] = {
+  const ownStorage: Pick<PluginApi["storage"], "get" | "set"> = {
     get: (key) => call(services.storage.get(id, key)).then(Option.getOrUndefined),
     set: (key, value) => {
       if (!isJson(value)) return Promise.reject(new TypeError("Storage values must be JSON."));
       return call(services.storage.set(id, key, value));
     },
-    delete: (key) => call(services.storage.remove(id, key)),
-    list: (prefix) => call(services.storage.list(id, prefix)),
+  };
+  const isT3Key = (key: string) => key.startsWith(T3_STORAGE_PREFIX);
+  const refuseT3Key = () =>
+    Promise.reject(
+      new TypeError(`Storage keys starting with "${T3_STORAGE_PREFIX}" belong to T3.`),
+    );
+  const storage: PluginApi["storage"] = {
+    get: ownStorage.get,
+    set: (key, value) => (isT3Key(key) ? refuseT3Key() : ownStorage.set(key, value)),
+    delete: (key) => (isT3Key(key) ? refuseT3Key() : call(services.storage.remove(id, key))),
+    list: (prefix) =>
+      call(services.storage.list(id, prefix)).then((keys) => keys.filter((key) => !isT3Key(key))),
   };
   const events = makeEventsApi(facade, services);
 
@@ -195,7 +205,7 @@ export const makePluginApi = (input: {
     worktrees: makeWorktreesApi(facade, services),
     schedule: makeScheduleApi(facade),
     turns: makeTurnsApi(facade, services, {
-      storage,
+      storage: ownStorage,
       pluginName: input.name,
       runEvents: (afterSequence) =>
         storedEvents(facade, services, { types: ["run.updated"], afterSequence }, "suspend"),

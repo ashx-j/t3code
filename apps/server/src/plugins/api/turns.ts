@@ -12,6 +12,9 @@ import type * as PluginHooks from "../PluginHooks.ts";
 import type { FacadeContext } from "./facade.ts";
 import type { RuntimeRequestHooks } from "./runtimeRequests.ts";
 
+/** T3 keeps its own records in a plugin's storage under this prefix, out of the plugin's reach. */
+export const T3_STORAGE_PREFIX = "t3.";
+
 // A hook sits on the send path of every message, so it gets a short deadline and fails open.
 const BEFORE_DISPATCH_DEADLINE = Duration.seconds(2);
 const MAX_APPENDED_CHARS = 20_000;
@@ -76,7 +79,7 @@ export const makeTurnsApi = (
     readonly runtimeRequests: RuntimeRequestHooks;
   },
   api: {
-    readonly storage: PluginApi["storage"];
+    readonly storage: Pick<PluginApi["storage"], "get" | "set">;
     /** Every `run.updated` event after `afterSequence`; never drops events. */
     readonly runEvents: (afterSequence: number) => AsyncIterable<PluginStoredEvent>;
     /** The newest stored thread event's sequence, where reading from now starts. */
@@ -93,7 +96,7 @@ export const makeTurnsApi = (
         throw new Error("This plugin activation has ended.");
       }
       runHandlers += 1;
-      const cursorKey = `t3.turns.afterRunCompleted.${runHandlers}`;
+      const cursorKey = `${T3_STORAGE_PREFIX}turns.afterRunCompleted.${runHandlers}`;
       void (async () => {
         const cursor = readCursor(await api.storage.get(cursorKey));
         let sequence = cursor?.sequence;

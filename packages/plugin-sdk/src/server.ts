@@ -251,6 +251,7 @@ export interface PluginApi {
     /** Yields the settings as `get` reads them after each change, until deactivation. */
     readonly changes: () => AsyncIterable<JsonObject>;
   };
+  /** Keys starting with `t3.` are T3's own: `list` leaves them out, and `set` and `delete` refuse them. */
   readonly storage: {
     readonly get: (key: string) => Promise<JsonValue | undefined>;
     readonly set: (key: string, value: JsonValue) => Promise<void>;

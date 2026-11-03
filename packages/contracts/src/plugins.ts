@@ -217,13 +217,13 @@ export const PluginCheckUpdatesInput = Schema.Struct({});
 export type PluginCheckUpdatesInput = typeof PluginCheckUpdatesInput.Type;
 
 /**
- * A client's report that a plugin's web half failed, or `null` once it works. `revision` is the
- * start the client loaded, so a report about an earlier start is ignored.
+ * A client's report that a plugin's web half failed. `revision` is the start the client loaded,
+ * so a report about an earlier start is ignored.
  */
 export const PluginReportWebFailureInput = Schema.Struct({
   pluginId: PluginId,
   revision: Schema.Number,
-  message: Schema.NullOr(Schema.String),
+  message: Schema.String,
 });
 export type PluginReportWebFailureInput = typeof PluginReportWebFailureInput.Type;
 
@@ -231,6 +231,11 @@ export const PluginUninstallInput = Schema.Struct({
   pluginId: PluginId,
   /** Also delete the plugin's settings, secrets and storage. */
   removeData: Schema.optionalKey(Schema.Boolean),
+  /**
+   * A `dev` row's `linkedFolder`: unlinks exactly that folder, even when another copy with the
+   * same id is in use. Unlinking a copy that is not in use keeps the id's data.
+   */
+  linkedFolder: Schema.optionalKey(Schema.String),
 });
 export type PluginUninstallInput = typeof PluginUninstallInput.Type;
 

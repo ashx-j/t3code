@@ -74,7 +74,7 @@ export const makePluginRpcHandlers = (
     pluginHost.reportWebFailure(input).pipe(Effect.mapError(toRpcError(input.pluginId))),
   [WS_METHODS.pluginsUninstall]: (input: PluginUninstallInput) =>
     pluginHost
-      .uninstall(input.pluginId, input.removeData === true)
+      .uninstall(input.pluginId, input.removeData === true, input.linkedFolder)
       .pipe(Effect.as({ pluginId: input.pluginId }), Effect.mapError(toRpcError(input.pluginId))),
   [WS_METHODS.pluginsSettingsGet]: (input: PluginSettingsGetInput) =>
     pluginHost.getSettings(input.pluginId).pipe(

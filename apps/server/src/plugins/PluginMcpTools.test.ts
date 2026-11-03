@@ -266,9 +266,13 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
     const unnamed = yield* call("t3_plugins_check", readOnlyClient, {});
     assert.isTrue(unnamed.isError);
     assert.include(unnamed.text, "Give either pluginId or path.");
+    // A path can name any folder on the server, so only an installed plugin is a read.
+    const folder = { path: "/home/user/plugin" };
+    assert.isTrue((yield* call("t3_plugins_check", readOnlyClient, folder)).isError);
+    assert.isFalse((yield* call("t3_plugins_check", fullAccessClient, folder)).isError);
     assert.isFalse(
-      (yield* call("t3_plugins_check", readOnlyClient, { path: "/home/user/plugin" })).isError,
+      (yield* call("t3_plugins_check", readOnlyClient, { pluginId: "mcp-plugin" })).isError,
     );
-    assert.deepStrictEqual(checked, [{ path: "/home/user/plugin" }]);
+    assert.deepStrictEqual(checked, [folder, { pluginId: "mcp-plugin" }]);
   }).pipe(Effect.provide(layerTest)),
 );

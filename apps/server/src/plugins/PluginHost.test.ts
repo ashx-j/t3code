@@ -336,6 +336,37 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
     }).pipe(Effect.provide(layerConfig())),
   );
 
+  it.effect("keeps the keys T3 saves in a plugin's storage out of the plugin's reach", () =>
+    Effect.gen(function* () {
+      const id = PluginId.make("keeper");
+      const cursorKey = "t3.turns.afterRunCompleted.1";
+      yield* writeInstalledPlugin(
+        id,
+        `module.exports = { activate(api) {
+  api.rpc.register("keys", async () => { await api.storage.set("mine", 1); return api.storage.list(); }, { access: "write" });
+  api.rpc.register("overwrite", () => api.storage.set("${cursorKey}", 0), { access: "write" });
+} };`,
+      );
+      yield* writePluginsConfig({ enabled: { [id]: true } });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const storage = yield* PluginStorage.PluginStorage;
+        yield* waitForStatuses(host, { [id]: "active" });
+        yield* storage.set(id, cursorKey, { sequence: 3, runIds: [] });
+        const call = (method: string) =>
+          host.invoke({ pluginId: id, method, input: undefined, scopes: operate });
+
+        assert.deepStrictEqual(yield* call("keys"), ["mine"]);
+        const refused = yield* call("overwrite").pipe(Effect.flip);
+        assert.include(refused.message, 'Storage keys starting with "t3." belong to T3.');
+        assert.deepStrictEqual(
+          yield* storage.get(id, cursorKey),
+          Option.some({ sequence: 3, runIds: [] }),
+        );
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
   it.effect("gives agents a plugin's skills and instructions until it is disabled", () =>
     Effect.gen(function* () {
       const skills = PluginId.make("skills-plugin");
@@ -688,11 +719,35 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           .install({ type: "path", path: installedDir, link: true })
           .pipe(Effect.flip);
         assert.strictEqual(twice.message, "installed-one is already installed. Remove it first.");
+        // Discovery would list it as installed too, so removing it would delete it.
+        const unlisted = yield* writeInstalledPlugin("unlisted", plugin("v1"));
+        const inside = yield* host
+          .install({ type: "path", path: unlisted, link: true })
+          .pipe(Effect.flip);
+        assert.include(inside.message, "is already in the plugins folder");
+        yield* fs.remove(unlisted, { recursive: true });
 
         yield* host.uninstall(id, false);
         assert.isTrue(yield* fs.exists(`${folder}/server.cjs`));
         // Forgotten, not only stopped: a rescan does not find it again.
         assert.isUndefined(stateOf((yield* host.rescan).plugins, "in-place"));
+
+        // A copy put in the plugins folder by hand shadows the link. Unlinking leaves that copy
+        // running with its data, which shares the id.
+        const storage = yield* PluginStorage.PluginStorage;
+        yield* host.install({ type: "path", path: folder, link: true });
+        yield* writeInstalledPlugin("in-place", plugin("installed"));
+        yield* host.reload(id);
+        yield* storage.set(id, "kept", true);
+        yield* host.uninstall(id, true, folder);
+        const copies = (yield* host.rescan).plugins.filter((state) => state.id === "in-place");
+        assert.deepStrictEqual(
+          copies.map((state) => state.source),
+          ["installed"],
+        );
+        assert.strictEqual(yield* which, "installed");
+        assert.deepStrictEqual(yield* storage.get(id, "kept"), Option.some(true));
+        assert.isTrue(yield* fs.exists(`${folder}/server.cjs`));
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
@@ -712,14 +767,47 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
       );
       yield* writeFile(`${stateDir}/plugins/web-only/web.js`, "export default {};");
       yield* writePluginsConfig({ enabled: { "web-only": true } });
+      // Holds a publish at its skills check, which it runs for each active plugin.
+      let held:
+        | { readonly reached: Deferred.Deferred<void>; readonly release: Deferred.Deferred<void> }
+        | undefined;
+      const layerHeldPublish = layerFileSystemWith((fs) => ({
+        exists: (target) =>
+          held !== undefined && target.endsWith("skills")
+            ? Deferred.succeed(held.reached, undefined).pipe(
+                Effect.andThen(Deferred.await(held.release)),
+                Effect.andThen(fs.exists(target)),
+              )
+            : fs.exists(target),
+      }));
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
         const id = PluginId.make("web-only");
         const revision = stateOf(yield* waitForStatuses(host, { [id]: "active" }), id)?.revision;
         assert.isDefined(revision);
         const webFailure = Effect.map(host.list, (states) => stateOf(states, id)?.webFailure);
-        const report = (message: string | null, at = revision) =>
+        const report = (message: string, at = revision) =>
           host.reportWebFailure({ pluginId: id, revision: at, message });
+
+        // A client that disconnects mid-publish still gets its report to the others.
+        const sent = yield* host.streamStates.pipe(
+          Stream.filter((states) => stateOf(states, id)?.webFailure === "load threw"),
+          Stream.runHead,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        held = { reached: yield* Deferred.make<void>(), release: yield* Deferred.make<void>() };
+        const reporting = yield* report("load threw").pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Deferred.await(held.reached);
+        const interrupting = yield* Fiber.interrupt(reporting).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Deferred.succeed(held.release, undefined);
+        held = undefined;
+        yield* Fiber.join(interrupting);
+        yield* report("load threw");
+        assert.isTrue(Option.isSome(yield* Fiber.join(sent)));
 
         const call = yield* host
           .invoke({ pluginId: id, method: "ping", input: undefined, scopes: operate })
@@ -731,8 +819,6 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
 
         yield* report("activate threw");
         assert.strictEqual(yield* webFailure, "activate threw");
-        yield* report(null);
-        assert.isUndefined(yield* webFailure);
         yield* report("a part threw");
         assert.deepInclude((yield* host.check({ pluginId: id })).findings[0], {
           code: "web-failed",
@@ -745,7 +831,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         assert.isUndefined(yield* webFailure);
         yield* report("fresh", reloaded.revision);
         assert.strictEqual(yield* webFailure, "fresh");
-      }).pipe(Effect.provide(layerHost()));
+      }).pipe(Effect.provide(layerHost().pipe(Layer.provide(layerHeldPublish))));
     }).pipe(Effect.provide(layerConfig())),
   );
 
