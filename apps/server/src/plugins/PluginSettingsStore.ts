@@ -308,8 +308,9 @@ const make = Effect.gen(function* () {
           else merged[key] = value;
         }
 
-        // Secrets are validated with their real values so `required` and type checks hold.
-        const validation = validate?.(merged);
+        // Checked as the plugin reads them: over the schema's defaults, and with secrets' real
+        // values, so a required field that has a default or a secret passes. Defaults aren't saved.
+        const validation = validate?.({ ...defaultsOf(settingsSchema), ...merged });
         if (validation !== undefined && Result.isFailure(validation)) {
           return yield* new PluginSettingsValidationError({
             pluginId,

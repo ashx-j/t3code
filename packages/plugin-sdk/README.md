@@ -32,7 +32,10 @@ Vite preset below.
 - `engines.t3` is a semver range. A server outside it refuses to start the plugin and says why.
 - `server` must be CommonJS ending in `.cjs`. `web` is a single-file ES module.
 - `settingsSchema` is JSON Schema. T3 Code draws a form from it on the Plugins page, and fields with
-  `"format": "t3-secret"` are stored in the server's secret store and never shown again.
+  `"format": "t3-secret"` are stored in the server's secret store and never shown again. The form
+  covers top-level strings, numbers, integers, booleans, `enum`s of strings or numbers, and arrays
+  of strings. One property of any other shape, such as an object or a nullable type, turns the whole
+  form into a JSON box. Agents read and change settings with the `t3_plugins_settings` tool.
 - A `themes/` folder of theme JSON files is published while the plugin is active, and an `assets/`
   folder is served to the web half when the plugin has one. T3 Code remembers the published
   themes, so the boot screen and the desktop window start in the active theme's colors. A theme

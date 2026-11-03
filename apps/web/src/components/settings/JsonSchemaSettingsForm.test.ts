@@ -8,19 +8,27 @@ const form = pluginSettingsForm({
   properties: {
     token: { type: "string", format: "t3-secret" },
     name: { type: "string" },
+    count: { type: "integer", minimum: 0 },
   },
 });
 const fields = form.kind === "fields" ? form.fields : [];
 
 describe("toPatch", () => {
   it("sends only changed fields, removes a cleared secret and keeps an untouched one", () => {
-    const saved = { token: "", name: "Ash" };
-    expect(toPatch(fields, saved, { token: null, name: "Ash" })).toEqual({
+    const saved = { token: "", name: "Ash", count: "2" };
+    expect(toPatch(fields, saved, { ...saved, token: null })).toEqual({
       patch: { token: null },
     });
-    expect(toPatch(fields, saved, { token: "", name: " " })).toEqual({ patch: { name: null } });
-    expect(toPatch(fields, saved, { token: "new", name: "Ash" })).toEqual({
+    expect(toPatch(fields, saved, { ...saved, name: " " })).toEqual({ patch: { name: null } });
+    expect(toPatch(fields, saved, { ...saved, token: "new" })).toEqual({
       patch: { token: "new" },
+    });
+    // A half-typed or out-of-range number is a problem to fix, not a cleared field.
+    expect(toPatch(fields, saved, { ...saved, count: "1e" })).toEqual({
+      problem: "count must be a whole number.",
+    });
+    expect(toPatch(fields, saved, { ...saved, count: "-1" })).toEqual({
+      problem: "count must be at least 0.",
     });
   });
 });

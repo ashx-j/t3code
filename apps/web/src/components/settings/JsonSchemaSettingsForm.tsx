@@ -50,7 +50,17 @@ export const toPatch = (
       patch[field.key] = null;
     } else if (field.kind === "number") {
       const parsed = Number(value);
-      if (!Number.isFinite(parsed)) return { problem: `${field.label} must be a number.` };
+      if (!Number.isFinite(parsed) || (field.integer && !Number.isInteger(parsed))) {
+        return {
+          problem: `${field.label} must be ${field.integer ? "a whole number" : "a number"}.`,
+        };
+      }
+      if (field.minimum !== undefined && parsed < field.minimum) {
+        return { problem: `${field.label} must be at least ${field.minimum}.` };
+      }
+      if (field.maximum !== undefined && parsed > field.maximum) {
+        return { problem: `${field.label} must be at most ${field.maximum}.` };
+      }
       patch[field.key] = parsed;
     } else if (field.kind === "select") {
       patch[field.key] = field.options.find((option) => String(option) === value) ?? value;
@@ -159,6 +169,8 @@ export function JsonSchemaSettingsForm({
   );
 }
 
+const UNSET_OPTION = "\u0000unset";
+
 function JsonSchemaFieldView({
   id,
   field,
@@ -192,13 +204,24 @@ function JsonSchemaFieldView({
       {field.kind === "boolean" ? (
         <Switch id={id} checked={value === true} onCheckedChange={onChange} />
       ) : field.kind === "select" ? (
-        <Select value={text} onValueChange={(next) => typeof next === "string" && onChange(next)}>
+        <Select
+          value={text === "" ? UNSET_OPTION : text}
+          onValueChange={(next) =>
+            typeof next === "string" && onChange(next === UNSET_OPTION ? "" : next)
+          }
+        >
           <SelectTrigger id={id} size="sm" aria-label={field.label}>
             <SelectValue>
               {text || (fallback === undefined ? "" : `${fallback} (default)`)}
             </SelectValue>
           </SelectTrigger>
           <SelectPopup align="start" alignItemWithTrigger={false}>
+            {/* Back to the default, as clearing a text field is. */}
+            {fallback !== undefined || !field.required ? (
+              <SelectItem value={UNSET_OPTION}>
+                {fallback === undefined ? "Not set" : `${fallback} (default)`}
+              </SelectItem>
+            ) : null}
             {field.options.map((option) => (
               <SelectItem key={String(option)} value={String(option)}>
                 {String(option)}
@@ -243,7 +266,11 @@ function JsonSchemaFieldView({
       ) : (
         <Input
           id={id}
-          type={field.kind === "number" ? "number" : "text"}
+          // Text, not a number input, so text that isn't a number stays to be fixed instead of
+          // reading as empty, which would clear the saved value.
+          type="text"
+          inputMode={field.kind === "number" ? (field.integer ? "numeric" : "decimal") : undefined}
+          maxLength={field.kind === "text" ? field.maxLength : undefined}
           autoComplete="off"
           placeholder={fallback === undefined ? undefined : `Default: ${fallback}`}
           value={text}

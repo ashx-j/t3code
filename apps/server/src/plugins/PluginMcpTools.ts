@@ -24,6 +24,7 @@ const PLUGINS_INSTALL_TOOL = "t3_plugins_install";
 const PLUGINS_UNINSTALL_TOOL = "t3_plugins_uninstall";
 const PLUGINS_RELOAD_TOOL = "t3_plugins_reload";
 const PLUGINS_CHECK_TOOL = "t3_plugins_check";
+const PLUGINS_SETTINGS_TOOL = "t3_plugins_settings";
 
 const isJson = Schema.is(Schema.Json);
 
@@ -88,6 +89,14 @@ export interface PluginMcpHostActions {
   readonly check: (
     target: { readonly pluginId: PluginId } | { readonly path: string },
   ) => Effect.Effect<PluginCheckReport, { readonly message: string }>;
+  /** Saved settings as clients see them, with secrets redacted. */
+  readonly getSettings: (
+    pluginId: PluginId,
+  ) => Effect.Effect<Schema.JsonObject, { readonly message: string }>;
+  readonly updateSettings: (
+    pluginId: PluginId,
+    patch: Schema.JsonObject,
+  ) => Effect.Effect<Schema.JsonObject, { readonly message: string }>;
   /** Slash command names with each plugin's id, so agents can send `/name` to a thread. */
   readonly slashCommands: Effect.Effect<
     ReadonlyArray<{ readonly pluginId: string; readonly name: string }>
@@ -103,6 +112,9 @@ const decodeInvokeInput = Schema.decodeUnknownEffect(
 );
 const decodeSetEnabledInput = Schema.decodeUnknownEffect(
   Schema.Struct({ pluginId: PluginId, enabled: Schema.Boolean }),
+);
+const decodeSettingsInput = Schema.decodeUnknownEffect(
+  Schema.Struct({ pluginId: PluginId, values: Schema.optional(Schema.JsonObject) }),
 );
 const decodeInstallInput = Schema.decodeUnknownEffect(
   Schema.Struct({ source: PluginInstallSource }),
@@ -402,6 +414,34 @@ const make = () => {
       ),
   };
 
+  const pluginsSettings: PluginMcpToolEntry = {
+    name: PLUGINS_SETTINGS_TOOL,
+    description:
+      "Read an installed plugin's saved settings, or change them by passing values: each key sets that setting, and null removes it so the plugin reads its default. The plugin's settingsSchema in t3-plugin.json lists its settings, and a change the schema rejects returns why. Secrets read as redacted.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        pluginId: { type: "string" },
+        values: { type: "object", description: "Settings to change. Leave out to read them." },
+      },
+      required: ["pluginId"],
+      additionalProperties: false,
+    },
+    access: (input) => (input.values === undefined ? "read" : "write"),
+    call: (input) =>
+      decodeSettingsInput(input).pipe(
+        Effect.mapError(invalidInput),
+        Effect.flatMap(({ pluginId, values }) =>
+          withHost((actions) =>
+            values === undefined
+              ? actions.getSettings(pluginId)
+              : actions.updateSettings(pluginId, values),
+          ),
+        ),
+        Effect.map((settings) => ({ settings })),
+      ),
+  };
+
   return PluginMcpTools.of({
     register: Effect.fn("PluginMcpTools.register")(function* ({ pluginId, tool, handler }) {
       const name = `plg_${pluginId}_${tool.name}`;
@@ -458,6 +498,7 @@ const make = () => {
           pluginsUninstall,
           pluginsReload,
           pluginsCheck,
+          pluginsSettings,
         ]) {
           yield* publish(entry);
         }

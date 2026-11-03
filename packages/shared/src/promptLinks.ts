@@ -197,7 +197,8 @@ export function promptLinkAppPath(
       return `/new${url.search}`;
     }
     const pluginPage = url.host === "plugins" ? PLUGIN_PAGE_PATH.exec(url.pathname) : null;
-    if (pluginPage) return `/plugins/${pluginPage[1]}/${pluginPage[2]}${url.search}`;
+    // Plugin pages get no query: a link only opens the page.
+    if (pluginPage) return `/plugins/${pluginPage[1]}/${pluginPage[2]}`;
     const thread = url.host === "threads" ? THREAD_PATH.exec(url.pathname) : null;
     return thread ? `/${thread[1]}/${thread[2]}${url.search}` : null;
   }

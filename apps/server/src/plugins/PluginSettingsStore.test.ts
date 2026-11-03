@@ -94,6 +94,8 @@ it.layer(NodeServices.layer)("PluginSettingsStore", (it) => {
           name: { type: "string", default: "T3" },
           token: { type: "string", format: "t3-secret", default: "not-a-secret" },
         },
+        // A required field with a default must not block a save that leaves it unsaved.
+        required: ["enabled"],
       };
       const next = yield* store
         .changes(hello)

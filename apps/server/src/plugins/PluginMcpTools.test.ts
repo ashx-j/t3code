@@ -202,6 +202,7 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
     const invoked: Array<unknown> = [];
     const checked: Array<unknown> = [];
     const uninstalled: Array<unknown> = [];
+    const settingsPatches: Array<unknown> = [];
     yield* tools.setHostActions({
       invoke: (pluginId, method, input) =>
         Effect.sync(() => {
@@ -226,6 +227,12 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
           checked.push(target);
           return { folder: "/home/user/plugin", pluginId: null, findings: [] };
         }),
+      getSettings: () => Effect.succeed({ mode: "a" }),
+      updateSettings: (pluginId, patch) =>
+        Effect.sync(() => {
+          settingsPatches.push({ pluginId, patch });
+          return { mode: "b" };
+        }),
       slashCommands: Effect.succeed([{ pluginId: "mcp-plugin", name: "deploy" }]),
     });
     yield* tools.setInstalledPlugins([]);
@@ -247,6 +254,7 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
       "t3_plugins_uninstall",
       "t3_plugins_reload",
       "t3_plugins_check",
+      "t3_plugins_settings",
     ]);
     assert.deepStrictEqual(yield* call("t3_plugins_list", readOnlyClient), {
       isError: false,
@@ -306,6 +314,18 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
       (yield* call("t3_plugins_check", readOnlyClient, { pluginId: "mcp-plugin" })).isError,
     );
     assert.deepStrictEqual(checked, [folder, { pluginId: "mcp-plugin" }]);
+    // Reading settings is a read; changing them needs write access.
+    assert.deepStrictEqual(
+      yield* call("t3_plugins_settings", readOnlyClient, { pluginId: "mcp-plugin" }),
+      { isError: false, text: '{"settings":{"mode":"a"}}' },
+    );
+    const change = { pluginId: "mcp-plugin", values: { mode: "b" } };
+    assert.isTrue((yield* call("t3_plugins_settings", readOnlyClient, change)).isError);
+    assert.deepStrictEqual(yield* call("t3_plugins_settings", fullAccessClient, change), {
+      isError: false,
+      text: '{"settings":{"mode":"b"}}',
+    });
+    assert.deepStrictEqual(settingsPatches, [{ pluginId: "mcp-plugin", patch: { mode: "b" } }]);
     // One linked copy that isn't in use is unlinked by its folder, as Settings does it.
     yield* call("t3_plugins_uninstall", fullAccessClient, {
       pluginId: "mcp-plugin",

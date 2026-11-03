@@ -218,9 +218,11 @@ function PluginsPage({
             installer={installer}
             dragActive={dragActive}
             scopeNote={
-              targets.length > 1
-                ? `Installs on every environment that runs plugins. A plugin with no server code or agent skills only changes the app, so it goes to ${main.label} only.`
-                : `Installs on ${main.label}.`
+              main.environmentId !== primaryEnvironmentId
+                ? `Installs on ${targets.length > 1 ? "every environment here that runs plugins" : main.label}. ${main.label} isn't your main environment, and the app shows plugin changes only from that one, so a plugin with no server code or agent skills does nothing here.`
+                : targets.length > 1
+                  ? `Installs on every environment that runs plugins. A plugin with no server code or agent skills only changes the app, so it goes to ${main.label} only.`
+                  : `Installs on ${main.label}.`
             }
           />
         )}
