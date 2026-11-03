@@ -191,9 +191,12 @@ function AppRoutePage({
  */
 export function AppRouteHeader({
   className,
+  actions,
   children,
 }: {
   className?: string;
+  /** Buttons that sit beside the close button, at the row's end. */
+  actions?: ReactNode;
   children: ReactNode;
 }) {
   const closePage = use(AppRoutePageCloseContext);
@@ -201,7 +204,10 @@ export function AppRouteHeader({
     return (
       <WorkspacePageHeader electron={isElectron} className={className}>
         {children}
-        <AppRoutePageClose close={closePage} />
+        <div className="ms-auto flex shrink-0 items-center gap-1">
+          {actions}
+          <AppRoutePageClose close={closePage} />
+        </div>
       </WorkspacePageHeader>
     );
   }
@@ -210,19 +216,22 @@ export function AppRouteHeader({
       className={cn("flex min-h-12 shrink-0 items-center gap-3 border-b ps-5 pe-2", className)}
     >
       {children}
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <DialogPrimitive.Close
-              aria-label="Close"
-              render={<Button size="icon-sm" variant="ghost" />}
-            />
-          }
-        >
-          <XIcon />
-        </TooltipTrigger>
-        <TooltipPopup side="bottom">Close (Esc)</TooltipPopup>
-      </Tooltip>
+      <div className="ms-auto flex shrink-0 items-center gap-1">
+        {actions}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <DialogPrimitive.Close
+                aria-label="Close"
+                render={<Button size="icon-sm" variant="ghost" />}
+              />
+            }
+          >
+            <XIcon />
+          </TooltipTrigger>
+          <TooltipPopup side="bottom">Close (Esc)</TooltipPopup>
+        </Tooltip>
+      </div>
     </header>
   );
 }

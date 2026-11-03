@@ -130,15 +130,17 @@ function SettingsContentLayout() {
       <div className="relative flex min-h-0 flex-1">
         <AppRouteModalNav />
         <div {...contentArea} className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <AppRouteHeader>
-            <SettingsBreadcrumb pathname={location.pathname} />
-            <div className="ms-auto flex shrink-0 items-center gap-1">
-              {location.pathname === "/settings/general" ? (
+          <AppRouteHeader
+            className="h-12"
+            actions={
+              location.pathname === "/settings/general" ? (
                 <RestoreDeviceDefaultsButton
                   onRestored={() => setRestoreSignal((value) => value + 1)}
                 />
-              ) : null}
-            </div>
+              ) : null
+            }
+          >
+            <SettingsBreadcrumb pathname={location.pathname} />
           </AppRouteHeader>
           <div key={`${contentScopeKey}:${restoreSignal}`} className="min-h-0 flex flex-1 flex-col">
             <SettingsScopeBoundary pathname={location.pathname}>

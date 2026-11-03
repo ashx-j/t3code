@@ -22,14 +22,17 @@ export function useComposerCollapseOnScroll(input: {
   /** False while a multi-line prompt, a question or a forced expansion keeps it open. */
   readonly canFold: boolean;
 }) {
-  const active = useAtomValue(pluginComposerCollapseOnScrollAtom) && input.wideScreen;
-  const awayAtom = active
+  const requested = useAtomValue(pluginComposerCollapseOnScrollAtom);
+  const active = requested && input.wideScreen;
+  // Followed even while narrow, so a window widened while scrolled up folds at once.
+  const awayAtom = requested
     ? timelineAwayFromEndAtom(scopedThreadKey(input.threadRef))
     : NEVER_AWAY_FROM_END;
   useAtomSubscribe(awayAtom, (away) => {
     const focused = document.activeElement;
     if (
       away &&
+      active &&
       input.canFold &&
       focused instanceof HTMLElement &&
       focused.isContentEditable &&
@@ -38,5 +41,6 @@ export function useComposerCollapseOnScroll(input: {
       focused.blur();
     }
   });
-  return { active, awayFromEnd: useAtomValue(awayAtom) };
+  const awayFromEnd = useAtomValue(awayAtom);
+  return { active, awayFromEnd: active && awayFromEnd };
 }

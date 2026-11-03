@@ -10,7 +10,8 @@ import {
   setPluginWebFailure,
 } from "./pluginRegistry";
 
-const toastedFailures = new WeakSet<PluginOwner>();
+// One report per replacement: a broken part in every timeline row would otherwise send one each.
+const reportedFailures = new WeakSet<PluginOwner>();
 
 const PART_NAMES: { readonly [Part in PluginPartName]: string } = {
   "composer.controls": "the composer's controls",
@@ -22,15 +23,15 @@ const PART_NAMES: { readonly [Part in PluginPartName]: string } = {
   "app.sidebar": "the sidebar",
 };
 
-// Shown on the plugin's row until it reloads, and once as a toast, since T3's own part quietly
-// takes its place.
+// Shown on the plugin's row until it reloads, and as a toast, since T3's own part quietly takes its
+// place.
 const reportFailure = (part: PluginPartName, owner: PluginOwner, error: unknown) => {
+  if (reportedFailures.has(owner)) return;
+  reportedFailures.add(owner);
   const reason = error instanceof Error ? error.message : String(error);
   const message = `Its version of ${PART_NAMES[part]} (${part}) stopped with an error: ${reason}. T3 shows its own until the plugin reloads.`;
   setPluginWebFailure(owner.environmentId, owner.pluginId, message);
   owner.report?.(message);
-  if (toastedFailures.has(owner)) return;
-  toastedFailures.add(owner);
   toastManager.add({
     type: "error",
     title: `${owner.pluginName} stopped changing ${PART_NAMES[part]}`,

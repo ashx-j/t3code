@@ -186,8 +186,9 @@ the components in `@t3tools/plugin-sdk/ui` are shared.
 
 ## Keeping a plugin working across T3 updates
 
-T3 changes its markup, class names, labels and layout in most releases. A plugin keeps working
-when it uses only what T3 hands it on purpose:
+Build the whole design; leaving a detail out because it might break is not the answer. T3 changes
+its markup, class names, labels and layout in most releases, so build each detail on the most
+durable thing T3 offers for it:
 
 - **Arrange pieces instead of rebuilding T3's controls.** `ui.replace` gives you T3's own controls,
   already wired up. Place them, wrap them or leave them out. A copied control, with its markup,
@@ -195,9 +196,11 @@ when it uses only what T3 hands it on purpose:
 - **Style with theme tokens.** Colors, radii and fonts come from the theme. Set them in a theme
   file in `themes/`, and use `var(--border)`, `var(--radius)` and the other tokens in your own
   components instead of hex or rgb values.
-- **Don't select T3's markup in CSS.** Selectors on `aria-label`, `data-slot`, class names such as
-  `[class~="border-border/65"]` or `.lucide-shield-off`, and `:has()` break when T3 renames or
-  moves things. Style your own elements.
+- **Reach into T3's markup only as a last resort.** Selectors on `aria-label`, `data-slot`, class
+  names such as `[class~="border-border/65"]` or `.lucide-shield-off`, and `:has()` break when T3
+  renames or moves things. Use one only when no theme value, piece or part does the job. Keep each
+  rule small and in one commented place, prefer one that falls back to T3's own look when the
+  markup changes, and list it in the plugin's README with the seam that would replace it.
 - **Leave T3's frame to T3.** The title bar row, the room for the window buttons on Windows and
   Linux, drag areas, phone safe areas and breakpoints are T3's. A page shown through
   `app.pageFrame` gets T3's header with all of that, so don't resize or pad it.
@@ -208,9 +211,9 @@ when it uses only what T3 hands it on purpose:
 - **Ask for a seam.** When T3 doesn't hand over what you need, ask for a piece, part or token on
   the T3 Code repository instead of reaching into its markup.
 
-An agent can run the `t3_plugins_check` tool on a plugin to find the patterns above. A
-replacement that throws shows a note on its plugin's row in Settings → Plugins, and T3 draws its
-own part until the plugin reloads.
+An agent can run the `t3_plugins_check` tool on a plugin to find the patterns above, so it knows
+what to recheck after an update. A replacement that throws shows a note on its plugin's row in
+Settings → Plugins, and T3 draws its own part until the plugin reloads.
 
 ## Developing a plugin
 
