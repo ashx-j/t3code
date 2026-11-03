@@ -245,7 +245,7 @@ export function AppRouteHeader({
           >
             <XIcon />
           </TooltipTrigger>
-          <TooltipPopup side="bottom">Close (Esc)</TooltipPopup>
+          <TooltipPopup side="bottom">{page === null ? "Close (Esc)" : "Close"}</TooltipPopup>
         </Tooltip>
       </div>
     </header>

@@ -448,7 +448,8 @@ export function startEnvironmentThemeCache(): () => void {
 export function asImportedThemeCopy(theme: ThemeDefinition): ThemeDefinition {
   const published = getEnvironmentThemes();
   if (!published.some((candidate) => candidate.id === theme.id)) return theme;
-  const taken = new Set([...getCustomThemes(), ...published].map((candidate) => candidate.id));
+  // A saved copy is left out, so importing the file again offers to replace that copy.
+  const taken = new Set(published.map((candidate) => candidate.id));
   const base = `${theme.id.slice(0, 38)}-copy`;
   let id = base;
   for (let copy = 2; taken.has(id); copy += 1) id = `${base}-${copy}`;

@@ -52,7 +52,7 @@ import { splitTransferredFiles } from "./workspaceFileDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
-  cloneElement,
+  type ComponentProps,
   memo,
   use,
   useEffect,
@@ -2339,8 +2339,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     : composerControlsCollapsed
       ? 0
       : expandedControlsIconOnlyBlockCount;
-  const composerControls = (
+  const composerControlsBar = (piece?: ComponentProps<typeof ComposerControlsBar>["piece"]) => (
     <ComposerControlsBar
+      piece={piece}
       environmentId={environmentId}
       routeKind={routeKind}
       routeThreadRef={routeThreadRef}
@@ -2391,6 +2392,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       getModelDisabledReason={getModelDisabledReason}
     />
   );
+  const composerControls = composerControlsBar();
   // An open question owns the space above the composer. Only a machine problem,
   // which is why an answer could not go through, stays beside it.
   const shelfItems = hasBlockingComposerTopDrawer
@@ -3562,9 +3564,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     original: defaultComposerFooter,
                     attach: composerAttachButton,
                     controls: composerControls,
-                    model: cloneElement(composerControls, { piece: "model" }),
-                    effort: cloneElement(composerControls, { piece: "effort" }),
-                    access: cloneElement(composerControls, { piece: "access" }),
+                    model: composerControlsBar("model"),
+                    effort: composerControlsBar("effort"),
+                    access: composerControlsBar("access"),
                     actions: composerPrimaryActions,
                     buttons: composerPluginButtons,
                   }}

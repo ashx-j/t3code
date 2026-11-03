@@ -158,6 +158,7 @@ export interface WebPluginParts {
   /** A user message's text in the timeline, drawn as Markdown. */
   readonly "message.user": {
     readonly original: WebPluginNode;
+    /** The message's Markdown. Each chip in it is a link to a `t3-context:` address. */
     readonly text: string;
     readonly messageId: string;
     /** Null outside a thread, such as in a shared guest view. */
@@ -183,7 +184,10 @@ export interface WebPluginParts {
   /** The frame Settings and Usage open in. T3 draws a large window over the thread. */
   readonly "app.pageFrame": {
     readonly original: WebPluginNode;
-    /** The page itself, with its section list, header and close button. */
+    /**
+     * The page itself, with its section list, header and close button. Its close button closes
+     * the page; Esc is up to the frame the plugin draws.
+     */
     readonly content: WebPluginNode;
     /**
      * The page in place of the thread, beside the sidebar, without its section list: draw `nav`

@@ -22,13 +22,27 @@ const showRefusals = (refused: ReadonlyArray<DesktopPluginShortcutRefusal>) => {
     const key = `${command}\u0000${entry.globalShortcut}`;
     if (refusalsShown.has(key)) continue;
     refusalsShown.add(key);
+    const holder =
+      reason === "taken"
+        ? [...commands.values()].find(
+            (other) =>
+              other.command !== command &&
+              other.globalShortcut?.toLowerCase() === entry.globalShortcut?.toLowerCase(),
+          )
+        : undefined;
     toastManager.add({
       type: "warning",
       title:
         reason === "taken"
           ? `${entry.globalShortcut} is taken`
           : `${entry.globalShortcut} isn't a valid shortcut`,
-      description: `${reason === "taken" ? "Another app uses it" : "The desktop app can't bind it"}, so ${entry.pluginName}'s "${entry.title}" has no global shortcut.`,
+      description: `${
+        reason === "invalid"
+          ? "The desktop app can't bind it"
+          : holder === undefined
+            ? "Another app uses it"
+            : `${holder.pluginName}'s "${holder.title}" uses it`
+      }, so ${entry.pluginName}'s "${entry.title}" has no global shortcut.`,
     });
   }
 };

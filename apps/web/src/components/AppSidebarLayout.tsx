@@ -49,7 +49,11 @@ import {
   SidebarChromeFooter,
   SidebarChromeHeader,
 } from "./sidebar/SidebarChrome";
-import { isAppModalPage, shownAppPageAtom } from "./sidebar/mainAppLocation";
+import {
+  isAppModalPage,
+  shownAppPageAtom,
+  sidebarSettingsNavShownAtom,
+} from "./sidebar/mainAppLocation";
 import type { SidebarRouteReveal } from "./sidebar/routeReveal";
 import { useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
 import {
@@ -422,17 +426,23 @@ function SidebarControl() {
 function SidebarSettingsNav() {
   const pathname = useLocation({ select: (location) => location.pathname });
   const { isMobile, setOpen, setOpenMobile } = useSidebar();
+  const showSettingsNav = () => {
+    appAtomRegistry.set(sidebarSettingsNavShownAtom, true);
+    return () => appAtomRegistry.set(sidebarSettingsNavShownAtom, false);
+  };
   return (
-    <Suspense fallback={<div className="min-h-0 flex-1" />}>
-      <SettingsSidebarNav
-        pathname={pathname}
-        placement="sidebar"
-        onNavigate={() => {
-          if (isMobile) setOpenMobile(false);
-        }}
-        onRevealSearch={() => (isMobile ? setOpenMobile(true) : setOpen(true))}
-      />
-    </Suspense>
+    <div ref={showSettingsNav} className="contents">
+      <Suspense fallback={<div className="min-h-0 flex-1" />}>
+        <SettingsSidebarNav
+          pathname={pathname}
+          placement="sidebar"
+          onNavigate={() => {
+            if (isMobile) setOpenMobile(false);
+          }}
+          onRevealSearch={() => (isMobile ? setOpenMobile(true) : setOpen(true))}
+        />
+      </Suspense>
+    </div>
   );
 }
 
@@ -471,13 +481,9 @@ function AppSidebarContent({ routeReveal }: { routeReveal: SidebarRouteReveal })
 }
 
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
-  // A plugin's page frame can put Settings' sections in the sidebar.
-  const shownPage = useAtomValue(shownAppPageAtom);
-  const sidebarArea = workspaceAreaProps(
-    "sidebar",
-    0,
-    shownPage === "settings" ? "Settings" : "Threads",
-  );
+  // A plugin can put Settings' sections in the sidebar.
+  const settingsNavShown = useAtomValue(sidebarSettingsNavShownAtom);
+  const sidebarArea = workspaceAreaProps("sidebar", 0, settingsNavShown ? "Settings" : "Threads");
   const [sidebarRouteReveal] = useState<SidebarRouteReveal>(() => ({
     observedKey: null,
     pendingKey: null,

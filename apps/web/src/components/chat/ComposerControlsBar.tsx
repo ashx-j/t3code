@@ -90,7 +90,7 @@ export function ComposerControlsBar(props: {
   modelPickerIconClassName: string | undefined;
   getModelDisabledReason: ChatComposerProps["getModelDisabledReason"];
   /** Renders one control on its own, for a plugin that lays out the row itself. */
-  piece?: "model" | "effort" | "access";
+  piece?: "model" | "effort" | "access" | undefined;
 }) {
   const {
     environmentId,

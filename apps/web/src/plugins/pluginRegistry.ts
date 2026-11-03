@@ -198,10 +198,11 @@ const addClaim = <Claim>(
   key: string,
   claim: Claim,
   pluginIdOf: (claim: Claim) => string,
+  claimed: string,
 ) => {
   const list = claims.get(key) ?? [];
   if (list.some((other) => pluginIdOf(other) === pluginIdOf(claim))) {
-    throw new TypeError("This plugin already registered that name.");
+    throw new TypeError(`This plugin already registered ${claimed}.`);
   }
   list.push(claim);
   claims.set(key, list);
@@ -220,6 +221,7 @@ export function registerPluginSlashCommand(entry: PluginSlashCommandEntry): () =
     `${entry.environmentId}\u0000${entry.name}`,
     entry,
     (claim) => claim.pluginId,
+    `the slash command /${entry.name}`,
   );
   bump();
   return () => {
@@ -329,7 +331,13 @@ const publishCodeBlocks = () =>
 
 /** Draws fenced code of `language` in chat messages; returns the function that removes it. */
 export function registerPluginCodeBlock(language: string, entry: PluginCodeBlockEntry): () => void {
-  const remove = addClaim(codeBlockClaims, language, entry, (claim) => claim.owner.pluginId);
+  const remove = addClaim(
+    codeBlockClaims,
+    language,
+    entry,
+    (claim) => claim.owner.pluginId,
+    `code blocks in ${language}`,
+  );
   publishCodeBlocks();
   return () => {
     remove();
@@ -556,8 +564,12 @@ export function setPluginThreadBadge(
   ) {
     return;
   }
-  const others = current.filter((entry) => entry.pluginId !== pluginId);
-  const next = badge === null ? others : [...others, { pluginId, ...badge }];
+  const next =
+    badge === null
+      ? current.filter((entry) => entry.pluginId !== pluginId)
+      : existing === undefined
+        ? [...current, { pluginId, ...badge }]
+        : current.map((entry) => (entry === existing ? { pluginId, ...badge } : entry));
   if (next.length === 0) threadBadges.delete(threadKey);
   else threadBadges.set(threadKey, next);
   appAtomRegistry.set(threadBadgesVersionAtom, appAtomRegistry.get(threadBadgesVersionAtom) + 1);

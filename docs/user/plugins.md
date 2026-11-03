@@ -76,9 +76,10 @@ A plugin can also change a message before it is sent, or stop it and say why. A 
 stays in the composer, so you can edit it and send it again.
 
 Plugins can add slash commands. They appear in the composer's `/` menu with the agent's own
-commands, in every app. A plugin's command runs on the server. It can send the agent a message the
-plugin prepares, stop with a reason, or answer you in the thread without asking the agent. The
-agent's own command wins over a plugin's with the same name. Between plugins, a command that runs
+commands. A command that runs on the server shows in every app, and one that runs in the app shows
+in the web and desktop apps. A command can send the agent a message the plugin prepares, stop with
+a reason, or answer you in the thread without asking the agent. The agent's own command wins over a
+plugin's with the same name. Between plugins, a command that runs
 on the server wins over one that runs in the app, and otherwise the plugin whose id comes first
 alphabetically gets it.
 

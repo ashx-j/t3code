@@ -86,8 +86,8 @@ one before. Parts have their own version atom because they sit on hot paths such
 and every timeline row. A replacement that throws records the failure on its plugin's row, which
 is why each registered replacement carries its plugin and environment. The `app.pageFrame` part's
 `page` piece renders Settings or Usage beside the thread kept mounted under it; `index.css` hides
-that thread, and the page carries `data-app-modal` so focus and shortcut guards treat it as they
-treat the window.
+that thread, and the page carries `data-app-modal` so shortcut guards treat it as they treat the
+window. F6 still moves between the page and the sidebar beside it.
 
 T3 keeps the frame around a part and plugins arrange what is inside it, so updates rarely break
 them. Settings and Usage draw their top row with `AppRouteHeader`, which in the page frame becomes

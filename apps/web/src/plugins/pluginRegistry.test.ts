@@ -61,6 +61,13 @@ describe("plugin thread badges", () => {
     expect(appAtomRegistry.get(pluginThreadBadgesAtom("thread-b"))).toEqual([
       { pluginId: "flags", label: "Done", tone: "success" },
     ]);
+    // A changed badge keeps its place beside another plugin's.
+    setPluginThreadBadge("thread-a", "ci", { label: "Passing", tone: "success" });
+    setPluginThreadBadge("thread-a", "flags", { label: "Approved", tone: "success" });
+    expect(
+      appAtomRegistry.get(pluginThreadBadgesAtom("thread-a")).map((badge) => badge.pluginId),
+    ).toEqual(["flags", "ci"]);
+    setPluginThreadBadge("thread-a", "ci", null);
     setPluginThreadBadge("thread-a", "flags", null);
     setPluginThreadBadge("thread-b", "flags", null);
     expect(appAtomRegistry.get(pluginThreadBadgesAtom("thread-a"))).toEqual([]);

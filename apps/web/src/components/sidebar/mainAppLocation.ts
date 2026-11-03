@@ -50,6 +50,9 @@ export const shownAppPageAtom = Atom.make<AppPage | null>(null).pipe(Atom.keepAl
 /** Whether the sidebar shows a Back button, which makes a page's own close button redundant. */
 export const sidebarBackShownAtom = Atom.make(false).pipe(Atom.keepAlive);
 
+/** Whether the sidebar lists Settings' sections in place of the threads. */
+export const sidebarSettingsNavShownAtom = Atom.make(false).pipe(Atom.keepAlive);
+
 /** Leaves Settings or Usage for the page that opened it. */
 export function useCloseAppModal() {
   const navigate = useNavigate();
