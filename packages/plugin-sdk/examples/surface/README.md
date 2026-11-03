@@ -14,7 +14,8 @@ the nightly and dev artwork in the sidebar's corner.
 
 `themes/surface.json` holds every color, the corner radius and the status colors. `web.js` adds the
 shapes a theme file can't set yet. Its rules apply only while the Surface theme is on, so picking
-another theme brings back T3's own look.
+another theme brings back T3's own look. The theme file also imports on its own through **Add
+theme**, which keeps its colors but not its corner radius, status colors or `web.js` shapes.
 
 ## What `web.js` hardcodes
 
@@ -29,6 +30,6 @@ adds the seam, move the rule to it.
 | The composer card's outline and top highlight are plain white hairlines                   | `--chat-composer-outline` and `--chat-composer-highlight` on `data-slot="composer-shell"`                | Theme roles `composerOutline` and `composerHighlight`                                                                 |
 | Tool errors keep a light red icon                                                         | T3's `--tool-error-icon` variable                                                                        | A `toolErrorIcon` theme role                                                                                          |
 | Thread details shows one card per section, rows on a raised layer                         | `data-thread-details-card`, its `section` elements, and the `border-border/65` class on divided sections | A `thread.details` part with `sections: ReadonlyArray<{ id; title; actions; rows }>` and `mode: "panel" \| "popover"` |
-| Grouped settings are solid cards                                                          | `data-slot="settings-group"` and the grouped variant's `bg-card/40` class                                | Theme component colors such as `settingsGroup: { surface, border }`                                                   |
+| Grouped settings are solid cards, except the provider detail pane's flat sections         | `data-slot="settings-group"`, the grouped variant's `bg-card/40` class, and `data-provider-detail`       | Theme component colors such as `settingsGroup: { surface, border }`                                                   |
 | Segmented tabs have a sunken track and a raised selected tab                              | `data-slot="toggle-group"` with `data-variant="segmented"`, and `data-slot="toggle"`                     | Theme component colors such as `segmented: { track, thumb }`                                                          |
 | The stop button is a dark rounded square with a red icon                                  | The button's `aria-label="Stop generation"`, its only mark                                               | Theme component colors such as `stopButton: { surface, icon, shape }`, or a `data-slot` on the button                 |
