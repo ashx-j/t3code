@@ -184,7 +184,10 @@ export const dynamic = <P, A, E, R>(
 ) => {
   const declaration: Declaration<
     (params: P) => Effect.Effect<A, E | OrchestratorMcpFailure, R | WritingServices>
-  > = access === "read" ? reads(handle) : writesEnvironment((params: P) => handle(params));
+  > =
+    access === "read"
+      ? reads(handle)
+      : writesEnvironment((params: P) => handle(params), { refusals: pluginToolRefusals });
   return checkedHandler(declaration);
 };
 
@@ -298,8 +301,17 @@ export const either = <P, A, E, R, A2, E2, R2>(
   );
 };
 
-const fullAccessRequired =
-  "Changing projects or environment settings needs a live full-access/default calling thread or a full-access client.";
+const environmentRefusals = {
+  linked: "change projects or environment settings",
+  limited:
+    "Changing projects or environment settings needs a live full-access/default calling thread or a full-access client.",
+};
+
+const pluginToolRefusals = {
+  linked: "use plugin tools that change things",
+  limited:
+    "This plugin tool changes things, so it runs only from a thread set to Full access and not in Plan mode, or for an outside agent approved with Full access. Ask the user to switch this thread to Full access and leave Plan mode, then call it again.",
+};
 
 /** Recheck after waits before writing; caller modes may have changed. */
 export const writesEnvironment = <P, A, E, R>(
@@ -313,23 +325,22 @@ export const writesEnvironment = <P, A, E, R>(
      * everything already here as it was.
      */
     readonly linkedCallers?: "allowed";
+    /** What a refused caller reads, for writes that are not projects or settings. */
+    readonly refusals?: typeof environmentRefusals;
   },
 ) => {
+  const refusals = options?.refusals ?? environmentRefusals;
   const check = orchestratingCaller.pipe(
     Effect.tap((caller) =>
-      options?.linkedCallers === "allowed"
-        ? Effect.void
-        : assertNotLinked(caller, "change projects or environment settings"),
+      options?.linkedCallers === "allowed" ? Effect.void : assertNotLinked(caller, refusals.linked),
     ),
-    Effect.tap((caller) => assertFullAccess(caller, fullAccessRequired)),
+    Effect.tap((caller) => assertFullAccess(caller, refusals.limited)),
   );
   return declare(
     (params: P) => check.pipe(Effect.flatMap(() => handle(params, check))),
     // Linked work never reaches a link at all; that is checked as the call goes.
     () =>
-      orchestratingCaller.pipe(
-        Effect.tap((caller) => assertFullAccess(caller, fullAccessRequired)),
-      ),
+      orchestratingCaller.pipe(Effect.tap((caller) => assertFullAccess(caller, refusals.limited))),
   );
 };
 

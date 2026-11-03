@@ -173,7 +173,7 @@ export const makeTurnsApi = (
         throw new Error("This plugin activation has ended.");
       }
       const remove = Effect.runSyncWith(facade.context)(
-        services.hooks.addBeforeDispatch((message) =>
+        services.hooks.addBeforeDispatch(pluginId, (message) =>
           activation.controller.signal.aborted
             ? Effect.sync(() => undefined)
             : Effect.tryPromise(() =>

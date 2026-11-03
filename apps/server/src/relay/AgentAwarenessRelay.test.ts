@@ -586,7 +586,7 @@ describe("AgentAwarenessRelay", () => {
         modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test-model" },
         providerThreadId: null,
         userMessageId: MessageId.make("message:held-item"),
-        rootNodeId: null,
+        rootNodeId: NodeId.make("node:held-item"),
         activeAttemptId: null,
         status: "running" as const,
         requestedAt: now,

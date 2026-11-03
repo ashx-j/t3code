@@ -39,7 +39,11 @@ export interface PluginMcpTool {
   readonly description: string;
   /** JSON Schema for the tool's arguments. */
   readonly inputSchema: JsonObject;
-  /** Every agent sees the tool; calling a `write` tool needs a session that may change things. */
+  /**
+   * Every agent sees the tool. A `write` tool runs only for an agent in a thread set to Full
+   * access and not in Plan mode, or an outside agent approved with Full access; others get a
+   * refusal that says so. Agents from linked environments can't call it.
+   */
   readonly access: PluginRpcAccess;
 }
 
@@ -411,10 +415,10 @@ export interface PluginApi {
       handler: (run: PluginCompletedRun) => void | Promise<void>,
     ) => void;
     /**
-     * Asked about each approval or question an agent raises while the plugin is active, after
-     * hooks registered before it, until one answers. The user sees the request meanwhile and may
-     * answer first, which aborts `signal`. A hook slower than 10 seconds, one that throws, or one
-     * whose answer does not fit or the server refuses is skipped; with no answer the user decides.
+     * Asked about each approval or question an agent raises until a hook answers, plugins in id
+     * order. The user may answer first, which aborts `signal`. A hook slower than 10 seconds, one
+     * that throws, or one whose answer does not fit or the server refuses is skipped; with no
+     * answer the user decides.
      */
     readonly onRuntimeRequest: (
       handler: (
@@ -423,10 +427,10 @@ export interface PluginApi {
       ) => PluginRuntimeRequestAnswer | Promise<PluginRuntimeRequestAnswer>,
     ) => void;
     /**
-     * Sees each user or agent message before it is sent, except slash commands, after hooks
-     * registered before it and with their changes. It also sees the new text of an edited queued
-     * message and a delegated task's prompt, whose `threadId` is the task's new thread. A block
-     * stops the rest. A hook slower than 2 seconds or one that throws is skipped.
+     * Sees each message before it is sent, except slash commands, with the changes of the hooks
+     * before it, plugins in id order. It also sees an edited queued message and a delegated task's
+     * prompt, whose `threadId` is the task's new thread. A block stops the rest; a hook slower
+     * than 2 seconds or one that throws is skipped.
      */
     readonly beforeDispatch: (
       hook: (
@@ -466,8 +470,9 @@ export interface PluginApi {
     }) => Promise<string>;
     /**
      * Supplies `kind` of text before T3 Code generates it, until the plugin deactivates. T3 cleans
-     * up the answer as it does model output. Nothing, a wrong shape, an error or 30 seconds
-     * without an answer leaves it to the next plugin, then to T3 Code's own generator.
+     * up the answer as it does model output. Plugins are asked in id order. Nothing, a wrong
+     * shape, an error or 30 seconds without an answer leaves it to the next plugin, then to T3
+     * Code's own generator.
      */
     readonly register: <K extends keyof PluginTextGenerationTasks>(
       kind: K,

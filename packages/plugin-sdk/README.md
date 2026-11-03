@@ -111,8 +111,10 @@ What a provider driver may leave out:
   plugin's driver, so it shows no version advisory.
 - **Usage limits.** Report them in the snapshot (`usageLimits`) and through `applyUsageLimits`.
   The Usage page's history reads only T3 Code's own drivers, so a driver has no `usage` reader.
-- **Text generation.** Fail each method with `TextGenerationError`; T3 Code then uses another
-  provider for titles and commit messages.
+- **Text generation.** Fail each method with `TextGenerationError` and set
+  `supportsTextGeneration: false` on the snapshot, so Settings doesn't offer the provider for
+  titles and commit messages and the usage-limit fallback skips it. T3 Code doesn't switch to
+  another provider when a method fails: the thread keeps its title and the commit fails.
 - **Client presentation.** `client.settingsSchema` (the JSON Schema format plugin settings use,
   without `t3-secret` fields, because the form saves into the instance's config) and
   `client.iconUrl` (https or `data:image`) give the provider a settings form and an icon; without

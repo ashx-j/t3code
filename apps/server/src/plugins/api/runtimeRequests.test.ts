@@ -104,26 +104,29 @@ const harness = Effect.fn(function* (options: {
 });
 
 it.layer(NodeServices.layer)("runtime request hooks", (it) => {
-  it.effect("asks hooks in order, skips one past its deadline or with an unfit answer", () =>
-    Effect.gen(function* () {
-      const { events, responded, asked, hook } = yield* harness({ subscribe: Stream.fromQueue });
-      const hangs = Promise.withResolvers<void>();
-      hook("hangs", () => {
-        hangs.resolve();
-        return new Promise(() => undefined);
-      });
-      // Not one of the decisions this request offers.
-      hook("unfit", async () => ({ decision: "acceptAlways" }));
-      hook("answers", async () => ({ decision: "accept" }));
-      hook("never-asked", async () => ({ decision: "decline" }));
+  it.effect(
+    "asks hooks in plugin id order, skips one past its deadline or with an unfit answer",
+    () =>
+      Effect.gen(function* () {
+        const { events, responded, asked, hook } = yield* harness({ subscribe: Stream.fromQueue });
+        // Registered out of id order, as plugins that finish starting in another order would.
+        hook("d-never-asked", async () => ({ decision: "decline" }));
+        hook("c-answers", async () => ({ decision: "accept" }));
+        const hangs = Promise.withResolvers<void>();
+        hook("a-hangs", () => {
+          hangs.resolve();
+          return new Promise(() => undefined);
+        });
+        // Not one of the decisions this request offers.
+        hook("b-unfit", async () => ({ decision: "acceptAlways" }));
 
-      yield* Queue.offer(events, pending);
-      yield* Effect.promise(() => hangs.promise);
-      yield* TestClock.adjust("10 seconds");
+        yield* Queue.offer(events, pending);
+        yield* Effect.promise(() => hangs.promise);
+        yield* TestClock.adjust("10 seconds");
 
-      assert.deepInclude(yield* Queue.take(responded), accepted("accept"));
-      assert.deepStrictEqual(asked, ["hangs", "unfit", "answers"]);
-    }),
+        assert.deepInclude(yield* Queue.take(responded), accepted("accept"));
+        assert.deepStrictEqual(asked, ["a-hangs", "b-unfit", "c-answers"]);
+      }),
   );
 
   it.effect("asks the next hook when the server refuses an answer to a pending request", () =>
@@ -141,12 +144,12 @@ it.layer(NodeServices.layer)("runtime request hooks", (it) => {
               )
             : Effect.void,
       });
-      hook("refused", async () => ({ decision: "accept" }));
-      hook("declines", async () => ({ decision: "decline" }));
+      hook("a-refused", async () => ({ decision: "accept" }));
+      hook("b-declines", async () => ({ decision: "decline" }));
 
       yield* Queue.offer(events, pending);
       assert.deepInclude(yield* Queue.take(responded), accepted("decline"));
-      assert.deepStrictEqual(asked, ["refused", "declines"]);
+      assert.deepStrictEqual(asked, ["a-refused", "b-declines"]);
     }),
   );
 

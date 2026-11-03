@@ -88,7 +88,7 @@ const createRun = Effect.fn(function* (
       modelSelection,
       providerThreadId: null,
       userMessageId: MessageId.make(`message:${runId}`),
-      rootNodeId: null,
+      rootNodeId: NodeId.make(`node:${runId}`),
       activeAttemptId: null,
       status,
       requestedAt: old,
@@ -243,6 +243,33 @@ it.effect(
           pendingBackgroundTasks: [{ taskId: "running-task", kind: "subagent" }],
         },
       });
+      // A plugin command's reply never counts as the latest run, here as in the shell.
+      const replied = yield* createThread("replied");
+      yield* createRun(replied);
+      const replyRunId = RunId.make(`run:${replied}:reply`);
+      yield* store.apply({
+        id: EventId.make(`event:${replyRunId}`),
+        type: "run.created",
+        threadId: replied,
+        occurredAt: now,
+        payload: {
+          id: replyRunId,
+          threadId: replied,
+          ordinal: 2,
+          providerInstanceId,
+          modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make(`message:${replyRunId}`),
+          rootNodeId: null,
+          activeAttemptId: null,
+          status: "completed",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: now,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
       const candidates = yield* store.getSettlementCandidates();
       const shell = yield* store.getShellSnapshot({ location: "active" });
       const eligible = candidates.filter((thread) =>
@@ -250,7 +277,7 @@ it.effect(
       );
       assert.deepEqual(
         new Set(eligible.map((thread) => thread.id)),
-        new Set([idle, completed, queued, woke, background, persistent, rolledBack]),
+        new Set([idle, completed, queued, woke, background, persistent, rolledBack, replied]),
       );
       assert.deepEqual(
         new Set(eligible.map((thread) => thread.id)),

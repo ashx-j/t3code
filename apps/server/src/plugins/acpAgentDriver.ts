@@ -117,8 +117,8 @@ export const makeAcpAgentDriver = (
           displayName,
           accentColor,
           continuationGroupKey: continuationIdentity.continuationKey,
-        })(
-          buildServerProvider({
+        })({
+          ...buildServerProvider({
             presentation: { displayName: agent.label, showInteractionModeToggle: false },
             enabled,
             checkedAt: DateTime.formatIso(yield* DateTime.now),
@@ -126,7 +126,8 @@ export const makeAcpAgentDriver = (
             // Status checks must not start the agent, so sign-in stays unknown until a turn.
             probe: { installed: true, version: null, status: "ready", auth: { status: "unknown" } },
           }),
-        );
+          supportsTextGeneration: false,
+        });
         const orchestrationAdapter = yield* makeAcpAdapterV2({
           instanceId,
           selfInvocation: yield* resolveSelfInvocation(),

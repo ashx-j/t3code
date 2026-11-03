@@ -26,14 +26,17 @@ const own = {
 it.effect("asks plugins before T3, skipping slow or unusable answers, and cleans up theirs", () =>
   Effect.gen(function* () {
     const hooks = yield* PluginHooks.PluginHooks;
-    const textGeneration = makeTextGenerationApi(
-      makeFacadeContext({
-        pluginId: PluginId.make("writer"),
-        activation: makePluginActivation(yield* PubSub.sliding<PluginPublication>(1)),
-        context: yield* Effect.context<never>(),
-      }),
-      { hooks },
-    );
+    const textGenerationOf = Effect.fn(function* (pluginId: string) {
+      return makeTextGenerationApi(
+        makeFacadeContext({
+          pluginId: PluginId.make(pluginId),
+          activation: makePluginActivation(yield* PubSub.sliding<PluginPublication>(1)),
+          context: yield* Effect.context<never>(),
+        }),
+        { hooks },
+      );
+    });
+    const textGeneration = yield* textGenerationOf("writer");
     const generation = withPluginTextGeneration(hooks, own);
     const asked = Promise.withResolvers<void>();
     textGeneration.register("branchName", () => {
@@ -55,6 +58,16 @@ it.effect("asks plugins before T3, skipping slow or unusable answers, and cleans
     assert.deepStrictEqual(
       yield* generation.generateThreadTitle({ cwd: "/repo", message: "Hi", modelSelection }),
       { title: "T3 title" },
+    );
+
+    // The plugin whose id sorts first is asked first, whichever registered first.
+    textGeneration.register("threadTitle", () => ({ title: "Writer title" }));
+    (yield* textGenerationOf("a-titler")).register("threadTitle", () => ({
+      title: "Titler title",
+    }));
+    assert.deepStrictEqual(
+      yield* generation.generateThreadTitle({ cwd: "/repo", message: "Hi", modelSelection }),
+      { title: "Titler title" },
     );
   }).pipe(Effect.provide(PluginHooks.layer)),
 );
