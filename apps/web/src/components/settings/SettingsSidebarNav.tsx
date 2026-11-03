@@ -61,6 +61,8 @@ import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchIte
 import { validateSettingsScopeSearch } from "./settingsScope";
 import { useSettingsSectionNavigation } from "./useSettingsSectionNavigation";
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
+import { useAtomValue } from "@effect/atom-react";
+import { sidebarBackShownAtom } from "../sidebar/mainAppLocation";
 
 const SnapShotIcon = createLucideIcon("snap-shot", [
   [
@@ -146,8 +148,12 @@ export function SettingsSidebarNav({
   /** Runs before the search shortcut focuses the field, such as to open a collapsed sidebar. */
   onRevealSearch?: () => void;
 }) {
-  const navArea = workspaceAreaProps("settings-nav", 0, "Settings sections");
   const rail = placement === "page";
+  const sidebarBackShown = useAtomValue(sidebarBackShownAtom);
+  // In the app sidebar, a Back button below takes the avatar onto its row.
+  const avatarShown = rail || !sidebarBackShown;
+  // In the app sidebar, the sidebar's own focus area holds the sections.
+  const navArea = rail ? workspaceAreaProps("settings-nav", 0, "Settings sections") : undefined;
   const navigate = useNavigate();
   const currentHash = useLocation({ select: (location) => location.hash });
   const currentSearch = useLocation({ select: (location) => location.search });
@@ -479,9 +485,11 @@ export function SettingsSidebarNav({
         <Suspense fallback={null}>
           <T3ConnectSidebarSignIn />
         </Suspense>
-        <Suspense fallback={null}>
-          <T3ConnectSidebarAvatar />
-        </Suspense>
+        {avatarShown ? (
+          <Suspense fallback={null}>
+            <T3ConnectSidebarAvatar />
+          </Suspense>
+        ) : null}
       </SidebarFooter>
     </nav>
   );

@@ -68,6 +68,17 @@ export const toPatch = (
 
 const parseJsonObject = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.JsonObject));
 
+/** The edited JSON as a settings patch, with `null` for each saved key it no longer has. */
+export const toJsonPatch = (
+  saved: Schema.JsonObject,
+  json: string,
+): { readonly patch: Schema.JsonObject } | { readonly problem: string } => {
+  const parsed = parseJsonObject(json);
+  if (Option.isNone(parsed)) return { problem: "Settings must be a JSON object." };
+  const removed = Object.keys(saved).filter((key) => !Object.hasOwn(parsed.value, key));
+  return { patch: { ...Object.fromEntries(removed.map((key) => [key, null])), ...parsed.value } };
+};
+
 /**
  * A settings form drawn from a JSON Schema, for plugins and for provider drivers that come from
  * plugins. `onSave` gets the changed fields, with `null` for a cleared one, and resolves with the
@@ -103,14 +114,7 @@ export function JsonSchemaSettingsForm({
 
   const save = async () => {
     const next =
-      form.kind === "json"
-        ? (() => {
-            const parsed = parseJsonObject(json);
-            return Option.isSome(parsed)
-              ? { patch: parsed.value }
-              : { problem: "Settings must be a JSON object." };
-          })()
-        : toPatch(fields, saved, draft);
+      form.kind === "json" ? toJsonPatch(savedSettings, json) : toPatch(fields, saved, draft);
     if ("problem" in next) return setProblem(next.problem);
     setBusy(true);
     const result = await onSave(next.patch);

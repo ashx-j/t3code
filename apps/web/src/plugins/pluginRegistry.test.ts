@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import {
+  capPluginMentionText,
   PLUGIN_CONTEXT_KIND,
   pluginMentionContextId,
   pluginMentionContextRecords,
@@ -151,5 +152,8 @@ describe("plugin @ items", () => {
     ]);
     setPluginMentionItems(environmentId, "notes", []);
     expect(pluginMentionContextRecords(chip)).toEqual([]);
+    // Control characters grow sixfold as JSON, so text within the character cap can overflow it.
+    const codes = capPluginMentionText("\u0001".repeat(30_000));
+    expect(JSON.stringify({ plugin: "Notes", text: codes }).length).toBeLessThanOrEqual(64_000);
   });
 });

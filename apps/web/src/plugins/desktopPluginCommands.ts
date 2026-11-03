@@ -15,19 +15,43 @@ let syncQueued = false;
 // Told once per command and shortcut, since every sync registers all of them again.
 const refusalsShown = new Set<string>();
 
+const ACCELERATOR_ALIASES: Readonly<Record<string, string>> = {
+  cmdorctrl: "commandorcontrol",
+  cmd: "command",
+  ctrl: "control",
+  option: "alt",
+  meta: "super",
+};
+
+// Electron accepts several spellings of one shortcut, such as CmdOrCtrl and CommandOrControl.
+const sameAccelerator = (a: string, b: string) => {
+  const canonical = (accelerator: string) =>
+    accelerator
+      .toLowerCase()
+      .split("+")
+      .map((part) => ACCELERATOR_ALIASES[part] ?? part)
+      .toSorted()
+      .join("+");
+  return canonical(a) === canonical(b);
+};
+
 const showRefusals = (refused: ReadonlyArray<DesktopPluginShortcutRefusal>) => {
+  const refusedCommands = new Set(refused.map((refusal) => refusal.command));
   for (const { command, reason } of refused) {
     const entry = commands.get(command);
     if (entry?.globalShortcut === undefined) continue;
     const key = `${command}\u0000${entry.globalShortcut}`;
     if (refusalsShown.has(key)) continue;
     refusalsShown.add(key);
+    const shortcut = entry.globalShortcut;
+    // Only a command whose shortcut was registered can hold it; refused ones lost to another app.
     const holder =
       reason === "taken"
         ? [...commands.values()].find(
             (other) =>
-              other.command !== command &&
-              other.globalShortcut?.toLowerCase() === entry.globalShortcut?.toLowerCase(),
+              !refusedCommands.has(other.command) &&
+              other.globalShortcut !== undefined &&
+              sameAccelerator(other.globalShortcut, shortcut),
           )
         : undefined;
     toastManager.add({

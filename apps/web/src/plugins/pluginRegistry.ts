@@ -177,6 +177,14 @@ export function registerPluginCommand(entry: PluginCommandEntry): () => void {
   };
 }
 
+/** A loaded plugin command's name for people, such as in Keybindings settings. */
+export function pluginCommandLabel(command: string): string | undefined {
+  for (const entry of commands.values()) {
+    if (entry.command === command) return `${entry.pluginName}: ${entry.title}`;
+  }
+  return undefined;
+}
+
 export const pluginCommandsAtom = Atom.family((environmentId: string) =>
   Atom.make((get) => {
     get(versionAtom);
@@ -686,6 +694,25 @@ export const pluginMentionItemsAtom = Atom.family((environmentId: string) =>
 /** The context kind of a plugin `@` item's chip. Clients without plugins treat it as unknown. */
 export const PLUGIN_CONTEXT_KIND = "plugin";
 
+const MENTION_TEXT_MAX_CHARS = 30_000;
+// A chip's record holds at most 64,000 characters of JSON, and the rest of it is short.
+const MENTION_TEXT_MAX_JSON_CHARS = 60_000;
+
+/** Cuts an `@` item's text to fit its chip's record, where escapes such as ANSI codes grow. */
+export function capPluginMentionText(text: string): string {
+  let capped = text.slice(0, MENTION_TEXT_MAX_CHARS);
+  // No character takes more than 6 when escaped, so most text needs no measuring.
+  if (capped.length * 6 + 2 <= MENTION_TEXT_MAX_JSON_CHARS) return capped;
+  for (let encoded = JSON.stringify(capped).length; encoded > MENTION_TEXT_MAX_JSON_CHARS;) {
+    capped = capped.slice(
+      0,
+      Math.floor((capped.length * MENTION_TEXT_MAX_JSON_CHARS) / encoded) - 1,
+    );
+    encoded = JSON.stringify(capped).length;
+  }
+  return capped;
+}
+
 export const pluginMentionContextId = (
   environmentId: EnvironmentId,
   pluginId: string,
@@ -708,6 +735,15 @@ export const pluginMentionItemAtom = Atom.family((contextId: string) =>
     return findPluginMentionItem(contextId);
   }),
 );
+
+/**
+ * A plugin chip as text, for an answer to an agent's question, which carries no context records.
+ * Undefined once the item is gone.
+ */
+export function pluginMentionAnswerText(contextId: string, label: string): string | undefined {
+  const item = findPluginMentionItem(contextId);
+  return item === undefined ? undefined : `${label} (from ${item.pluginName}):\n\n${item.text}\n\n`;
+}
 
 /**
  * Records for the plugin chips in a message, read when it is sent so the agent gets each item's

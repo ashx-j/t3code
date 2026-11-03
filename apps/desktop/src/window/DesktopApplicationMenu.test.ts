@@ -256,6 +256,13 @@ describe("DesktopApplicationMenu", () => {
           menu: false,
           globalShortcut: "CommandOrControl+Shift+Y",
         },
+        // Another plugin with the same name gets its own submenu.
+        {
+          command: "plugin.hello-fork.wave",
+          title: "Wave",
+          pluginName: "Hello web",
+          menu: true,
+        },
       ]);
 
       const template = yield* Deferred.await(applicationMenuTemplate);
@@ -263,6 +270,7 @@ describe("DesktopApplicationMenu", () => {
       if (!Array.isArray(plugins?.submenu)) {
         throw new Error("Expected a Plugins menu.");
       }
+      assert.equal(plugins.submenu.length, 2);
       const helloWeb = plugins.submenu.find((item) => item.label === "Hello web");
       if (!Array.isArray(helloWeb?.submenu)) {
         throw new Error("Expected a submenu for Hello web.");

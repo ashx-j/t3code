@@ -64,6 +64,8 @@ export function t3PluginWeb(options: T3PluginWebOptions = {}) {
           cssFileName: "web",
         },
         outDir: options.outDir ?? "dist",
+        // T3 loads only `web.js`, so `import()` and `React.lazy` modules must stay inside it.
+        rolldownOptions: { output: { codeSplitting: false } },
       },
     }),
     configResolved: (config: { readonly root: string }) => {

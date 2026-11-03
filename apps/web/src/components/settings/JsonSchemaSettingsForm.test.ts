@@ -1,7 +1,7 @@
 import { pluginSettingsForm } from "@t3tools/client-runtime/plugins/settings-form";
 import { describe, expect, it } from "vite-plus/test";
 
-import { toPatch } from "./JsonSchemaSettingsForm";
+import { toJsonPatch, toPatch } from "./JsonSchemaSettingsForm";
 
 const form = pluginSettingsForm({
   type: "object",
@@ -22,5 +22,14 @@ describe("toPatch", () => {
     expect(toPatch(fields, saved, { token: "new", name: "Ash" })).toEqual({
       patch: { token: "new" },
     });
+  });
+});
+
+describe("toJsonPatch", () => {
+  it("removes a key deleted from the JSON", () => {
+    expect(toJsonPatch({ a: 1, b: { c: 2 } }, '{ "b": { "c": 3 } }')).toEqual({
+      patch: { a: null, b: { c: 3 } },
+    });
+    expect(toJsonPatch({ a: 1 }, "[]")).toEqual({ problem: "Settings must be a JSON object." });
   });
 });

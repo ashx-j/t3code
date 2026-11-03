@@ -229,6 +229,9 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       {props.item.type === "thread" ? (
         <MessagesSquareIcon aria-hidden="true" className="size-4 shrink-0 text-secondary-label" />
       ) : null}
+      {props.item.type === "plugin-mention" ? (
+        <BlocksIcon aria-hidden="true" className="size-4 shrink-0 text-secondary-label" />
+      ) : null}
       {props.item.type === "environment" ? (
         <EnvironmentMachineIcon
           kind={props.item.machine}

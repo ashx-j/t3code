@@ -57,6 +57,7 @@ import {
   registerPluginToolRenderer,
   registerPluginSettingsPanel,
   pluginContributionKey,
+  capPluginMentionText,
   pluginMentionContextId,
   setPluginComposerCollapseOnScroll,
   setPluginMentionItems,
@@ -74,7 +75,6 @@ const COMMAND_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const BADGE_TONES = new Set(["info", "success", "warning", "error"]);
 const TOAST_TYPES = new Set(["info", "success", "warning", "error"]);
 const CODE_LANGUAGE = /^[a-z0-9][a-z0-9+#.-]{0,31}$/;
-const MENTION_TEXT_MAX_CHARS = 30_000;
 // Languages the app already draws itself.
 const BUILT_IN_LANGUAGES = new Set(["mermaid", "math"]);
 
@@ -318,6 +318,8 @@ function makeWebPluginApi({
     },
     settings: {
       registerPanel: (component) => {
+        // A replaced start's late panel would take the current start's place, then remove it.
+        if (!active()) return;
         track(registerPluginSettingsPanel({ component, owner }));
       },
     },
@@ -388,6 +390,9 @@ function makeWebPluginApi({
         ) {
           throw new TypeError("A banner needs a text title, and its description must be text.");
         }
+        // Banner keys restart with each start, so a replaced start's banner would take the
+        // current one's place.
+        if (!active()) return () => {};
         bannerCount += 1;
         const hide: () => void = registerPluginBanner({
           key: `${pluginId}:${bannerCount}`,
@@ -449,9 +454,8 @@ function makeWebPluginApi({
             pluginName: plugin.name,
             label: item.label,
             description,
-            // A chip's record holds at most 64,000 characters of JSON, so longer text would
-            // fail the whole send.
-            text: item.text.slice(0, MENTION_TEXT_MAX_CHARS),
+            // Longer text would fail the whole send.
+            text: capPluginMentionText(item.text),
           };
         });
         setPluginMentionItems(environmentId, pluginId, entries);

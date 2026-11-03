@@ -1,6 +1,6 @@
 import { ArrowLeftIcon, ArrowRightIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import { memo } from "react";
+import { lazy, memo, Suspense } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useAtomValue } from "@effect/atom-react";
@@ -38,6 +38,7 @@ import {
   isAppModalPage,
   isSidebarUtilityPage,
   sidebarBackShownAtom,
+  sidebarSettingsNavShownAtom,
   useCloseAppModal,
   useNavigateToMainApp,
 } from "./mainAppLocation";
@@ -225,6 +226,12 @@ function SidebarUtilityItem({
   );
 }
 
+const T3ConnectSidebarAvatar = lazy(() =>
+  import("../clerk/T3ConnectSidebarSignIn").then((module) => ({
+    default: module.T3ConnectSidebarAvatar,
+  })),
+);
+
 /** What the footer row starts with: T3's page buttons, a Back button, or nothing. */
 type SidebarFooterUtility = "menu" | "back" | "none";
 
@@ -237,6 +244,8 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu({
   const navigateToMainApp = useNavigateToMainApp();
   const closeAppModal = useCloseAppModal();
   const { isMobile, setOpenMobile } = useSidebar();
+  // Settings' sections in the sidebar leave their account avatar to this row, beside Back.
+  const settingsNavShown = useAtomValue(sidebarSettingsNavShownAtom);
   const isOnUtilityPage = useLocation({
     select: (location) => isSidebarUtilityPage(location.pathname),
   });
@@ -280,12 +289,19 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu({
   return (
     <SidebarMenu className="flex-row items-center">
       {utility === "none" ? null : utility === "back" || isOnUtilityPage ? (
-        <SidebarMenuItem ref={showBack} className="min-w-0 flex-1">
-          <SidebarMenuButton onClick={handleBackClick}>
-            <ArrowLeftIcon />
-            <span>Back</span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
+        <>
+          <SidebarMenuItem ref={showBack} className="min-w-0 flex-1">
+            <SidebarMenuButton onClick={handleBackClick}>
+              <ArrowLeftIcon />
+              <span>Back</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          {settingsNavShown ? (
+            <Suspense fallback={null}>
+              <T3ConnectSidebarAvatar />
+            </Suspense>
+          ) : null}
+        </>
       ) : (
         <>
           <SidebarUtilityItem

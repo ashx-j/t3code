@@ -115,6 +115,8 @@ interface PluginCopy extends PluginTarget {
   readonly plugin: PluginState;
 }
 
+const NO_INSTALL_PERMISSION = Atom.make(false);
+
 /** Lists the plugins in view. Plugin folders dropped anywhere on it are installed. */
 function PluginsPage({
   environments,
@@ -132,6 +134,11 @@ function PluginsPage({
   const [adding, setAdding] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [main] = targets;
+  const canInstall = useAtomValue(
+    main === undefined
+      ? NO_INSTALL_PERMISSION
+      : pluginEnvironment.installPluginFiles.permissionAtom(main.environmentId),
+  );
   const isFileDrag = (event: DragEvent) => event.dataTransfer.types.includes("Files");
   return (
     <SettingsPageContainer>
@@ -145,13 +152,14 @@ function PluginsPage({
         onDragEnter={(event) => {
           if (!isFileDrag(event)) return;
           event.preventDefault();
-          setDragActive(true);
+          setDragActive(canInstall);
         }}
         onDragOver={(event) => {
           if (!isFileDrag(event)) return;
+          // Taken even without permission, so the browser doesn't open the folder instead.
           event.preventDefault();
-          event.dataTransfer.dropEffect = "copy";
-          setDragActive(true);
+          event.dataTransfer.dropEffect = canInstall ? "copy" : "none";
+          setDragActive(canInstall);
         }}
         onDragLeave={(event) => {
           if (!isFileDrag(event)) return;
@@ -167,6 +175,7 @@ function PluginsPage({
           if (!isFileDrag(event)) return;
           event.preventDefault();
           setDragActive(false);
+          if (!canInstall) return;
           void installer
             .installFolders(droppedFolders(event.dataTransfer))
             .then((installed) => installed && setAdding(false));

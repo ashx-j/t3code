@@ -274,7 +274,10 @@ export interface WebPluginApi {
         readonly id: string;
         readonly label: string;
         readonly description?: string;
-        /** What the agent reads for the chip, up to 30,000 characters; the rest is cut. */
+        /**
+         * What the agent reads for the chip, up to 30,000 characters, or fewer when much of it
+         * is control characters such as ANSI codes. The rest is cut.
+         */
         readonly text: string;
       }>,
     ) => void;
@@ -282,7 +285,9 @@ export interface WebPluginApi {
     readonly addButton: (button: WebPluginAction<{ readonly threadId: string | null }>) => void;
     /**
      * While on, the composer on wide screens folds to one line, as it does on phones, when the
-     * timeline scrolls up away from its end. Focusing it or scrolling back to the end unfolds it.
+     * user scrolls the timeline up away from its end. A position restored on opening a thread or a
+     * jump, such as to a find result, doesn't fold it. Focusing it or scrolling back to the end
+     * unfolds it.
      */
     readonly setCollapseOnScroll: (enabled: boolean) => void;
   };

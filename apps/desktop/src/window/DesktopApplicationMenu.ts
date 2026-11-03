@@ -123,17 +123,20 @@ const pluginMenuTemplate = (
   commands: ReadonlyArray<DesktopPluginCommand>,
   run: (command: string) => void,
 ): Electron.MenuItemConstructorOptions[] => {
-  const byPlugin = new Map<string, Electron.MenuItemConstructorOptions[]>();
+  // Keyed by plugin id, the middle of `plugin.<pluginId>.<commandId>`, since names can repeat.
+  const byPlugin = new Map<
+    string,
+    { label: string; submenu: Electron.MenuItemConstructorOptions[] }
+  >();
   for (const { command, title, pluginName, menu } of commands) {
     if (!menu) continue;
-    const items = byPlugin.get(pluginName) ?? [];
-    items.push({ label: title, click: () => run(command) });
-    byPlugin.set(pluginName, items);
+    const pluginId = command.split(".")[1] ?? pluginName;
+    const group = byPlugin.get(pluginId) ?? { label: pluginName, submenu: [] };
+    group.submenu.push({ label: title, click: () => run(command) });
+    byPlugin.set(pluginId, group);
   }
   if (byPlugin.size === 0) return [];
-  return [
-    { label: "Plugins", submenu: [...byPlugin].map(([label, submenu]) => ({ label, submenu })) },
-  ];
+  return [{ label: "Plugins", submenu: [...byPlugin.values()] }];
 };
 
 /** @public */

@@ -47,7 +47,11 @@ import { appAtomRegistry } from "../../rpc/atomRegistry";
 
 const TIMELINE_SCROLL_CANCEL_SENTINEL = Object.freeze({});
 
-/** Whether a thread's timeline sits away from its end, while the scroll-to-end pill shows. */
+/**
+ * Whether the reader scrolled a thread's timeline away from its end during this visit, while the
+ * scroll-to-end pill shows. A position restored on arrival or a jump, such as to a find result,
+ * doesn't count.
+ */
 export const timelineAwayFromEndAtom = Atom.family((threadKey: string) =>
   Atom.make(false).pipe(Atom.withLabel(`timeline-away-from-end:${threadKey}`)),
 );
@@ -209,7 +213,12 @@ export function useTimelineFollow(input: TimelineFollowInput) {
   );
   const showScrollToBottom = pill.visit === visit ? pill.show : !visit.followEnd;
   // Only a plugin's collapse on scroll reads it, so threads cost nothing while none asks.
-  const tellComposer = useAtomValue(pluginComposerCollapseOnScrollAtom) && showScrollToBottom;
+  const collapseRequested = useAtomValue(pluginComposerCollapseOnScrollAtom);
+  const [readerScrolledVisit, setReaderScrolledVisit] = useState<TimelineFollowVisit | null>(null);
+  const tellComposer = collapseRequested && showScrollToBottom && readerScrolledVisit === visit;
+  const noteReaderScroll = () => {
+    if (collapseRequested && readerScrolledVisit !== visit) setReaderScrolledVisit(visit);
+  };
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the thread's composer, which lives outside this hook, that the reader left the end
   useEffect(() => {
     if (!tellComposer) return;
@@ -323,6 +332,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     null,
   );
   const handlePageScrollStart = useStableCallback((key: PageScrollKey) => {
+    noteReaderScroll();
     if ((key === "PageUp" && timelineRealContentOverflowsViewport()) || !isTimelineAtLogicalEnd()) {
       // Through the viewport, so a running position restore stops too.
       viewportRef.current?.navigate({ releasesFollow: true });
@@ -383,6 +393,12 @@ export function useTimelineFollow(input: TimelineFollowInput) {
       awayFromEnd,
     });
     if (releases) releaseFollowForNavigation();
+    // Commands, such as a minimap click or a find jump, aren't the reader scrolling.
+    if (
+      navigation.source !== "command" &&
+      (navigation.source !== "pointer" || navigation.onScrollbar)
+    )
+      noteReaderScroll();
   };
   const handleNavigationStable = useStableCallback(handleNavigation);
   /**

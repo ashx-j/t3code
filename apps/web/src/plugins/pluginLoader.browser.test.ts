@@ -53,6 +53,7 @@ import {
   pluginContributionKey,
   pluginRightPanelAtom,
   pluginRightPanelKey,
+  pluginSettingsPanelAtom,
   pluginSlashCommandsAtom,
   pluginToolRendererAtom,
   pluginToolRendererKey,
@@ -190,10 +191,14 @@ describe("startPluginLoader", () => {
   });
 
   it("reloads a restarted plugin and undoes what it registers after unloading", async () => {
-    // Registers its panel only when the test releases it, after the loader may have stopped.
+    // The first start registers only when the test releases it, after a restart replaced it.
     const slowSource = `export default { activate(api) {
-      return new Promise((release) => { globalThis.__releaseSlowPlugin = release; }).then(() =>
-        api.rightPanel.register({ name: "slow", title: "Slow", component: () => null }));
+      const settings = () => api.settings.registerPanel(() => null);
+      if (globalThis.__releaseSlowPlugin) return settings();
+      return new Promise((release) => { globalThis.__releaseSlowPlugin = release; }).then(() => {
+        settings();
+        api.rightPanel.register({ name: "slow", title: "Slow", component: () => null });
+      });
     } };`;
     using fetchSpy = vi
       .spyOn(globalThis, "fetch")
@@ -222,16 +227,24 @@ describe("startPluginLoader", () => {
     await vi.waitFor(() =>
       expect(Reflect.get(globalThis, "__releaseSlowPlugin")).toBeTypeOf("function"),
     );
-    stop();
+    appAtomRegistry.set(
+      live,
+      AsyncResult.success({ plugins: [{ ...webPlugin("slow-web"), revision: 2 }] }),
+    );
+    const settingsPanel = pluginSettingsPanelAtom(pluginContributionKey(environmentId, "slow-web"));
+    await vi.waitFor(() => expect(appAtomRegistry.get(settingsPanel)).toBeDefined());
     const release = Reflect.get(globalThis, "__releaseSlowPlugin") as () => void;
     Reflect.deleteProperty(globalThis, "__releaseSlowPlugin");
     release();
     await Promise.resolve();
+    expect(appAtomRegistry.get(settingsPanel)).toBeDefined();
     expect(
       appAtomRegistry.get(
         pluginRightPanelAtom(pluginRightPanelKey(environmentId, "slow-web", "slow")),
       ),
     ).toBeUndefined();
+    stop();
+    expect(appAtomRegistry.get(settingsPanel)).toBeUndefined();
   });
 
   it("gives a shared slash command to the plugin whose id sorts first, and ignores a plugin's calls after it unloads", async () => {

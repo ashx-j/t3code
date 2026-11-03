@@ -1,8 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { AsyncResult } from "effect/reactivity";
 import { BlocksIcon } from "lucide-react";
 
 import { PluginRenderBoundary } from "./PluginRenderBoundary";
+import { pluginEnvironment } from "../state/plugins";
 import { Button } from "../components/ui/button";
 import {
   Empty,
@@ -37,6 +39,31 @@ function PluginPanelNotice(props: {
   );
 }
 
+/** The installed plugin's name, or its id while the list loads or once it is uninstalled. */
+function usePluginName(environmentId: EnvironmentId, pluginId: string) {
+  const result = useAtomValue(pluginEnvironment.pluginsLive({ environmentId, input: {} }));
+  const plugin = AsyncResult.isSuccess(result)
+    ? result.value.plugins.find((candidate) => candidate.id === pluginId)
+    : undefined;
+  return plugin?.name ?? pluginId;
+}
+
+function PluginNotLoadedNotice(props: {
+  readonly environmentId: EnvironmentId;
+  readonly pluginId: string;
+  readonly panel: string;
+  readonly onClose: () => void;
+}) {
+  const name = usePluginName(props.environmentId, props.pluginId);
+  return (
+    <PluginPanelNotice
+      title="Plugin not active"
+      description={`${name} is disabled or not loaded, so its "${props.panel}" panel is unavailable.`}
+      onClose={props.onClose}
+    />
+  );
+}
+
 /** A right panel registered by a web plugin, or a notice when that plugin is not loaded. */
 export function PluginPanelSurface(props: {
   readonly environmentId: EnvironmentId;
@@ -50,9 +77,10 @@ export function PluginPanelSurface(props: {
   );
   if (entry === undefined) {
     return (
-      <PluginPanelNotice
-        title="Plugin not active"
-        description={`${props.pluginId} is disabled or not loaded, so its "${props.panel}" panel is unavailable.`}
+      <PluginNotLoadedNotice
+        environmentId={props.environmentId}
+        pluginId={props.pluginId}
+        panel={props.panel}
         onClose={props.onClose}
       />
     );
@@ -66,7 +94,7 @@ export function PluginPanelSurface(props: {
       fallback={
         <PluginPanelNotice
           title="Plugin panel failed"
-          description={`${entry.title} from ${props.pluginId} stopped with an error.`}
+          description={`${entry.title} from ${entry.owner.pluginName} stopped with an error.`}
           onClose={props.onClose}
         />
       }
