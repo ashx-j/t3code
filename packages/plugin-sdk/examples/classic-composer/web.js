@@ -18,7 +18,8 @@ var Fragment = /* @__PURE__ */ read("Fragment");
 var jsx = /* @__PURE__ */ read("jsx");
 var jsxs = /* @__PURE__ */ read("jsxs");
 // examples/classic-composer/web.tsx
-var chevron = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`;
+var chevronSvg = (stroke) =>
+  `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='${stroke}' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`;
 var css = `
 .classic-composer {
   display: flex;
@@ -141,7 +142,7 @@ var css = `
     height: 0.875rem;
     flex-shrink: 0;
     background-color: var(--icon-muted);
-    mask: ${chevron} center / 0.875rem no-repeat;
+    mask: ${chevronSvg(2.25)} center / 0.875rem no-repeat;
   }
 }
 
@@ -149,7 +150,7 @@ var css = `
       showed an open lock before the redesign. Here and in every menu that lists it. */
 svg.lucide-shield-off {
   background-color: currentColor;
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='18' height='11' x='3' y='11' rx='2' ry='2'/%3E%3Cpath d='M7 11V7a5 5 0 0 1 9.9-1'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='18' height='11' x='3' y='11' rx='2' ry='2'/%3E%3Cpath d='M7 11V7a5 5 0 0 1 9.9-1'/%3E%3C/svg%3E") center / contain no-repeat;
   & > * {
     display: none;
   }
@@ -183,6 +184,7 @@ svg.lucide-shield-off {
     background-image:
       linear-gradient(transparent 16px, rgb(0 0 0 / 18%) 16px, transparent 26px),
       linear-gradient(rgb(255 255 255 / 1%), rgb(255 255 255 / 1%));
+    background-origin: border-box;
     -webkit-backdrop-filter: blur(var(--glass-blur, 0)) saturate(var(--glass-saturation, 1));
     backdrop-filter: blur(var(--glass-blur, 0)) saturate(var(--glass-saturation, 1));
     /* The top 15px sit under the card. */
@@ -197,7 +199,7 @@ svg.lucide-shield-off {
     height: 0.75rem;
     flex-shrink: 0;
     background-color: currentColor;
-    mask: ${chevron} center / contain no-repeat;
+    mask: ${chevronSvg(1.75)} center / contain no-repeat;
   }
   /* The branch picker's icons sat 2px into its padding. */
   & [data-slot="combobox-trigger"] {
@@ -207,46 +209,112 @@ svg.lucide-shield-off {
     }
   }
 }
+/* The card's outline opens where the drawer joins it, so no hairline crosses the join, and its fill
+   lets the drawer's side edges run up into the card's last pixel. Hook: data-context-row, which T3
+   sets on the shell while the drawer shows, and the outline and fill on the card's own elements. */
+[data-slot="composer-shell"][data-context-row] {
+  & :is([data-slot="composer-host"], [data-chat-composer-main-surface])::after {
+    clip-path: polygon(
+      0 0,
+      100% 0,
+      100% 100%,
+      calc(100% - 1.375rem) 100%,
+      calc(100% - 1.375rem) calc(100% - 2px),
+      1.375rem calc(100% - 2px),
+      1.375rem 100%,
+      0 100%
+    );
+  }
+  & [data-slot="composer-host"]::before {
+    clip-path: polygon(
+      0 0,
+      100% 0,
+      100% 100%,
+      calc(100% - 1.375rem) 100%,
+      calc(100% - 1.375rem) calc(100% - 1px),
+      calc(100% - 1.375rem - 1px) calc(100% - 1px),
+      calc(100% - 1.375rem - 1px) 100%,
+      calc(1.375rem + 1px) 100%,
+      calc(1.375rem + 1px) calc(100% - 1px),
+      1.375rem calc(100% - 1px),
+      1.375rem 100%,
+      0 100%
+    );
+  }
+}
+
+/* 5. Hook: data-chat-composer-body, which T3's resting animation reads. The prompt sat 12px in on
+      a narrow screen, like the row. */
+@media (width < 40rem) {
+  [data-chat-composer-body] {
+    padding-inline: 0.75rem;
+  }
+}
+
+/* 6. Hook: the Lucide class on the attach icon, inside this plugin's row. The paperclip sat 1px
+      higher before T3 nudged it down. */
+.classic-composer svg.lucide-paperclip {
+  translate: none;
+}
 `;
 /**
  * How far the row has folded as it narrows: every label, then permissions as an icon, then effort
  * too, then T3's own row, which folds them into its menu.
  */
 var FOLDS = ["full", "access-icon", "icons", "menu"];
+/** The text of the pickers, which changes with the model, effort or permissions picked. */
+var pickerLabels = (area) =>
+  Array.from(
+    area.querySelectorAll("[data-chat-provider-model-picker], [data-composer-shortcut]"),
+    (picker) => picker.textContent,
+  ).join("\n");
 /** The classic row: pickers on the left, attach and send on the right. */
 function ClassicRow({ pieces }) {
   const [row, setRow] = useState(null);
   const [fold, setFold] = useState("full");
-  const needed = useRef({});
+  const overflows = useRef(/* @__PURE__ */ new Map());
+  const needs = useRef(/* @__PURE__ */ new Map());
   useLayoutEffect(() => {
     if (!row) return;
     const pickers = row.querySelector(".classic-composer-pickers");
+    const area = pickers ?? row.querySelector('[data-chat-composer-controls="footer"]') ?? row;
     const index = FOLDS.indexOf(fold);
     const measure = () => {
-      const width = row.clientWidth;
+      const room = area.clientWidth;
+      const labels = pickerLabels(area);
+      const looser = FOLDS[index - 1];
+      const lacked = looser ? overflows.current.get(looser) : void 0;
+      if (looser && lacked !== void 0 && !needs.current.has(looser))
+        needs.current.set(looser, {
+          room: room + lacked,
+          labels,
+        });
+      const need = looser ? needs.current.get(looser) : void 0;
       const overflow = pickers ? pickers.scrollWidth - pickers.clientWidth : 0;
       const tighter = FOLDS[index + 1];
       if (overflow > 0.5 && tighter) {
-        needed.current[fold] = width + overflow;
+        overflows.current.set(fold, overflow);
+        needs.current.delete(fold);
         setFold(tighter);
-        return;
-      }
-      const looser = FOLDS[index - 1];
-      if (looser && (needed.current[looser] ?? Number.POSITIVE_INFINITY) <= width) setFold(looser);
+      } else if (looser && (!need || need.labels !== labels || need.room <= room)) setFold(looser);
     };
     const resize = new ResizeObserver(measure);
     const observe = () => {
       resize.disconnect();
-      resize.observe(row);
+      resize.observe(area);
       for (const picker of pickers?.querySelectorAll("button") ?? []) resize.observe(picker);
     };
     observe();
-    const mutations = new MutationObserver(observe);
-    if (pickers)
-      mutations.observe(pickers, {
-        childList: true,
-        subtree: true,
-      });
+    measure();
+    const mutations = new MutationObserver(() => {
+      observe();
+      measure();
+    });
+    mutations.observe(area, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
     return () => {
       resize.disconnect();
       mutations.disconnect();

@@ -66,8 +66,9 @@ const css = `
   }
 
   /* 5. Grouped settings are solid cards. Hook: data-slot="settings-group", and the grouped
-        variant's own fill class, so a plain group never matches. */
-  & [data-slot="settings-group"][class~="bg-card/40"] {
+        variant's own fill class, so a plain group never matches. The provider detail pane keeps
+        T3's flat sections. */
+  & [data-slot="settings-group"][class~="bg-card/40"]:not([data-provider-detail] *) {
     border-color: var(--border);
     border-radius: var(--radius-2xl);
     background: var(--card);
