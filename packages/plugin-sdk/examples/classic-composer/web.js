@@ -20,6 +20,10 @@ var jsxs = /* @__PURE__ */ read("jsxs");
 // examples/classic-composer/web.tsx
 var chevronSvg = (stroke) =>
   `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='${stroke}' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`;
+var chevron = chevronSvg(2.25);
+var drawerChevron = chevronSvg(1.75);
+var lockOpen = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='18' height='11' x='3' y='11' rx='2' ry='2'/%3E%3Cpath d='M7 11V7a5 5 0 0 1 9.9-1'/%3E%3C/svg%3E")`;
+var drawerInset = "var(--chat-composer-drawer-inset, 1.375rem)";
 var css = `
 .classic-composer {
   display: flex;
@@ -141,7 +145,7 @@ var css = `
     height: 0.875rem;
     flex-shrink: 0;
     background-color: var(--icon-muted);
-    mask: ${chevronSvg(2.25)} center / 0.875rem no-repeat;
+    mask: ${chevron} center / 0.875rem no-repeat;
   }
 }
 
@@ -149,7 +153,7 @@ var css = `
       showed an open lock before the redesign. Here and in every menu that lists it. */
 svg.lucide-shield-off {
   background-color: currentColor;
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='18' height='11' x='3' y='11' rx='2' ry='2'/%3E%3Cpath d='M7 11V7a5 5 0 0 1 9.9-1'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: ${lockOpen} center / contain no-repeat;
   & > * {
     display: none;
   }
@@ -161,7 +165,7 @@ svg.lucide-shield-off {
 [data-slot="composer-context-strip"] {
   isolation: isolate;
   width: auto;
-  margin: -1rem 1.375rem 0;
+  margin: -1rem ${drawerInset} 0;
   padding: 1.25rem 0.5rem 0.25rem;
   gap: 0.25rem;
   /* The pull request and branch sit at the drawer's right end at every width. An auto margin
@@ -184,7 +188,7 @@ svg.lucide-shield-off {
     height: 0.75rem;
     flex-shrink: 0;
     background-color: currentColor;
-    mask: ${chevronSvg(1.75)} center / contain no-repeat;
+    mask: ${drawerChevron} center / contain no-repeat;
   }
   /* The branch picker's icons sat 2px into its padding. */
   & [data-slot="combobox-trigger"] {
@@ -234,10 +238,10 @@ svg.lucide-shield-off {
       0 0,
       100% 0,
       100% 100%,
-      calc(100% - 1.375rem) 100%,
-      calc(100% - 1.375rem) calc(100% - 2px),
-      1.375rem calc(100% - 2px),
-      1.375rem 100%,
+      calc(100% - ${drawerInset}) 100%,
+      calc(100% - ${drawerInset}) calc(100% - 2px),
+      ${drawerInset} calc(100% - 2px),
+      ${drawerInset} 100%,
       0 100%
     );
   }
@@ -246,14 +250,14 @@ svg.lucide-shield-off {
       0 0,
       100% 0,
       100% 100%,
-      calc(100% - 1.375rem) 100%,
-      calc(100% - 1.375rem) calc(100% - 1px),
-      calc(100% - 1.375rem - 1px) calc(100% - 1px),
-      calc(100% - 1.375rem - 1px) 100%,
-      calc(1.375rem + 1px) 100%,
-      calc(1.375rem + 1px) calc(100% - 1px),
-      1.375rem calc(100% - 1px),
-      1.375rem 100%,
+      calc(100% - ${drawerInset}) 100%,
+      calc(100% - ${drawerInset}) calc(100% - 1px),
+      calc(100% - ${drawerInset} - 1px) calc(100% - 1px),
+      calc(100% - ${drawerInset} - 1px) 100%,
+      calc(${drawerInset} + 1px) 100%,
+      calc(${drawerInset} + 1px) calc(100% - 1px),
+      ${drawerInset} calc(100% - 1px),
+      ${drawerInset} 100%,
       0 100%
     );
   }
