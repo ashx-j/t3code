@@ -1,5 +1,5 @@
 import { pipe } from "effect/Function";
-import type { DesktopBridge } from "@t3tools/contracts";
+import type { DesktopBridge, DesktopWindowBackground } from "@t3tools/contracts";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import * as Schema from "effect/Schema";
 import { useSyncExternalStore } from "react";
@@ -38,8 +38,8 @@ type ThemeSnapshot = {
 };
 
 type DesktopThemeBridge = Pick<DesktopBridge, "setTheme">;
-// Undefined until the first report, so a color left from a removed theme is cleared too.
-let lastDesktopWindowBackground: string | null | undefined;
+// Undefined until the first report, so colors left from a removed theme are cleared too.
+let lastDesktopWindowBackground: string | undefined;
 
 const STORAGE_KEY = "t3code:theme";
 const MEDIA_QUERY = "(prefers-color-scheme: dark)";
@@ -342,7 +342,7 @@ function applyTheme(theme: Theme, { suppressTransitions = false, preservePreview
   lastAppliedTheme = { theme, systemDark, followSystem, appearanceMode, themeHalves };
   syncBrowserChromeTheme();
   syncDesktopTheme(theme, followSystem, appearanceMode);
-  syncDesktopWindowBackground(themeCanvasHex(appliedTheme, resolvedAppearance));
+  syncDesktopWindowBackground(theme, followSystem, appearanceMode, themeHalves);
   if (suppressTransitions) {
     // Force a reflow so the no-transitions class takes effect before removal
     void document.documentElement.offsetHeight;
@@ -396,16 +396,39 @@ function syncDesktopTheme(
   );
 }
 
-/** New desktop windows start in the theme's canvas instead of flashing black or white. */
-function syncDesktopWindowBackground(color: string | null) {
+/**
+ * New desktop windows start in the theme's canvas instead of flashing black or white. The desktop
+ * app gets what the page paints while its native theme is light and while it is dark.
+ */
+function syncDesktopWindowBackground(
+  theme: Theme,
+  followSystem: boolean,
+  appearanceMode: ThemePreferenceMode,
+  themeHalves: ThemeHalves | null,
+) {
   if (typeof window === "undefined") return;
   const bridge = window.desktopBridge;
   if (typeof bridge?.setWindowBackground !== "function") return;
-  if (lastDesktopWindowBackground === color) return;
-  lastDesktopWindowBackground = color;
-  void bridge.setWindowBackground(color).catch((cause: unknown) => {
+  const canvas = (systemDark: boolean) => {
+    const appearance = resolveThemeAppearance(
+      theme,
+      systemDark,
+      followSystem,
+      appearanceMode,
+      themeHalves,
+    );
+    return {
+      appearance,
+      color: themeCanvasHex(resolveThemeHalf(theme, themeHalves, appearance), appearance),
+    };
+  };
+  const background: DesktopWindowBackground = { light: canvas(false), dark: canvas(true) };
+  const signature = JSON.stringify(background);
+  if (lastDesktopWindowBackground === signature) return;
+  lastDesktopWindowBackground = signature;
+  void bridge.setWindowBackground(background).catch((cause: unknown) => {
     console.error("Could not set the desktop window background.", safeErrorLogAttributes(cause));
-    if (lastDesktopWindowBackground === color) lastDesktopWindowBackground = undefined;
+    if (lastDesktopWindowBackground === signature) lastDesktopWindowBackground = undefined;
   });
 }
 

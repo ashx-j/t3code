@@ -12,10 +12,41 @@ import * as Electron from "electron";
 
 import * as DesktopAssets from "../../app/DesktopAssets.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import { isWaylandSession } from "../../snapShot/snapShot.ts";
 import * as DesktopApplicationMenu from "../../window/DesktopApplicationMenu.ts";
 import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import { SET_PLUGIN_COMMANDS_CHANNEL } from "../channels.ts";
+
+type RefusalReason = DesktopPluginShortcutRefusal["reason"];
+
+// Shift and AltGr are left out: with a letter they type one.
+const TYPING_SAFE_MODIFIERS = new Set([
+  "command",
+  "cmd",
+  "control",
+  "ctrl",
+  "commandorcontrol",
+  "cmdorctrl",
+  "alt",
+  "option",
+  "super",
+  "meta",
+]);
+
+/**
+ * Whether a global shortcut leaves every app's typing alone: it holds a modifier such as Ctrl or
+ * Alt, or its key types nothing, such as F13 to F24 or a media key.
+ */
+function leavesTypingAlone(accelerator: string): boolean {
+  const parts = accelerator.toLowerCase().split("+");
+  const key = parts.at(-1) ?? "";
+  return (
+    parts.slice(0, -1).some((part) => TYPING_SAFE_MODIFIERS.has(part)) ||
+    /^f(1[3-9]|2[0-4])$/.test(key) ||
+    /^(media|volume)/.test(key)
+  );
+}
 
 /**
  * Takes the main window's plugin commands: menu items go to the Plugins menu, tray items to a
@@ -27,12 +58,25 @@ export const installPluginCommands = Effect.fn("desktop.ipc.installPluginCommand
   const menu = yield* DesktopApplicationMenu.DesktopApplicationMenu;
   const assets = yield* DesktopAssets.DesktopAssets;
   const platform = yield* HostProcess.Platform;
-  const runFork = Effect.runForkWith(yield* Effect.context<DesktopWindow.DesktopWindow>());
+  const runFork = Effect.runForkWith(
+    yield* Effect.context<DesktopWindow.DesktopWindow | ElectronWindow.ElectronWindow>(),
+  );
   const runCommand = (command: string) =>
     runFork(
       Effect.flatMap(DesktopWindow.DesktopWindow, (desktopWindow) =>
         desktopWindow.dispatchMenuAction(command, { reveal: true }),
       ).pipe(Effect.ignore),
+    );
+  // A shortcut leaves the user in the app they are in. Only a page can run the command, so it
+  // opens T3 Code when no window exists.
+  const runShortcut = (command: string) =>
+    runFork(
+      Effect.gen(function* () {
+        const main = yield* (yield* ElectronWindow.ElectronWindow).main;
+        yield* (yield* DesktopWindow.DesktopWindow).dispatchMenuAction(command, {
+          reveal: Option.isNone(main),
+        });
+      }).pipe(Effect.ignore),
     );
   let tray: Electron.Tray | null = null;
   const destroyTray = () => {
@@ -42,9 +86,35 @@ export const installPluginCommands = Effect.fn("desktop.ipc.installPluginCommand
   let registered: Array<string> = [];
   // Each window load sends an empty list first, so an unchanged list skips the menu rebuild.
   let current: ReadonlyArray<typeof DesktopPluginCommandSchema.Type> = [];
+  let refused: ReadonlyArray<DesktopPluginShortcutRefusal> = [];
+  let wayland: boolean | undefined;
   const unregisterAll = () => {
     for (const accelerator of registered) Electron.globalShortcut.unregister(accelerator);
     registered = [];
+  };
+  // Runs before any plugin shortcut is registered, when the only one this app holds is SnapShot's.
+  const checkShortcut = (accelerator: string): RefusalReason | undefined => {
+    // Electron's shortcuts need the desktop portal on Wayland, which this app doesn't enable.
+    wayland ??= isWaylandSession(platform, process.env);
+    if (wayland) return "unsupported";
+    try {
+      if (Electron.globalShortcut.isRegistered(accelerator)) return "snap-shot";
+    } catch {
+      return "invalid";
+    }
+    return leavesTypingAlone(accelerator) ? undefined : "no-modifier";
+  };
+  const bindShortcut = (command: string, accelerator: string): RefusalReason | undefined => {
+    try {
+      // False when another app, or an earlier plugin command, holds it.
+      if (!Electron.globalShortcut.register(accelerator, () => runShortcut(command))) {
+        return "taken";
+      }
+    } catch {
+      return "invalid";
+    }
+    registered.push(accelerator);
+    return undefined;
   };
 
   yield* ipc.handle(
@@ -62,7 +132,7 @@ export const installPluginCommands = Effect.fn("desktop.ipc.installPluginCommand
         ) {
           return [];
         }
-        if (Equal.equals(commands, current)) return [];
+        if (Equal.equals(commands, current)) return refused;
         current = commands;
         yield* menu.setPluginCommands(commands);
         const trayCommands = commands.filter((entry) => entry.tray === true);
@@ -74,10 +144,7 @@ export const installPluginCommands = Effect.fn("desktop.ipc.installPluginCommand
             const icon = platform === "win32" ? iconPaths.ico : iconPaths.png;
             if (Option.isSome(icon)) {
               const image = Electron.nativeImage.createFromPath(icon.value);
-              // The app icon is 1024px; the macOS menu bar wants about 18pt.
-              tray = new Electron.Tray(
-                platform === "darwin" ? image.resize({ width: 18, height: 18 }) : image,
-              );
+              tray = new Electron.Tray(platform === "darwin" ? menuBarImage(image) : image);
               tray.setToolTip(Electron.app.getName());
             } else {
               yield* Effect.logWarning("No icon for the plugin tray icon; skipping it");
@@ -104,23 +171,23 @@ export const installPluginCommands = Effect.fn("desktop.ipc.installPluginCommand
           );
         }
         unregisterAll();
-        const refused: Array<DesktopPluginShortcutRefusal> = [];
-        for (const { command, globalShortcut } of commands) {
-          if (globalShortcut === undefined) continue;
-          const run = () => runCommand(command);
-          // Throws on an accelerator Electron can't parse; returns false when another app holds it.
-          const added = yield* Effect.try(() =>
-            Electron.globalShortcut.register(globalShortcut, run),
-          ).pipe(Effect.orElseSucceed(() => "invalid" as const));
-          if (added === true) registered.push(globalShortcut);
-          else {
-            refused.push({ command, reason: added === false ? "taken" : "invalid" });
-            yield* Effect.logWarning("Could not register a plugin's global shortcut", {
-              command,
-              globalShortcut,
-            });
-          }
+        const checked = commands.flatMap(({ command, globalShortcut }) =>
+          globalShortcut === undefined
+            ? []
+            : [{ command, globalShortcut, reason: checkShortcut(globalShortcut) }],
+        );
+        const nextRefused: Array<DesktopPluginShortcutRefusal> = [];
+        for (const { command, globalShortcut, reason: early } of checked) {
+          const reason = early ?? bindShortcut(command, globalShortcut);
+          if (reason === undefined) continue;
+          nextRefused.push({ command, reason });
+          yield* Effect.logWarning("Could not register a plugin's global shortcut", {
+            command,
+            globalShortcut,
+            reason,
+          });
         }
+        refused = nextRefused;
         return refused;
       }),
     }),
@@ -132,3 +199,16 @@ export const installPluginCommands = Effect.fn("desktop.ipc.installPluginCommand
     }),
   );
 });
+
+/** The 1024px app icon at the menu bar's 18pt, with a 2x copy for Retina screens. */
+function menuBarImage(image: Electron.NativeImage): Electron.NativeImage {
+  const sized = Electron.nativeImage.createEmpty();
+  for (const scaleFactor of [1, 2]) {
+    const side = 18 * scaleFactor;
+    sized.addRepresentation({
+      scaleFactor,
+      buffer: image.resize({ width: side, height: side }).toPNG(),
+    });
+  }
+  return sized;
+}

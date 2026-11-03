@@ -480,6 +480,33 @@ describe("DesktopWindow", () => {
     );
   });
 
+  it("starts windows in the canvas the page paints in the current appearance", () => {
+    const surface = {
+      light: { appearance: "light", color: "#f4f4f4" },
+      dark: { appearance: "dark", color: "#151515" },
+    } as const;
+    const pinnedDark = {
+      light: { appearance: "dark", color: "#151515" },
+      dark: { appearance: "dark", color: "#151515" },
+    } as const;
+    const plain = {
+      light: { appearance: "light", color: null },
+      dark: { appearance: "dark", color: null },
+    } as const;
+    for (const [shouldUseDarkColors, background, expected] of [
+      [false, surface, { color: "#f4f4f4", dark: false }],
+      [true, surface, { color: "#151515", dark: true }],
+      [false, pinnedDark, { color: "#151515", dark: true }],
+      [true, plain, { color: "#000000", dark: true }],
+      [false, null, { color: "#ffffff", dark: false }],
+    ] as const) {
+      assert.deepEqual(
+        DesktopWindow.resolveWindowCanvas(shouldUseDarkColors, background),
+        expected,
+      );
+    }
+  });
+
   it("rejects renderer navigations whose origin only serializes as null", () => {
     for (const applicationUrl of ["t3code://app/", "t3code-dev://app/"]) {
       assert.isTrue(

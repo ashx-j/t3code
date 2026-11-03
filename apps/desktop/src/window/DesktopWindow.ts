@@ -8,7 +8,11 @@ import * as Ref from "effect/Ref";
 
 import * as Electron from "electron";
 
-import { type DesktopSnapShotEvent, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
+import {
+  type DesktopSnapShotEvent,
+  type DesktopWindowBackground,
+  DEFAULT_CLIENT_SETTINGS,
+} from "@t3tools/contracts";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -131,12 +135,14 @@ function getIconOption(
   });
 }
 
-/** The theme canvas the renderer last reported, so a new window does not flash black first. */
-function getInitialWindowBackgroundColor(
+/** The canvas the page paints in the current native theme, so a new window does not flash first. */
+export function resolveWindowCanvas(
   shouldUseDarkColors: boolean,
-  themeBackground: string | null,
-): string {
-  return themeBackground ?? (shouldUseDarkColors ? "#000000" : "#ffffff");
+  background: DesktopWindowBackground | null,
+): { readonly color: string; readonly dark: boolean } {
+  const canvas = background?.[shouldUseDarkColors ? "dark" : "light"];
+  const dark = canvas === undefined ? shouldUseDarkColors : canvas.appearance === "dark";
+  return { color: canvas?.color ?? (dark ? "#000000" : "#ffffff"), dark };
 }
 
 type DisplayBounds = Pick<Electron.Rectangle, "x" | "y" | "width" | "height">;
@@ -178,10 +184,13 @@ export function resolveInitialMainWindowBounds(
   return DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE;
 }
 
-function buildConnectingSplashDataUrl(shouldUseDarkColors: boolean, background: string): string {
-  const label = shouldUseDarkColors ? "#9ca3af" : "#6b7280";
-  const accent = shouldUseDarkColors ? "#f8fafc" : "#1f2937";
-  const track = shouldUseDarkColors ? "rgba(248,250,252,0.18)" : "rgba(31,41,55,0.18)";
+function buildConnectingSplashDataUrl({
+  color: background,
+  dark,
+}: ReturnType<typeof resolveWindowCanvas>): string {
+  const label = dark ? "#9ca3af" : "#6b7280";
+  const accent = dark ? "#f8fafc" : "#1f2937";
+  const track = dark ? "rgba(248,250,252,0.18)" : "rgba(31,41,55,0.18)";
   const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>html,body{margin:0;height:100%}body{background:${background};color:${label};font-family:system-ui,-apple-system,'Segoe UI',sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;-webkit-user-select:none;user-select:none;-webkit-app-region:drag}.spinner{width:26px;height:26px;border:3px solid ${track};border-top-color:${accent};border-radius:50%;animation:spin .8s linear infinite}.label{font-size:13px}@keyframes spin{to{transform:rotate(360deg)}}</style></head><body><div class="spinner"></div><div class="label">Connecting to WSL…</div></body></html>`;
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
@@ -261,7 +270,7 @@ function getWindowTitleBarOptions(
 function syncWindowAppearance(
   window: Electron.BrowserWindow,
   shouldUseDarkColors: boolean,
-  themeBackground: string | null,
+  themeBackground: DesktopWindowBackground | null,
   platform: NodeJS.Platform,
 ): Effect.Effect<void> {
   return Effect.sync(() => {
@@ -269,9 +278,7 @@ function syncWindowAppearance(
       return;
     }
 
-    window.setBackgroundColor(
-      getInitialWindowBackgroundColor(shouldUseDarkColors, themeBackground),
-    );
+    window.setBackgroundColor(resolveWindowCanvas(shouldUseDarkColors, themeBackground).color);
     const { titleBarOverlay } = getWindowTitleBarOptions(shouldUseDarkColors, platform);
     if (typeof titleBarOverlay === "object") {
       window.setTitleBarOverlay(titleBarOverlay);
@@ -392,10 +399,8 @@ export const make = Effect.gen(function* () {
       show: false,
       autoHideMenuBar: true,
       ...(environment.platform === "darwin" ? { disableAutoHideCursor: true } : {}),
-      backgroundColor: getInitialWindowBackgroundColor(
-        shouldUseDarkColors,
-        persistedSettings.windowBackground,
-      ),
+      backgroundColor: resolveWindowCanvas(shouldUseDarkColors, persistedSettings.windowBackground)
+        .color,
       ...iconOption,
       title: environment.displayName,
       ...getWindowTitleBarOptions(shouldUseDarkColors, environment.platform),
@@ -905,9 +910,8 @@ export const make = Effect.gen(function* () {
     const existingWindow = yield* electronWindow.currentMainOrFirst;
     if (Option.isSome(existingWindow)) return;
 
-    const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
-    const background = getInitialWindowBackgroundColor(
-      shouldUseDarkColors,
+    const canvas = resolveWindowCanvas(
+      yield* electronTheme.shouldUseDarkColors,
       (yield* desktopSettings.get).windowBackground,
     );
     if (yield* Ref.get(desktopState.quitting)) return;
@@ -922,7 +926,7 @@ export const make = Effect.gen(function* () {
       center: true,
       show: false,
       skipTaskbar: false,
-      backgroundColor: background,
+      backgroundColor: canvas.color,
       title: environment.displayName,
       webPreferences: {
         contextIsolation: true,
@@ -944,7 +948,7 @@ export const make = Effect.gen(function* () {
         splash.show();
       }
     });
-    void splash.loadURL(buildConnectingSplashDataUrl(shouldUseDarkColors, background));
+    void splash.loadURL(buildConnectingSplashDataUrl(canvas));
     yield* logWindowInfo("connecting splash shown");
   }).pipe(
     Effect.catch((error) =>

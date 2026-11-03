@@ -112,8 +112,11 @@ Published palettes, plugin themes among them, arrive over the server config stre
 first paint. The client saves them in localStorage on each themes event and reads that copy until
 the server sends its own, so the boot script in `index.html` and the first paint already use a
 plugin theme; an empty event clears the copy. The desktop main process cannot read localStorage,
-so the client sends the applied palette's canvas over IPC and the desktop keeps it in its settings
-for the next window.
+so the client sends over IPC the canvas it paints while Electron's native theme is light and while
+it is dark, and the desktop keeps both in its settings for the next window and the WSL splash. The
+pair is keyed by the native theme rather than by the theme's halves because a launch starts from
+the system appearance before the page pins one, so a theme pinned to dark sends its dark canvas
+for both.
 
 Plugin buttons, menu items and badges belong to the plugin's environment, since they act through
 its server half. Thread menus are built and dispatched in two places (the header hook and the

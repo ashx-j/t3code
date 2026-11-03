@@ -115,7 +115,16 @@ enabled.
 
 Plugins that draw web UI load in the web and desktop apps, from the app's main environment: the
 desktop app's own server, or the server the web app was opened from. Plugins on other environments
-you connect show in **Settings → Plugins**, but their UI doesn't load. In the desktop app a plugin can also
-add commands under **Plugins** in the menu bar or to a tray icon's menu, and shortcuts that work
-while T3 Code is in the background. The tray icon shows only while a plugin uses it. The mobile app doesn't show plugin UI, settings
-or themes.
+you connect show in **Settings → Plugins**, but their UI doesn't load. The mobile app doesn't show
+plugin UI, settings or themes.
+
+In the desktop app a plugin can also add its commands to these places. Every plugin command is also
+in the command palette.
+
+- A **Plugins** menu in the macOS menu bar. Windows and Linux don't show T3 Code's app menu.
+- A tray icon's menu, which shows only while a plugin uses it. Picking an item brings T3 Code to
+  the front.
+- Global shortcuts, which run the command while you work in another app and leave you there. They
+  need Ctrl, Alt, Command or Super, except for keys such as F13 to F24 and media keys. They don't
+  work in Linux Wayland sessions. When a shortcut can't be set, because another app or your
+  SnapShot shortcut uses it, T3 Code tells you once.
