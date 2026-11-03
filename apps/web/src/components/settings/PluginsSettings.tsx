@@ -13,7 +13,15 @@ import {
   SlidersHorizontalIcon,
   Trash2Icon,
 } from "lucide-react";
-import { type ComponentType, type DragEvent, useContext, useEffect, useRef, useState } from "react";
+import {
+  type ComponentType,
+  type DragEvent,
+  useContext,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 
 import { cn } from "../../lib/utils";
 import { droppedFolders, type PluginFolder, pickedFolder } from "../../plugins/pluginFolders";
@@ -719,7 +727,6 @@ function PluginRow({
   const update = useAtomCommand(pluginEnvironment.updatePlugin, "plugin update");
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [removeData, setRemoveData] = useState(false);
   // Plugin UI loads from the main environment only, so its settings panel and web failure do too.
   const contributionKey = pluginContributionKey(environmentId, plugin.id);
   const customSettings = useAtomValue(pluginSettingsPanelAtom(contributionKey));
@@ -737,6 +744,8 @@ function PluginRow({
   const updatable = copies.filter((copy) => copy.plugin.installSource !== undefined);
   // A plugin an agent linked from its own folder is unlinked instead; the folder stays.
   const removeLabel = copies.every((copy) => copy.plugin.source === "dev") ? "Unlink" : "Remove";
+  // Only a shadowed link can be dropped on its own, by its folder; see `pluginRows`.
+  const shadowedLink = shadowed && plugin.source === "dev" ? plugin.linkedFolder : undefined;
   const source = updatable[0]?.plugin.installSource;
   const availableUpdate = copies.find((copy) => copy.plugin.availableUpdate !== undefined)?.plugin
     .availableUpdate;
@@ -774,7 +783,25 @@ function PluginRow({
         )
       }
       control={
-        shadowed ? undefined : (
+        shadowed ? (
+          shadowedLink !== undefined ? (
+            <RemovePluginPopover
+              name={plugin.name}
+              unlink
+              linkedFolder={shadowedLink}
+              offerDataRemoval={false}
+              disabled={busy || !canManage}
+              onRemove={() =>
+                runOn([first], (copy) =>
+                  uninstall({
+                    environmentId: copy.environmentId,
+                    input: { pluginId: plugin.id, linkedFolder: shadowedLink },
+                  }),
+                )
+              }
+            />
+          ) : undefined
+        ) : (
           <>
             {hasSettings ? (
               <Button
@@ -820,61 +847,21 @@ function PluginRow({
                 <DownloadIcon className="size-4" />
               </Button>
             )}
-            <Popover>
-              <PopoverTrigger
-                render={
-                  <Button
-                    size="icon-sm"
-                    variant="ghost"
-                    disabled={busy || !canManage}
-                    aria-label={`${removeLabel} ${plugin.name}`}
-                  />
-                }
-              >
-                <Trash2Icon className="size-4" />
-              </PopoverTrigger>
-              <PopoverPopup side="top" align="end" width="md">
-                <div className="flex flex-col gap-3">
-                  {removeLabel === "Unlink" && plugin.linkedFolder !== undefined ? (
-                    <p className="text-muted-foreground text-xs">
-                      Stops loading{" "}
-                      <span className="break-all font-mono">{plugin.linkedFolder}</span>. The folder
-                      stays.
-                    </p>
-                  ) : null}
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      id={`plugin-remove-data-${first.environmentId}-${plugin.id}`}
-                      checked={removeData}
-                      onCheckedChange={(checked) => setRemoveData(checked === true)}
-                    />
-                    <Label htmlFor={`plugin-remove-data-${first.environmentId}-${plugin.id}`}>
-                      Also delete its settings and stored data
-                    </Label>
-                  </div>
-                  <div className="flex justify-end gap-2">
-                    <PopoverClose render={<Button size="sm" variant="ghost" disabled={busy} />}>
-                      Cancel
-                    </PopoverClose>
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      disabled={busy}
-                      onClick={() =>
-                        void runOn(copies, (copy) =>
-                          uninstall({
-                            environmentId: copy.environmentId,
-                            input: { pluginId: plugin.id, removeData },
-                          }),
-                        )
-                      }
-                    >
-                      {removeLabel} {plugin.name}
-                    </Button>
-                  </div>
-                </div>
-              </PopoverPopup>
-            </Popover>
+            <RemovePluginPopover
+              name={plugin.name}
+              unlink={removeLabel === "Unlink"}
+              linkedFolder={plugin.linkedFolder}
+              offerDataRemoval
+              disabled={busy || !canManage}
+              onRemove={(removeData) =>
+                runOn(copies, (copy) =>
+                  uninstall({
+                    environmentId: copy.environmentId,
+                    input: { pluginId: plugin.id, removeData },
+                  }),
+                )
+              }
+            />
             <Switch
               checked={copies.every((copy) => copy.plugin.enabled)}
               disabled={busy || !canManage}
@@ -900,6 +887,76 @@ function PluginRow({
         )
       ) : null}
     </SettingsRow>
+  );
+}
+
+/** The remove button and the popup that confirms it, or Unlink for a plugin loaded from a folder. */
+function RemovePluginPopover({
+  name,
+  unlink,
+  linkedFolder,
+  offerDataRemoval,
+  disabled,
+  onRemove,
+}: {
+  readonly name: string;
+  readonly unlink: boolean;
+  readonly linkedFolder: string | undefined;
+  readonly offerDataRemoval: boolean;
+  readonly disabled: boolean;
+  readonly onRemove: (removeData: boolean) => Promise<unknown>;
+}) {
+  const [removeData, setRemoveData] = useState(false);
+  const checkboxId = useId();
+  const label = unlink ? "Unlink" : "Remove";
+  return (
+    <Popover>
+      <PopoverTrigger
+        render={
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            disabled={disabled}
+            aria-label={`${label} ${name}`}
+          />
+        }
+      >
+        <Trash2Icon className="size-4" />
+      </PopoverTrigger>
+      <PopoverPopup side="top" align="end" width="md">
+        <div className="flex flex-col gap-3">
+          {unlink && linkedFolder !== undefined ? (
+            <p className="text-muted-foreground text-xs">
+              Stops loading <span className="break-all font-mono">{linkedFolder}</span>. The folder
+              stays.
+            </p>
+          ) : null}
+          {offerDataRemoval ? (
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id={checkboxId}
+                checked={removeData}
+                onCheckedChange={(checked) => setRemoveData(checked === true)}
+              />
+              <Label htmlFor={checkboxId}>Also delete its settings and stored data</Label>
+            </div>
+          ) : null}
+          <div className="flex justify-end gap-2">
+            <PopoverClose render={<Button size="sm" variant="ghost" disabled={disabled} />}>
+              Cancel
+            </PopoverClose>
+            <Button
+              size="sm"
+              variant="destructive"
+              disabled={disabled}
+              onClick={() => void onRemove(removeData)}
+            >
+              {label} {name}
+            </Button>
+          </div>
+        </div>
+      </PopoverPopup>
+    </Popover>
   );
 }
 
