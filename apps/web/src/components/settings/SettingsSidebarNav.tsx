@@ -2,6 +2,7 @@ import {
   lazy,
   Suspense,
   useEffect,
+  useEffectEvent,
   useRef,
   useState,
   type ComponentType,
@@ -136,11 +137,14 @@ export function SettingsSidebarNav({
   pathname,
   placement = "page",
   onNavigate,
+  onRevealSearch,
 }: {
   pathname: string;
   placement?: "page" | "sidebar";
   /** Runs after a section or search result is picked, such as to close the phone's sheet. */
   onNavigate?: () => void;
+  /** Runs before the search shortcut focuses the field, such as to open a collapsed sidebar. */
+  onRevealSearch?: () => void;
 }) {
   const navArea = workspaceAreaProps("settings-nav", 0, "Settings sections");
   const rail = placement === "page";
@@ -170,6 +174,18 @@ export function SettingsSidebarNav({
     setActiveResultIndex(maxResultIndex);
   }
 
+  const focusSearch = useEffectEvent(() => {
+    setCompactSearchOpen(true);
+    const focus = () => {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    };
+    if (onRevealSearch === undefined) return focus();
+    onRevealSearch();
+    // Once the opened sidebar has drawn, so focus lands in a visible field.
+    requestAnimationFrame(focus);
+  });
+
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window keydown listener for the find and slash search shortcuts
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -198,9 +214,7 @@ export function SettingsSidebarNav({
       }
 
       event.preventDefault();
-      setCompactSearchOpen(true);
-      searchInputRef.current?.focus();
-      searchInputRef.current?.select();
+      focusSearch();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);

@@ -6,6 +6,7 @@ import { cn } from "../../lib/utils";
 import {
   getCustomThemes,
   installCustomTheme,
+  asImportedThemeCopy,
   parseThemeFile,
   removeCustomTheme,
   THEME_FILE_VERSION,
@@ -398,9 +399,9 @@ function ThemeImportBody({
     }
     try {
       const parsed: unknown = JSON.parse(json);
-      const theme = isVsCodeThemeFile(parsed)
-        ? parseVsCodeThemeFile(parsed)
-        : parseThemeFile(parsed);
+      const theme = asImportedThemeCopy(
+        isVsCodeThemeFile(parsed) ? parseVsCodeThemeFile(parsed) : parseThemeFile(parsed),
+      );
       if (getCustomThemes().some((existing) => existing.id === theme.id)) {
         setError(null);
         setConflicts([theme]);

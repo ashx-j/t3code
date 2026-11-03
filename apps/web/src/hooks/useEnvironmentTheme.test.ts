@@ -26,11 +26,14 @@ vi.mock(import("./useTheme"), () => ({ refreshTheme }) as never);
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import {
+  asImportedThemeCopy,
   ENVIRONMENT_THEMES_STORAGE_KEY,
   getThemeDefinition,
   installCustomTheme,
   invalidateCustomThemes,
+  parseThemeFile,
   publishedThemeDefinitions,
+  THEME_FILE_VERSION,
   themeAllowsComposerArtwork,
   themeAllowsSidebarArtwork,
 } from "../themePalette";
@@ -124,6 +127,18 @@ describe("environment themes", () => {
     });
     expect(themeAllowsSidebarArtwork("nightfall")).toBe(true);
     expect(themeAllowsComposerArtwork("nightfall")).toBe(false);
+    // Importing the same theme file makes a copy instead of hiding the published original.
+    const imported = parseThemeFile({
+      version: THEME_FILE_VERSION,
+      id: "nightfall",
+      name: "Nightfall",
+      appearance: "dark",
+      colors: { canvas: "#1a1b26" },
+    });
+    expect(asImportedThemeCopy(imported)).toMatchObject({
+      id: "nightfall-copy",
+      label: "Nightfall copy",
+    });
   });
 
   it("lets a theme the user saved win an id collision", () => {

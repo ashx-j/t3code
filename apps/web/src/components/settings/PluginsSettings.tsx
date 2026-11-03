@@ -13,15 +13,7 @@ import {
   SlidersHorizontalIcon,
   Trash2Icon,
 } from "lucide-react";
-import {
-  type ComponentType,
-  type DragEvent,
-  useContext,
-  useEffect,
-  useId,
-  useRef,
-  useState,
-} from "react";
+import { type DragEvent, useContext, useEffect, useId, useRef, useState } from "react";
 
 import { cn } from "../../lib/utils";
 import { droppedFolders, type PluginFolder, pickedFolder } from "../../plugins/pluginFolders";
@@ -29,10 +21,11 @@ import { type EnvironmentPresentation, usePrimaryEnvironmentId } from "../../sta
 import {
   pluginContributionKey,
   pluginSettingsPanelAtom,
+  type PluginSettingsPanelEntry,
   pluginWebFailureAtom,
 } from "../../plugins/pluginRegistry";
 import { pluginEnvironment } from "../../state/plugins";
-import { RenderErrorBoundary } from "../RenderErrorBoundary";
+import { PluginRenderBoundary } from "../../plugins/PluginRenderBoundary";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Badge } from "../ui/badge";
@@ -885,7 +878,7 @@ function PluginRow({
         customSettings === undefined ? (
           <PluginSettingsEditor first={first} copies={copies} labelled={labelled} />
         ) : (
-          <PluginCustomSettings panel={customSettings} />
+          <PluginCustomSettings entry={customSettings} />
         )
       ) : null}
     </SettingsRow>
@@ -963,12 +956,14 @@ function RemovePluginPopover({
 }
 
 /** A settings panel the plugin's web bundle drew instead of the generated form. */
-function PluginCustomSettings(props: { readonly panel: ComponentType }) {
-  const Panel = props.panel;
+function PluginCustomSettings(props: { readonly entry: PluginSettingsPanelEntry }) {
+  const Panel = props.entry.component;
   return (
     <div className="border-t py-3">
-      <RenderErrorBoundary
-        resetKeys={[Panel]}
+      <PluginRenderBoundary
+        owner={props.entry.owner}
+        what="Its settings panel"
+        resetKeys={[props.entry]}
         fallback={
           <p className="text-xs text-destructive">
             This plugin's settings panel stopped with an error.
@@ -976,7 +971,7 @@ function PluginCustomSettings(props: { readonly panel: ComponentType }) {
         }
       >
         <Panel />
-      </RenderErrorBoundary>
+      </PluginRenderBoundary>
     </div>
   );
 }

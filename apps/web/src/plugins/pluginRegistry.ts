@@ -71,7 +71,7 @@ export interface PluginToolRendererProps {
 // Plain maps with one list-level version: chat code reads them on render and re-renders on the
 // version alone, so a plugin never adds a subscription per row or per panel.
 const rightPanels = new Map<string, PluginRightPanelEntry>();
-const settingsPanels = new Map<string, ComponentType>();
+const settingsPanels = new Map<string, PluginSettingsPanelEntry>();
 const webFailures = new Map<string, string>();
 const commands = new Map<string, PluginCommandEntry>();
 const slashCommands = new Map<string, PluginSlashCommandEntry>();
@@ -117,17 +117,18 @@ export const pluginRightPanelsAtom = Atom.family((environmentId: string) =>
   }),
 );
 
+export interface PluginSettingsPanelEntry {
+  readonly component: ComponentType;
+  readonly owner: PluginOwner;
+}
+
 /** Replaces a plugin's generated settings form; returns the function that removes it. */
-export function registerPluginSettingsPanel(
-  environmentId: EnvironmentId,
-  pluginId: string,
-  component: ComponentType,
-): () => void {
-  const key = pluginContributionKey(environmentId, pluginId);
-  settingsPanels.set(key, component);
+export function registerPluginSettingsPanel(entry: PluginSettingsPanelEntry): () => void {
+  const key = pluginContributionKey(entry.owner.environmentId, entry.owner.pluginId);
+  settingsPanels.set(key, entry);
   bump();
   return () => {
-    if (settingsPanels.get(key) !== component) return;
+    if (settingsPanels.get(key) !== entry) return;
     settingsPanels.delete(key);
     bump();
   };
@@ -183,10 +184,13 @@ export const pluginCommandsAtom = Atom.family((environmentId: string) =>
 );
 
 /** Adds a plugin command to the composer's `/` menu; returns the function that removes it. */
+/** Another plugin already holds the name or language; the loader skips the contribution. */
+export class PluginContributionTakenError extends Error {}
+
 export function registerPluginSlashCommand(entry: PluginSlashCommandEntry): () => void {
   const key = `${entry.environmentId}\u0000${entry.name}`;
   if (slashCommands.has(key)) {
-    throw new Error(`Slash command "/${entry.name}" is already registered.`);
+    throw new PluginContributionTakenError(`Slash command "/${entry.name}" is already registered.`);
   }
   slashCommands.set(key, entry);
   bump();
@@ -286,7 +290,9 @@ export const pluginCodeBlockRenderersAtom = Atom.make<ReadonlyMap<string, Plugin
 export function registerPluginCodeBlock(language: string, entry: PluginCodeBlockEntry): () => void {
   const current = appAtomRegistry.get(pluginCodeBlockRenderersAtom);
   if (current.has(language)) {
-    throw new Error(`A renderer for \`${language}\` code blocks is already registered.`);
+    throw new PluginContributionTakenError(
+      `A renderer for \`${language}\` code blocks is already registered.`,
+    );
   }
   appAtomRegistry.set(pluginCodeBlockRenderersAtom, new Map(current).set(language, entry));
   return () => {

@@ -1022,6 +1022,12 @@ export const DesktopPluginCommandSchema = Schema.Struct({
 });
 export type DesktopPluginCommand = typeof DesktopPluginCommandSchema.Type;
 
+export const DesktopPluginShortcutRefusalSchema = Schema.Struct({
+  command: Schema.String,
+  reason: Schema.Literals(["taken", "invalid"]),
+});
+export type DesktopPluginShortcutRefusal = typeof DesktopPluginShortcutRefusalSchema.Type;
+
 export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
@@ -1117,9 +1123,11 @@ export interface DesktopBridge {
   pasteAsText: () => Promise<void>;
   /**
    * Replaces the plugin commands in the app menu and their global shortcuts. Resolves with the
-   * commands whose shortcut the OS refused, usually because another app holds it.
+   * commands whose shortcut could not be bound: another app holds it, or it isn't valid.
    */
-  setPluginCommands: (commands: readonly DesktopPluginCommand[]) => Promise<readonly string[]>;
+  setPluginCommands: (
+    commands: readonly DesktopPluginCommand[],
+  ) => Promise<ReadonlyArray<DesktopPluginShortcutRefusal>>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   onSnapShotEvent: (listener: (event: DesktopSnapShotEvent) => void) => () => void;
   onQuitShortcut: (listener: (event: QuitShortcutHintEvent) => void) => () => void;

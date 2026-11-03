@@ -439,6 +439,21 @@ export function startEnvironmentThemeCache(): () => void {
   };
 }
 
+/**
+ * An imported theme whose id a published theme, such as a plugin's, already uses, renamed to a copy.
+ * A custom theme wins an id collision, so the import would otherwise hide the original and its
+ * radius and status colors.
+ */
+export function asImportedThemeCopy(theme: ThemeDefinition): ThemeDefinition {
+  const published = getEnvironmentThemes();
+  if (!published.some((candidate) => candidate.id === theme.id)) return theme;
+  const taken = new Set([...getCustomThemes(), ...published].map((candidate) => candidate.id));
+  const base = `${theme.id.slice(0, 38)}-copy`;
+  let id = base;
+  for (let copy = 2; taken.has(id); copy += 1) id = `${base}-${copy}`;
+  return { ...theme, id, label: `${theme.label.slice(0, 43)} copy` };
+}
+
 function getEnvironmentThemes(): ReadonlyArray<ThemeDefinition> {
   return appAtomRegistry.get(environmentThemeDefinitionsAtom);
 }

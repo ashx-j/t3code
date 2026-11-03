@@ -1,4 +1,8 @@
-import { DesktopPluginCommandSchema, type DesktopPluginCommand } from "@t3tools/contracts";
+import {
+  DesktopPluginCommandSchema,
+  type DesktopPluginCommand,
+  type DesktopPluginShortcutRefusal,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import { toastManager } from "../components/ui/toast";
@@ -11,8 +15,8 @@ let syncQueued = false;
 // Told once per command and shortcut, since every sync registers all of them again.
 const refusalsShown = new Set<string>();
 
-const showRefusals = (refused: ReadonlyArray<string>) => {
-  for (const command of refused) {
+const showRefusals = (refused: ReadonlyArray<DesktopPluginShortcutRefusal>) => {
+  for (const { command, reason } of refused) {
     const entry = commands.get(command);
     if (entry?.globalShortcut === undefined) continue;
     const key = `${command}\u0000${entry.globalShortcut}`;
@@ -20,8 +24,11 @@ const showRefusals = (refused: ReadonlyArray<string>) => {
     refusalsShown.add(key);
     toastManager.add({
       type: "warning",
-      title: `${entry.globalShortcut} is taken`,
-      description: `Another app uses it, so ${entry.pluginName}'s "${entry.title}" has no global shortcut.`,
+      title:
+        reason === "taken"
+          ? `${entry.globalShortcut} is taken`
+          : `${entry.globalShortcut} isn't a valid shortcut`,
+      description: `${reason === "taken" ? "Another app uses it" : "The desktop app can't bind it"}, so ${entry.pluginName}'s "${entry.title}" has no global shortcut.`,
     });
   }
 };

@@ -418,7 +418,7 @@ function SidebarControl() {
 
 function SidebarSettingsNav() {
   const pathname = useLocation({ select: (location) => location.pathname });
-  const { isMobile, setOpenMobile } = useSidebar();
+  const { isMobile, setOpen, setOpenMobile } = useSidebar();
   return (
     <Suspense fallback={<div className="min-h-0 flex-1" />}>
       <SettingsSidebarNav
@@ -427,6 +427,7 @@ function SidebarSettingsNav() {
         onNavigate={() => {
           if (isMobile) setOpenMobile(false);
         }}
+        onRevealSearch={() => (isMobile ? setOpenMobile(true) : setOpen(true))}
       />
     </Suspense>
   );
