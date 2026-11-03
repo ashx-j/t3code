@@ -186,8 +186,9 @@ the components in `@t3tools/plugin-sdk/ui` are shared.
 
 ## Keeping a plugin working across T3 updates
 
-T3 changes its markup, class names, labels and layout in most releases. A plugin keeps working
-best when it uses what T3 hands it on purpose:
+Build the whole design; leaving a detail out because it might break is not the answer. T3 changes
+its markup, class names, labels and layout in most releases, so build each detail on the most
+durable thing T3 offers for it:
 
 - **Arrange pieces instead of rebuilding T3's controls.** `ui.replace` gives you T3's own controls,
   already wired up. Place them, wrap them or leave them out. A copied control, with its markup,
