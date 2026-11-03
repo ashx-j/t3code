@@ -65,7 +65,6 @@ import {
   type PluginActionContexts,
   type PluginActionEntry,
   type PluginActionPlace,
-  PluginContributionTakenError,
   type PluginOwner,
 } from "./pluginRegistry";
 import { isLoadableWebPlugin } from "./pluginWatch";
@@ -255,18 +254,6 @@ function makeWebPluginApi({
     pluginName: plugin.name,
     report: (message) => reportWebFailure(environmentId, plugin, message),
   };
-  // Another plugin got there first: this one goes without that contribution, and its row says so,
-  // instead of failing to start because of load order.
-  const addUnlessTaken = (what: string, register: () => () => void) => {
-    try {
-      track(register());
-    } catch (error) {
-      if (!(error instanceof PluginContributionTakenError)) throw error;
-      const message = `${what} is taken by another plugin, so this one goes without it.`;
-      setPluginWebFailure(environmentId, pluginId, message);
-      owner.report?.(message);
-    }
-  };
   return {
     version: 1,
     id: pluginId,
@@ -416,7 +403,7 @@ function makeWebPluginApi({
         if (T3_SLASH_COMMAND_NAMES.has(command.name)) {
           throw new TypeError(`/${command.name} is one of T3's own commands.`);
         }
-        addUnlessTaken(`/${command.name}`, () =>
+        track(
           registerPluginSlashCommand({
             environmentId,
             pluginId,
@@ -559,9 +546,7 @@ function makeWebPluginApi({
         if (!CODE_LANGUAGE.test(renderer.language) || BUILT_IN_LANGUAGES.has(renderer.language)) {
           throw new TypeError(`"${renderer.language}" is not a language plugins can draw.`);
         }
-        addUnlessTaken(`\`${renderer.language}\` code blocks`, () =>
-          registerPluginCodeBlock(renderer.language, { component: renderer.component, owner }),
-        );
+        track(registerPluginCodeBlock(renderer.language, { component: renderer.component, owner }));
       },
     },
     timeline: {

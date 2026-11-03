@@ -234,7 +234,7 @@ describe("startPluginLoader", () => {
     ).toBeUndefined();
   });
 
-  it("skips a slash command another plugin holds, and ignores a plugin's calls after it unloads", async () => {
+  it("gives a shared slash command to the plugin whose id sorts first, and ignores a plugin's calls after it unloads", async () => {
     const source = (id: string) => `export default { activate(api) {
       globalThis.__api_${id} = api;
       api.composer.registerSlashCommand({ name: "notes", description: "${id}", run() {} });
@@ -254,17 +254,13 @@ describe("startPluginLoader", () => {
       live,
       AsyncResult.success({ plugins: [webPlugin("first-web"), webPlugin("second-web")] }),
     );
-    // Both start; whichever came second goes without `/notes` and says so on its row.
+    // Both start, whatever order they finish in, and `/notes` belongs to first-web.
     await vi.waitFor(() =>
       expect(appAtomRegistry.get(pluginCommandsAtom(environmentId))).toHaveLength(2),
     );
-    expect(appAtomRegistry.get(pluginSlashCommandsAtom(environmentId))).toHaveLength(1);
-    const notes = ["first-web", "second-web"].map((id) =>
-      appAtomRegistry.get(pluginWebFailureAtom(pluginContributionKey(environmentId, id))),
-    );
-    expect(notes.filter((note) => note !== undefined)).toEqual([
-      "/notes is taken by another plugin, so this one goes without it.",
-    ]);
+    expect(
+      appAtomRegistry.get(pluginSlashCommandsAtom(environmentId)).map((entry) => entry.pluginId),
+    ).toEqual(["first-web"]);
 
     // A timer the plugin left running changes nothing once it is off.
     const api = Reflect.get(globalThis, "__api_first") as {
@@ -274,6 +270,10 @@ describe("startPluginLoader", () => {
     await vi.waitFor(() =>
       expect(appAtomRegistry.get(pluginCommandsAtom(environmentId))).toHaveLength(1),
     );
+    // Without first-web, second-web's `/notes` takes over.
+    expect(
+      appAtomRegistry.get(pluginSlashCommandsAtom(environmentId)).map((entry) => entry.pluginId),
+    ).toEqual(["second-web"]);
     api.threads.setBadge("thread-1", { label: "Late" });
     const threadKey = scopedThreadKey(scopeThreadRef(environmentId, ThreadId.make("thread-1")));
     expect(appAtomRegistry.get(pluginThreadBadgesAtom(threadKey))).toEqual([]);

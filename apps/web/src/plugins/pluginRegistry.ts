@@ -74,7 +74,8 @@ const rightPanels = new Map<string, PluginRightPanelEntry>();
 const settingsPanels = new Map<string, PluginSettingsPanelEntry>();
 const webFailures = new Map<string, string>();
 const commands = new Map<string, PluginCommandEntry>();
-const slashCommands = new Map<string, PluginSlashCommandEntry>();
+// Each name keeps every plugin that claims it; see `firstById`.
+const slashCommands = new Map<string, Array<PluginSlashCommandEntry>>();
 const banners = new Map<string, PluginBannerEntry>();
 const toolRenderers = new Map<string, PluginToolRendererEntry>();
 
@@ -185,18 +186,31 @@ export const pluginCommandsAtom = Atom.family((environmentId: string) =>
 
 /** Adds a plugin command to the composer's `/` menu; returns the function that removes it. */
 /** Another plugin already holds the name or language; the loader skips the contribution. */
-export class PluginContributionTakenError extends Error {}
+/**
+ * When plugins claim the same slash command or code block language, the one whose id sorts first
+ * gets it whatever order they started in, as on the server; the others go without.
+ */
+const firstById = <Claim>(claims: ReadonlyArray<Claim>, pluginIdOf: (claim: Claim) => string) =>
+  claims.reduce((first, claim) => (pluginIdOf(claim) < pluginIdOf(first) ? claim : first));
+
+// Adds `claim` under `key`; returns the function that removes it again.
+const addClaim = <Claim>(claims: Map<string, Array<Claim>>, key: string, claim: Claim) => {
+  const list = claims.get(key) ?? [];
+  list.push(claim);
+  claims.set(key, list);
+  return () => {
+    const index = list.indexOf(claim);
+    if (index === -1) return;
+    list.splice(index, 1);
+    if (list.length === 0) claims.delete(key);
+  };
+};
 
 export function registerPluginSlashCommand(entry: PluginSlashCommandEntry): () => void {
-  const key = `${entry.environmentId}\u0000${entry.name}`;
-  if (slashCommands.has(key)) {
-    throw new PluginContributionTakenError(`Slash command "/${entry.name}" is already registered.`);
-  }
-  slashCommands.set(key, entry);
+  const remove = addClaim(slashCommands, `${entry.environmentId}\u0000${entry.name}`, entry);
   bump();
   return () => {
-    if (slashCommands.get(key) !== entry) return;
-    slashCommands.delete(key);
+    remove();
     bump();
   };
 }
@@ -204,7 +218,9 @@ export function registerPluginSlashCommand(entry: PluginSlashCommandEntry): () =
 export const pluginSlashCommandsAtom = Atom.family((environmentId: string) =>
   Atom.make((get) => {
     get(versionAtom);
-    return [...slashCommands.values()].filter((entry) => entry.environmentId === environmentId);
+    return [...slashCommands.values()]
+      .map((claims) => firstById(claims, (claim) => claim.pluginId))
+      .filter((entry) => entry.environmentId === environmentId);
   }),
 );
 
@@ -286,21 +302,25 @@ export const pluginCodeBlockRenderersAtom = Atom.make<ReadonlyMap<string, Plugin
   new Map(),
 ).pipe(Atom.keepAlive);
 
+const codeBlockClaims = new Map<string, Array<PluginCodeBlockEntry>>();
+const publishCodeBlocks = () =>
+  appAtomRegistry.set(
+    pluginCodeBlockRenderersAtom,
+    new Map(
+      Array.from(codeBlockClaims, ([language, claims]) => [
+        language,
+        firstById(claims, (claim) => claim.owner.pluginId),
+      ]),
+    ),
+  );
+
 /** Draws fenced code of `language` in chat messages; returns the function that removes it. */
 export function registerPluginCodeBlock(language: string, entry: PluginCodeBlockEntry): () => void {
-  const current = appAtomRegistry.get(pluginCodeBlockRenderersAtom);
-  if (current.has(language)) {
-    throw new PluginContributionTakenError(
-      `A renderer for \`${language}\` code blocks is already registered.`,
-    );
-  }
-  appAtomRegistry.set(pluginCodeBlockRenderersAtom, new Map(current).set(language, entry));
+  const remove = addClaim(codeBlockClaims, language, entry);
+  publishCodeBlocks();
   return () => {
-    const latest = appAtomRegistry.get(pluginCodeBlockRenderersAtom);
-    if (latest.get(language) !== entry) return;
-    const next = new Map(latest);
-    next.delete(language);
-    appAtomRegistry.set(pluginCodeBlockRenderersAtom, next);
+    remove();
+    publishCodeBlocks();
   };
 }
 
