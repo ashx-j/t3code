@@ -1545,11 +1545,15 @@ export function removeCustomThemes(themeIds: ReadonlyArray<string>): void {
   );
 }
 
+const THEME_STATUS_COLOR_ROLE_SET: ReadonlySet<string> = new Set(THEME_STATUS_COLOR_ROLES);
+
 function parseThemeColorOverrides(value: unknown): ThemeColorOverrides {
   if (!isRecord(value)) throw new Error("Theme colors must be objects.");
 
   const overrides: Partial<Record<ThemeColorRole, string>> = {};
   for (const [role, color] of Object.entries(value)) {
+    // A published theme's status colors; an imported copy keeps T3's own, like its radius.
+    if (THEME_STATUS_COLOR_ROLE_SET.has(role)) continue;
     if (!THEME_COLOR_ROLE_SET.has(role)) {
       throw new Error(`"${role}" is not a supported theme color role.`);
     }
