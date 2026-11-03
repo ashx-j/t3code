@@ -2,9 +2,10 @@
 
 A web-only plugin that brings back the composer row from before T3's redesign. The model, effort
 and permissions pickers sit on the left, each ending in a chevron, and attach and send sit on the
-right, 16px in from the card's edges. Full access shows an open lock. As the composer narrows,
-permissions and then effort drop their labels, and on the narrowest screens the row hands over to
-T3's own row, which folds them into a menu. A new thread's workspace and branch sit in a drawer
+right, 16px in from the card's edges. Below a 640px wide window, the row and the prompt both sit
+12px in. Full access shows an open lock. As the composer narrows, permissions and then effort drop
+their labels, and on the narrowest screens the row hands over to T3's own row, which folds them
+into a menu. A new thread's workspace and branch sit in a drawer
 tucked under the card, shaded below the card in dark mode. A folder without git gives the drawer
 nothing to show, so there is no drawer, and while T3's own row shows, the drawer names the
 permissions. Scrolling the timeline up rests an existing thread's composer as one line;

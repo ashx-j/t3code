@@ -26,7 +26,6 @@ var css = `
   flex: 1;
   min-width: 0;
   align-items: center;
-  container: classic-composer / inline-size;
 }
 .classic-composer-pickers {
   display: flex;
@@ -56,7 +55,7 @@ var css = `
 .classic-composer-folded {
   flex: 1;
 }
-@container classic-composer (min-width: 28rem) {
+@media (width >= 40rem) {
   .classic-composer-pickers {
     margin-inline-start: 0;
     margin-block-end: 0.5rem;
@@ -116,7 +115,7 @@ var css = `
     margin-inline: -0.25rem 0.5rem;
   }
 }
-@container classic-composer (min-width: 28rem) {
+@media (width >= 40rem) {
   .classic-composer-folded [data-chat-composer-controls="footer"] {
     margin-inline-start: 0;
   }

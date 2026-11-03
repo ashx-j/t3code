@@ -13,15 +13,14 @@ const drawerChevron = chevronSvg(1.75);
 const lockOpen = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='18' height='11' x='3' y='11' rx='2' ry='2'/%3E%3Cpath d='M7 11V7a5 5 0 0 1 9.9-1'/%3E%3C/svg%3E")`;
 
 // The plugin's own elements. The old row sat 16px in from the card's right and bottom edges, and
-// 12px in a narrow composer with the model picker pulled 4px toward the edge. T3 already insets
-// the row by 8px.
+// 12px on a narrow screen with the model picker pulled 4px toward the edge, switching at the same
+// width as the prompt. T3 already insets the row by 8px.
 const css = `
 .classic-composer {
   display: flex;
   flex: 1;
   min-width: 0;
   align-items: center;
-  container: classic-composer / inline-size;
 }
 .classic-composer-pickers {
   display: flex;
@@ -51,7 +50,7 @@ const css = `
 .classic-composer-folded {
   flex: 1;
 }
-@container classic-composer (min-width: 28rem) {
+@media (width >= 40rem) {
   .classic-composer-pickers {
     margin-inline-start: 0;
     margin-block-end: 0.5rem;
@@ -111,7 +110,7 @@ const css = `
     margin-inline: -0.25rem 0.5rem;
   }
 }
-@container classic-composer (min-width: 28rem) {
+@media (width >= 40rem) {
   .classic-composer-folded [data-chat-composer-controls="footer"] {
     margin-inline-start: 0;
   }
