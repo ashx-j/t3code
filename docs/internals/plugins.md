@@ -129,10 +129,12 @@ so drafts, their persistence and queued edits need no plugin slot, and a chip wh
 is sent as unavailable.
 
 In the desktop app, plugin commands that ask for a menu item, a tray item or a global shortcut cross
-to the main process as one list that replaces the previous one. Each window load first sends an
-empty list, because the main process outlives the page, so a reload or an unloaded plugin never
-leaves stale items. Clicks and shortcuts come back through the existing menu-action channel as the
-`plugin.<pluginId>.<commandId>` command.
+to the main process as one list that replaces the previous one. The main process outlives the
+page, so a new page holds its list back until its first round of plugin loads ends, then sends it
+even when it is empty; a page with no web plugins sends an empty list once. A reload keeps the tray
+icon and shortcuts in between, and an unloaded plugin never leaves stale items. Clicks and
+shortcuts come back through the existing menu-action channel as the `plugin.<pluginId>.<commandId>`
+command.
 
 ## Reaching into orchestration
 

@@ -13,6 +13,9 @@ export const isDesktopPluginCommand = Schema.is(DesktopPluginCommandSchema);
 
 const commands = new Map<string, DesktopPluginCommand>();
 let syncQueued = false;
+// The desktop keeps the last page's list until this page's first round of plugin loads ends, so
+// a reload doesn't drop the tray icon and shortcuts in between.
+let held = true;
 
 // Each refusal shows once, across launches and reloads, since each one registers every shortcut
 // again. Keyed by command and shortcut; a shortcut that later binds is forgotten.
@@ -144,7 +147,7 @@ const showRefusals = (
 
 // One IPC call per burst of changes, such as a plugin registering several commands at once.
 const queueSync = () => {
-  if (syncQueued) return;
+  if (held || syncQueued) return;
   syncQueued = true;
   queueMicrotask(() => {
     syncQueued = false;
@@ -156,6 +159,13 @@ const queueSync = () => {
       .catch(() => undefined);
   });
 };
+
+/** Sends this page's commands, even none, once its first round of plugin loads has ended. */
+export function releaseDesktopPluginCommands() {
+  if (!held) return;
+  held = false;
+  queueSync();
+}
 
 /**
  * Lists a plugin command in the desktop app's Plugins menu or binds its global shortcut, and

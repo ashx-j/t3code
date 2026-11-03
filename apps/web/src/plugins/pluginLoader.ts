@@ -40,7 +40,11 @@ import { Textarea } from "../components/ui/textarea";
 import { toastManager } from "../components/ui/toast";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { registerCommands, type CommandHandlers } from "../shortcuts/dispatcher";
-import { isDesktopPluginCommand, registerDesktopPluginCommand } from "./desktopPluginCommands";
+import {
+  isDesktopPluginCommand,
+  registerDesktopPluginCommand,
+  releaseDesktopPluginCommands,
+} from "./desktopPluginCommands";
 import { pluginEnvironment } from "../state/plugins";
 import { readPreparedConnection } from "../state/session";
 import {
@@ -772,15 +776,18 @@ export function startPluginLoader(
     }
     // Not awaited, so a plugin that hangs until its deadline holds back neither the others nor
     // the next change, such as turning another plugin off.
-    for (const plugin of wanted.values()) {
-      if (!loaded.has(plugin.id)) void load(plugin);
-    }
+    return [...wanted.values()].filter((plugin) => !loaded.has(plugin.id)).map(load);
   };
 
+  let firstRoundStarted = false;
   const stopFollowing = appAtomRegistry.subscribe(
     pluginEnvironment.pluginsLive({ environmentId, input: {} }),
     (result) => {
-      if (!stopped && AsyncResult.isSuccess(result)) reconcile(result.value.plugins);
+      if (stopped || !AsyncResult.isSuccess(result)) return;
+      const loads = reconcile(result.value.plugins);
+      if (firstRoundStarted) return;
+      firstRoundStarted = true;
+      void Promise.allSettled(loads).then(releaseDesktopPluginCommands);
     },
     { immediate: true },
   );

@@ -34,8 +34,13 @@ async function loadPage(
     },
   });
   vi.resetModules();
-  const { registerDesktopPluginCommand } = await import("./desktopPluginCommands");
+  const { registerDesktopPluginCommand, releaseDesktopPluginCommands } =
+    await import("./desktopPluginCommands");
   registerDesktopPluginCommand(toggle, () => undefined);
+  // The desktop keeps the last page's commands until this page's plugins have loaded.
+  await Promise.resolve();
+  expect(setPluginCommands).not.toHaveBeenCalled();
+  releaseDesktopPluginCommands();
   await vi.waitFor(() => expect(setPluginCommands).toHaveBeenCalledOnce());
   // The module's own handler was attached first, so it has run once this resolves.
   await setPluginCommands.mock.results[0]!.value;

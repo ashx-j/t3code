@@ -5,11 +5,15 @@ import { useEffect } from "react";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { primaryServerConfigAtom } from "../state/server";
 
-// A new or reloaded window has no plugin commands yet, while the desktop main process still holds
-// the last page's menu items, tray icon and global shortcuts. Plugins that load send theirs again.
-if (typeof window !== "undefined") {
+// The desktop main process outlives the page and keeps the last page's menu items, tray icon and
+// global shortcuts. The loader replaces them once its first plugins have loaded; with no web
+// plugins to load, they are cleared here, once.
+let desktopCommandsSettled = false;
+const clearDesktopPluginCommands = () => {
+  if (desktopCommandsSettled || typeof window === "undefined") return;
+  desktopCommandsSettled = true;
   void window.desktopBridge?.setPluginCommands([]).catch(() => undefined);
-}
+};
 
 // Module level: React Compiler cannot compile a component that calls import() itself.
 const loadPluginWatch = () => import("./pluginWatch");
@@ -31,25 +35,34 @@ const whenIdle = (run: () => void) => {
 export function PluginLoaderStarter() {
   const environmentId = usePrimaryEnvironmentId();
   const router = useRouter();
-  const supported =
-    useAtomValue(primaryServerConfigAtom)?.environment.capabilities.plugins === true;
+  const config = useAtomValue(primaryServerConfigAtom);
+  const configKnown = config !== null && config !== undefined;
+  const supported = config?.environment.capabilities.plugins === true;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts and stops a runtime that lives outside React
   useEffect(() => {
-    if (!supported || environmentId === null) return;
+    if (!supported || environmentId === null) {
+      if (configKnown) clearDesktopPluginCommands();
+      return;
+    }
     let cancelled = false;
     let stopWatching: (() => void) | undefined;
     let stopLoader: (() => void) | undefined;
     const cancelIdle = whenIdle(() => {
       void loadPluginWatch().then(({ watchForWebPlugins }) => {
         if (cancelled) return;
-        stopWatching = watchForWebPlugins(environmentId, () => {
-          void loadPluginLoader().then((module) => {
-            if (cancelled) return;
-            stopLoader = module.startPluginLoader(environmentId, (path) =>
-              router.history.push(path),
-            );
-          });
-        });
+        stopWatching = watchForWebPlugins(
+          environmentId,
+          () => {
+            desktopCommandsSettled = true;
+            void loadPluginLoader().then((module) => {
+              if (cancelled) return;
+              stopLoader = module.startPluginLoader(environmentId, (path) =>
+                router.history.push(path),
+              );
+            });
+          },
+          clearDesktopPluginCommands,
+        );
       });
     });
     return () => {
@@ -58,6 +71,6 @@ export function PluginLoaderStarter() {
       stopWatching?.();
       stopLoader?.();
     };
-  }, [supported, environmentId, router]);
+  }, [supported, environmentId, router, configKnown]);
   return null;
 }
