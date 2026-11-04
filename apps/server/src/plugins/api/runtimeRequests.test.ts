@@ -55,7 +55,8 @@ const accepted = (decision: "accept" | "decline") => ({
 
 /**
  * Hooks over a pending deploy approval. `subscribe` makes each subscription to the event stream,
- * and `respond` decides whether the server accepts each answer.
+ * `respond` decides whether the server accepts each answer, and `waiting` lists the request's
+ * thread among the live ones before any event names it.
  */
 const harness = Effect.fn(function* (options: {
   readonly subscribe: (
@@ -64,6 +65,7 @@ const harness = Effect.fn(function* (options: {
   readonly respond?: (
     command: OrchestrationV2ServerCommand,
   ) => Effect.Effect<void, Orchestrator.OrchestratorV2Error>;
+  readonly waiting?: boolean;
 }) {
   const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
   const responded = yield* Queue.unbounded<OrchestrationV2ServerCommand>();
@@ -71,6 +73,10 @@ const harness = Effect.fn(function* (options: {
     Orchestrator.OrchestratorV2,
     Layer.mock(Orchestrator.OrchestratorV2)({
       streamDomainEvents: Stream.suspend(() => options.subscribe(events)),
+      listActiveShellIndex: () =>
+        Effect.succeed(
+          options.waiting === true ? [{ id: threadId, mayBeLive: true } as never] : [],
+        ),
       getThreadRecords: () =>
         Effect.succeed({ runtimeRequests: [request], turnItems: [item] } as never),
     }),
@@ -150,6 +156,15 @@ it.layer(NodeServices.layer)("runtime request hooks", (it) => {
       yield* Queue.offer(events, pending);
       assert.deepInclude(yield* Queue.take(responded), accepted("decline"));
       assert.deepStrictEqual(asked, ["a-refused", "b-declines"]);
+    }),
+  );
+
+  it.effect("asks about a request that was already pending when the first hook arrived", () =>
+    Effect.gen(function* () {
+      // Such as one raised while the only plugin with a hook reloaded.
+      const { responded, hook } = yield* harness({ subscribe: Stream.fromQueue, waiting: true });
+      hook("answers", async () => ({ decision: "accept" }));
+      assert.deepInclude(yield* Queue.take(responded), accepted("accept"));
     }),
   );
 

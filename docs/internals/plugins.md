@@ -14,13 +14,22 @@ that throws or hangs while loading or activating is marked failed, one that thro
 that call, hung cleanups are abandoned after a deadline, and none of them stops the server. Node
 exits on a rejection nobody handles, so every promise the API hands a plugin goes through
 `forPlugin` in `facade.ts`, and only a plugin that awaits it sees the failure. Plugin code can still
-fail where nothing T3 runs is waiting, such as in a timer or an async callback that awaits a failing
-call, so from the first server plugin load the host listens for uncaught exceptions and unhandled
-rejections (`pluginFailureGuard.ts`). It records the ones whose error is a plugin API error or whose
-stack runs through a plugin's folder as that plugin's `serverFailure`, and passes the rest on, so
-T3's own crashes still stop the server. Node keeps a stopped plugin's code and timers, so the guard
-stays until the host stops. It takes over the listeners already there instead of listening beside
-them, because the Cursor SDK's guard exits only while it listens alone. Enable,
+fail where nothing T3 runs is waiting, such as in a timer, an async callback that awaits a failing
+call or a child process with no `'error'` listener, so from the first server plugin load the host
+listens for uncaught exceptions and unhandled rejections (`pluginFailureGuard.ts`). A child
+process's failure has only Node's frames in its stack, so the host runs module load, `activate`,
+cleanups and every plugin callback it calls in an `AsyncLocalStorage` scope naming the plugin, which
+Node carries into the timers, promises and callbacks that code starts; `call` and `fork` in
+`facade.ts` leave it, so T3's work for an API call is not the plugin's. The guard records a failure
+raised in a plugin's scope, or else one whose error is a plugin API error or whose stack runs
+through a plugin's folder, as that plugin's `serverFailure`, and passes the rest on, so T3's own
+crashes still stop the server. Callbacks only T3 waits on, such as schedules, run and send hooks and
+text generators, record their failures the same way. Clients get a plugin's first failure at once
+and its latest at most every 5 seconds, so a timer failing in a loop does not resend the list each
+time, and stopping a plugin forgets the failures of that start. Node keeps a stopped plugin's code
+and timers, so the guard stays until the host stops. It holds the listeners already there, and any
+added later, instead of listening beside them, because the Cursor SDK's guard exits only while it
+listens alone. Enable,
 disable, reload and install run in the host's scope, so a client that disconnects mid-change never
 leaves a plugin half torn down. A newly found plugin starts disabled; the user enables it. The web
 loader starts bundles in parallel, gives each 30 seconds to load and to activate, and undoes
@@ -154,7 +163,8 @@ before the command reaches it, with a 2-second deadline each and fail-open, and 
 and guest messages. The logic lives in `pluginSendHooks.ts` behind one call, because that file is
 one of upstream's busiest. While any hook or plugin command is registered, a thread's messages and
 queued edits pass hooks and dispatch one at a time in arrival order, or a 10-second command would
-let the message sent after it reach the agent first. Other threads never wait, and a plugin's own
+let the message sent after it reach the agent first. A message still in line keeps the next one
+behind it after the last hook or command is removed. Other threads never wait, and a plugin's own
 sends skip the line, so a command handler that sends to its thread cannot wait on itself. Queued edits and delegated task prompts reach agents without a new
 message, so they run the hooks there too, or a redaction plugin could be bypassed by editing a
 queued message. A message whose id is already recorded passed the hooks when it was first sent: a
@@ -174,10 +184,11 @@ skips and its writes refuse, when the plugin first subscribes and after each run
 with the last 256 ended runs: runs that end while a plugin is off arrive when it starts, even
 before it has handled one, and a run updated again after it ended (a checkpoint landing on an
 interrupted run) is not delivered twice, while a retry, which sets the failed run back to
-`preparing`, makes it deliverable again. Command replies are recorded with `run.created` alone, so
+`preparing`, makes it deliverable again, and a revert delivers a run once more as `rolled_back`. Command replies are recorded with `run.created` alone, so
 one arrives only when a revert rolls it back. For a slash command, a name in T3's, the provider's or a plugin's list, hooks may
 only block, because changed text would change what the command does; other text that starts with
-`/`, such as a path, gets every hook. Hooks see the message's `creationSource`, because text the
+`/`, such as a path, gets every hook. A queued edit reads its run's provider; a delegated task that
+names no model is checked without one, so any `/name` there may only be blocked. Hooks see the message's `creationSource`, because text the
 server writes, such as the usage-limit resume, is sent as the user.
 
 `turns.onRuntimeRequest` reacts to stored events too and answers through the same
@@ -187,7 +198,9 @@ Cursor raises none. Adapters record a request and its turn item in either order,
 watches both event types and asks plugins once both exist. Requests that cannot be answered
 (`not_resumable`) are skipped, and plugins choose only from the decisions the request offers,
 because adapters map the rest differently (`acceptAlways` is a deny in Claude). The user sees the
-request while plugins decide: holding it back would need a change at every adapter.
+request while plugins decide: holding it back would need a change at every adapter. The reactor
+follows events only while a hook is registered, so when it starts, such as after the only hooked
+plugin reloads, it also reads the pending requests of threads that may be live.
 
 A server plugin's slash commands are provider slash commands: the server adds them to every
 provider's lists where it adds `/usage-limits`, so every client lists them with no plugin code, and
@@ -297,8 +310,9 @@ config, the host turns defects in a plugin's `create` into driver errors, and a 
 whose rebuild still fails removes its driver so the kind stays free. Adding a driver builds its
 instances without their secrets, as startup does: one that needs a secret shows "Reading secrets…"
 until a read outside the lock finishes, so a vault prompt never holds other registry changes. The
-registry also holds its lock while `create` runs, so the host fails a plugin's `create` after 20 seconds, within the 30
-that `activate` gets while it waits on `registerDriver`.
+registry also holds its lock while `create` runs, so the host fails each instance's `create` after
+20 seconds. `registerDriver` builds the kind's saved instances one after another, so an `activate`
+that awaits it outlasts its 30 seconds, and the plugin fails, once 2 of them hang.
 
 Clients pick a provider's card, icon and form from static definitions, so a plugin's driver
 declares `client.settingsSchema` (the JSON Schema subset plugin settings use) and

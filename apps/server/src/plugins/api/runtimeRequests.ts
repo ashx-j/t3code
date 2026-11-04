@@ -24,7 +24,7 @@ import * as Stream from "effect/Stream";
 import type * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import type * as ThreadManagementService from "../../orchestration-v2/ThreadManagementService.ts";
 import { inPluginOrder } from "../PluginHooks.ts";
-import { newCommandId } from "./facade.ts";
+import { newCommandId, pluginCodeScope } from "./facade.ts";
 
 // The user sees the request the whole time and may answer first, so a plugin gets a short window.
 const RUNTIME_REQUEST_DEADLINE = Duration.seconds(10);
@@ -284,25 +284,55 @@ export const makeRuntimeRequestHooks = (input: {
     );
   });
 
+  const considerLogged = (threadId: ThreadId, requestId: RuntimeRequestId) =>
+    consider(threadId, requestId).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("reading a runtime request for plugins failed", {
+          requestId,
+          cause: String(cause).slice(0, 500),
+        }),
+      ),
+    );
+
   // The in-memory event stream other reactors use: nothing is serialized or budgeted per event,
   // and the type check runs before anything else. The buffer keeps projection reads for one
   // request from holding back the events behind it.
-  const react = orchestrator.streamDomainEvents.pipe(
+  const followEvents = orchestrator.streamDomainEvents.pipe(
     Stream.map(candidateOf),
     Stream.filter((candidate) => candidate !== undefined),
     Stream.buffer({ capacity: CANDIDATE_BUFFER, strategy: "sliding" }),
     Stream.runForEach((candidate) =>
       candidate.open
-        ? consider(candidate.threadId, candidate.requestId).pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("reading a runtime request for plugins failed", {
-                requestId: candidate.requestId,
-                cause: String(cause).slice(0, 500),
-              }),
-            ),
-          )
+        ? considerLogged(candidate.threadId, candidate.requestId)
         : forget(candidate.requestId),
     ),
+  );
+
+  // Requests already pending when the reactor starts, such as ones raised while the only plugin
+  // with a hook reloaded, get no new event, so the threads that may be live are read once.
+  const considerWaiting = Effect.gen(function* () {
+    for (const shell of yield* orchestrator.listActiveShellIndex()) {
+      if (!shell.mayBeLive) continue;
+      const { runtimeRequests } = yield* orchestrator.getThreadRecords(shell.id, [
+        "runtimeRequests",
+      ]);
+      for (const request of runtimeRequests) {
+        if (request.status === "pending") yield* considerLogged(shell.id, request.id);
+      }
+    }
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("reading pending runtime requests for plugins failed", {
+        cause: String(cause).slice(0, 500),
+      }),
+    ),
+  );
+
+  // Both run at once, so a request raised while the threads are read still arrives as an event.
+  const react = Effect.all([followEvents, considerWaiting], {
+    concurrency: "unbounded",
+    discard: true,
+  }).pipe(
     // Started again while any hook is registered, so one failure cannot silence every plugin.
     Effect.catchCause((cause) =>
       Effect.logWarning("plugin runtime request reactor stopped; restarting", {
@@ -316,7 +346,8 @@ export const makeRuntimeRequestHooks = (input: {
   return {
     add: (hook) => {
       hooks = inPluginOrder(hooks, hook);
-      reactor ??= Effect.runForkWith(context)(react);
+      // Every plugin's hooks share it, so it starts outside the scope of the plugin adding one.
+      reactor ??= pluginCodeScope.exit(() => Effect.runForkWith(context)(react));
       return () => {
         hooks = hooks.filter((other) => other !== hook);
         if (hooks.length > 0 || reactor === undefined) return;

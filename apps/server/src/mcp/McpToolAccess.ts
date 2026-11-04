@@ -200,8 +200,8 @@ export const dynamic = <P, A, E, R>(
               Effect.tap(fullAccess),
               Effect.flatMap(() => handle(params)),
             ),
-          // Linked work never reaches a link at all; that is checked as the call goes.
-          () => orchestratingCaller.pipe(Effect.tap(fullAccess)),
+          // Only the handler leaves `dynamic`, and remote checks are read where toolkits route calls.
+          undefined,
         );
   return checkedHandler(declaration);
 };

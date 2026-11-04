@@ -11,13 +11,12 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 
-import { abortEffect } from "./api/facade.ts";
+import { abortEffect, errorText } from "./api/facade.ts";
 import type { PluginCheckReport } from "./pluginCheck.ts";
 
 // MCP clients reject longer tool names.
 const MAX_TOOL_NAME_CHARS = 64;
 const TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
-const MAX_REASON_CHARS = 500;
 const PLUGINS_LIST_TOOL = "t3_plugins_list";
 const PLUGINS_INVOKE_TOOL = "t3_plugins_invoke";
 const PLUGINS_SET_ENABLED_TOOL = "t3_plugins_set_enabled";
@@ -147,6 +146,7 @@ const toolState = (state: PluginState) => ({
     ? {}
     : { failure: `${state.failure.stage}: ${state.failure.message}` }),
   ...(state.webFailure === undefined ? {} : { webFailure: state.webFailure }),
+  ...(state.serverFailure === undefined ? {} : { serverFailure: state.serverFailure }),
   ...(state.linkedFolder === undefined ? {} : { linkedFolder: state.linkedFolder }),
 });
 
@@ -197,17 +197,6 @@ export class PluginMcpTools extends Context.Service<
   }
 >()("t3/plugins/PluginMcpTools") {}
 
-const errorText = (cause: unknown) => {
-  let text = "Unknown error";
-  try {
-    text =
-      cause instanceof Error && typeof cause.message === "string" ? cause.message : String(cause);
-  } catch {
-    // Plugin code can throw values whose conversion to a string throws again.
-  }
-  return text.slice(0, MAX_REASON_CHARS);
-};
-
 const make = () => {
   // Every change runs synchronously, so plugin activation can register a tool and return.
   const tools = new Map<string, PluginMcpToolEntry>();
@@ -234,7 +223,7 @@ const make = () => {
   const pluginsList: PluginMcpToolEntry = {
     name: PLUGINS_LIST_TOOL,
     description:
-      "List the plugins installed in this T3 Code environment, with each one's status, whether it is enabled, why its last start or its web half in the browser failed, if either did, and the linkedFolder of each copy loaded from a folder with link: true.",
+      "List the plugins installed in this T3 Code environment, with each one's status, whether it is enabled, why its last start, its web half in the browser or its server code outside a call (serverFailure, such as in a timer) failed, if any did, and the linkedFolder of each copy loaded from a folder with link: true.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     access: "read",
     call: () =>
@@ -278,7 +267,8 @@ const make = () => {
 
   const pluginsSetEnabled: PluginMcpToolEntry = {
     name: PLUGINS_SET_ENABLED_TOOL,
-    description: "Turn an installed plugin on or off and return its new status.",
+    description:
+      "Turn an installed plugin on or off and return its new status, with why it failed if it did, including serverFailure for its server code failing outside a call.",
     inputSchema: {
       type: "object",
       properties: { pluginId: { type: "string" }, enabled: { type: "boolean" } },
@@ -383,7 +373,7 @@ const make = () => {
   const pluginsReload: PluginMcpToolEntry = {
     name: PLUGINS_RELOAD_TOOL,
     description:
-      "Restart an installed plugin with its current files, including a changed t3-plugin.json, and return its status and why it failed, if it did. Run t3_plugins_check on it to find the cause of a failure. An open T3 Code window loads its web half after this returns; t3_plugins_list then shows whether that failed.",
+      "Restart an installed plugin with its current files, including a changed t3-plugin.json, and return its status and why it failed, if it did, including serverFailure for its server code failing outside a call. Run t3_plugins_check on it to find the cause of a failure. An open T3 Code window loads its web half after this returns; t3_plugins_list then shows whether that failed.",
     inputSchema: {
       type: "object",
       properties: { pluginId: { type: "string" } },

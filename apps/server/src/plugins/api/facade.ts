@@ -1,18 +1,56 @@
+// @effect-diagnostics nodeBuiltinImport:off - AsyncLocalStorage has no Effect counterpart, and it
+// must follow plugin code through Node's own callbacks.
+import * as NodeAsyncHooks from "node:async_hooks";
+
 import { CommandId, type PluginId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import type * as Context from "effect/Context";
 import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import type { PluginActivation } from "../PluginApi.ts";
+
+const MAX_ERROR_CHARS = 500;
+
+/** A plugin error's text for logs, states and replies, bounded. */
+export const errorText = (cause: unknown) => {
+  let text = "Unknown error";
+  try {
+    text =
+      cause instanceof Error && typeof cause.message === "string" ? cause.message : String(cause);
+  } catch {
+    // Plugin code can throw values whose conversion to a string throws again.
+  }
+  return text.slice(0, MAX_ERROR_CHARS);
+};
+
+/** Plugin code threw or rejected. Its message is the plugin's own. */
+export class PluginCodeError extends Schema.TaggedError<PluginCodeError>()("PluginCodeError", {
+  cause: Schema.Defect(),
+}) {
+  override get message(): string {
+    return errorText(this.cause);
+  }
+}
+
+/**
+ * The plugin whose code is running, carried through every timer, promise and Node callback that
+ * code starts, so a failure whose stack shows only Node's internals is still the plugin's.
+ */
+export const pluginCodeScope = new NodeAsyncHooks.AsyncLocalStorage<PluginId>();
 
 /** What every facade group needs from the activation it belongs to. */
 export interface FacadeContext {
   readonly pluginId: PluginId;
   readonly activation: PluginActivation;
   readonly context: Context.Context<never>;
+  /** Runs the plugin's own code, such as a handler, in its scope. */
+  readonly asPlugin: <A>(run: () => A) => A;
+  /** Records a failure of a plugin callback that only T3 waits on, such as a schedule handler. */
+  readonly reportFailure: (error: unknown) => void;
   /**
    * Runs an effect as a Promise that rejects with an `Error` carrying the failure's `_tag` as `code`.
    * Map results inside the effect: a `.then` on the Promise is a new one that nothing handles.
@@ -86,11 +124,24 @@ export const makeFacadeContext = (input: {
   readonly pluginId: PluginId;
   readonly activation: PluginActivation;
   readonly context: Context.Context<never>;
+  /** Where `reportFailure` sends failures; the host shows them on the plugin's row. */
+  readonly onFailure?: (error: unknown) => void;
 }): FacadeContext => {
   const { activation, context, pluginId } = input;
-  const runExit = Effect.runPromiseExitWith(context);
+  // T3's work for a call is not the plugin's code, so it leaves the plugin's scope.
+  const runExit = <A, E>(effect: Effect.Effect<A, E>) =>
+    pluginCodeScope.exit(() => Effect.runPromiseExitWith(context)(effect));
   return {
-    ...input,
+    pluginId,
+    activation,
+    context,
+    asPlugin: (run) => pluginCodeScope.run(pluginId, run),
+    reportFailure:
+      input.onFailure ??
+      ((error) =>
+        Effect.runForkWith(context)(
+          Effect.logWarning("plugin code failed", { pluginId, reason: errorText(error) }),
+        )),
     // Cleanups may still save state; afterwards a disabled plugin's leftovers cannot act.
     call: (effect) =>
       activation.ended.signal.aborted
@@ -120,13 +171,15 @@ export const makeFacadeContext = (input: {
             }),
           ),
     fork: (effect) => {
-      Effect.runForkWith(context)(
-        effect.pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("plugin background work failed", {
-              pluginId,
-              cause: Cause.pretty(cause).slice(0, 500),
-            }),
+      pluginCodeScope.exit(() =>
+        Effect.runForkWith(context)(
+          effect.pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("plugin background work failed", {
+                pluginId,
+                cause: Cause.pretty(cause).slice(0, 500),
+              }),
+            ),
           ),
         ),
       );

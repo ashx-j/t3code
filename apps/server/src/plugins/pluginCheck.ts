@@ -207,11 +207,18 @@ export const checkPluginFolder = Effect.fn("PluginCheck.check")(function* (
         Effect.map(Option.flatMap((stat) => Option.liftPredicate(stat, (s) => s.type === "File"))),
         Effect.map(Option.map((stat) => Number(stat.size))),
       );
-  // Nothing for a file that is missing or larger than `limit`.
+  // A link out of the folder could make the report quote any file on the server.
+  const root = yield* fs.realPath(folder).pipe(Effect.orElseSucceed(() => folder));
+  const isInside = (file: string) =>
+    fs.realPath(file).pipe(
+      Effect.map((real) => real.startsWith(`${root}${path.sep}`)),
+      Effect.orElseSucceed(() => false),
+    );
+  // Nothing for a file that is missing, outside the folder or larger than `limit`.
   const readText = (file: string, limit: number) =>
-    sizeOf(file).pipe(
-      Effect.flatMap((size) =>
-        Option.isSome(size) && size.value <= limit
+    Effect.all([isInside(file), sizeOf(file)]).pipe(
+      Effect.flatMap(([inside, size]) =>
+        inside && Option.isSome(size) && size.value <= limit
           ? fs.readFileString(file).pipe(Effect.option)
           : Effect.succeedNone,
       ),
@@ -227,7 +234,9 @@ export const checkPluginFolder = Effect.fn("PluginCheck.check")(function* (
       file: MANIFEST_FILE,
       problem: Option.isNone(size)
         ? `The folder has no ${MANIFEST_FILE}.`
-        : `${MANIFEST_FILE} is larger than ${MAX_MANIFEST_BYTES} bytes.`,
+        : size.value > MAX_MANIFEST_BYTES
+          ? `${MANIFEST_FILE} is larger than ${MAX_MANIFEST_BYTES} bytes.`
+          : `${MANIFEST_FILE} links to a file outside the plugin folder.`,
       fix: "Add the manifest at the plugin's root; the Manifest section of the plugin SDK README lists its fields.",
     });
     return report();

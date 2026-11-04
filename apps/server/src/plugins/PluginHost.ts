@@ -68,6 +68,7 @@ import {
   type PluginApiServices,
   type PluginPublication,
 } from "./PluginApi.ts";
+import { errorText, PluginCodeError, pluginCodeScope } from "./api/facade.ts";
 import { makeRuntimeRequestHooks } from "./api/runtimeRequests.ts";
 import { makePluginFailureGuard } from "./pluginFailureGuard.ts";
 import { discoverPlugins, type DiscoveredPlugin } from "./pluginDiscovery.ts";
@@ -84,7 +85,6 @@ import * as PluginMcpTools from "./PluginMcpTools.ts";
 import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
 
-const MAX_FAILURE_MESSAGE_CHARS = 500;
 // Clients send web failures and agents read them, so they are bounded like plugin errors.
 const MAX_WEB_FAILURE_CHARS = 1_000;
 const WEB_CONTENT_TYPES: Readonly<Record<string, string>> = {
@@ -105,6 +105,9 @@ const WEB_CONTENT_TYPES: Readonly<Record<string, string>> = {
 const ACTIVATE_DEADLINE = Duration.seconds(30);
 const UPDATE_CHECK_INTERVAL = Duration.hours(24);
 const CLEANUP_DEADLINE = Duration.seconds(5);
+// A plugin's failures outside a call reach clients at most this often, the latest one last, so a
+// timer failing every few milliseconds with new text does not resend the list each time.
+const FAILURE_PUBLISH_INTERVAL = Duration.seconds(5);
 const PUBLICATION_BUFFER = 64;
 
 export class PluginNotFoundError extends Schema.TaggedError<PluginNotFoundError>()(
@@ -161,15 +164,6 @@ export class PluginHandlerError extends Schema.TaggedError<PluginHandlerError>()
 ) {
   override get message(): string {
     return `Plugin ${this.pluginId} failed in ${this.method}: ${this.reason}`;
-  }
-}
-
-/** Plugin code threw or rejected while loading, activating, or cleaning up. */
-class PluginCodeError extends Schema.TaggedError<PluginCodeError>()("PluginCodeError", {
-  cause: Schema.Defect(),
-}) {
-  override get message(): string {
-    return errorText(this.cause);
   }
 }
 
@@ -345,17 +339,6 @@ interface PluginRecord {
   readonly revision?: number;
 }
 
-const errorText = (cause: unknown) => {
-  let text = "Unknown error";
-  try {
-    text =
-      cause instanceof Error && typeof cause.message === "string" ? cause.message : String(cause);
-  } catch {
-    // Plugin code can throw values whose conversion to a string throws again.
-  }
-  return text.slice(0, MAX_FAILURE_MESSAGE_CHARS);
-};
-
 const manifestOf = (plugin: DiscoveredPlugin): PluginManifest | undefined =>
   "manifest" in plugin ? plugin.manifest : undefined;
 
@@ -507,12 +490,12 @@ const make = Effect.gen(function* () {
   const activations = yield* FiberMap.make<PluginId>();
   const hostScope = yield* Effect.scope;
 
-  const currentStates = Effect.gen(function* () {
+  const statesOf = Effect.fn("PluginHost.statesOf")(function* (all: ReadonlyArray<PluginRecord>) {
     const config = yield* Ref.get(pluginsConfig);
     const enabled = config.enabled ?? {};
     const failures = yield* Ref.get(webFailures);
     const serverFailed = yield* Ref.get(serverFailures);
-    return (yield* Ref.get(records)).map((record) => {
+    return all.map((record) => {
       const webFailure = failures.get(record.plugin.id);
       const serverFailure = serverFailed.get(record.plugin.id);
       return toState(
@@ -529,15 +512,17 @@ const make = Effect.gen(function* () {
       );
     });
   });
-  // What the last publish sent. Settings rescans on every visit, and a list sent again would make
-  // every client and provider stream rebuild what it already shows.
-  let published: ReadonlyArray<PluginState> | undefined;
+  const currentStates = Ref.get(records).pipe(Effect.flatMap(statesOf));
+  // What the last publish sent, starting from the empty list clients get before any. Settings
+  // rescans on every visit, and a list sent again would make every client and provider stream
+  // rebuild what it already shows.
+  let published: ReadonlyArray<PluginState> = [];
   // Reading and publishing under one lock, so a slower fiber cannot publish an older list last.
   const publishUnderLock = publishLock.withPermits(1)(
     Effect.gen(function* () {
       const all = yield* Ref.get(records);
-      const states = yield* currentStates;
-      if (published !== undefined && Equal.equals(states, published)) return;
+      const states = yield* statesOf(all);
+      if (Equal.equals(states, published)) return;
       yield* services.mcpTools.setInstalledPlugins(states);
       const active = all.flatMap((record, index) =>
         states[index]?.status === "active" ? [record.plugin] : [],
@@ -592,21 +577,48 @@ const make = Effect.gen(function* () {
       return next;
     }).pipe(Effect.andThen(publishStates));
 
-  // A timer that fails every second logs and publishes once.
+  // When each plugin's failure was last published, and the plugins whose next one is waiting.
+  const failurePublishedAt = new Map<PluginId, number>();
+  const failurePublishWaiting = new Set<PluginId>();
+  // A timer that fails every second with the same text logs and publishes once.
   const recordServerFailure = Effect.fnUntraced(function* (pluginId: PluginId, error: unknown) {
     const record = yield* findRecord(pluginId);
     const message = errorText(error);
     const known = (yield* Ref.get(serverFailures)).get(pluginId);
     if (known?.revision === record?.revision && known?.message === message) return;
-    yield* Effect.logWarning("plugin code failed outside a call", { pluginId, reason: message });
     yield* Ref.update(serverFailures, (all) =>
       new Map(all).set(pluginId, { revision: record?.revision, message }),
     );
+    if (failurePublishWaiting.has(pluginId)) return;
+    const publishedAt = failurePublishedAt.get(pluginId);
+    const wait =
+      publishedAt === undefined
+        ? 0
+        : publishedAt +
+          Duration.toMillis(FAILURE_PUBLISH_INTERVAL) -
+          (yield* Clock.currentTimeMillis);
+    if (wait > 0) {
+      failurePublishWaiting.add(pluginId);
+      yield* Effect.sleep(Duration.millis(wait)).pipe(
+        Effect.ensuring(Effect.sync(() => failurePublishWaiting.delete(pluginId))),
+      );
+    }
+    failurePublishedAt.set(pluginId, yield* Clock.currentTimeMillis);
+    yield* Effect.logWarning("plugin code failed outside a call", {
+      pluginId,
+      reason: (yield* Ref.get(serverFailures)).get(pluginId)?.message ?? message,
+    });
     yield* publishStates;
   });
-  const failureGuard = makePluginFailureGuard((pluginId, error) => {
-    Effect.runForkWith(context)(recordServerFailure(pluginId, error));
-  });
+  // Recorded at once and outside the plugin's scope, where the guard hears of it, and in the
+  // host's scope, so a publish still waiting ends with the host.
+  const reportServerFailure = (pluginId: PluginId, error: unknown) =>
+    pluginCodeScope.exit(() => {
+      Effect.runForkWith(context)(
+        Effect.forkIn(recordServerFailure(pluginId, error), hostScope, { startImmediately: true }),
+      );
+    });
+  const failureGuard = makePluginFailureGuard(reportServerFailure);
   // Added before the teardown finalizer, so it runs after plugin cleanups.
   yield* Effect.addFinalizer(() => Effect.sync(failureGuard.uninstall));
 
@@ -656,7 +668,7 @@ const make = Effect.gen(function* () {
 
   const runCleanup = (pluginId: PluginId, cleanup: () => void | Promise<void>) =>
     Effect.tryPromise({
-      try: () => Promise.resolve().then(cleanup),
+      try: () => pluginCodeScope.run(pluginId, () => Promise.resolve().then(cleanup)),
       catch: (cause) => new PluginCodeError({ cause }),
     }).pipe(
       Effect.catchTags({
@@ -689,7 +701,7 @@ const make = Effect.gen(function* () {
         for (const cached of Object.keys(requireFromDisk.cache)) {
           if (cached.startsWith(prefix)) Reflect.deleteProperty(requireFromDisk.cache, cached);
         }
-        const exported: unknown = requireFromDisk(entryPath);
+        const exported: unknown = pluginCodeScope.run(plugin.id, () => requireFromDisk(entryPath));
         // Bundlers that compile `export default` to CommonJS put the definition on `default`.
         const definition =
           typeof exported === "object" && exported !== null && "default" in exported
@@ -710,9 +722,7 @@ const make = Effect.gen(function* () {
     const resolved = yield* fs.realPath(file).pipe(Effect.option);
     if (Option.isNone(resolved)) return notFound;
     const real = resolved.value;
-    if (real !== within && !real.startsWith(`${within}${path.sep}`)) {
-      return yield* new PluginCodeError({ cause: "The file resolves outside the plugin folder." });
-    }
+    if (real !== within && !real.startsWith(`${within}${path.sep}`)) return notFound;
     const info = yield* fs.stat(real).pipe(Effect.option);
     if (Option.isNone(info) || info.value.type !== "File") return notFound;
     return {
@@ -869,6 +879,7 @@ const make = Effect.gen(function* () {
       activation,
       context,
       services,
+      onFailure: (error) => reportServerFailure(plugin.id, error),
     });
     // Only `activate` can be interrupted. A stop that lands after it waits until the record holds
     // the activation, so `stopPlugin` always finds what to tear down.
@@ -876,7 +887,10 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const activated = yield* restore(
           Effect.tryPromise({
-            try: () => Promise.resolve().then(() => definition.value.activate(api)),
+            try: () =>
+              pluginCodeScope.run(plugin.id, () =>
+                Promise.resolve().then(() => definition.value.activate(api)),
+              ),
             catch: (cause) => new PluginCodeError({ cause }),
           }).pipe(Effect.timeoutOption(ACTIVATE_DEADLINE)),
         ).pipe(Effect.exit);
@@ -908,6 +922,13 @@ const make = Effect.gen(function* () {
    */
   const stopPlugin = Effect.fnUntraced(function* (pluginId: PluginId) {
     yield* FiberMap.remove(activations, pluginId);
+    // A failure from before the stop, even one while loading, which has no revision, belongs to
+    // that start; failures of code left running after it are recorded again.
+    yield* Ref.update(serverFailures, (all) => {
+      const next = new Map(all);
+      next.delete(pluginId);
+      return next;
+    });
     yield* removeAgentFolder(pluginId);
     // Web-only plugins have no activation but still serve their bundle.
     yield* services.httpRoutes.unregisterPlugin(pluginId);
@@ -1078,7 +1099,11 @@ const make = Effect.gen(function* () {
       next.map(({ plugin, kept }) => {
         if (kept === undefined) return initialRecord(plugin, enabled[plugin.id] === true);
         const latest = current.find((record) => record.plugin === kept.plugin) ?? kept;
-        return "failure" in plugin ? { ...latest, plugin, failure: plugin.failure } : latest;
+        if ("failure" in plugin) return { ...latest, plugin, failure: plugin.failure };
+        // One that runs nothing takes the files found now, so starting it loads their manifest.
+        return latest.status === "active" || latest.status === "loading"
+          ? latest
+          : { ...latest, plugin };
       }),
     );
     yield* publishStates;
@@ -1257,31 +1282,28 @@ const make = Effect.gen(function* () {
         fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore),
       ),
     );
-    const existing = yield* findRecord(manifest.id);
-    const pluginsFile = yield* Ref.get(pluginsConfig);
-    const recorded = pluginsFile.sources?.[manifest.id];
-    // A source may only replace the plugin it installed: another package claiming an installed
-    // id would take over that plugin's folder, settings, secrets and storage. Sent files have no
-    // source, so they replace only plugins that were sent or put in the plugins folder.
-    const refusal =
-      existing?.plugin.source === "dev"
-        ? `${manifest.id} is linked from ${existing.plugin.folder}. Unlink it first.`
-        : expectedId !== undefined && manifest.id !== expectedId
-          ? `The source now provides ${manifest.id}, not ${expectedId}.`
-          : existing !== undefined && !sameSource(recorded, source)
-            ? `${manifest.id} is already installed from somewhere else. Remove it first to replace it.`
-            : undefined;
-    if (refusal !== undefined) {
-      yield* fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore);
-      return yield* new PluginInstallError({ reason: refusal });
-    }
-    // An update keeps a disabled plugin disabled; a new install is enabled.
-    const enabled = existing === undefined ? true : pluginsFile.enabled?.[manifest.id] === true;
-    const target =
-      existing === undefined ? path.join(pluginsDir, manifest.id) : existing.plugin.folder;
     const previous = path.join(stagingDir, "previous");
+    let stopped = false;
     yield* runLifecycle(
+      // Read under the lock, so another install or a removal cannot change them before the swap.
       Effect.gen(function* () {
+        const existing = yield* findRecord(manifest.id);
+        const pluginsFile = yield* Ref.get(pluginsConfig);
+        const recorded = pluginsFile.sources?.[manifest.id];
+        // A source may only replace the plugin it installed: another package claiming an
+        // installed id would take over that plugin's folder, settings, secrets and storage. Sent
+        // files have no source, so they replace only plugins sent or put in the plugins folder.
+        const refusal =
+          existing?.plugin.source === "dev"
+            ? `${manifest.id} is linked from ${existing.plugin.folder}. Unlink it first.`
+            : expectedId !== undefined && manifest.id !== expectedId
+              ? `The source now provides ${manifest.id}, not ${expectedId}.`
+              : existing !== undefined && !sameSource(recorded, source)
+                ? `${manifest.id} is already installed from somewhere else. Remove it first to replace it.`
+                : undefined;
+        if (refusal !== undefined) return yield* new PluginInstallError({ reason: refusal });
+        const target =
+          existing === undefined ? path.join(pluginsDir, manifest.id) : existing.plugin.folder;
         // A folder put there by hand holds another plugin, or none, which the swap would delete.
         if (
           existing === undefined &&
@@ -1292,6 +1314,9 @@ const make = Effect.gen(function* () {
             reason: `The plugins folder already has a ${manifest.id} folder${owner === undefined ? "" : ` holding ${owner.plugin.id}`}. Move it, then install again.`,
           });
         }
+        // An update keeps a disabled plugin disabled; a new install is enabled.
+        const enabled = existing === undefined ? true : pluginsFile.enabled?.[manifest.id] === true;
+        stopped = true;
         yield* stopPlugin(manifest.id);
         yield* fs
           .makeDirectory(pluginsDir, { recursive: true })
@@ -1321,8 +1346,10 @@ const make = Effect.gen(function* () {
       }),
     ).pipe(
       Effect.ensuring(fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore)),
-      // Whatever happened, the plugin folder now holds one version; start it again.
-      Effect.ensuring(reload(manifest.id).pipe(Effect.ignore)),
+      // Whatever happened after the stop, the plugin folder holds one version; start it again.
+      Effect.ensuring(
+        Effect.suspend(() => (stopped ? reload(manifest.id).pipe(Effect.ignore) : Effect.void)),
+      ),
     );
     return yield* stateOf(manifest.id);
   });
@@ -1657,7 +1684,7 @@ const make = Effect.gen(function* () {
                 code: "server-failed",
                 severity: "error" as const,
                 file: null,
-                problem: `Its server code failed outside a call, such as in a timer: ${state.serverFailure}`,
+                problem: `Its server code failed outside a call, such as in a timer or a hook: ${state.serverFailure}`,
                 fix: "Catch errors in its timers and callbacks, and stop its timers in onDeactivate, then reload the plugin.",
               },
             ]),
@@ -1720,10 +1747,12 @@ const make = Effect.gen(function* () {
       const output = yield* Effect.raceFirst(
         Effect.tryPromise({
           try: (signal) =>
-            Promise.resolve().then(() =>
-              registered.handler(request.input, {
-                signal: AbortSignal.any([signal, deactivated]),
-              }),
+            pluginCodeScope.run(request.pluginId, () =>
+              Promise.resolve().then(() =>
+                registered.handler(request.input, {
+                  signal: AbortSignal.any([signal, deactivated]),
+                }),
+              ),
             ),
           catch: handlerError,
         }),

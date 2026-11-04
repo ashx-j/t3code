@@ -441,6 +441,10 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
           Effect.forkChild({ startImmediately: true }),
         );
         yield* host.rescan;
+        // Neither does a change elsewhere on the plugin's row.
+        const revision = stateOf(yield* host.list, skills)?.revision;
+        assert.isDefined(revision);
+        yield* host.reportWebFailure({ pluginId: skills, revision, message: "load threw" });
         yield* host.setEnabled(skills, false);
         assert.deepStrictEqual(
           (yield* Fiber.join(skillLists)).map((list) => list.length),
@@ -859,33 +863,77 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
     Effect.gen(function* () {
       yield* writeInstalledPlugin(
         "leaky",
-        `module.exports = { activate(api) {
+        `let titles = 0;
+module.exports = { activate(api) {
   api.rpc.register("throwLater", () => { setTimeout(() => { throw new Error("thrown in a timer"); }, 0); }, { access: "read" });
   api.rpc.register("awaitLater", () => { setTimeout(async () => { await api.threads.read("thread:gone"); }, 0); }, { access: "read" });
+  api.rpc.register("spawnMissing", () => { require("node:child_process").spawn("t3-plugin-test-missing-command"); }, { access: "read" });
+  api.textGeneration.register("threadTitle", () => { titles += 1; throw new Error("no title " + titles); });
 } };`,
       );
-      yield* writePluginsConfig({ enabled: { leaky: true } });
+      // A timer it sets while starting fails, then it fails to start.
+      yield* writeInstalledPlugin(
+        "leaky-start",
+        `module.exports = { activate() {
+  setTimeout(() => { throw new Error("thrown while starting"); }, 0);
+  return new Promise((_, reject) => setTimeout(() => reject(new Error("activate failed")), 0));
+} };`,
+      );
+      yield* writePluginsConfig({ enabled: { leaky: true, "leaky-start": true } });
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
+        const hooks = yield* PluginHooks.PluginHooks;
         const id = PluginId.make("leaky");
-        yield* waitForStatuses(host, { leaky: "active" });
-        const failureAfter = (method: string, previous: string | undefined) =>
-          host.invoke({ pluginId: id, method, input: undefined, scopes: operate }).pipe(
-            Effect.andThen(
-              host.streamStates.pipe(
-                Stream.map((states) => stateOf(states, id)?.serverFailure),
-                Stream.filter((failure) => failure !== undefined && failure !== previous),
-                Stream.runHead,
-                Effect.map(Option.getOrThrow),
-              ),
-            ),
+        yield* waitForStatuses(host, { leaky: "active", "leaky-start": "failed" });
+        const nextFailure = (previous: string | undefined) =>
+          host.streamStates.pipe(
+            Stream.map((states) => stateOf(states, id)?.serverFailure),
+            Stream.filter((failure) => failure !== undefined && failure !== previous),
+            Stream.runHead,
+            Effect.map(Option.getOrThrow),
           );
+        const failureAfter = (method: string, previous: string | undefined) =>
+          host
+            .invoke({ pluginId: id, method, input: undefined, scopes: operate })
+            .pipe(Effect.andThen(nextFailure(previous)));
 
         const thrown = yield* failureAfter("throwLater", undefined);
         assert.strictEqual(thrown, "thrown in a timer");
+        // A plugin's failures reach clients at once, then at most every 5 seconds.
+        yield* TestClock.adjust("5 seconds");
         // An awaited API call fails away from the plugin's own frames, so its error names it.
-        assert.isString(yield* failureAfter("awaitLater", thrown));
+        const awaited = yield* failureAfter("awaitLater", thrown);
+        yield* TestClock.adjust("5 seconds");
+        // So does a child process with no error listener, whose stack is all Node's.
+        const spawned = yield* failureAfter("spawnMissing", awaited);
+        assert.include(spawned, "ENOENT");
         assert.include(stateOf(yield* host.list, id), { status: "active" });
+
+        // A callback only T3 waits on fails onto the row too. Of failures closer together than
+        // 5 seconds, clients get the first at once and the latest when the 5 seconds are up.
+        yield* TestClock.adjust("5 seconds");
+        const [generateTitle] = yield* hooks.textGenerators("threadTitle");
+        assert.isDefined(generateTitle);
+        const failures = yield* host.streamStates.pipe(
+          Stream.map((states) => stateOf(states, id)?.serverFailure),
+          Stream.changes,
+          Stream.takeUntil((failure) => failure === "no title 3"),
+          Stream.runCollect,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* generateTitle({ message: "Fix it" });
+        yield* nextFailure(spawned);
+        yield* generateTitle({ message: "Fix it" });
+        yield* generateTitle({ message: "Fix it" });
+        yield* TestClock.adjust("5 seconds");
+        assert.deepStrictEqual(yield* Fiber.join(failures), [spawned, "no title 1", "no title 3"]);
+
+        // A failure while starting belongs to that start, so Disable clears it.
+        const starting = PluginId.make("leaky-start");
+        assert.include(stateOf(yield* host.list, starting), {
+          serverFailure: "thrown while starting",
+        });
+        assert.isUndefined((yield* host.setEnabled(starting, false)).serverFailure);
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
@@ -1116,6 +1164,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         Layer.mock(Orchestrator.OrchestratorV2)({
           streamStoredEventsFrom: () => Stream.never,
           streamDomainEvents: Stream.fromQueue(domainEvents),
+          listActiveShellIndex: () => Effect.succeed([]),
           getThreadRecords: () => Effect.sync(() => records as never),
         }),
         Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({
@@ -1510,11 +1559,8 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           request: { ...request, path: "/assets/hello.txt" },
         });
         assert.strictEqual(asset.headers["content-type"], "text/plain; charset=utf-8");
-        const escaped = yield* routes
-          .handle({ pluginId: helloWeb, request: { ...request, path: "/assets/..%2Fserver.cjs" } })
-          .pipe(Effect.flip);
-        assert.strictEqual(escaped._tag, "PluginHttpHandlerError");
-        for (const path of ["/assets/%E0%A4%A", "/assets/"]) {
+        // A path out of the assets folder names no asset; it is not the plugin's failure.
+        for (const path of ["/assets/..%2Fserver.cjs", "/assets/%E0%A4%A", "/assets/"]) {
           const missing = yield* routes.handle({
             pluginId: helloWeb,
             request: { ...request, path },
@@ -1693,6 +1739,9 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           enabled: false,
           hasSkills: true,
         });
+        // A new version copied over one that is off is what Settings lists and what starts.
+        yield* writeFile(`${stateDir}/plugins/My Notes/t3-plugin.json`, notesManifest("1.0.5"));
+        assert.include(stateOf((yield* host.rescan).plugins, "notes"), { version: "1.0.5" });
 
         // A dropped folder replaces a plugin copied in by hand, in the folder it was copied to.
         yield* host.installFiles([
@@ -1892,6 +1941,48 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         runStatus = "completed";
         assert.include((yield* Effect.flip(ask)).message, "has no turn in progress");
       }).pipe(Effect.provide(layerHost(services)));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("sends a client that connects during startup one empty list, not two", () =>
+    Effect.gen(function* () {
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const reached = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      // Holds startup inside its lock, before it lists the plugins folder.
+      const layerHeldStartup = layerFileSystemWith((fs) => ({
+        remove: (target, options) =>
+          target.endsWith("plugin-agents")
+            ? Deferred.succeed(reached, undefined).pipe(
+                Effect.andThen(Deferred.await(release)),
+                Effect.andThen(fs.remove(target, options)),
+              )
+            : fs.remove(target, options),
+      }));
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        yield* Deferred.await(reached);
+        const lists = yield* host.streamStates.pipe(
+          Stream.map((states) => states.map((state) => state.id)),
+          Stream.take(2),
+          Stream.runCollect,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Deferred.succeed(release, undefined);
+        // Waits for startup's lock, so startup has published whatever it does by then.
+        yield* host.rescan;
+        yield* writeFile(
+          `${stateDir}/plugins/late/t3-plugin.json`,
+          JSON.stringify({
+            id: "late",
+            name: "Late",
+            version: "0.1.0",
+            engines: { t3: ">=0.1.0" },
+          }),
+        );
+        yield* host.rescan;
+        assert.deepStrictEqual(yield* Fiber.join(lists), [[], ["late"]]);
+      }).pipe(Effect.provide(layerHost().pipe(Layer.provide(layerHeldStartup))));
     }).pipe(Effect.provide(layerConfig())),
   );
 

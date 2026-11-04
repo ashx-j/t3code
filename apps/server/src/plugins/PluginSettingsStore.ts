@@ -157,7 +157,9 @@ export const secretsOutsideStore = (settingsSchema: Schema.JsonObject): Readonly
     if ("format" in value && value.format === "t3-secret" && !stored.has(value)) {
       found.push(pointer === "" ? "/" : pointer);
     }
-    for (const [key, child] of Object.entries(value)) visit(child, `${pointer}/${key}`);
+    for (const [key, child] of Object.entries(value)) {
+      visit(child, `${pointer}/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`);
+    }
   };
   visit(settingsSchema, "");
   return found;

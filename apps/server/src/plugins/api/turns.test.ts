@@ -93,6 +93,35 @@ it.effect(
           }),
         ),
       );
+
+      // A queued edit knows its run's provider, so only a name in a command list is a command,
+      // which hooks may only block.
+      yield* hooks.setProviderSlashCommands(() => Effect.succeed(["review"]));
+      const rewrite = (text: string) =>
+        hooks
+          .beforeRewrite(
+            text,
+            Effect.succeed({
+              threadId: ThreadId.make("thread:hooks"),
+              messageId: "message:queued",
+              text: "Go",
+              createdBy: "user" as const,
+              creationSource: "web" as const,
+              attachments: [],
+              model: { instanceId: "codex", model: "gpt-5" },
+            }),
+            notAccepted,
+          )
+          .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+      const notCommand = yield* rewrite("/please go");
+      yield* TestClock.adjust("2 seconds");
+      assert.deepStrictEqual(
+        yield* Fiber.join(notCommand),
+        Exit.succeed("/PLEASE GO\n\nFIRST\n\nlast"),
+      );
+      const command = yield* rewrite("/review go");
+      yield* TestClock.adjust("2 seconds");
+      assert.deepStrictEqual(yield* Fiber.join(command), Exit.succeed("/review go"));
     }).pipe(Effect.provide(PluginHooks.layer)),
 );
 
@@ -173,7 +202,15 @@ it.effect("delivers each ended run once and resumes after the last one it handle
       ]),
       ["run:12:completed"],
     );
-    assert.deepStrictEqual(requests, [9, 9, 12, 13, 13]);
+    // A revert rolls back a run that already ended, which is delivered once more.
+    assert.deepStrictEqual(
+      yield* activate([
+        runUpdateOf(18, "run:12", "rolled_back"),
+        runUpdateOf(19, "run:12", "rolled_back"),
+      ]),
+      ["run:12:rolled_back"],
+    );
+    assert.deepStrictEqual(requests, [9, 9, 12, 13, 13, 17]);
   }).pipe(Effect.provide(PluginHooks.layer)),
 );
 

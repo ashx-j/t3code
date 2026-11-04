@@ -22,8 +22,10 @@ export const makeHttpApi = (
           method,
           path,
           handler: (request, signal) =>
-            Promise.resolve().then(() =>
-              handler(request, { signal: AbortSignal.any([signal, deactivated]) }),
+            facade.asPlugin(() =>
+              Promise.resolve().then(() =>
+                handler(request, { signal: AbortSignal.any([signal, deactivated]) }),
+              ),
             ),
           deactivated,
         }),
