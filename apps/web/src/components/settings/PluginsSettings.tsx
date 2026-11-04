@@ -45,7 +45,6 @@ import {
   DialogPanel,
   DialogPopup,
   DialogTitle,
-  DialogTrigger,
 } from "../ui/dialog";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
@@ -790,6 +789,7 @@ function PluginRow({
   const uninstall = useAtomCommand(pluginEnvironment.uninstallPlugin, "plugin removal");
   const update = useAtomCommand(pluginEnvironment.updatePlugin, "plugin update");
   const [busy, setBusy] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   // Plugin UI loads from the main environment only, so its settings panel and web failure do too.
   const contributionKey = pluginContributionKey(environmentId, plugin.id);
   const customSettings = useAtomValue(pluginSettingsPanelAtom(contributionKey));
@@ -874,13 +874,15 @@ function PluginRow({
         ) : (
           <>
             {hasSettings ? (
-              <PluginSettingsDialog
-                first={first}
-                copies={copies}
-                labelled={labelled}
-                customSettings={customSettings}
-                hasGeneratedForm={hasGeneratedForm}
-              />
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label={`Settings for ${plugin.name}`}
+                aria-expanded={settingsOpen}
+                onClick={() => setSettingsOpen((open) => !open)}
+              >
+                <SlidersHorizontalIcon className="size-4" />
+              </Button>
             ) : null}
             <Button
               size="icon-sm"
@@ -946,12 +948,22 @@ function PluginRow({
           </>
         )
       }
-    />
+    >
+      {settingsOpen ? (
+        <PluginSettingsPanel
+          first={first}
+          copies={copies}
+          labelled={labelled}
+          customSettings={customSettings}
+          hasGeneratedForm={hasGeneratedForm}
+        />
+      ) : null}
+    </SettingsRow>
   );
 }
 
-/** The settings button and the dialog it opens: the plugin's own panel, or the generated form. */
-function PluginSettingsDialog({
+/** A plugin's settings under its row: the plugin's own panel, or the generated form. */
+function PluginSettingsPanel({
   first,
   copies,
   labelled,
@@ -964,45 +976,29 @@ function PluginSettingsDialog({
   readonly customSettings: PluginSettingsPanelEntry | undefined;
   readonly hasGeneratedForm: boolean;
 }) {
-  const { plugin } = first;
   return (
-    <Dialog>
-      <DialogTrigger
-        render={
-          <Button size="icon-sm" variant="ghost" aria-label={`Settings for ${plugin.name}`} />
-        }
-      >
-        <SlidersHorizontalIcon className="size-4" />
-      </DialogTrigger>
-      <DialogPopup>
-        <DialogHeader>
-          <DialogTitle>{plugin.name}</DialogTitle>
-          {plugin.description ? <DialogDescription>{plugin.description}</DialogDescription> : null}
-        </DialogHeader>
-        <DialogPanel>
-          {customSettings === undefined ? (
-            <PluginSettingsEditor first={first} copies={copies} labelled={labelled} />
-          ) : (
+    <div className="mt-3 mb-2 space-y-3 rounded-lg border border-border/60 bg-muted/30 p-3 sm:p-4">
+      {customSettings === undefined ? (
+        <PluginSettingsEditor first={first} copies={copies} labelled={labelled} />
+      ) : (
+        <>
+          <PluginCustomSettings entry={customSettings} />
+          {/* The plugin's own panel talks to the main environment's copy alone. */}
+          {copies.length > 1 ? (
             <>
-              <PluginCustomSettings entry={customSettings} />
-              {/* The plugin's own panel talks to the main environment's copy alone. */}
-              {copies.length > 1 ? (
-                <>
-                  <p className="text-xs text-muted-foreground">
-                    {hasGeneratedForm
-                      ? `This panel changes ${first.label} only. The form below changes every environment.`
-                      : `This panel changes ${first.label} only.`}
-                  </p>
-                  {hasGeneratedForm ? (
-                    <PluginSettingsEditor first={first} copies={copies} labelled={labelled} />
-                  ) : null}
-                </>
+              <p className="text-xs text-muted-foreground">
+                {hasGeneratedForm
+                  ? `This panel changes ${first.label} only. The form below changes every environment.`
+                  : `This panel changes ${first.label} only.`}
+              </p>
+              {hasGeneratedForm ? (
+                <PluginSettingsEditor first={first} copies={copies} labelled={labelled} />
               ) : null}
             </>
-          )}
-        </DialogPanel>
-      </DialogPopup>
-    </Dialog>
+          ) : null}
+        </>
+      )}
+    </div>
   );
 }
 
@@ -1120,20 +1116,18 @@ function RemovePluginPopover({
 function PluginCustomSettings(props: { readonly entry: PluginSettingsPanelEntry }) {
   const Panel = props.entry.component;
   return (
-    <div>
-      <PluginRenderBoundary
-        owner={props.entry.owner}
-        what="Its settings panel"
-        resetKeys={[props.entry]}
-        fallback={
-          <p className="text-xs text-destructive">
-            This plugin's settings panel stopped with an error.
-          </p>
-        }
-      >
-        <Panel />
-      </PluginRenderBoundary>
-    </div>
+    <PluginRenderBoundary
+      owner={props.entry.owner}
+      what="Its settings panel"
+      resetKeys={[props.entry]}
+      fallback={
+        <p className="text-xs text-destructive">
+          This plugin's settings panel stopped with an error.
+        </p>
+      }
+    >
+      <Panel />
+    </PluginRenderBoundary>
   );
 }
 
