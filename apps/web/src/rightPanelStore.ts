@@ -78,7 +78,7 @@ export type RightPanelSurface =
     }
   | { id: "pull-requests"; kind: "pull-requests" }
   | { id: `side-chat:${string}`; kind: "side-chat"; threadId: ThreadId }
-  /** A panel a web plugin registered; the panel renders "plugin disabled" while it is unloaded. */
+  /** A panel a web plugin registered; the panel says its plugin is not active while unloaded. */
   | { id: `plugin:${string}`; kind: "plugin"; pluginId: string; panel: string; title: string };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";

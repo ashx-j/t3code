@@ -84,7 +84,7 @@ export const installPluginCommands = Effect.fn("desktop.ipc.installPluginCommand
     tray = null;
   };
   let registered: Array<string> = [];
-  // Each window load sends an empty list first, so an unchanged list skips the menu rebuild.
+  // A reload sends the same list again, so an unchanged list skips the menu rebuild.
   let current: ReadonlyArray<typeof DesktopPluginCommandSchema.Type> = [];
   let refused: ReadonlyArray<DesktopPluginShortcutRefusal> = [];
   let wayland: boolean | undefined;
@@ -132,7 +132,19 @@ export const installPluginCommands = Effect.fn("desktop.ipc.installPluginCommand
         ) {
           return [];
         }
-        if (Equal.equals(commands, current)) return refused;
+        if (Equal.equals(commands, current)) {
+          // Another app may have let go of a shortcut since; take it now.
+          refused = refused.filter(({ command, reason }) => {
+            if (reason !== "taken") return true;
+            const globalShortcut = commands.find(
+              (entry) => entry.command === command,
+            )?.globalShortcut;
+            return (
+              globalShortcut === undefined || bindShortcut(command, globalShortcut) !== undefined
+            );
+          });
+          return refused;
+        }
         current = commands;
         yield* menu.setPluginCommands(commands);
         const trayCommands = commands.filter((entry) => entry.tray === true);

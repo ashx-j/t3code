@@ -238,14 +238,32 @@ export function registerPluginSlashCommand(entry: PluginSlashCommandEntry): () =
   };
 }
 
-export const pluginSlashCommandsAtom = Atom.family((environmentId: string) =>
-  Atom.make((get) => {
+/**
+ * Hands back the previous list while it holds the same entries, so a registry change that
+ * doesn't touch a reader's list doesn't re-render the composer that reads it.
+ */
+const stableList = <Entry>() => {
+  let previous: ReadonlyArray<Entry> = [];
+  return (next: ReadonlyArray<Entry>) => {
+    if (next.length === previous.length && next.every((entry, i) => entry === previous[i])) {
+      return previous;
+    }
+    previous = next;
+    return next;
+  };
+};
+
+export const pluginSlashCommandsAtom = Atom.family((environmentId: string) => {
+  const stable = stableList<PluginSlashCommandEntry>();
+  return Atom.make((get) => {
     get(versionAtom);
-    return [...slashCommands.values()]
-      .map((claims) => firstById(claims, (claim) => claim.pluginId))
-      .filter((entry) => entry.environmentId === environmentId);
-  }),
-);
+    return stable(
+      [...slashCommands.values()]
+        .map((claims) => firstById(claims, (claim) => claim.pluginId))
+        .filter((entry) => entry.environmentId === environmentId),
+    );
+  });
+});
 
 /** Shows a banner above the composer; returns the function that removes it. */
 export function registerPluginBanner(entry: PluginBannerEntry): () => void {
@@ -259,12 +277,13 @@ export function registerPluginBanner(entry: PluginBannerEntry): () => void {
   };
 }
 
-export const pluginBannersAtom = Atom.family((environmentId: string) =>
-  Atom.make((get) => {
+export const pluginBannersAtom = Atom.family((environmentId: string) => {
+  const stable = stableList<PluginBannerEntry>();
+  return Atom.make((get) => {
     get(versionAtom);
-    return [...banners.values()].filter((entry) => entry.environmentId === environmentId);
-  }),
-);
+    return stable([...banners.values()].filter((entry) => entry.environmentId === environmentId));
+  });
+});
 
 // Plugin contribution keys; the composer folds on scroll while any plugin asks for it.
 const collapseOnScrollRequests = new Set<string>();
@@ -677,6 +696,22 @@ export function setPluginMentionItems(
   if (items.length === 0) {
     if (!mentionItems.delete(key)) return;
   } else {
+    // A plugin that offers the same items again leaves the composer alone.
+    const current = mentionItems.get(key);
+    if (
+      current?.length === items.length &&
+      current.every((item, i) => {
+        const next = items[i]!;
+        return (
+          item.key === next.key &&
+          item.label === next.label &&
+          item.description === next.description &&
+          item.text === next.text
+        );
+      })
+    ) {
+      return;
+    }
     mentionItems.set(key, items);
   }
   appAtomRegistry.set(mentionItemsVersionAtom, appAtomRegistry.get(mentionItemsVersionAtom) + 1);

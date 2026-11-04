@@ -18,10 +18,10 @@ export default defineWebPlugin({
           .then(setNote);
       }, []);
       return (
-        <div className="hello-web-panel space-y-1 p-4 text-sm">
+        <div className="hello-web-panel">
           <p>{greeting}</p>
           <p>{note}</p>
-          <p className="text-muted-foreground">Thread {props.threadId}</p>
+          <p className="hello-web-muted">Thread {props.threadId}</p>
         </div>
       );
     }
@@ -32,9 +32,9 @@ export default defineWebPlugin({
           .split(",")
           .map((value, position) => ({ id: `bar-${position}`, height: Number(value) * 10 }));
         return (
-          <div className="flex h-16 items-end gap-1">
+          <div className="hello-web-chart">
             {bars.map((bar) => (
-              <div key={bar.id} className="w-3 bg-primary" style={{ height: `${bar.height}%` }} />
+              <div key={bar.id} className="hello-web-bar" style={{ height: `${bar.height}%` }} />
             ))}
           </div>
         );
@@ -42,9 +42,18 @@ export default defineWebPlugin({
     });
     api.timeline.registerToolRenderer({
       tool: "greet",
-      component: (props) => <p className="text-sm">👋 {props.output ?? "Greeting…"}</p>,
+      component: (props) => <p className="hello-web-text">👋 {props.output ?? "Greeting…"}</p>,
     });
-    api.injectStyles(".hello-web-panel { border-top: 2px solid var(--color-primary); }");
+    // Its own classes: T3's Tailwind classes exist only while T3's own code happens to use them.
+    api.injectStyles(`
+.hello-web-panel { display: grid; gap: 0.25rem; padding: 1rem; font-size: 0.875rem; border-top: 2px solid var(--color-primary); }
+.hello-web-muted { color: var(--muted-foreground); }
+.hello-web-text { font-size: 0.875rem; }
+.hello-web-chart { display: flex; height: 4rem; align-items: flex-end; gap: 0.25rem; }
+.hello-web-bar { width: 0.75rem; background: var(--primary); }
+.hello-web-settings { display: grid; gap: 0.5rem; }
+.hello-web-settings p { font-size: 0.75rem; }
+`);
     api.composer.setCollapseOnScroll(true);
     api.rightPanel.register({ name: "hello", title: "Hello panel", component: HelloPanel });
     api.composer.registerSlashCommand({
@@ -65,8 +74,8 @@ export default defineWebPlugin({
       run: () => api.navigate("/settings/plugins"),
     });
     api.settings.registerPanel(() => (
-      <div className="space-y-2">
-        <p className="text-xs">These settings are drawn by hello-web.</p>
+      <div className="hello-web-settings">
+        <p>These settings are drawn by hello-web.</p>
         <Button
           size="xs"
           variant="outline"

@@ -180,8 +180,13 @@ export interface WebPluginParts {
      * `file_change`, `web_search` or `dynamic_tool`, and narrows the other fields.
      */
     readonly item: OrchestrationV2TurnItem;
-    /** The step's text output, when it has one. */
+    /**
+     * The step's text output, when T3 has it as text. A command's output streams instead, so for
+     * commands this is null where `commandOutput` draws it.
+     */
     readonly output: string | null;
+    /** T3's live output panel for a command, or null for other steps. */
+    readonly commandOutput: WebPluginNode;
   };
   /** The file diffs in the diff panel. */
   readonly "diff.view": {

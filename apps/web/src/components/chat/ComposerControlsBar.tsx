@@ -227,7 +227,7 @@ export function ComposerControlsBar(props: {
         composerControlsCollapsed ? "min-w-13 shrink text-xs!" : "min-w-13",
       )}
       {...(modelOnly
-        ? {}
+        ? { tooltip: true }
         : {
             triggerSuffix: effort.suffix,
             triggerDetail: effort.detail,

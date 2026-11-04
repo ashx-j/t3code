@@ -76,6 +76,8 @@ import { isLoadableWebPlugin } from "./pluginWatch";
 
 const PANEL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
 const COMMAND_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
+// The server's rule for a plugin's own tool names.
+const TOOL_NAME = /^[a-zA-Z0-9_-]+$/;
 const BADGE_TONES = new Set(["info", "success", "warning", "error"]);
 const TOAST_TYPES = new Set(["info", "success", "warning", "error"]);
 const CODE_LANGUAGE = /^[a-z0-9][a-z0-9+#.-]{0,31}$/;
@@ -413,16 +415,22 @@ function makeWebPluginApi({
         // current one's place.
         if (!active()) return () => {};
         bannerCount += 1;
-        const hide: () => void = registerPluginBanner({
+        // Hiding also drops the cleanup, so many short-lived banners don't pile up until unload.
+        let untrack = () => {};
+        const hide = () => {
+          untrack();
+          removeBanner();
+        };
+        const removeBanner: () => void = registerPluginBanner({
           key: `${pluginId}:${bannerCount}`,
           environmentId,
           pluginId,
           variant: banner.variant ?? "info",
           title: banner.title,
           ...(banner.description === undefined ? {} : { description: banner.description }),
-          dismiss: () => hide(),
+          dismiss: hide,
         });
-        track(hide);
+        untrack = track(removeBanner);
         return hide;
       },
       registerSlashCommand: (command) => {
@@ -431,6 +439,9 @@ function makeWebPluginApi({
         }
         if (T3_SLASH_COMMAND_NAMES.has(command.name)) {
           throw new TypeError(`/${command.name} is one of T3's own commands.`);
+        }
+        if (typeof command.description !== "string") {
+          throw new TypeError(`/${command.name} needs a text description for the / menu.`);
         }
         track(
           registerPluginSlashCommand({
@@ -579,6 +590,16 @@ function makeWebPluginApi({
     },
     timeline: {
       registerToolRenderer: (renderer) => {
+        // The tool's own name, as the server half registered it, without the `plg_` prefix.
+        if (
+          typeof renderer.tool !== "string" ||
+          !TOOL_NAME.test(renderer.tool) ||
+          renderer.tool.startsWith(`plg_${pluginId}_`)
+        ) {
+          throw new TypeError(
+            `"${String(renderer.tool)}" is not a tool name this plugin registers. Use the name given to api.mcp.registerTool, without plg_<id>_.`,
+          );
+        }
         track(
           registerPluginToolRenderer({
             environmentId,

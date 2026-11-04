@@ -289,19 +289,12 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu({
   return (
     <SidebarMenu className="flex-row items-center">
       {utility === "none" ? null : utility === "back" || isOnUtilityPage ? (
-        <>
-          <SidebarMenuItem ref={showBack} className="min-w-0 flex-1">
-            <SidebarMenuButton onClick={handleBackClick}>
-              <ArrowLeftIcon />
-              <span>Back</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          {settingsNavShown ? (
-            <Suspense fallback={null}>
-              <T3ConnectSidebarAvatar />
-            </Suspense>
-          ) : null}
-        </>
+        <SidebarMenuItem ref={showBack} className="min-w-0 flex-1">
+          <SidebarMenuButton onClick={handleBackClick}>
+            <ArrowLeftIcon />
+            <span>Back</span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
       ) : (
         <>
           <SidebarUtilityItem
@@ -325,6 +318,12 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu({
       )}
       <SidebarThreadUndoNotice />
       <SidebarUpdatePill />
+      {/* At the row's end, as in Settings' own footer. */}
+      {settingsNavShown && utility !== "none" && (utility === "back" || isOnUtilityPage) ? (
+        <Suspense fallback={null}>
+          <T3ConnectSidebarAvatar />
+        </Suspense>
+      ) : null}
     </SidebarMenu>
   );
 });

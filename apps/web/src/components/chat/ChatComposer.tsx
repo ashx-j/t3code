@@ -3188,13 +3188,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       environmentId={environmentId}
       context={{ threadId: routeKind === "server" ? routeThreadRef.threadId : null }}
       size="icon-sm"
-      className="me-2"
     />
   );
   const defaultComposerFooter = (
     <>
       {composerAttachButton ? <div className="me-2">{composerAttachButton}</div> : null}
-      {composerPluginButtons}
+      {/* The spacing is T3's row's, so a plugin placing `buttons` sets its own. */}
+      <div className="me-2 empty:hidden">{composerPluginButtons}</div>
       <div
         data-chat-composer-actions="right"
         data-chat-composer-transition-actions="true"

@@ -901,7 +901,22 @@ function PluginRow({
         customSettings === undefined ? (
           <PluginSettingsEditor first={first} copies={copies} labelled={labelled} />
         ) : (
-          <PluginCustomSettings entry={customSettings} />
+          <>
+            <PluginCustomSettings entry={customSettings} />
+            {/* The plugin's own panel talks to the main environment's copy alone. */}
+            {copies.length > 1 ? (
+              <>
+                <p className="pb-3 text-xs text-muted-foreground">
+                  {first.plugin.settingsSchema === undefined
+                    ? `This panel changes ${first.label} only.`
+                    : `This panel changes ${first.label} only. The form below changes every environment.`}
+                </p>
+                {first.plugin.settingsSchema === undefined ? null : (
+                  <PluginSettingsEditor first={first} copies={copies} labelled={labelled} />
+                )}
+              </>
+            ) : null}
+          </>
         )
       ) : null}
     </SettingsRow>

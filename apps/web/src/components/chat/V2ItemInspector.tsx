@@ -246,6 +246,23 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
   );
   const item = fetched.item;
   const outputState = fetched.output;
+  const dynamicToolBody =
+    item.type === "dynamic_tool" ? (
+      <ToolCallBody
+        toolName={item.toolName}
+        args={item.input}
+        {...outputState}
+        onImageExpand={props.onImageExpand}
+      />
+    ) : null;
+  const commandOutput = streamsOutput ? (
+    <CommandOutputPanel
+      environmentId={props.environmentId}
+      threadId={props.projectedItem.sourceThreadId}
+      itemId={props.projectedItem.sourceItemId}
+      source={props.source?.commandOutput}
+    />
+  ) : null;
   const inspector = (
     <div className="space-y-2 text-xs" data-v2-item-inspector={item.type}>
       {item.type === "reasoning" && item.text ? (
@@ -268,16 +285,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
           exitCode={item.exitCode}
           {...outputState}
           onImageExpand={props.onImageExpand}
-          outputSlot={
-            streamsOutput ? (
-              <CommandOutputPanel
-                environmentId={props.environmentId}
-                threadId={props.projectedItem.sourceThreadId}
-                itemId={props.projectedItem.sourceItemId}
-                source={props.source?.commandOutput}
-              />
-            ) : undefined
-          }
+          outputSlot={commandOutput ?? undefined}
         />
       ) : null}
 
@@ -381,7 +389,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
         </ul>
       ) : null}
 
-      {item.type === "dynamic_tool" ? (
+      {item.type === "dynamic_tool" && dynamicToolBody !== null ? (
         pluginToolNameOf(item.toolName) !== undefined && item.toolName !== null ? (
           <PluginToolBody
             environmentId={props.environmentId}
@@ -389,22 +397,10 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
             input={item.input}
             output={outputState.output}
             status={item.status}
-            fallback={
-              <ToolCallBody
-                toolName={item.toolName}
-                args={item.input}
-                {...outputState}
-                onImageExpand={props.onImageExpand}
-              />
-            }
+            fallback={dynamicToolBody}
           />
         ) : (
-          <ToolCallBody
-            toolName={item.toolName}
-            args={item.input}
-            {...outputState}
-            onImageExpand={props.onImageExpand}
-          />
+          dynamicToolBody
         )
       ) : null}
 
@@ -438,7 +434,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
   return (
     <PluginReplaceable
       part="timeline.item"
-      pieces={{ original: inspector, item, output: outputState.output }}
+      pieces={{ original: inspector, item, output: outputState.output, commandOutput }}
     />
   );
 });

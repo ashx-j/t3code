@@ -140,6 +140,13 @@ it.effect("runs plugin shortcuts in the background and says why it refuses one",
       );
       // A reloaded page that sends the same list still learns what was refused.
       assert.deepEqual(yield* Effect.promise(() => send(commands)), expected);
+      // Once the other app lets go of a shortcut, the same list takes it.
+      native.takenElsewhere.delete("Control+Shift+Q");
+      assert.deepEqual(
+        yield* Effect.promise(() => send(commands)),
+        expected.filter(({ command }) => command !== "plugin.timer.taken"),
+      );
+      assert.isTrue(native.shortcuts.has("Control+Shift+Q"));
 
       native.shortcuts.get("CommandOrControl+Shift+Y")!();
       assert.isFalse(yield* Queue.take(reveals));

@@ -19,7 +19,7 @@ const reportRenderFailure = (owner: PluginOwner, what: string, error: unknown) =
   toastManager.add({
     type: "error",
     title: `${owner.pluginName} hit an error`,
-    description: `${what} stopped working until the plugin reloads.`,
+    description: `${what} stopped working where it failed, and T3 shows its own there until the plugin reloads.`,
   });
 };
 

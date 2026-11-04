@@ -273,7 +273,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
       refoldFromRef.current = null;
       return;
     }
-    // A composer the reader reopened folds again once they scroll 24px, as Surface's build does.
+    // A composer the reader reopened folds again once they scroll 24px, not on a brushed trackpad.
     if (refoldFromRef.current === null) refoldFromRef.current = top;
     else if (Math.abs(top - refoldFromRef.current) >= REFOLD_SCROLL_PX) {
       refoldFromRef.current = null;

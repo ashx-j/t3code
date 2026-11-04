@@ -63,7 +63,7 @@ export function ComposerPluginContextChip(props: { contextId: string; label: str
     return (
       <UnresolvedChip
         label={props.label}
-        tooltip="This plugin item is no longer available. Turn its plugin on or remove it."
+        tooltip="This plugin item isn't available. Its plugin may be off or still loading; turn it on or remove the item."
       />
     );
   }

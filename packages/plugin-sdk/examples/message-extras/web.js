@@ -21,6 +21,7 @@ var css = `
   font: 0.75rem/1.5 var(--font-mono, monospace);
   white-space: pre-wrap;
 }
+.message-extras-terminal pre { margin: 0; font: inherit; white-space: pre-wrap; }
 .message-extras-terminal b { color: var(--success-foreground); font-weight: 400; }
 .message-extras-diff { display: flex; min-height: 0; flex: 1; flex-direction: column; }
 .message-extras-diff-summary { padding: 0.25rem 0.75rem; font-size: 0.6875rem; color: var(--muted-foreground); }
@@ -68,11 +69,16 @@ var web_default = defineWebPlugin({
     );
     api.ui.replace("timeline.item", (step) =>
       step.item.type === "command_execution" && typeof step.item.input === "string"
-        ? /* @__PURE__ */ jsxs("pre", {
+        ? /* @__PURE__ */ jsxs("div", {
             className: "message-extras-terminal",
             children: [
-              /* @__PURE__ */ jsxs("b", { children: ["$ ", step.item.input] }),
-              step.output ? `\n${step.output}` : null,
+              /* @__PURE__ */ jsxs("pre", {
+                children: [
+                  /* @__PURE__ */ jsxs("b", { children: ["$ ", step.item.input] }),
+                  step.output ? `\n${step.output}` : null,
+                ],
+              }),
+              step.commandOutput,
             ],
           })
         : step.original,

@@ -6,6 +6,7 @@ import { Button } from "../components/ui/button";
 import { SidebarInset } from "../components/ui/sidebar";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { isElectron } from "../env";
+import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { PluginRenderBoundary } from "./PluginRenderBoundary";
 import { pluginPageAtom, pluginPageKey } from "./pluginRegistry";
 
@@ -35,12 +36,16 @@ function PageUnavailable({ reason }: { readonly reason: string }) {
 export function PluginPage(props: { readonly pluginId: string; readonly name: string }) {
   const page = useAtomValue(pluginPageAtom(pluginPageKey(props.pluginId, props.name)));
   const Page = page?.component;
+  const title = page?.title ?? props.name;
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
       <WorkspacePageHeader electron={isElectron}>
-        <h1 className="truncate font-medium text-sm">{page?.title ?? props.name}</h1>
+        <h1 className="truncate font-medium text-sm">{title}</h1>
       </WorkspacePageHeader>
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div
+        {...workspaceAreaProps("plugin-page", 1, title)}
+        className="min-h-0 flex-1 overflow-auto"
+      >
         {page && Page ? (
           <PluginRenderBoundary
             owner={page.owner}

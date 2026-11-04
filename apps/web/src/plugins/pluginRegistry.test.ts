@@ -14,6 +14,7 @@ import {
   pluginPageKey,
   pluginThreadBadgesAtom,
   registerPluginAction,
+  registerPluginBanner,
   registerPluginPage,
   setPluginMentionItems,
   runPluginThreadMenuItem,
@@ -110,8 +111,19 @@ describe("plugin @ items", () => {
       },
     ]);
 
-    // The composer reads slash commands too; @ item updates must not hand it a new list.
+    // The composer reads slash commands too; @ item updates must not hand it a new list, and
+    // neither must another registry change, such as a banner.
     expect(appAtomRegistry.get(pluginSlashCommandsAtom(environmentId))).toBe(slashCommands);
+    const hideBanner = registerPluginBanner({
+      key: "notes:1",
+      environmentId,
+      pluginId: "notes",
+      variant: "info",
+      title: "Saved",
+      dismiss: () => undefined,
+    });
+    expect(appAtomRegistry.get(pluginSlashCommandsAtom(environmentId))).toBe(slashCommands);
+    hideBanner();
     expect(appAtomRegistry.get(pluginMentionItemsAtom(environmentId))).toHaveLength(2);
     expect(appAtomRegistry.get(pluginMentionItemsAtom(otherEnvironmentId))).toEqual([]);
     setPluginMentionItems(environmentId, "notes", []);

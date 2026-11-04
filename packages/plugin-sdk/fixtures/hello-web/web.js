@@ -30,12 +30,12 @@ var web_default = defineWebPlugin({
           .then(setNote);
       }, []);
       return /* @__PURE__ */ jsxs("div", {
-        className: "hello-web-panel space-y-1 p-4 text-sm",
+        className: "hello-web-panel",
         children: [
           /* @__PURE__ */ jsx("p", { children: greeting }),
           /* @__PURE__ */ jsx("p", { children: note }),
           /* @__PURE__ */ jsxs("p", {
-            className: "text-muted-foreground",
+            className: "hello-web-muted",
             children: ["Thread ", props.threadId],
           }),
         ],
@@ -45,7 +45,7 @@ var web_default = defineWebPlugin({
       language: "hello-chart",
       component: (props) => {
         return /* @__PURE__ */ jsx("div", {
-          className: "flex h-16 items-end gap-1",
+          className: "hello-web-chart",
           children: props.code
             .split(",")
             .map((value, position) => ({
@@ -56,7 +56,7 @@ var web_default = defineWebPlugin({
               /* @__PURE__ */ jsx(
                 "div",
                 {
-                  className: "w-3 bg-primary",
+                  className: "hello-web-bar",
                   style: { height: `${bar.height}%` },
                 },
                 bar.id,
@@ -69,11 +69,19 @@ var web_default = defineWebPlugin({
       tool: "greet",
       component: (props) =>
         /* @__PURE__ */ jsxs("p", {
-          className: "text-sm",
+          className: "hello-web-text",
           children: ["👋 ", props.output ?? "Greeting…"],
         }),
     });
-    api.injectStyles(".hello-web-panel { border-top: 2px solid var(--color-primary); }");
+    api.injectStyles(`
+.hello-web-panel { display: grid; gap: 0.25rem; padding: 1rem; font-size: 0.875rem; border-top: 2px solid var(--color-primary); }
+.hello-web-muted { color: var(--muted-foreground); }
+.hello-web-text { font-size: 0.875rem; }
+.hello-web-chart { display: flex; height: 4rem; align-items: flex-end; gap: 0.25rem; }
+.hello-web-bar { width: 0.75rem; background: var(--primary); }
+.hello-web-settings { display: grid; gap: 0.5rem; }
+.hello-web-settings p { font-size: 0.75rem; }
+`);
     api.composer.setCollapseOnScroll(true);
     api.rightPanel.register({
       name: "hello",
@@ -102,12 +110,9 @@ var web_default = defineWebPlugin({
     });
     api.settings.registerPanel(() =>
       /* @__PURE__ */ jsxs("div", {
-        className: "space-y-2",
+        className: "hello-web-settings",
         children: [
-          /* @__PURE__ */ jsx("p", {
-            className: "text-xs",
-            children: "These settings are drawn by hello-web.",
-          }),
+          /* @__PURE__ */ jsx("p", { children: "These settings are drawn by hello-web." }),
           /* @__PURE__ */ jsx(Button, {
             size: "xs",
             variant: "outline",
