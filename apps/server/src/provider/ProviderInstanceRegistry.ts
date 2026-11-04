@@ -11,6 +11,7 @@ import {
   secretReferencesInSettings,
   type ServerProvider,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -586,7 +587,7 @@ export const makeProviderInstanceRegistry = Effect.fn(
 
   // Rebuilds the live instances of one kind against the current drivers; unavailable ones are
   // rebuilt by every reconcile anyway.
-  const reconcileKind = (driverKind: ProviderDriverKind) =>
+  const reconcileKind = (driverKind: ProviderDriverKind, deferSecrets = false) =>
     semaphore.withPermits(1)(
       Effect.gen(function* () {
         const live = yield* Ref.get(entries);
@@ -595,9 +596,39 @@ export const makeProviderInstanceRegistry = Effect.fn(
             entry.instance.driverKind === driverKind ? [instanceId] : [],
           ),
         );
-        yield* reconcileWithR(yield* Ref.get(configMapRef), rebuild, false, driverKind);
+        yield* reconcileWithR(yield* Ref.get(configMapRef), rebuild, deferSecrets, driverKind);
       }).pipe(Effect.provideContext(driverContext)),
     );
+
+  // As at startup, a vault prompt for an added driver's secrets waits outside the lock, and its
+  // instances wait as "Reading secrets…" instead of holding every other registry change.
+  const readAddedSecrets = Effect.fn("ProviderInstanceRegistry.readAddedSecrets")(
+    function* (driver: AnyProviderDriver<R>) {
+      const kind = driver.driverKind;
+      const driversNow = yield* Ref.get(drivers);
+      const references = (yield* Effect.filter(
+        Object.values(yield* Ref.get(configMapRef)),
+        (entry) =>
+          entry.driver === kind && secretReferencesOf(driversNow, entry).length > 0
+            ? isEntryEnabled(driversNow, entry)
+            : Effect.succeed(false),
+      )).flatMap((entry) => secretReferencesOf(driversNow, entry));
+      if (references.length === 0) return;
+      yield* (yield* SecretResolver.SecretResolver).read(references);
+      yield* semaphore.withPermits(1)(
+        Effect.gen(function* () {
+          if ((yield* Ref.get(drivers)).get(kind) !== driver) return;
+          yield* reconcileWithR(yield* Ref.get(configMapRef), new Set(), false, kind);
+        }),
+      );
+    },
+    Effect.provideContext(driverContext),
+    Effect.catchCause((cause) =>
+      Effect.logWarning("could not start a plugin driver's instances after reading secrets", {
+        cause: Cause.pretty(cause).slice(0, 500),
+      }),
+    ),
+  );
 
   const addDriver = Effect.fn("ProviderInstanceRegistry.addDriver")(function* (
     driver: AnyProviderDriver<R>,
@@ -619,7 +650,8 @@ export const makeProviderInstanceRegistry = Effect.fn(
       return next;
     }).pipe(Effect.andThen(reconcileKind(kind)));
     // A registration that fails must not hold the kind, or the plugin could never register again.
-    yield* reconcileKind(kind).pipe(Effect.onError(() => remove));
+    yield* reconcileKind(kind, true).pipe(Effect.onError(() => remove));
+    yield* readAddedSecrets(driver).pipe(Effect.forkIn(parentScope));
     return remove;
   });
 

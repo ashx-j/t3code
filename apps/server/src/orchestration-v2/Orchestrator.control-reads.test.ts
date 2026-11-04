@@ -350,6 +350,23 @@ it.effect("records a plugin's reply to a command as a finished run with no provi
         ["assistant_message", null],
       ],
     );
+
+    // Sent under a provider the user just picked, the reply stays with the one the thread runs
+    // on, so that provider's first turn still gets the thread's context handed over.
+    yield* orchestrator.dispatch({
+      type: "thread.command-reply.record",
+      commandId: CommandId.make("send-status-after-switch"),
+      threadId,
+      messageId: MessageId.make("message:status-after-switch"),
+      text: "/status",
+      attachments: [],
+      modelSelection: { instanceId: ProviderInstanceId.make("claude"), model: "claude-haiku-5-5" },
+      createdBy: "user",
+      creationSource: "web",
+      reply: { messageId: MessageId.make("message:status-after-switch:reply"), text: "All good." },
+    });
+    const afterSwitch = (yield* projections.getThreadProjection(threadId)).runs.at(-1);
+    assert.deepInclude(afterSwitch, { providerInstanceId: instanceId, modelSelection });
   }).pipe(Effect.provide(layerTest)),
 );
 

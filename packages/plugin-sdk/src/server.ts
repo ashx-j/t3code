@@ -81,6 +81,11 @@ export interface PluginOutgoingMessage {
   readonly messageId: string;
   readonly text: string;
   readonly createdBy: "user" | "agent";
+  /**
+   * Where the message came from. `server` is text T3 or a plugin wrote, such as "Continue where
+   * you left off." after a usage limit, a delegated task's report or a plugin's `sendMessage`.
+   */
+  readonly creationSource: "web" | "mobile" | "mcp" | "provider" | "server";
   /** What is attached; the files themselves stay with the server. */
   readonly attachments: ReadonlyArray<{
     readonly type: string;
@@ -197,6 +202,10 @@ export interface PluginTextGenerationTasks {
       readonly stagedPatch: string;
       /** Whether T3 also wants a branch name for the commit. */
       readonly includeBranch: boolean;
+      /** The commit style the user picked in Settings, with the repository's examples. */
+      readonly instructions?: string;
+      /** How the user wants branches named, sent with `includeBranch`. */
+      readonly branchInstructions?: string;
     };
     readonly output: { readonly subject: string; readonly body: string; readonly branch?: string };
   };
@@ -211,6 +220,8 @@ export interface PluginTextGenerationTasks {
       /** The repository's pull request template, if it has one. */
       readonly template?: string;
       readonly threadContext?: string;
+      /** The pull request style the user picked in Settings, with the repository's examples. */
+      readonly instructions?: string;
     };
     readonly output: { readonly title: string; readonly body: string };
   };
@@ -277,9 +288,9 @@ export interface PluginApi {
   readonly events: {
     /**
      * Stored orchestration events of `types` in sequence order, after `afterSequence`, or from now
-     * when omitted. Ends when the plugin deactivates or `signal` aborts. A consumer more than
-     * 1024 events behind loses the oldest, so handle events quickly and store the last `sequence`
-     * to resume from after a restart.
+     * when omitted. Ends when the plugin deactivates or `signal` aborts. Events stored before the
+     * call all arrive; after that, a consumer more than 1024 events behind loses the oldest, so
+     * handle events quickly and store the last `sequence` to resume from after a restart.
      */
     readonly stored: (options: {
       readonly types: ReadonlyArray<string>;
@@ -288,8 +299,13 @@ export interface PluginApi {
     }) => AsyncIterable<PluginStoredEvent>;
   };
   readonly threads: {
+    /**
+     * Threads, newest activity first: those not archived, or with `archived: true` only the
+     * archived ones. Deleted threads are never listed, and other calls treat them as not found.
+     */
     readonly list: (options?: {
       readonly projectId?: string;
+      readonly archived?: boolean;
     }) => Promise<ReadonlyArray<JsonObject>>;
     readonly read: (threadId: string) => Promise<JsonObject>;
     /**
@@ -407,9 +423,10 @@ export interface PluginApi {
   };
   readonly turns: {
     /**
-     * Runs once for each run that ends, in order. The plugin's storage keeps the position, so runs
-     * that end while the plugin is off are delivered when it starts again. The first registration
-     * starts from now. Register handlers in the same order on every activation.
+     * Runs each time a run ends, in order; a failed run the user retries arrives again when it ends.
+     * The plugin's storage keeps the position, so runs that end while the plugin is off are
+     * delivered when it starts again. The first registration starts from now. Register handlers in
+     * the same order on every activation. Slash command replies are not runs and never arrive.
      */
     readonly afterRunCompleted: (
       handler: (run: PluginCompletedRun) => void | Promise<void>,
@@ -427,10 +444,10 @@ export interface PluginApi {
       ) => PluginRuntimeRequestAnswer | Promise<PluginRuntimeRequestAnswer>,
     ) => void;
     /**
-     * Sees each message before it is sent, except slash commands, with the changes of the hooks
-     * before it, plugins in id order. It also sees an edited queued message and a delegated task's
-     * prompt, whose `threadId` is the task's new thread. A block stops the rest; a hook slower
-     * than 2 seconds or one that throws is skipped.
+     * Sees each message, edited queued message and delegated task prompt before it is sent, after
+     * earlier hooks' changes, plugins in id order. A block stops the rest; a hook slower than 2
+     * seconds or one that throws is skipped. Only a block applies to a slash command, a name T3,
+     * the agent or a plugin lists. A task prompt's `threadId` is the task's new thread.
      */
     readonly beforeDispatch: (
       hook: (
@@ -440,10 +457,10 @@ export interface PluginApi {
   };
   readonly slashCommands: {
     /**
-     * Lists `/name` with every provider's commands; user and agent messages starting with it run
-     * `handler` instead of being sent, and throwing or 10 seconds blocks the message. Names are
-     * lowercase letters, digits and `-`, not T3 Code's; a provider's own command of the name wins,
-     * and of plugins sharing one, the id that sorts first.
+     * Lists `/name` with every provider's commands; messages starting with it run `handler` instead
+     * of being sent, unless a send hook blocks them, and throwing or 10 seconds blocks the message.
+     * Names are lowercase letters, digits and `-`, not T3 Code's; a provider's own command of the
+     * name wins, and of plugins sharing one, the id that sorts first.
      */
     readonly register: (
       command: {

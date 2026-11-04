@@ -48,7 +48,7 @@ const decodeProjectId = Schema.decodeUnknownEffect(ProjectId);
 const decodeLaunch = Schema.decodeUnknownEffect(
   Schema.Struct({
     projectId: ProjectId,
-    title: Schema.String.check(Schema.isNonEmpty()),
+    title: TrimmedNonEmptyString,
     message: Schema.optional(Schema.String),
     model: Schema.optional(ModelSelection),
     runtimeMode: Schema.optional(RuntimeMode),
@@ -134,7 +134,10 @@ export const makeThreadsApi = (
   const shellOf = Effect.fnUntraced(function* (threadId: string) {
     const id = yield* decodeThreadId(threadId);
     const shell = yield* threads.getThreadShell(id);
-    if (shell === null) return yield* new PluginThreadNotFoundError({ threadId });
+    // A deleted thread keeps its shell, but agents and clients treat it as gone.
+    if (shell === null || shell.deletedAt !== null) {
+      return yield* new PluginThreadNotFoundError({ threadId });
+    }
     return shell;
   });
   return {
@@ -145,7 +148,11 @@ export const makeThreadsApi = (
             options?.projectId === undefined
               ? undefined
               : yield* decodeProjectId(options.projectId);
-          const shells = yield* threads.listProjectThreads({ projectId, includeSubagents: false });
+          const shells = yield* threads.listProjectThreads({
+            projectId,
+            includeSubagents: false,
+            archived: options?.archived === true,
+          });
           return yield* Effect.forEach(shells, (shell) =>
             encodeThreadShell(shell).pipe(Effect.map(asJsonObject)),
           );
@@ -366,18 +373,17 @@ export const makeProjectsApi = (
         ),
     ),
   read: (projectId) =>
-    facade
-      .call(
-        decodeProjectId(projectId).pipe(
-          Effect.flatMap(services.projects.getShell),
-          Effect.flatMap((shell) =>
-            Option.isNone(shell)
-              ? Effect.succeedNone
-              : encodeProjectShell(shell.value).pipe(
-                  Effect.map((encoded) => Option.some(asJsonObject(encoded))),
-                ),
-          ),
+    facade.call(
+      decodeProjectId(projectId).pipe(
+        Effect.flatMap(services.projects.getShell),
+        Effect.flatMap((shell) =>
+          Option.isNone(shell)
+            ? Effect.succeedNone
+            : encodeProjectShell(shell.value).pipe(
+                Effect.map((encoded) => Option.some(asJsonObject(encoded))),
+              ),
         ),
-      )
-      .then(Option.getOrUndefined),
+        Effect.map(Option.getOrUndefined),
+      ),
+    ),
 });

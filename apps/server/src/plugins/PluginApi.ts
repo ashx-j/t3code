@@ -23,7 +23,7 @@ import type * as SourceControlDrivers from "../sourceControl/builtInDrivers.ts";
 import type * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { makeAgentsApi } from "./api/agents.ts";
 import { makeEventsApi, storedEvents } from "./api/events.ts";
-import { makeFacadeContext } from "./api/facade.ts";
+import { makeFacadeContext, refused } from "./api/facade.ts";
 import { makeHttpApi } from "./api/http.ts";
 import { makeMcpApi } from "./api/mcp.ts";
 import { makeProvidersApi } from "./api/providers.ts";
@@ -135,24 +135,26 @@ export const makePluginApi = (input: {
     };
 
   const ownStorage: Pick<PluginApi["storage"], "get" | "set"> = {
-    get: (key) => call(services.storage.get(id, key)).then(Option.getOrUndefined),
+    get: (key) => call(services.storage.get(id, key).pipe(Effect.map(Option.getOrUndefined))),
     set: (key, value) => {
-      if (!isJson(value)) return Promise.reject(new TypeError("Storage values must be JSON."));
+      if (!isJson(value)) return refused(new TypeError("Storage values must be JSON."));
       return call(services.storage.set(id, key, value));
     },
   };
   // Plain-JS plugins can pass any key; a non-text one must reject like other bad calls, not throw.
   const isT3Key = (key: unknown) => typeof key === "string" && key.startsWith(T3_STORAGE_PREFIX);
   const refuseT3Key = () =>
-    Promise.reject(
-      new TypeError(`Storage keys starting with "${T3_STORAGE_PREFIX}" belong to T3.`),
-    );
+    refused(new TypeError(`Storage keys starting with "${T3_STORAGE_PREFIX}" belong to T3.`));
   const storage: PluginApi["storage"] = {
     get: ownStorage.get,
     set: (key, value) => (isT3Key(key) ? refuseT3Key() : ownStorage.set(key, value)),
     delete: (key) => (isT3Key(key) ? refuseT3Key() : call(services.storage.remove(id, key))),
     list: (prefix) =>
-      call(services.storage.list(id, prefix)).then((keys) => keys.filter((key) => !isT3Key(key))),
+      call(
+        services.storage
+          .list(id, prefix)
+          .pipe(Effect.map((keys) => keys.filter((key) => !isT3Key(key)))),
+      ),
   };
   const events = makeEventsApi(facade, services);
 

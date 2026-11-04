@@ -86,6 +86,9 @@ export const withPluginTextGeneration = (
           stagedSummary: input.stagedSummary,
           stagedPatch: input.stagedPatch,
           includeBranch: input.includeBranch === true,
+          instructions: input.policy?.commitInstructions,
+          branchInstructions:
+            input.includeBranch === true ? input.policy?.branchInstructions : undefined,
         },
         (answer) =>
           decodeCommit(answer).pipe(
@@ -111,6 +114,7 @@ export const withPluginTextGeneration = (
           diffPatch: input.diffPatch,
           template: input.changeRequestTemplate,
           threadContext: input.threadContext,
+          instructions: input.policy?.changeRequestInstructions,
         },
         (answer) =>
           decodePr(answer).pipe(

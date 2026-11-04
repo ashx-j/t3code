@@ -4,7 +4,7 @@ import { UNKNOWN_SOURCE_CONTROL_CLIENT } from "@t3tools/source-control-core/shar
 import * as Effect from "effect/Effect";
 
 import * as BuiltInDrivers from "../../sourceControl/builtInDrivers.ts";
-import type { FacadeContext } from "./facade.ts";
+import { type FacadeContext, refused } from "./facade.ts";
 
 export const makeSourceControlApi = (
   facade: FacadeContext,
@@ -16,7 +16,7 @@ export const makeSourceControlApi = (
   registerDriver: (driver) => {
     const { activation, pluginId } = facade;
     if (activation.controller.signal.aborted) {
-      return Promise.reject(new Error("This plugin activation has ended."));
+      return refused(new Error("This plugin activation has ended."));
     }
     if (
       !BuiltInDrivers.isSourceControlProviderKind(driver.kind) ||
@@ -27,23 +27,32 @@ export const makeSourceControlApi = (
       typeof driver.definition.recognizeRemote !== "function" ||
       !Effect.isEffect(driver.make)
     ) {
-      return Promise.reject(
+      return refused(
         new TypeError(
           "A source control driver needs a kind, a definition of the same kind with recognizeRemote, and make built with runtime.Effect.",
         ),
       );
     }
-    return facade.call(services.sourceControlDrivers.add(driver)).then((remove) => {
-      const removeNow = () =>
-        facade.fork(
-          remove.pipe(
-            Effect.tap(() =>
-              Effect.logInfo("plugin source control host removed", { pluginId, kind: driver.kind }),
-            ),
-          ),
-        );
-      if (activation.controller.signal.aborted) return removeNow();
-      activation.controller.signal.addEventListener("abort", removeNow, { once: true });
-    });
+    return facade.call(
+      services.sourceControlDrivers.add(driver).pipe(
+        Effect.flatMap((remove) =>
+          Effect.sync(() => {
+            const removeNow = () =>
+              facade.fork(
+                remove.pipe(
+                  Effect.tap(() =>
+                    Effect.logInfo("plugin source control host removed", {
+                      pluginId,
+                      kind: driver.kind,
+                    }),
+                  ),
+                ),
+              );
+            if (activation.controller.signal.aborted) return removeNow();
+            activation.controller.signal.addEventListener("abort", removeNow, { once: true });
+          }),
+        ),
+      ),
+    );
   },
 });

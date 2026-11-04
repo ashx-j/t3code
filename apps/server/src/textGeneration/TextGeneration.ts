@@ -46,8 +46,11 @@ export type {
 export class TextGeneration extends Context.Service<
   TextGeneration,
   Omit<ProviderTextGeneration, "generateText"> & {
-    /** Answers a free-form prompt; fails when the selected model's provider cannot run one. */
-    readonly generateText: (
+    /**
+     * Answers a free-form prompt for plugins; fails when the selected model's provider cannot run
+     * one. Optional, so fakes that never write free-form text need not stub it.
+     */
+    readonly generateText?: (
       input: TextGenerationInput,
     ) => Effect.Effect<TextGenerationResult, TextGenerationError | TextGenerationUnsupportedError>;
   }
@@ -95,11 +98,8 @@ export const make = Effect.gen(function* () {
       modelSelection: ModelSelection,
     ) => Effect.Effect<A, TextGenerationError | E>,
   ) {
-    const snapshots = yield* registry.listInstances.pipe(
-      Effect.flatMap((instances) =>
-        Effect.forEach(instances, (instance) => instance.snapshot.getSnapshot),
-      ),
-    );
+    const instances = yield* registry.listInstances;
+    const snapshots = yield* Effect.forEach(instances, (instance) => instance.snapshot.getSnapshot);
     const now = DateTime.toEpochMillis(yield* DateTime.now);
     const limited = exhaustedUsageWindow(
       snapshots.find((provider) => provider.instanceId === selection.instanceId),
@@ -131,6 +131,12 @@ export const make = Effect.gen(function* () {
               isProviderAvailable(provider) &&
               isProviderTextGenerationCapable(provider) &&
               (operation !== "generateReviewGuide" || INVESTIGATING_DRIVERS.has(driver)) &&
+              (operation !== "generateText" ||
+                instances.some(
+                  (instance) =>
+                    instance.instanceId === instanceId &&
+                    instance.textGeneration.generateText !== undefined,
+                )) &&
               !exhaustedUsageWindow(provider, now, defaultTextGenerationModel(driver))
             );
           },

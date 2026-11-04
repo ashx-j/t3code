@@ -13,7 +13,10 @@ export interface FacadeContext {
   readonly pluginId: PluginId;
   readonly activation: PluginActivation;
   readonly context: Context.Context<never>;
-  /** Runs an effect as a Promise that rejects with an `Error` carrying the failure's `_tag` as `code`. */
+  /**
+   * Runs an effect as a Promise that rejects with an `Error` carrying the failure's `_tag` as `code`.
+   * Map results inside the effect: a `.then` on the Promise is a new one that nothing handles.
+   */
   readonly call: <A, E>(effect: Effect.Effect<A, E>) => Promise<A>;
   /** Runs an effect in the background for the plugin; failures are logged, not thrown. */
   readonly fork: <A, E>(effect: Effect.Effect<A, E>) => void;
@@ -28,6 +31,18 @@ export const newCommandId = (pluginId: string, crypto: Crypto.Crypto) =>
     Effect.map((id) => CommandId.make(`command:plugin:${pluginId}:${id}`)),
   );
 
+/**
+ * Hands a plugin a promise whose failure only the plugin sees: one it never awaits must not be an
+ * unhandled rejection, which stops the server.
+ */
+const forPlugin = <A>(promise: Promise<A>): Promise<A> => {
+  promise.catch(() => undefined);
+  return promise;
+};
+
+/** A plugin API call refused before it ran, such as one with a bad argument. */
+export const refused = (error: Error): Promise<never> => forPlugin(Promise.reject(error));
+
 class PluginApiCallError extends Error {
   readonly code: string;
   constructor(code: string, message: string) {
@@ -37,7 +52,8 @@ class PluginApiCallError extends Error {
   }
 }
 
-const abortEffect = (signal: AbortSignal) =>
+/** Completes when `signal` aborts, at once if it already has. */
+export const abortEffect = (signal: AbortSignal) =>
   Effect.callback<void>((resume) => {
     const onAbort = () => resume(Effect.void);
     if (signal.aborted) return onAbort();
@@ -70,24 +86,24 @@ export const makeFacadeContext = (input: {
     // Cleanups may still save state; afterwards a disabled plugin's leftovers cannot act.
     call: (effect) =>
       activation.ended.signal.aborted
-        ? Promise.reject(
-            new PluginApiCallError("PluginDeactivated", "This plugin activation has ended."),
-          )
-        : runExit(effect).then((exit) => {
-            if (Exit.isSuccess(exit)) return exit.value;
-            const error = Cause.squash(exit.cause);
-            const code =
-              typeof error === "object" &&
-              error !== null &&
-              "_tag" in error &&
-              typeof error._tag === "string"
-                ? error._tag
-                : "PluginApiFailure";
-            throw new PluginApiCallError(
-              code,
-              error instanceof Error ? error.message : "The plugin API call failed.",
-            );
-          }),
+        ? refused(new PluginApiCallError("PluginDeactivated", "This plugin activation has ended."))
+        : forPlugin(
+            runExit(effect).then((exit) => {
+              if (Exit.isSuccess(exit)) return exit.value;
+              const error = Cause.squash(exit.cause);
+              const code =
+                typeof error === "object" &&
+                error !== null &&
+                "_tag" in error &&
+                typeof error._tag === "string"
+                  ? error._tag
+                  : "PluginApiFailure";
+              throw new PluginApiCallError(
+                code,
+                error instanceof Error ? error.message : "The plugin API call failed.",
+              );
+            }),
+          ),
     fork: (effect) => {
       Effect.runForkWith(context)(
         effect.pipe(

@@ -69,5 +69,26 @@ it.effect("asks plugins before T3, skipping slow or unusable answers, and cleans
       yield* generation.generateThreadTitle({ cwd: "/repo", message: "Hi", modelSelection }),
       { title: "Titler title" },
     );
+
+    // Plugins get the commit style the user picked, as T3's own generator does.
+    textGeneration.register("commitMessage", ({ instructions, branchInstructions }) => ({
+      subject: `${instructions} ${branchInstructions}`,
+      body: "",
+    }));
+    const commit = yield* generation.generateCommitMessage({
+      cwd: "/repo",
+      branch: null,
+      stagedSummary: "M a.ts",
+      stagedPatch: "",
+      includeBranch: true,
+      policy: {
+        kind: "custom",
+        commitInstructions: "Start with a verb.",
+        branchInstructions: "Prefix with fix.",
+        inferRepositoryConventions: false,
+      },
+      modelSelection,
+    });
+    assert.strictEqual(commit.subject, "Start with a verb. Prefix with fix");
   }).pipe(Effect.provide(PluginHooks.layer)),
 );

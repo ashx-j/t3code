@@ -42,6 +42,7 @@ export const makeMcpApi = (
             Promise.resolve().then(() =>
               handler(input, { signal: AbortSignal.any([signal, deactivated]), threadId }),
             ),
+          deactivated,
         }),
       );
       if (Exit.isFailure(registered)) {

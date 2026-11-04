@@ -959,7 +959,19 @@ describe("ProviderInstanceRegistry secret environment", () => {
       yield* PubSub.take(changes);
       return built;
     });
-    return { vault, reads, invalidated, created, configs, make, makeGated, gate };
+    return {
+      vault,
+      reads,
+      invalidated,
+      created,
+      configs,
+      make,
+      makeGated,
+      gate,
+      driver,
+      configMap,
+      resolver,
+    };
   }
 
   it.effect("starts an instance with the secret its environment points at", () => {
@@ -1011,6 +1023,25 @@ describe("ProviderInstanceRegistry secret environment", () => {
       expect(yield* registry.getInstance(defaultInstanceIdForDriver(pluginKind))).toBeDefined();
       const [waiting] = yield* registry.listUnavailable;
       expect(waiting).toMatchObject({ instanceId, unavailableReason: "Reading secrets…" });
+    }).pipe(Effect.scoped);
+  });
+
+  it.effect("adds a driver whose instance's secret waits on an unlock, then starts it", () => {
+    const fixture = setup({ [secret.reference]: "sk-live" });
+    return Effect.gen(function* () {
+      // The driver arrives with a plugin after startup, while the vault is still locked.
+      const { registry, addDriver } = yield* makeProviderInstanceRegistry<never>({
+        drivers: [],
+        configMap: fixture.configMap,
+      }).pipe(Effect.provide(fixture.resolver));
+      const _remove = yield* addDriver(fixture.driver);
+      const changes = yield* registry.subscribeChanges;
+      const [waiting] = yield* registry.listUnavailable;
+      expect(waiting).toMatchObject({ instanceId, unavailableReason: "Reading secrets…" });
+
+      yield* Deferred.succeed(fixture.gate, undefined);
+      yield* PubSub.take(changes);
+      expect(yield* registry.getInstance(instanceId)).toBeDefined();
     }).pipe(Effect.scoped);
   });
 

@@ -183,7 +183,7 @@ it.effect(
 );
 
 it.effect(
-  "plugins change, block or handle user messages but not notifications or other slash commands",
+  "plugins change, block or handle user messages, may only block slash commands, and skip notifications",
   () => {
     const threadId = ThreadId.make("thread:thread-management:chokepoint");
     const dispatched: Array<string> = [];
@@ -218,7 +218,10 @@ it.effect(
           Effect.succeed(
             outgoing.text.includes("token")
               ? { block: "Remove the token first.", pluginName: "Guard" }
-              : { text: `${outgoing.text}\n\nProject uses pnpm.` },
+              : // Text the server wrote, here a delegated task's prompt, is left as it is.
+                outgoing.creationSource === "server"
+                ? undefined
+                : { text: `${outgoing.text}\n\nProject uses pnpm.` },
           ),
         )
         .pipe(Effect.asVoid);
@@ -273,6 +276,18 @@ it.effect(
       yield* threads.dispatch(message("command", undefined, "/goal clear"));
       // Only starts with a slash: not a command, so hooks see it.
       yield* threads.dispatch(message("path", undefined, "/etc/hosts is broken"));
+      // A name in no command list is text too.
+      yield* threads.dispatch(message("unlisted", undefined, "/please fix the build"));
+      // A command's text stays as sent, but a hook can still block it.
+      yield* hooks.setProviderSlashCommands(() => Effect.succeed(["review"]));
+      yield* threads.dispatch(message("provider-command", undefined, "/review now"));
+      for (const [index, text] of ["/goal token", "/review token", "/deploy token"].entries()) {
+        const refused = yield* Effect.flip(
+          threads.dispatch(message(`blocked-command-${index}`, undefined, text)),
+        );
+        expect(userFacingDispatchErrorMessage(refused)).toBe("Guard: Remove the token first.");
+      }
+      expect(deploys).toBe(1);
       // A steer that missed its turn sends the recorded message again under a new command id.
       yield* threads.dispatch({
         ...message("steer-again", undefined, "Fix the build.\n\nProject uses pnpm."),
@@ -313,9 +328,11 @@ it.effect(
         "Fix the build.",
         "/goal clear",
         "/etc/hosts is broken\n\nProject uses pnpm.",
+        "/please fix the build\n\nProject uses pnpm.",
+        "/review now",
         "Fix the build.\n\nProject uses pnpm.",
         "edited Fix the tests.\n\nProject uses pnpm.",
-        "task Check the tests.\n\nProject uses pnpm.",
+        "task Check the tests.",
       ]);
     }).pipe(Effect.provide(layerTest));
   },
@@ -367,6 +384,24 @@ it.effect(
     }).pipe(Effect.provide(layerTest));
   },
 );
+
+it("latestRun passes over a slash command reply recorded while a turn runs", () => {
+  const run = (id: string, ordinal: number, status: OrchestrationV2Run["status"], reply = false) =>
+    ({
+      id: RunId.make(id),
+      ordinal,
+      status,
+      rootNodeId: reply ? null : NodeId.make(`node:${id}`),
+      providerThreadId: reply ? null : ProviderThreadId.make(`provider-thread:${id}`),
+    }) as OrchestrationV2Run;
+  const reply = run("run:reply", 2, "completed", true);
+  expect(
+    ThreadManagementService.latestRun({ runs: [run("run:turn", 1, "running"), reply] })?.id,
+  ).toBe("run:turn");
+  expect(
+    ThreadManagementService.latestRun({ runs: [run("run:turn", 1, "completed"), reply] })?.id,
+  ).toBe("run:reply");
+});
 
 it.effect("waitForThread follows a restart continuation instead of the cut run", () =>
   Effect.gen(function* () {

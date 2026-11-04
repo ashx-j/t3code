@@ -245,7 +245,7 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
       },
       (textGeneration) =>
         Effect.gen(function* () {
-          const generated = yield* textGeneration.generateText({
+          const generated = yield* textGeneration.generateText!({
             cwd: process.cwd(),
             prompt: "Summarize the week.",
             modelSelection: {

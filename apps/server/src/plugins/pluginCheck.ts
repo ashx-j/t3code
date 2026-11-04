@@ -8,6 +8,8 @@ import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
+import { settingsSchemaProblem } from "./PluginSettingsStore.ts";
+
 const MANIFEST_FILE = "t3-plugin.json";
 const MAX_MANIFEST_BYTES = 64 * 1024;
 // Bounds what one check reads, so a folder full of build output cannot stall the server.
@@ -253,14 +255,37 @@ export const checkPluginFolder = Effect.fn("PluginCheck.check")(function* (
       problem: `${MANIFEST_FILE} is not a valid manifest: ${reasonOf(Cause.squash(decoded.cause))}`,
       fix: "Fix the fields it names; the Manifest section of the plugin SDK README lists them.",
     });
-  } else if (!satisfiesSemverRange(serverVersion, decoded.value.engines.t3)) {
-    findings.push({
-      code: "engine-range",
-      severity: "error",
-      file: MANIFEST_FILE,
-      problem: `engines.t3 is "${decoded.value.engines.t3}", which leaves out this server's version, ${serverVersion}.`,
-      fix: `Widen engines.t3 to include ${serverVersion}, for example ">=${serverVersion.split("-")[0]}".`,
-    });
+  } else {
+    if (!satisfiesSemverRange(serverVersion, decoded.value.engines.t3)) {
+      findings.push({
+        code: "engine-range",
+        severity: "error",
+        file: MANIFEST_FILE,
+        problem: `engines.t3 is "${decoded.value.engines.t3}", which leaves out this server's version, ${serverVersion}.`,
+        fix: `Widen engines.t3 to include ${serverVersion}, for example ">=${serverVersion.split("-")[0]}".`,
+      });
+    }
+    const settingsProblem =
+      decoded.value.settingsSchema === undefined
+        ? undefined
+        : settingsSchemaProblem(decoded.value.settingsSchema);
+    if (settingsProblem?.kind === "unreadable") {
+      findings.push({
+        code: "settings-schema-unreadable",
+        severity: "warning",
+        file: MANIFEST_FILE,
+        problem: `T3 cannot read settingsSchema, so every settings save fails: ${settingsProblem.reason}`,
+        fix: "Use JSON Schema 2020-12 keywords that describe plain JSON values.",
+      });
+    } else if (settingsProblem?.kind === "default") {
+      findings.push({
+        code: "settings-default-invalid",
+        severity: "warning",
+        file: MANIFEST_FILE,
+        problem: `A default in settingsSchema breaks its own field, so every settings save fails: ${settingsProblem.reason}`,
+        fix: "Change the default, or the rule it breaks, so the two agree.",
+      });
+    }
   }
 
   // Entry checks read the raw fields, so a manifest that fails to decode still gets them.

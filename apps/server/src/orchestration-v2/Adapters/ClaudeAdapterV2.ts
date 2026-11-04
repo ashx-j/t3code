@@ -2715,6 +2715,8 @@ export function claudeEffectiveQueryPolicyKey(
     readonly allowedTools?: ReadonlyArray<string>;
     readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
   },
+  // Claude reads plugin instructions and skill folders only when its process starts.
+  plugins?: ProviderAdapter.ProviderAdapterV2TurnInput["plugins"],
 ): string {
   return JSON.stringify({
     runtimePolicy: claudeRuntimeQueryPolicyKey({
@@ -2724,6 +2726,7 @@ export function claudeEffectiveQueryPolicyKey(
         : { allowedTools: mcpOverrides.allowedTools }),
     }),
     mcpServers: mcpOverrides.mcpServers,
+    plugins,
   });
 }
 
@@ -10112,7 +10115,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? {}
               : { allowedTools: queryPolicy.allowedTools }),
           });
-          const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides);
+          const queryPolicyKey = claudeEffectiveQueryPolicyKey(
+            queryPolicy,
+            mcpOverrides,
+            turnInput.plugins,
+          );
           const compiledSelection = compileClaudeModelSelection(turnInput.modelSelection);
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);

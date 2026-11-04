@@ -33,8 +33,13 @@ it.layer(NodeServices.layer)("PluginStorage", (it) => {
 
       yield* withStorage((storage) =>
         Effect.gen(function* () {
+          // Removing a plugin's data on a server that never stored any leaves no file behind.
+          yield* storage.clear(other);
           assert.isFalse(yield* fileSystem.exists(filename));
           yield* storage.set(hello, "greeting", { text: "hi" });
+          yield* storage.set(other, "gone", true);
+          yield* storage.clear(other);
+          assert.deepStrictEqual(yield* storage.list(other), []);
         }),
       );
 

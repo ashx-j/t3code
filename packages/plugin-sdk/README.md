@@ -35,7 +35,10 @@ Vite preset below.
   `"format": "t3-secret"` are stored in the server's secret store and never shown again. The form
   covers top-level strings, numbers, integers, booleans, `enum`s of strings or numbers, and arrays
   of strings. One property of any other shape, such as an object or a nullable type, turns the whole
-  form into a JSON box. Agents read and change settings with the `t3_plugins_settings` tool.
+  form into a JSON box. Every save is checked against the schema with the top-level `default`s
+  filled in, so a default its own field rejects refuses every save; `t3_plugins_check` reports it.
+  Agents read the settings and the schema, and change settings, with the `t3_plugins_settings`
+  tool.
 - A `themes/` folder of theme JSON files is published while the plugin is active, and an `assets/`
   folder is served to the web half when the plugin has one. T3 Code remembers the published
   themes, so the boot screen and the desktop window start in the active theme's colors. A theme
@@ -67,8 +70,8 @@ module.exports = {
 - stored orchestration events, run-completed hooks and notes in threads;
 - threads and projects: read, start, archive, snooze, settle and delete threads, add and change
   projects, and list a project's git worktrees;
-- send hooks that add to, replace or block a message, and slash commands that run on the server
-  and may answer in the thread without starting a turn;
+- send hooks that add to, replace or block a message (a slash command can only be blocked), and
+  slash commands that run on the server and may answer in the thread without starting a turn;
 - answers to agents' approvals and questions, instructions for agents, and MCP tools for agents;
 - secrets the user enters on a card in a thread with a turn in progress;
 - the text T3 Code generates, such as thread titles and commit messages, and free-form text from

@@ -11,7 +11,9 @@ Plugins are code the user installed on purpose. Server entries run in the server
 bundles run as React code in the page, with no sandbox; manifest `permissions` are shown, not
 enforced. Do not shape the API around a future sandbox. The host isolates failure instead: a plugin
 that throws or hangs while loading or activating is marked failed, one that throws in a handler fails
-that call, hung cleanups are abandoned after a deadline, and none of them stops the server. Enable,
+that call, hung cleanups are abandoned after a deadline, and none of them stops the server. Node
+exits on a rejection nobody handles, so every promise the API hands a plugin goes through
+`forPlugin` in `facade.ts`, and only a plugin that awaits it sees the failure. Enable,
 disable, reload and install run in the host's scope, so a client that disconnects mid-change never
 leaves a plugin half torn down. A newly found plugin starts disabled; the user enables it. The web
 loader starts bundles in parallel, gives each 30 seconds to load and to activate, and undoes
@@ -47,7 +49,8 @@ underscores so the `plg_<id>_` prefix on plugin MCP tool names belongs to one pl
 checked lexically; code that reads or serves them must still resolve symlinks. `contributes` rejects
 unknown keys, so a plugin written for a newer T3 fails with a reason instead of losing one silently.
 Settings are validated by Effect's JSON Schema 2020-12 importer; a schema it cannot import rejects
-saves with the importer's reason. Plugins read top-level `default`s for fields nobody saved, while
+saves with the importer's reason. Saves are validated over the defaults, so a default its own field
+rejects refuses every save; `t3_plugins_check` reports both before anyone saves. Plugins read top-level `default`s for fields nobody saved, while
 clients get only what is saved, so a form can tell a default from a choice. A save first drops
 stored keys a schema with `additionalProperties: false` no longer lists: the form cannot remove a
 key it does not show, and validating it would refuse every save.
@@ -150,16 +153,21 @@ the plugin's reason: every caller already handles that error and releases claime
 clients show the deepest error message, so the sender sees the reason and keeps the draft. The hook registry is a `PluginHooks` reference with an inert default, so
 orchestration code and its tests need no plugin wiring; the server provides one registry to the
 dispatch path and the host. `events.stored` for one type lets the event sink filter before anything is
-decoded for the plugin; several types share one stream so events stay in sequence order. A sliding
-buffer means a slow plugin loses old events rather than stalling the server; plugins resume by
-`sequence`. `turns.afterRunCompleted` reads the same events through a stream that waits instead of
+decoded for the plugin; several types share one stream so events stay in sequence order. Events
+stored before the call are read from the database page by page as the plugin asks, so resuming
+from an old `sequence` gets every one; after that a sliding buffer means a slow plugin loses old
+events rather than stalling the server. `turns.afterRunCompleted` reads the same events through a stream that waits instead of
 dropping, because a dropped run would be lost for good once the saved position moves past it. It
 saves the sequence in the plugin's storage, under the `t3.` prefix that the plugin's own `list`
 skips and its writes refuse, when the plugin first subscribes and after each run,
 with the last 256 ended runs: runs that end while a plugin is off arrive when it starts, even
 before it has handled one, and a run updated again after it ended (a checkpoint landing on an
-interrupted run) is not delivered twice. Hooks skip slash commands, whose meaning changed
-text would change.
+interrupted run) is not delivered twice, while a retry, which sets the failed run back to
+`preparing`, makes it deliverable again. Command replies are recorded with `run.created` alone, so
+they never arrive. For a slash command, a name in T3's, the provider's or a plugin's list, hooks may
+only block, because changed text would change what the command does; other text that starts with
+`/`, such as a path, gets every hook. Hooks see the message's `creationSource`, because text the
+server writes, such as the usage-limit resume, is sent as the user.
 
 `turns.onRuntimeRequest` reacts to stored events too and answers through the same
 `runtime-request.respond` command a client sends, so every adapter that raises approvals or
@@ -172,7 +180,7 @@ request while plugins decide: holding it back would need a change at every adapt
 
 A server plugin's slash commands are provider slash commands: the server adds them to every
 provider's lists where it adds `/usage-limits`, so every client lists them with no plugin code, and
-the `beforeDispatch` path runs the plugin's handler instead of the hooks. A provider's own command
+the `beforeDispatch` path runs the plugin's handler after hooks that may only block. A provider's own command
 of the same name wins in that provider's lists and when a message goes to it, so a plugin cannot
 take `/review` from an agent that has one. That includes the commands of the thread's folder
 (its worktree, else its project root), which the composer lists from the provider's workspace
@@ -186,7 +194,11 @@ sent message once a user message with its id exists, and paged clients drop run-
 reply takes the next ordinal even while a turn runs, so the thread shell leaves reply runs out
 like idle compactions (`isSilentRunForShell` and its SQL twin), and `latestExecutedRun` and its
 SQL twins skip them; otherwise a reply sent mid-turn would become the thread's status and hide
-the turn's failure. Web takes a message's revert target from
+the turn's failure. For the same reason `ThreadManagementService.latestRun` passes over a reply
+while a turn runs, so waiting on the thread waits for the turn. A reply carries the instance of the
+thread's active provider thread rather than the message's model selection: the queued-run start
+takes the latest finished run as the handoff source, and a reply filed under a provider the user
+just picked would skip the context handoff its first turn needs. Web takes a message's revert target from
 the previous run's checkpoint, so the first message after a reply has no revert button, while the
 command itself still reverts to before it. When a new
 thread's first message gets a reply, `ThreadLaunchService` prepares the workspace as for a launch
@@ -199,9 +211,11 @@ plugin's own prompt on the settings' text generation model through the router's 
 Drivers built with `fromRunner` get it from their JSON runner, with the answer in one `text` field;
 it is optional on `ProviderTextGeneration`, so drivers that cannot run a prompt (Fx, the ACP
 Registry driver, plugin ACP agents and Muse) need no change and the router fails with
-`TextGenerationUnsupportedError`. Drivers that pick a runtime per call, such as OpenCode's 1.x
+`TextGenerationUnsupportedError`. It is optional on the router service too, so test fakes of the
+router need not stub it. Drivers that pick a runtime per call, such as OpenCode's 1.x
 and 2 servers, must forward it, or the router sees it missing. Like the tasks,
-it moves to the fallback model when the selected one's usage limit is reached.
+it moves to the fallback model when the selected one's usage limit is reached, skipping providers
+without `generateText`.
 
 Plugin instructions and skill folders ride on each adapter turn input, read once per turn in
 `RunExecutionService`, so adapters never look up plugins. Claude appends the instructions to T3's
@@ -212,8 +226,10 @@ written when the plugin starts and removed when it stops. Codex
 gets the instructions as `application` context entries and the `skills` folders through
 `skills/extraRoots/set`, sent only when they change. The ACP agents (Grok, Antigravity, Fx),
 OpenCode, Cursor, Pi and Muse are not wired: each puts T3's own text in its own place, so each
-needs its own change, and none takes a skill folder from T3. Claude starts a process with its
-options, so a change reaches a Claude thread when its next process starts. The `$` picker reads
+needs its own change, and none takes a skill folder from T3. Claude reads them only when its
+process starts, so they are part of the adapter's process reuse key: turning a plugin on or off, or
+changing its instructions, starts a new process at the thread's next turn. A reload that only
+edits skill files keeps the same folder, so those reach a thread when its process next restarts. The `$` picker reads
 each provider's skill list, so the host reads the skills' frontmatter when plugin states change and
 the server adds them to the Claude and Codex lists where it adds plugin slash commands, under the
 name each invokes: Claude namespaces a `--plugin-dir` folder's skills by its manifest name, and the
@@ -233,7 +249,8 @@ in the server, so a one-use ref would only add a step. A plugin tool's handler g
 thread's id, so a tool can ask in the thread whose turn is waiting on it.
 
 MCP has no tool removal, so a deactivated plugin's tools stay listed and answer that the plugin is
-disabled, and turning it back on swaps the handlers in place. Claude reads the tool list once per
+disabled, and turning it back on swaps the handlers in place. A call still running when the plugin
+turns off ends with that answer, like `invoke`, even if its handler ignores the abort signal. Claude reads the tool list once per
 session (checked with Haiku 5.5): a plugin turned on mid-thread gives its tools to threads started
 after that, not to the running session.
 
@@ -266,8 +283,10 @@ Registration is a hydration service rather than a mutator method because only th
 drivers' service type concrete, so plugin drivers get the services built-ins get. A defect stops
 the reconcile that rebuilds every instance, so the registry catches defects while decoding a
 config, the host turns defects in a plugin's `create` into driver errors, and a registration
-whose rebuild still fails removes its driver so the kind stays free. The registry also holds its
-lock while `create` runs, so the host fails a plugin's `create` after 20 seconds, within the 30
+whose rebuild still fails removes its driver so the kind stays free. Adding a driver builds its
+instances without their secrets, as startup does: one that needs a secret shows "Reading secrets…"
+until a read outside the lock finishes, so a vault prompt never holds other registry changes. The
+registry also holds its lock while `create` runs, so the host fails a plugin's `create` after 20 seconds, within the 30
 that `activate` gets while it waits on `registerDriver`.
 
 Clients pick a provider's card, icon and form from static definitions, so a plugin's driver
