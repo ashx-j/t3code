@@ -5,7 +5,15 @@ import type { EnvironmentId, PluginInstallSource, PluginState } from "@t3tools/c
 import type * as Cause from "effect/Cause";
 import type * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { DownloadIcon, FolderDownIcon, BlocksIcon, RotateCwIcon, Trash2Icon } from "lucide-react";
+import {
+  BlocksIcon,
+  ChevronUpIcon,
+  DownloadIcon,
+  FolderDownIcon,
+  RotateCwIcon,
+  SlidersHorizontalIcon,
+  Trash2Icon,
+} from "lucide-react";
 import {
   type DragEvent,
   type ReactNode,
@@ -46,7 +54,6 @@ import { Label } from "../ui/label";
 import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
-import { AdvancedSettings } from "./AdvancedSettings";
 import { JsonSchemaSettingsForm } from "./JsonSchemaSettingsForm";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
@@ -783,6 +790,7 @@ function PluginRow({
   const uninstall = useAtomCommand(pluginEnvironment.uninstallPlugin, "plugin removal");
   const update = useAtomCommand(pluginEnvironment.updatePlugin, "plugin update");
   const [busy, setBusy] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   // Plugin UI loads from the main environment only, so its settings panel and web failure do too.
   const contributionKey = pluginContributionKey(environmentId, plugin.id);
   const customSettings = useAtomValue(pluginSettingsPanelAtom(contributionKey));
@@ -866,6 +874,21 @@ function PluginRow({
           ) : undefined
         ) : (
           <>
+            {hasSettings ? (
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label={`Settings for ${plugin.name}`}
+                aria-expanded={settingsOpen}
+                onClick={() => setSettingsOpen((open) => !open)}
+              >
+                {settingsOpen ? (
+                  <ChevronUpIcon className="size-4" />
+                ) : (
+                  <SlidersHorizontalIcon className="size-4" />
+                )}
+              </Button>
+            ) : null}
             <Button
               size="icon-sm"
               variant="ghost"
@@ -932,11 +955,12 @@ function PluginRow({
       }
     />
   );
-  if (shadowed || !hasSettings) return row;
+  if (shadowed || !hasSettings || !settingsOpen) return row;
   return (
     <>
       {row}
-      <AdvancedSettings label="Settings" targetIds={[]}>
+      {/* Lined like the card's own rows, as an Advanced fold's rows are. */}
+      <div className="[&>*+*]:border-t [&>*+*]:border-border/50">
         <PluginSettingsRows
           first={first}
           copies={copies}
@@ -944,12 +968,12 @@ function PluginRow({
           customSettings={customSettings}
           hasGeneratedForm={hasGeneratedForm}
         />
-      </AdvancedSettings>
+      </div>
     </>
   );
 }
 
-/** A plugin's settings under its Settings fold: the plugin's own panel, or rows from its schema. */
+/** A plugin's settings under its row: the plugin's own panel, or rows from its schema. */
 function PluginSettingsRows({
   first,
   copies,
