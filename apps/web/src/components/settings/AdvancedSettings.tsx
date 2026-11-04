@@ -10,9 +10,11 @@ import { useSettingsSearchTargetId } from "./settingsLayout";
  */
 export function AdvancedSettings({
   targetIds,
+  label = "Advanced",
   children,
 }: {
   readonly targetIds: ReadonlyArray<string>;
+  readonly label?: string;
   readonly children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -30,7 +32,7 @@ export function AdvancedSettings({
           aria-hidden
           className="size-3.5 shrink-0 transition-transform duration-150 group-data-panel-open:rotate-90 motion-reduce:transition-none"
         />
-        Advanced
+        {label}
       </CollapsibleTrigger>
       <CollapsiblePanel>
         <div className="border-t border-border/50 [&>*+*]:border-t [&>*+*]:border-border/50">

@@ -5,14 +5,7 @@ import type { EnvironmentId, PluginInstallSource, PluginState } from "@t3tools/c
 import type * as Cause from "effect/Cause";
 import type * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
-import {
-  DownloadIcon,
-  FolderDownIcon,
-  BlocksIcon,
-  RotateCwIcon,
-  SlidersHorizontalIcon,
-  Trash2Icon,
-} from "lucide-react";
+import { DownloadIcon, FolderDownIcon, BlocksIcon, RotateCwIcon, Trash2Icon } from "lucide-react";
 import {
   type DragEvent,
   type ReactNode,
@@ -53,6 +46,7 @@ import { Label } from "../ui/label";
 import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { AdvancedSettings } from "./AdvancedSettings";
 import { JsonSchemaSettingsForm } from "./JsonSchemaSettingsForm";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
@@ -789,7 +783,6 @@ function PluginRow({
   const uninstall = useAtomCommand(pluginEnvironment.uninstallPlugin, "plugin removal");
   const update = useAtomCommand(pluginEnvironment.updatePlugin, "plugin update");
   const [busy, setBusy] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   // Plugin UI loads from the main environment only, so its settings panel and web failure do too.
   const contributionKey = pluginContributionKey(environmentId, plugin.id);
   const customSettings = useAtomValue(pluginSettingsPanelAtom(contributionKey));
@@ -827,7 +820,7 @@ function PluginRow({
     ),
     ...(webFailure === undefined ? [] : [`Web part failed: ${webFailure}`]),
   ];
-  return (
+  const row = (
     <SettingsRow
       title={plugin.name}
       description={
@@ -873,17 +866,6 @@ function PluginRow({
           ) : undefined
         ) : (
           <>
-            {hasSettings ? (
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                aria-label={`Settings for ${plugin.name}`}
-                aria-expanded={settingsOpen}
-                onClick={() => setSettingsOpen((open) => !open)}
-              >
-                <SlidersHorizontalIcon className="size-4" />
-              </Button>
-            ) : null}
             <Button
               size="icon-sm"
               variant="ghost"
@@ -948,22 +930,27 @@ function PluginRow({
           </>
         )
       }
-    >
-      {settingsOpen ? (
-        <PluginSettingsPanel
+    />
+  );
+  if (shadowed || !hasSettings) return row;
+  return (
+    <>
+      {row}
+      <AdvancedSettings label="Settings" targetIds={[]}>
+        <PluginSettingsRows
           first={first}
           copies={copies}
           labelled={labelled}
           customSettings={customSettings}
           hasGeneratedForm={hasGeneratedForm}
         />
-      ) : null}
-    </SettingsRow>
+      </AdvancedSettings>
+    </>
   );
 }
 
-/** A plugin's settings under its row: the plugin's own panel, or the generated form. */
-function PluginSettingsPanel({
+/** A plugin's settings under its Settings fold: the plugin's own panel, or rows from its schema. */
+function PluginSettingsRows({
   first,
   copies,
   labelled,
@@ -976,29 +963,23 @@ function PluginSettingsPanel({
   readonly customSettings: PluginSettingsPanelEntry | undefined;
   readonly hasGeneratedForm: boolean;
 }) {
+  if (customSettings === undefined) {
+    return <PluginSettingsEditor first={first} copies={copies} labelled={labelled} />;
+  }
   return (
-    <div className="mt-3 mb-2 space-y-3 rounded-lg border border-border/60 bg-muted/30 p-3 sm:p-4">
-      {customSettings === undefined ? (
+    <>
+      <PluginCustomSettings entry={customSettings} />
+      {/* The plugin's own panel talks to the main environment's copy alone. */}
+      {copies.length > 1 ? (
+        <SettingsRow
+          title={`This panel changes ${first.label} only`}
+          description={hasGeneratedForm ? "The rows below change every environment." : undefined}
+        />
+      ) : null}
+      {copies.length > 1 && hasGeneratedForm ? (
         <PluginSettingsEditor first={first} copies={copies} labelled={labelled} />
-      ) : (
-        <>
-          <PluginCustomSettings entry={customSettings} />
-          {/* The plugin's own panel talks to the main environment's copy alone. */}
-          {copies.length > 1 ? (
-            <>
-              <p className="text-xs text-muted-foreground">
-                {hasGeneratedForm
-                  ? `This panel changes ${first.label} only. The form below changes every environment.`
-                  : `This panel changes ${first.label} only.`}
-              </p>
-              {hasGeneratedForm ? (
-                <PluginSettingsEditor first={first} copies={copies} labelled={labelled} />
-              ) : null}
-            </>
-          ) : null}
-        </>
-      )}
-    </div>
+      ) : null}
+    </>
   );
 }
 
@@ -1116,18 +1097,21 @@ function RemovePluginPopover({
 function PluginCustomSettings(props: { readonly entry: PluginSettingsPanelEntry }) {
   const Panel = props.entry.component;
   return (
-    <PluginRenderBoundary
-      owner={props.entry.owner}
-      what="Its settings panel"
-      resetKeys={[props.entry]}
-      fallback={
-        <p className="text-xs text-destructive">
-          This plugin's settings panel stopped with an error.
-        </p>
-      }
-    >
-      <Panel />
-    </PluginRenderBoundary>
+    // Padded as a settings row, so a panel drawn as one lines up with the rows around it.
+    <div className="px-3 py-3 sm:px-4">
+      <PluginRenderBoundary
+        owner={props.entry.owner}
+        what="Its settings panel"
+        resetKeys={[props.entry]}
+        fallback={
+          <p className="text-xs text-destructive">
+            This plugin's settings panel stopped with an error.
+          </p>
+        }
+      >
+        <Panel />
+      </PluginRenderBoundary>
+    </div>
   );
 }
 
@@ -1147,8 +1131,8 @@ function PluginSettingsEditor({
       input: { pluginId: first.plugin.id },
     }),
   );
-  if (query.error) return <p className="text-xs text-destructive">{query.error}</p>;
-  if (!query.data) return <p className="text-xs text-muted-foreground">Loading settings…</p>;
+  if (query.error) return <SettingsRow title="Could not load settings" description={query.error} />;
+  if (!query.data) return <SettingsRow title="Loading settings…" role="status" />;
   return (
     <PluginSettingsFormView
       first={first}

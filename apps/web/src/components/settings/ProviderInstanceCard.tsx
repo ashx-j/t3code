@@ -1210,25 +1210,23 @@ export function ProviderInstanceCard({
     />
   ) : liveProvider?.settingsSchema !== undefined ? (
     // Drivers from plugins have no client definition; their snapshot describes the form.
-    <div className="border-t py-3">
-      <JsonSchemaSettingsForm
-        idPrefix={`provider-instance-${instanceId}`}
-        label={displayName}
-        schema={liveProvider.settingsSchema}
-        settings={isJsonObject(instance.config) ? instance.config : {}}
-        canSave={!readOnly}
-        onSave={async (patch) => {
-          const current = isJsonObject(instance.config) ? instance.config : {};
-          const next: Record<string, Schema.Json> = { ...current };
-          for (const [key, value] of Object.entries(patch)) {
-            if (value === null) delete next[key];
-            else next[key] = value;
-          }
-          updateConfig(next);
-          return { settings: next };
-        }}
-      />
-    </div>
+    <JsonSchemaSettingsForm
+      idPrefix={`provider-instance-${instanceId}`}
+      label={displayName}
+      schema={liveProvider.settingsSchema}
+      settings={isJsonObject(instance.config) ? instance.config : {}}
+      canSave={!readOnly}
+      onSave={async (patch) => {
+        const current = isJsonObject(instance.config) ? instance.config : {};
+        const next: Record<string, Schema.Json> = { ...current };
+        for (const [key, value] of Object.entries(patch)) {
+          if (value === null) delete next[key];
+          else next[key] = value;
+        }
+        updateConfig(next);
+        return { settings: next };
+      }}
+    />
   ) : (
     <SettingsRow
       title="Driver"
