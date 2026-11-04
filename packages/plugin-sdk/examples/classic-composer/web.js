@@ -170,17 +170,20 @@ var css = `
 }
 
 /* 3. Hook: the Lucide class on T3's Full access icon, the only thing that marks it, inside T3's
-      permissions controls: the row's picker, the drawer, the permissions section of every menu
-      that lists the modes, the model picker's permissions button, and the default permissions
-      setting with its list, the only list that holds the lock and pen icons of T3's other modes.
-      Full access showed an open lock before the redesign. Other plugins keep their own icon. */
+      permissions and access controls: the row's picker, the drawer, the permissions section of
+      every menu that lists the modes, the model picker's permissions button, a select set to
+      full access, which the default permissions setting and the link access picker mark only
+      with their hidden input's value, a select list that also holds the lock and pen icons of
+      T3's other modes, and the Connect Agent page's access list. Full access showed an open lock
+      before the redesign. Other plugins keep their own icon. */
 :is(
     [data-composer-shortcut~="composer.mode"],
     [data-slot="composer-context-strip"],
     [data-composer-permissions],
     [data-composer-permissions-trigger],
-    [aria-label="Default permissions"],
-    [data-slot="select-popup"]:has(svg.lucide-lock):has(svg.lucide-pen-line)
+    [data-slot="select-trigger"]:has(+ input[value="full-access"]),
+    [data-slot="select-popup"]:has(svg.lucide-lock):has(svg.lucide-pen-line),
+    [aria-labelledby="connect-agent-access-label"]
   )
   svg.lucide-shield-off {
   background-color: currentColor;
@@ -231,6 +234,24 @@ var css = `
     flex-shrink: 0;
     background-color: currentColor;
     mask: ${drawerChevron} center / contain no-repeat;
+  }
+}
+/* T3 shows the workspace and machine as selects from a 576px wide composer. Ash's build shows
+   them only past 768px, which the wide and full chat widths reach, and below that one menu whose
+   icons and chevron sit flush, as these selects do here. Past 768px, the selects' icons sat 2px
+   into their padding, and their chevron was bolder, at 2.25, and 4px into it. Hook: the
+   composer-surface container T3 sets on the card, and aria-haspopup="listbox", which only the
+   selects have. */
+@container composer-surface (width >= 48rem) {
+  [data-slot="composer-context-strip"]
+    button[data-composer-context-control][aria-haspopup="listbox"] {
+    & svg {
+      margin-inline: -0.125rem;
+    }
+    &::before {
+      margin-inline-end: -0.25rem;
+      mask-image: ${chevron};
+    }
   }
 }
 /* In dark, the drawer is glass like the card, the card casts a shadow onto it, and it has a faint
