@@ -21,6 +21,8 @@ palette in its text colors, the raised surface and the error and warning fills. 
 shapes a theme file can't set yet. Its rules apply only while the Surface theme is on, so picking
 another theme brings back T3's own look. The theme file also imports on its own through **Add
 theme**, which keeps its colors but not its corner radius, status colors or `web.js` shapes.
+Duplicating Surface in the theme editor gives the copy a new id, so the copy loses the `web.js`
+shapes too.
 
 ## What `web.js` hardcodes
 
@@ -38,3 +40,8 @@ adds the seam, move the rule to it.
 | Grouped settings are solid cards, except the provider detail pane's flat sections                                          | `data-slot="settings-group"`, the grouped variant's `bg-card/40` class, and `data-provider-detail`                                                           | Theme component colors such as `settingsGroup: { surface, border }`                                                                     |
 | Segmented tabs have a framed track. In dark it is sunken with a raised selected tab                                        | `data-slot="toggle-group"` with `data-variant="segmented"`, and `data-variant` on its tabs, which a tooltip trigger keeps when it replaces their `data-slot` | Theme component colors such as `segmented: { track, thumb }`                                                                            |
 | The stop button is a dim rounded square with a red icon                                                                    | The button's `aria-label="Stop generation"`, its only mark                                                                                                   | Theme component colors such as `stopButton: { surface, icon, shape }`, or a `data-slot` on the button                                   |
+
+The cards, tabs and stop button read Tailwind's `--radius-lg`, `--radius-xl` and `--radius-2xl`,
+and thread details' headings read `--text-xs` and `--text-xs--line-height`. Tailwind emits those
+tokens only while T3's own code uses them, so each falls back to T3's value. A theme token list in
+the SDK would replace them.
