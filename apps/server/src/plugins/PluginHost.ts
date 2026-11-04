@@ -314,7 +314,7 @@ type PluginSettingsError =
 const PluginsConfigFile = Schema.StructWithRest(
   Schema.Struct({
     enabled: Schema.optionalKey(Schema.Record(Schema.String, Schema.Boolean)),
-    /** The user's choice for the `t3_plugins_*` agent tools; unset, they follow whether any plugin exists. */
+    /** Whether agents get the `t3_plugins_*` tools; off until the user turns them on. */
     agentTools: Schema.optionalKey(Schema.Boolean),
     devPaths: Schema.optionalKey(Schema.Array(Schema.String)),
     /** Where each plugin installed through `install` came from, so `update` can fetch it again. */
@@ -526,11 +526,10 @@ const make = Effect.gen(function* () {
   // rescans on every visit, and a list sent again would make every client and provider stream
   // rebuild what it already shows.
   let published: ReadonlyArray<PluginState> = [];
-  // Unless the user chose, agents get the management tools once the environment has a plugin, so an
-  // environment without plugins pays nothing for them.
+  // Agents get the management tools only once the user turns them on, so no turn pays for them
+  // unasked.
   const syncAgentTools = Effect.gen(function* () {
-    const choice = (yield* Ref.get(pluginsConfig)).agentTools;
-    const offered = choice ?? published.length > 0;
+    const offered = (yield* Ref.get(pluginsConfig)).agentTools ?? false;
     yield* services.mcpTools.offerManagementTools(offered);
     if ((yield* SubscriptionRef.get(agentToolsOffered)) !== offered) {
       yield* SubscriptionRef.set(agentToolsOffered, offered);

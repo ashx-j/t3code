@@ -390,7 +390,7 @@ check, so a restart before the next check is due starts no network request.
 
 Plugins activate after the server is listening, each in its own fiber. Clients show plugin UI only
 when the environment advertises `plugins`. Plugin MCP tools are registered only when a plugin adds
-them, and the `t3_plugins_*` management tools follow the Settings switch, which until the user sets
-it (`agentTools` in `plugins.json`) is on once a plugin is installed, because every agent turn pays
-for the advertised tool list. MCP has no tool removal, so a session that listed a tool keeps it,
+them, and the `t3_plugins_*` management tools follow the Settings switch (`agentTools` in
+`plugins.json`), which is off until the user turns it on, because every agent turn pays for the
+advertised tool list. MCP has no tool removal, so a session that listed a tool keeps it,
 and a withdrawn one refuses every call.

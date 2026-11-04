@@ -1596,7 +1596,7 @@ module.exports = { activate(api) {
         yield* Effect.gen(function* () {
           const host = yield* PluginHost.PluginHost;
           yield* waitForStatuses(host, {});
-          // Agents get the plugin tools once a plugin exists, unless the user chose otherwise.
+          // Agents get the plugin tools only once the user turns them on, plugins or not.
           const agentTools = Stream.runHead(host.agentTools).pipe(Effect.map(Option.getOrThrow));
           assert.isFalse(yield* agentTools);
 
@@ -1610,6 +1610,8 @@ module.exports = { activate(api) {
           const source = { type: "path" as const, path: `${fixturesDir}hello-plugin` };
           const installed = yield* host.install(source);
           assert.deepStrictEqual(installed.installSource, source);
+          assert.isFalse(yield* agentTools);
+          yield* host.setAgentTools(true);
           assert.isTrue(yield* agentTools);
           yield* host.setAgentTools(false);
           assert.isFalse(yield* agentTools);

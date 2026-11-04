@@ -32,8 +32,7 @@ turn on and off, call and change the settings of plugins when you ask them to. O
 thread set to **Full access**, and not in Plan mode, can do this, or an outside agent you approved
 with **Full access**. Agents from linked environments can't. Any agent can read a plugin's
 settings, with secrets hidden. T3 Code checks the thread's permission mode, not whether the person
-who started the thread may change Settings. Until you change the switch, it is on once the
-environment has a plugin, so turn it on first if you want an agent to add the first one.
+who started the thread may change Settings. The switch is off until you turn it on.
 
 ## Update a plugin
 
