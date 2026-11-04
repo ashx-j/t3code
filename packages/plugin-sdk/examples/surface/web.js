@@ -166,6 +166,23 @@ const css = `
     border-color: revert-layer;
     background-color: revert-layer;
   }
+
+  /* 9. Buttons and menus in the chat header keep their own look. For a theme, T3 fills them with
+        the toolbar control color, edges them with the toolbar border and draws their icons in
+        the toolbar text color, which turns a ghost button, such as a shared thread's Stop
+        sharing, into a filled one. T3's other header controls sit behind a tooltip, whose
+        data-slot the rule misses, and the panel layout toggles get only the same text color.
+        revert-layer hands each property back to the button's own classes. Hook: data-chat-header
+        with the data-slot values and data-toolbar-control T3's own rule uses. */
+  & [data-chat-header] :is([data-slot="button"], [data-slot="menu-trigger"], [data-toolbar-control]) {
+    --control-icon-color: revert-layer;
+    border-color: revert-layer;
+    background-color: revert-layer;
+    color: revert-layer;
+    &:is(:hover, [data-pressed]) {
+      background-color: revert-layer;
+    }
+  }
 }
 `;
 
