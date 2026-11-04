@@ -229,8 +229,8 @@ export interface PluginHooksRegistry {
   /**
    * Runs the hooks, not slash commands, on text that reaches an agent without a new message: a
    * queued message's edit or a delegated task's prompt. `message` is read only when a hook would
-   * run; nothing there means the text is not the sender's own, so it passes unchanged. A command
-   * may only be blocked, and with no model in `message`, any `/name` counts as one.
+   * run; nothing there means the text is not the sender's own, so it passes unchanged. So does a
+   * command, and with no model in `message`, any `/name` counts as one.
    */
   readonly beforeRewrite: (
     text: string,

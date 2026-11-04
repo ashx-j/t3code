@@ -71,7 +71,7 @@ module.exports = {
 - stored orchestration events, run-completed hooks and notes in threads;
 - threads and projects: read, start, archive, snooze, settle and delete threads, add and change
   projects, and list a project's git worktrees;
-- send hooks that add to, replace or block a message (a slash command can only be blocked), and
+- send hooks that add to, replace or block a message (slash commands never reach them), and
   slash commands that run on the server and may answer in the thread without starting a turn;
 - answers to agents' approvals and questions, instructions for agents, and MCP tools for agents;
 - secrets the user enters on a card in a thread with a turn in progress;
