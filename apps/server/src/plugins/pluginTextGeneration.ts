@@ -25,10 +25,8 @@ const decodeGuide = Schema.decodeUnknownOption(
   Schema.toCodecJson(Schema.Struct({ stops: Schema.Array(PullRequestReviewGuideStop) })),
 );
 
-const omitUndefined = (
-  input: Record<string, string | number | boolean | null | undefined>,
-): Schema.JsonObject => {
-  const request: Record<string, string | number | boolean | null> = {};
+const omitUndefined = (input: Record<string, Schema.Json | undefined>): Schema.JsonObject => {
+  const request: Record<string, Schema.Json> = {};
   for (const [key, value] of Object.entries(input)) if (value !== undefined) request[key] = value;
   return request;
 };
@@ -43,7 +41,7 @@ export const withPluginTextGeneration = (
 ): ProviderTextGeneration => {
   const fromPlugins = <A, E>(
     kind: PluginTextGenerationKind,
-    input: Record<string, string | number | boolean | null | undefined>,
+    input: Record<string, Schema.Json | undefined>,
     decode: (answer: unknown) => Option.Option<A>,
     fallback: Effect.Effect<A, E>,
   ) =>
@@ -125,7 +123,18 @@ export const withPluginTextGeneration = (
     generateBranchName: (input) =>
       fromPlugins(
         "branchName",
-        { cwd: input.cwd, message: input.message },
+        {
+          cwd: input.cwd,
+          message: input.message,
+          naming:
+            input.naming === undefined
+              ? undefined
+              : {
+                  mode: input.naming.mode,
+                  prefix: input.naming.prefix,
+                  instructions: input.naming.instructions,
+                },
+        },
         (answer) =>
           decodeBranch(answer).pipe(
             Option.map(({ branch }) => ({

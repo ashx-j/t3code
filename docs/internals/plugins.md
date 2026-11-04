@@ -13,7 +13,14 @@ enforced. Do not shape the API around a future sandbox. The host isolates failur
 that throws or hangs while loading or activating is marked failed, one that throws in a handler fails
 that call, hung cleanups are abandoned after a deadline, and none of them stops the server. Node
 exits on a rejection nobody handles, so every promise the API hands a plugin goes through
-`forPlugin` in `facade.ts`, and only a plugin that awaits it sees the failure. Enable,
+`forPlugin` in `facade.ts`, and only a plugin that awaits it sees the failure. Plugin code can still
+fail where nothing T3 runs is waiting, such as in a timer or an async callback that awaits a failing
+call, so from the first server plugin load the host listens for uncaught exceptions and unhandled
+rejections (`pluginFailureGuard.ts`). It records the ones whose error is a plugin API error or whose
+stack runs through a plugin's folder as that plugin's `serverFailure`, and passes the rest on, so
+T3's own crashes still stop the server. Node keeps a stopped plugin's code and timers, so the guard
+stays until the host stops. It takes over the listeners already there instead of listening beside
+them, because the Cursor SDK's guard exits only while it listens alone. Enable,
 disable, reload and install run in the host's scope, so a client that disconnects mid-change never
 leaves a plugin half torn down. A newly found plugin starts disabled; the user enables it. The web
 loader starts bundles in parallel, gives each 30 seconds to load and to activate, and undoes
@@ -71,14 +78,15 @@ Where T3 has a closed union and a `switch` (right panel kinds, settings paths, k
 drivers, MCP toolkits), plugins add an entry beside the built-ins: a `plugin` right panel kind, a
 `plugin.<pluginId>.<commandId>` keybinding command, a `plugin-slash-command` composer item for a
 web plugin's command, which runs in the page. Where T3 has a server-supplied open variant (dynamic
-tool items, themes, provider slash commands), plugins use it. Registries are module-level `Map`s behind one version atom,
-read through atoms derived from it: React Compiler would cache a plain lookup. Rows in hot paths,
-such as timeline and sidebar rows, each read that one shared version; with no plugins it never
-changes, so rows never re-render because of plugins.
-Chat code blocks read their own atom of code block renderers instead, so a banner or panel change
-never re-renders them, and only `plg_` tool rows look up a tool renderer. A
-plugin right panel stores its title on the surface so tab titles need no lookup, and renders
-"plugin not active" with a close button while its plugin is unloaded.
+tool items, themes, provider slash commands), plugins use it. Registries are module-level `Map`s
+behind version atoms, read through atoms derived from them: React Compiler would cache a plain
+lookup. Most share one version. Actions, thread badges and `@` items each have their own, because
+every timeline row, every sidebar row and the composer read them, so a change to another registry
+never re-renders those rows. With no plugins no version changes, so rows never re-render because
+of plugins. Chat code blocks read their own atom of code block renderers instead, so a banner or
+panel change never re-renders them, and only `plg_` tool rows look up a tool renderer. A plugin
+right panel stores its title on the surface so tab titles need no lookup, and renders "plugin not
+active" with a close button while its plugin is unloaded.
 
 A replaceable part (`ui.replace`) hands the plugin T3's own controls as elements T3 has already
 wired, so a plugin rearranges T3's code instead of copying it and keeps working when T3 changes a
@@ -144,7 +152,10 @@ command.
 The orchestrator stays pure: `turns.beforeDispatch` hooks run in `ThreadManagementService.dispatch`,
 before the command reaches it, with a 2-second deadline each and fail-open, and skip notifications
 and guest messages. The logic lives in `pluginSendHooks.ts` behind one call, because that file is
-one of upstream's busiest. Queued edits and delegated task prompts reach agents without a new
+one of upstream's busiest. While any hook or plugin command is registered, a thread's messages and
+queued edits pass hooks and dispatch one at a time in arrival order, or a 10-second command would
+let the message sent after it reach the agent first. Other threads never wait, and a plugin's own
+sends skip the line, so a command handler that sends to its thread cannot wait on itself. Queued edits and delegated task prompts reach agents without a new
 message, so they run the hooks there too, or a redaction plugin could be bypassed by editing a
 queued message. A message whose id is already recorded passed the hooks when it was first sent: a
 steer that misses its turn sends it again under a new command id, and hooks would apply twice. A
@@ -164,7 +175,7 @@ with the last 256 ended runs: runs that end while a plugin is off arrive when it
 before it has handled one, and a run updated again after it ended (a checkpoint landing on an
 interrupted run) is not delivered twice, while a retry, which sets the failed run back to
 `preparing`, makes it deliverable again. Command replies are recorded with `run.created` alone, so
-they never arrive. For a slash command, a name in T3's, the provider's or a plugin's list, hooks may
+one arrives only when a revert rolls it back. For a slash command, a name in T3's, the provider's or a plugin's list, hooks may
 only block, because changed text would change what the command does; other text that starts with
 `/`, such as a path, gets every hook. Hooks see the message's `creationSource`, because text the
 server writes, such as the usage-limit resume, is sent as the user.

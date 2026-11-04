@@ -86,6 +86,7 @@ export const makeSlashCommandsApi = (
                     name: command.name,
                     args: message.args,
                     createdBy: message.createdBy,
+                    creationSource: message.creationSource,
                     attachments: message.attachments,
                   },
                   { signal: AbortSignal.any([signal, activation.controller.signal]) },

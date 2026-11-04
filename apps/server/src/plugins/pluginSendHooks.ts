@@ -8,11 +8,13 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { derive } from "@t3tools/provider-core/server/IdAllocator";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import { isPluginCommand } from "./api/facade.ts";
 import * as PluginHooks from "./PluginHooks.ts";
 
 const attachmentsSeen = (attachments: ReadonlyArray<ChatAttachment>) =>
@@ -28,11 +30,30 @@ const modelSeen = (selection: ModelSelection | undefined) =>
     ? {}
     : { model: { instanceId: selection.instanceId, model: selection.model } };
 
+/** Messages and queued edits whose hooks run, by thread; nothing else waits on hooks. */
+const orderedThread = (command: OrchestrationV2ServerCommand): ThreadId | undefined => {
+  switch (command.type) {
+    case "message.dispatch":
+      // A plugin's own send skips the line: a command handler awaiting a send to its own thread
+      // would wait on itself.
+      return command.notification !== undefined ||
+        command.guestMessageId !== undefined ||
+        command.createdBy === "system" ||
+        isPluginCommand(command.commandId)
+        ? undefined
+        : command.threadId;
+    case "queued-run.edit":
+      return command.threadId;
+    default:
+      return undefined;
+  }
+};
+
 /**
  * Plugins see user and agent text before orchestration records it, may change or block it, and
  * handle their own slash commands: in new messages, edits of queued ones and delegated task
  * prompts. Notifications and guest messages are not the sender's own text, so they skip plugins.
- * Returns what to dispatch instead of `command`; a block rejects it with the plugin's reason.
+ * Dispatches what the hooks return instead of `command`; a block rejects it with the reason.
  */
 export const makePluginSendHooks = Effect.gen(function* () {
   const hooks = yield* PluginHooks.PluginHooks;
@@ -91,7 +112,34 @@ export const makePluginSendHooks = Effect.gen(function* () {
     };
   });
 
-  return (
+  // The last message in line on each thread. A hook or command can take seconds, and the thread's
+  // next message must not reach the orchestrator before it.
+  const lines = new Map<ThreadId, Deferred.Deferred<void>>();
+  const inThreadOrder = <A, E>(threadId: ThreadId, effect: Effect.Effect<A, E>) =>
+    Effect.uninterruptibleMask((restore) => {
+      const done = Deferred.makeUnsafe<void>();
+      const ahead = lines.get(threadId);
+      lines.set(threadId, done);
+      return restore(
+        ahead === undefined ? effect : Deferred.await(ahead).pipe(Effect.andThen(effect)),
+      ).pipe(
+        // A sender that gives up while waiting still lets the next one go only after its own.
+        Effect.ensuring(
+          Effect.suspend(() => {
+            if (lines.get(threadId) === done) {
+              if (ahead === undefined || Deferred.isDoneUnsafe(ahead)) lines.delete(threadId);
+              else lines.set(threadId, ahead);
+            }
+            return Deferred.completeWith(
+              done,
+              ahead === undefined ? Effect.void : Deferred.await(ahead),
+            );
+          }),
+        ),
+      );
+    });
+
+  const withHooks = (
     command: OrchestrationV2ServerCommand,
   ): Effect.Effect<OrchestrationV2ServerCommand, Orchestrator.OrchestratorCommandRejectedError> => {
     // Every caller already handles a rejected command; its cause carries the plugin's reason,
@@ -201,5 +249,18 @@ export const makePluginSendHooks = Effect.gen(function* () {
       default:
         return Effect.succeed(command);
     }
+  };
+
+  return <A, E>(
+    command: OrchestrationV2ServerCommand,
+    dispatch: (next: OrchestrationV2ServerCommand) => Effect.Effect<A, E>,
+  ): Effect.Effect<A, E | Orchestrator.OrchestratorCommandRejectedError> => {
+    const send = withHooks(command).pipe(Effect.flatMap(dispatch));
+    const threadId = orderedThread(command);
+    return threadId === undefined
+      ? send
+      : hooks.handlesMessages.pipe(
+          Effect.flatMap((handled) => (handled ? inThreadOrder(threadId, send) : send)),
+        );
   };
 });

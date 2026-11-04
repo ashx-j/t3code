@@ -11,6 +11,7 @@ import {
 import type { PluginApi, PluginDefinition } from "@t3tools/plugin-sdk/server";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import { HttpClient, HttpClientRequest, HttpRouter } from "effect/http";
@@ -68,9 +69,10 @@ const serveFixture = Effect.fn(function* () {
       ? loaded.default
       : undefined;
   assert(isDefinition(definition));
+  const activation = makePluginActivation(yield* PubSub.sliding<PluginPublication>(1));
   const facade = makeFacadeContext({
     pluginId: httpPlugin,
-    activation: makePluginActivation(yield* PubSub.sliding<PluginPublication>(1)),
+    activation,
     context: yield* Effect.context<never>(),
   });
   const routes = Context.get(services, PluginHttpRoutes.PluginHttpRoutes);
@@ -103,12 +105,12 @@ const serveFixture = Effect.fn(function* () {
       body: yield* response.text,
     };
   });
-  return { api, routes, send };
+  return { activation, api, routes, send };
 });
 
 it.effect("serves a plugin's routes and answers 404 and 500 for the rest", () =>
   Effect.gen(function* () {
-    const { api, routes, send } = yield* serveFixture();
+    const { activation, api, routes, send } = yield* serveFixture();
     api.http.route("GET", "/fail", () => {
       throw new Error("boom");
     });
@@ -162,6 +164,19 @@ it.effect("serves a plugin's routes and answers 404 and 500 for the rest", () =>
         body: "Plugin http-plugin failed to handle the request.",
       },
     );
+
+    // A handler that ignores its signal still answers once the plugin turns off.
+    const started = Promise.withResolvers<void>();
+    api.http.route("GET", "/hang", () => {
+      started.resolve();
+      return new Promise(() => undefined);
+    });
+    const hanging = yield* send("GET", "/api/plugins/http-plugin/hang", {
+      token: "Bearer read",
+    }).pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Effect.promise(() => started.promise);
+    activation.controller.abort();
+    assert.strictEqual((yield* Fiber.join(hanging)).status, 404);
 
     yield* routes.unregisterPlugin(httpPlugin);
     assert.strictEqual(

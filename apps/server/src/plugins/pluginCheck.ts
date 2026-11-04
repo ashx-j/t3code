@@ -8,7 +8,7 @@ import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
-import { settingsSchemaProblem } from "./PluginSettingsStore.ts";
+import { secretsOutsideStore, settingsSchemaProblem } from "./PluginSettingsStore.ts";
 
 const MANIFEST_FILE = "t3-plugin.json";
 const MAX_MANIFEST_BYTES = 64 * 1024;
@@ -284,6 +284,19 @@ export const checkPluginFolder = Effect.fn("PluginCheck.check")(function* (
         file: MANIFEST_FILE,
         problem: `A default in settingsSchema breaks its own field, so every settings save fails: ${settingsProblem.reason}`,
         fix: "Change the default, or the rule it breaks, so the two agree.",
+      });
+    }
+    const plainSecrets =
+      decoded.value.settingsSchema === undefined
+        ? []
+        : secretsOutsideStore(decoded.value.settingsSchema);
+    if (plainSecrets.length > 0) {
+      findings.push({
+        code: "secret-not-stored",
+        severity: "warning",
+        file: MANIFEST_FILE,
+        problem: `settingsSchema marks ${plainSecrets.join(", ")} as t3-secret, but only top-level string fields go to the secret store, so the rest are saved as plain text in settings.json.`,
+        fix: 'Make each secret a top-level field with "type": "string".',
       });
     }
   }

@@ -19,6 +19,7 @@ import {
 import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
 
 import { authenticateRawRouteWithScope } from "../http.ts";
+import { abortEffect } from "./api/facade.ts";
 
 const ROUTE_PREFIX = "/api/plugins";
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -73,6 +74,11 @@ type PluginHttpRouteHandler = (
   signal: AbortSignal,
 ) => Promise<PluginHttpResponse>;
 
+interface PluginHttpRoute {
+  readonly handler: PluginHttpRouteHandler;
+  readonly deactivated: AbortSignal | undefined;
+}
+
 export class PluginHttpRoutes extends Context.Service<
   PluginHttpRoutes,
   {
@@ -86,6 +92,8 @@ export class PluginHttpRoutes extends Context.Service<
       readonly path: string;
       /** `signal` aborts when the client goes away. */
       readonly handler: PluginHttpRouteHandler;
+      /** Aborts when the plugin turns off; a request still running then gets a 404. */
+      readonly deactivated?: AbortSignal;
     }) => Effect.Effect<void, PluginHttpRouteInvalidError>;
     readonly unregisterPlugin: (pluginId: PluginId) => Effect.Effect<void>;
     /** Answers a request already signed in and read; `path` is the part after the plugin id. */
@@ -113,8 +121,8 @@ const errorText = (cause: unknown) => {
 const isValidPath = (path: string) =>
   path.startsWith("/") && path.length <= MAX_PATH_CHARS && !/[?#\s]/.test(path);
 
-const findHandler = (
-  pluginRoutes: ReadonlyMap<string, PluginHttpRouteHandler> | undefined,
+const findRoute = (
+  pluginRoutes: ReadonlyMap<string, PluginHttpRoute> | undefined,
   method: string,
   path: string,
 ) => {
@@ -131,20 +139,21 @@ const findHandler = (
 };
 
 const make = () => {
-  // pluginId -> "METHOD /path" -> handler
-  const routes = new Map<string, Map<string, PluginHttpRouteHandler>>();
+  // pluginId -> "METHOD /path" -> route
+  const routes = new Map<string, Map<string, PluginHttpRoute>>();
   return PluginHttpRoutes.of({
     register: Effect.fn("PluginHttpRoutes.register")(function* ({
       pluginId,
       method,
       path,
       handler,
+      deactivated,
     }) {
       if (!isMethod(method) || !isValidPath(path)) {
         return yield* new PluginHttpRouteInvalidError({ pluginId });
       }
       const pluginRoutes = routes.get(pluginId) ?? new Map();
-      routes.set(pluginId, pluginRoutes.set(`${method} ${path}`, handler));
+      routes.set(pluginId, pluginRoutes.set(`${method} ${path}`, { handler, deactivated }));
     }),
     unregisterPlugin: Effect.fn("PluginHttpRoutes.unregisterPlugin")((pluginId) =>
       Effect.sync(() => {
@@ -152,16 +161,25 @@ const make = () => {
       }),
     ),
     handle: Effect.fn("PluginHttpRoutes.handle")(function* ({ pluginId, request }) {
-      const handler = findHandler(routes.get(pluginId), request.method, request.path);
-      if (handler === undefined) {
+      const route = findRoute(routes.get(pluginId), request.method, request.path);
+      if (route === undefined) {
         return yield* new PluginHttpRouteNotFoundError({ pluginId });
       }
       const failed = (cause: unknown) =>
         new PluginHttpHandlerError({ pluginId, reason: errorText(cause), cause });
-      const response: unknown = yield* Effect.tryPromise({
-        try: (signal) => handler(request, signal),
+      const handled = Effect.tryPromise({
+        try: (signal) => route.handler(request, signal),
         catch: failed,
       });
+      // A handler that ignores its abort signal must not hold the request open after disable.
+      const response: unknown = yield* route.deactivated === undefined
+        ? handled
+        : Effect.raceFirst(
+            handled,
+            abortEffect(route.deactivated).pipe(
+              Effect.andThen(Effect.fail(new PluginHttpRouteNotFoundError({ pluginId }))),
+            ),
+          );
       if (!isPluginResponse(response)) {
         return yield* failed(new TypeError("The handler returned an invalid response."));
       }

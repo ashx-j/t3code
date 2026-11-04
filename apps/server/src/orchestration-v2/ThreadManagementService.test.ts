@@ -279,8 +279,13 @@ it.effect(
       // A name in no command list is text too.
       yield* threads.dispatch(message("unlisted", undefined, "/please fix the build"));
       // A command's text stays as sent, but a hook can still block it.
-      yield* hooks.setProviderSlashCommands(() => Effect.succeed(["review"]));
+      // Claude plugin commands and MCP prompts are named with ":" and "_".
+      yield* hooks.setProviderSlashCommands(() =>
+        Effect.succeed(["review", "acme:ship", "mcp__docs__search"]),
+      );
       yield* threads.dispatch(message("provider-command", undefined, "/review now"));
+      yield* threads.dispatch(message("namespaced-command", undefined, "/acme:ship now"));
+      yield* threads.dispatch(message("mcp-prompt", undefined, "/mcp__docs__search hooks"));
       for (const [index, text] of ["/goal token", "/review token", "/deploy token"].entries()) {
         const refused = yield* Effect.flip(
           threads.dispatch(message(`blocked-command-${index}`, undefined, text)),
@@ -330,10 +335,69 @@ it.effect(
         "/etc/hosts is broken\n\nProject uses pnpm.",
         "/please fix the build\n\nProject uses pnpm.",
         "/review now",
+        "/acme:ship now",
+        "/mcp__docs__search hooks",
         "Fix the build.\n\nProject uses pnpm.",
         "edited Fix the tests.\n\nProject uses pnpm.",
         "task Check the tests.",
       ]);
+    }).pipe(Effect.provide(layerTest));
+  },
+);
+
+it.effect(
+  "a slow plugin command keeps the thread's next message behind it, not other threads'",
+  () => {
+    const threadId = ThreadId.make("thread:thread-management:chokepoint");
+    const texts: Array<string> = [];
+    const instanceId = ProviderInstanceId.make("codex_work");
+    const layerTest = layerDispatchChokepointTest(
+      ServerSettings.layerTest({
+        providerInstances: { [instanceId]: { driver: "codex", enabled: true } },
+      }),
+    )([], texts).pipe(Layer.provideMerge(PluginHooks.layer));
+    const message = (
+      id: string,
+      text: string,
+      to = threadId,
+    ): Extract<OrchestrationV2ServerCommand, { readonly type: "message.dispatch" }> => ({
+      type: "message.dispatch",
+      commandId: CommandId.make(`command:thread-management:order-${id}`),
+      threadId: to,
+      messageId: MessageId.make(`message:thread-management:order-${id}`),
+      text,
+      attachments: [],
+      dispatchMode: { type: "queue_after_active" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+
+    return Effect.gen(function* () {
+      const hooks = yield* PluginHooks.PluginHooks;
+      yield* hooks
+        .addSlashCommand(
+          { pluginId: "deployer", pluginName: "Deployer", name: "deploy" },
+          (outgoing) =>
+            Effect.sleep(Duration.seconds(4)).pipe(
+              Effect.as({ text: `Deploy ${outgoing.args} now.` }),
+            ),
+        )
+        .pipe(Effect.asVoid);
+      const threads = yield* ThreadManagementService.ThreadManagementService;
+      const deploying = yield* threads
+        .dispatch(message("deploy", "/deploy staging"))
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      const testing = yield* threads
+        .dispatch(message("tests", "And run the tests."))
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* threads.dispatch(
+        message("elsewhere", "Unrelated.", ThreadId.make("thread:thread-management:elsewhere")),
+      );
+      yield* TestClock.adjust(Duration.seconds(4));
+      yield* Fiber.join(deploying);
+      yield* Fiber.join(testing);
+
+      expect(texts).toEqual(["Unrelated.", "Deploy staging now.", "And run the tests."]);
     }).pipe(Effect.provide(layerTest));
   },
 );

@@ -758,8 +758,7 @@ const make = Effect.gen(function* () {
   const dispatch: ThreadManagementServiceShape["dispatch"] = (command) =>
     ensureCommandTranscripts(command).pipe(
       Effect.andThen(assertDispatchTargetEnabled(command)),
-      Effect.andThen(withPluginHooks(command)),
-      Effect.flatMap((next) => orchestrator.dispatch(next)),
+      Effect.andThen(withPluginHooks(command, (next) => orchestrator.dispatch(next))),
     );
 
   const getProjectThreadRecords: ThreadManagementServiceShape["getProjectThreadRecords"] = (

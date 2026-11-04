@@ -69,6 +69,7 @@ import {
   type PluginPublication,
 } from "./PluginApi.ts";
 import { makeRuntimeRequestHooks } from "./api/runtimeRequests.ts";
+import { makePluginFailureGuard } from "./pluginFailureGuard.ts";
 import { discoverPlugins, type DiscoveredPlugin } from "./pluginDiscovery.ts";
 import {
   checkPluginFolder,
@@ -387,6 +388,7 @@ const toState = (
   installSource: PluginInstallSource | undefined,
   availableUpdate: string | undefined,
   webFailure: string | undefined,
+  serverFailure: string | undefined,
 ): PluginState => {
   const manifest = manifestOf(record.plugin);
   return {
@@ -421,6 +423,7 @@ const toState = (
     hasWeb: manifest?.web !== undefined,
     ...("hasSkills" in record.plugin ? { hasSkills: record.plugin.hasSkills } : {}),
     ...(webFailure === undefined ? {} : { webFailure }),
+    ...(serverFailure === undefined ? {} : { serverFailure }),
   };
 };
 
@@ -491,6 +494,10 @@ const make = Effect.gen(function* () {
   const webFailures = yield* Ref.make<
     ReadonlyMap<PluginId, { readonly revision: number; readonly message: string }>
   >(new Map());
+  // Like web failures. A stopped plugin's leftover timers fail with no revision.
+  const serverFailures = yield* Ref.make<
+    ReadonlyMap<PluginId, { readonly revision: number | undefined; readonly message: string }>
+  >(new Map());
   const changes = yield* PubSub.sliding<ReadonlyArray<PluginState>>(1);
   const lifecycle = yield* Semaphore.make(1);
   const publishLock = yield* Semaphore.make(1);
@@ -504,8 +511,10 @@ const make = Effect.gen(function* () {
     const config = yield* Ref.get(pluginsConfig);
     const enabled = config.enabled ?? {};
     const failures = yield* Ref.get(webFailures);
+    const serverFailed = yield* Ref.get(serverFailures);
     return (yield* Ref.get(records)).map((record) => {
       const webFailure = failures.get(record.plugin.id);
+      const serverFailure = serverFailed.get(record.plugin.id);
       return toState(
         record,
         enabled[record.plugin.id] === true,
@@ -513,6 +522,9 @@ const make = Effect.gen(function* () {
         config.updates?.available[record.plugin.id],
         webFailure !== undefined && webFailure.revision === record.revision
           ? webFailure.message
+          : undefined,
+        serverFailure !== undefined && serverFailure.revision === record.revision
+          ? serverFailure.message
           : undefined,
       );
     });
@@ -579,6 +591,24 @@ const make = Effect.gen(function* () {
       next[index] = { plugin: all[index]!.plugin, ...update };
       return next;
     }).pipe(Effect.andThen(publishStates));
+
+  // A timer that fails every second logs and publishes once.
+  const recordServerFailure = Effect.fnUntraced(function* (pluginId: PluginId, error: unknown) {
+    const record = yield* findRecord(pluginId);
+    const message = errorText(error);
+    const known = (yield* Ref.get(serverFailures)).get(pluginId);
+    if (known?.revision === record?.revision && known?.message === message) return;
+    yield* Effect.logWarning("plugin code failed outside a call", { pluginId, reason: message });
+    yield* Ref.update(serverFailures, (all) =>
+      new Map(all).set(pluginId, { revision: record?.revision, message }),
+    );
+    yield* publishStates;
+  });
+  const failureGuard = makePluginFailureGuard((pluginId, error) => {
+    Effect.runForkWith(context)(recordServerFailure(pluginId, error));
+  });
+  // Added before the teardown finalizer, so it runs after plugin cleanups.
+  yield* Effect.addFinalizer(() => Effect.sync(failureGuard.uninstall));
 
   const readConfig = Effect.gen(function* () {
     const exists = yield* fs.exists(configPath);
@@ -674,13 +704,17 @@ const make = Effect.gen(function* () {
     });
 
   // Web files are served from the plugin's real folder; a path or symlink out of `within` is refused.
-  const readWebFile = Effect.fnUntraced(function* (within: string, file: string) {
+  const readWebFile = Effect.fnUntraced(function* (within: string, file: string | undefined) {
+    const notFound = { status: 404, body: "Not found." };
+    if (file === undefined) return notFound;
     const resolved = yield* fs.realPath(file).pipe(Effect.option);
-    if (Option.isNone(resolved)) return { status: 404, body: "Not found." };
+    if (Option.isNone(resolved)) return notFound;
     const real = resolved.value;
-    if (!real.startsWith(`${within}${path.sep}`)) {
+    if (real !== within && !real.startsWith(`${within}${path.sep}`)) {
       return yield* new PluginCodeError({ cause: "The file resolves outside the plugin folder." });
     }
+    const info = yield* fs.stat(real).pipe(Effect.option);
+    if (Option.isNone(info) || info.value.type !== "File") return notFound;
     return {
       status: 200,
       headers: {
@@ -693,7 +727,11 @@ const make = Effect.gen(function* () {
   });
 
   const serveWebFiles = Effect.fnUntraced(function* (plugin: DiscoveredPlugin, entry: string) {
-    const register = (routePath: string, read: (requestPath: string) => string, within: string) =>
+    const register = (
+      routePath: string,
+      read: (requestPath: string) => string | undefined,
+      within: string,
+    ) =>
       services.httpRoutes
         .register({
           pluginId: plugin.id,
@@ -709,8 +747,17 @@ const make = Effect.gen(function* () {
     if (Option.isSome(assetsDir) && assetsDir.value.startsWith(`${plugin.rootDir}${path.sep}`)) {
       yield* register(
         "/assets/*",
-        (requestPath) =>
-          path.join(assetsDir.value, decodeURIComponent(requestPath.slice("/assets/".length))),
+        (requestPath) => {
+          try {
+            return path.join(
+              assetsDir.value,
+              decodeURIComponent(requestPath.slice("/assets/".length)),
+            );
+          } catch {
+            // A malformed escape names no file.
+            return undefined;
+          }
+        },
         assetsDir.value,
       );
     }
@@ -802,6 +849,8 @@ const make = Effect.gen(function* () {
       return yield* setRecord(plugin.id, { status: "active", revision: nextRevision() });
     }
     yield* setRecord(plugin.id, { status: "loading" });
+    // Before loading, since a module can start timers as it loads.
+    failureGuard.watch(`${plugin.rootDir}${path.sep}`, plugin.id);
     const definition = yield* Effect.exit(loadDefinition(plugin, manifest.server));
     if (definition._tag === "Failure") {
       return yield* setRecord(plugin.id, {
@@ -1014,21 +1063,23 @@ const make = Effect.gen(function* () {
     });
     // Copies that are gone or changed stop, or they would keep running unlisted.
     for (const record of known) {
-      if (!next.some(({ kept }) => kept === record) && !("failure" in record.plugin)) {
+      if (
+        record.plugin.id !== restart &&
+        !next.some(({ kept }) => kept === record) &&
+        !("failure" in record.plugin)
+      ) {
         yield* stopPlugin(record.plugin.id);
       }
     }
     // In discovery's order, which puts the copy in use before the copies it shadows. A kept copy
-    // that runs nothing takes discovery's reason, which names the copy now in use.
-    yield* Ref.set(
-      records,
-      next.map(({ plugin, kept }) =>
-        kept === undefined
-          ? initialRecord(plugin, enabled[plugin.id] === true)
-          : "failure" in plugin
-            ? { ...kept, plugin, failure: plugin.failure }
-            : kept,
-      ),
+    // that runs nothing takes discovery's reason, which names the copy now in use. Kept records
+    // are read again here: one still starting may have finished while the others stopped.
+    yield* Ref.update(records, (current) =>
+      next.map(({ plugin, kept }) => {
+        if (kept === undefined) return initialRecord(plugin, enabled[plugin.id] === true);
+        const latest = current.find((record) => record.plugin === kept.plugin) ?? kept;
+        return "failure" in plugin ? { ...latest, plugin, failure: plugin.failure } : latest;
+      }),
     );
     yield* publishStates;
     for (const { plugin, kept } of next) {
@@ -1530,10 +1581,13 @@ const make = Effect.gen(function* () {
   yield* Effect.addFinalizer(() =>
     Ref.get(records).pipe(
       Effect.flatMap((all) =>
-        Effect.forEach(all, (record) =>
-          record.activation === undefined
-            ? Effect.void
-            : teardown(record.plugin.id, record.activation),
+        Effect.forEach(
+          all,
+          (record) =>
+            record.activation === undefined
+              ? Effect.void
+              : teardown(record.plugin.id, record.activation),
+          { concurrency: "unbounded", discard: true },
         ),
       ),
     ),
@@ -1594,6 +1648,17 @@ const make = Effect.gen(function* () {
                 file: null,
                 problem: `Its web half failed in the browser: ${state.webFailure}`,
                 fix: "Fix it, rebuild the web bundle, then reload the plugin.",
+              },
+            ]),
+        ...(state?.serverFailure === undefined
+          ? []
+          : [
+              {
+                code: "server-failed",
+                severity: "error" as const,
+                file: null,
+                problem: `Its server code failed outside a call, such as in a timer: ${state.serverFailure}`,
+                fix: "Catch errors in its timers and callbacks, and stop its timers in onDeactivate, then reload the plugin.",
               },
             ]),
       ];

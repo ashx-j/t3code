@@ -173,6 +173,9 @@ export const writesWithCapability = <P, A, E, R>(handle: (params: P) => Effect.E
     () => writingCaller,
   );
 
+const pluginToolFullAccessRequired =
+  "This plugin tool changes things, so it runs only from a thread set to Full access and not in Plan mode, or for an outside agent approved with Full access. Ask the user to switch this thread to Full access and leave Plan mode, then call it again.";
+
 /**
  * For tools whose access is data, registered while the server runs (plugin tools): `read`
  * checks like `reads`; `write` like `writesEnvironment`, because a plugin tool can do anything
@@ -182,12 +185,24 @@ export const dynamic = <P, A, E, R>(
   access: "read" | "write",
   handle: (params: P) => Effect.Effect<A, E, R>,
 ) => {
+  const fullAccess = (caller: Caller) => assertFullAccess(caller, pluginToolFullAccessRequired);
   const declaration: Declaration<
     (params: P) => Effect.Effect<A, E | OrchestratorMcpFailure, R | WritingServices>
   > =
     access === "read"
       ? reads(handle)
-      : writesEnvironment((params: P) => handle(params), { refusals: pluginToolRefusals });
+      : declare(
+          (params: P) =>
+            orchestratingCaller.pipe(
+              Effect.tap((caller) =>
+                assertNotLinked(caller, "use plugin tools that change things"),
+              ),
+              Effect.tap(fullAccess),
+              Effect.flatMap(() => handle(params)),
+            ),
+          // Linked work never reaches a link at all; that is checked as the call goes.
+          () => orchestratingCaller.pipe(Effect.tap(fullAccess)),
+        );
   return checkedHandler(declaration);
 };
 
@@ -301,17 +316,8 @@ export const either = <P, A, E, R, A2, E2, R2>(
   );
 };
 
-const environmentRefusals = {
-  linked: "change projects or environment settings",
-  limited:
-    "Changing projects or environment settings needs a live full-access/default calling thread or a full-access client.",
-};
-
-const pluginToolRefusals = {
-  linked: "use plugin tools that change things",
-  limited:
-    "This plugin tool changes things, so it runs only from a thread set to Full access and not in Plan mode, or for an outside agent approved with Full access. Ask the user to switch this thread to Full access and leave Plan mode, then call it again.",
-};
+const fullAccessRequired =
+  "Changing projects or environment settings needs a live full-access/default calling thread or a full-access client.";
 
 /** Recheck after waits before writing; caller modes may have changed. */
 export const writesEnvironment = <P, A, E, R>(
@@ -325,22 +331,23 @@ export const writesEnvironment = <P, A, E, R>(
      * everything already here as it was.
      */
     readonly linkedCallers?: "allowed";
-    /** What a refused caller reads, for writes that are not projects or settings. */
-    readonly refusals?: typeof environmentRefusals;
   },
 ) => {
-  const refusals = options?.refusals ?? environmentRefusals;
   const check = orchestratingCaller.pipe(
     Effect.tap((caller) =>
-      options?.linkedCallers === "allowed" ? Effect.void : assertNotLinked(caller, refusals.linked),
+      options?.linkedCallers === "allowed"
+        ? Effect.void
+        : assertNotLinked(caller, "change projects or environment settings"),
     ),
-    Effect.tap((caller) => assertFullAccess(caller, refusals.limited)),
+    Effect.tap((caller) => assertFullAccess(caller, fullAccessRequired)),
   );
   return declare(
     (params: P) => check.pipe(Effect.flatMap(() => handle(params, check))),
     // Linked work never reaches a link at all; that is checked as the call goes.
     () =>
-      orchestratingCaller.pipe(Effect.tap((caller) => assertFullAccess(caller, refusals.limited))),
+      orchestratingCaller.pipe(
+        Effect.tap((caller) => assertFullAccess(caller, fullAccessRequired)),
+      ),
   );
 };
 

@@ -107,7 +107,9 @@ type SlashCommandHandler = (
   message: PluginOutgoingMessage & { readonly args: string },
 ) => Effect.Effect<DispatchOutcome | PluginCommandReply>;
 
-const SLASH_COMMAND = /^\/([a-z0-9][a-z0-9-]*)(?:\s+([\s\S]*))?$/;
+// Loose, because providers name commands with ":" and "_" (`/plugin:cmd`, `/mcp__server__prompt`).
+// A name in no list is still text; only plugin registration uses the strict pattern.
+const SLASH_COMMAND = /^\/([^\s/]+)(?:\s+([\s\S]*))?$/;
 
 /**
  * Adds plugin slash commands to every provider's lists. A provider's own command of the same
@@ -234,6 +236,8 @@ export interface PluginHooksRegistry {
     message: Effect.Effect<PluginOutgoingMessage | undefined>,
     alreadyAccepted: Effect.Effect<boolean>,
   ) => Effect.Effect<string, PluginMessageBlockedError>;
+  /** Whether a hook or slash command would see a message, so sends must keep a thread's order. */
+  readonly handlesMessages: Effect.Effect<boolean>;
   /** Sets where `beforeDispatch` reads providers' own commands. The plugin host supplies it. */
   readonly setProviderSlashCommands: (names: ProviderSlashCommandNames) => Effect.Effect<void>;
   /**
@@ -251,8 +255,14 @@ export interface PluginHooksRegistry {
     kind: PluginTextGenerationKind,
     generator: TextGenerator,
   ) => Effect.Effect<Effect.Effect<void>>;
-  /** Adds instructions for agents and returns the effect that removes them. */
-  readonly addAgentInstructions: (text: string) => Effect.Effect<Effect.Effect<void>>;
+  /**
+   * Adds instructions for agents and returns the effect that removes them. They are kept in plugin
+   * id order, so a plugin's restart changes neither Claude's process key nor Codex's context keys.
+   */
+  readonly addAgentInstructions: (
+    pluginId: string,
+    text: string,
+  ) => Effect.Effect<Effect.Effect<void>>;
   /** Replaces the folders of active plugins that ship skills, and the skills in them. */
   readonly setSkillFolders: (
     folders: ReadonlyArray<SkillFolder>,
@@ -278,6 +288,7 @@ export class PluginHooks extends Context.Reference<PluginHooksRegistry>("t3/plug
     addBeforeDispatch: () => Effect.succeed(Effect.void),
     beforeDispatch: (message) => Effect.succeed(message.text),
     beforeRewrite: (text) => Effect.succeed(text),
+    handlesMessages: Effect.succeed(false),
     setProviderSlashCommands: () => Effect.void,
     addSlashCommand: () => Effect.succeed(Effect.void),
     currentSlashCommands: Effect.succeed([]),
@@ -343,7 +354,9 @@ const make = Effect.gen(function* () {
   const hooks = yield* Ref.make<
     ReadonlyArray<{ readonly pluginId: string; readonly run: BeforeDispatchHook }>
   >([]);
-  const instructions = yield* Ref.make<ReadonlyArray<{ readonly text: string }>>([]);
+  const instructions = yield* Ref.make<
+    ReadonlyArray<{ readonly pluginId: string; readonly text: string }>
+  >([]);
   const skillFolders = yield* Ref.make<ReadonlyArray<SkillFolder>>([]);
   const skills = yield* SubscriptionRef.make<ReadonlyArray<PluginSkill>>([]);
   const generators = yield* Ref.make<
@@ -481,6 +494,9 @@ const make = Effect.gen(function* () {
               ),
         ),
       ),
+    handlesMessages: Effect.all([Ref.get(hooks), SubscriptionRef.get(commands)]).pipe(
+      Effect.map(([hooked, listed]) => hooked.length > 0 || listed.length > 0),
+    ),
     setProviderSlashCommands: (names) => Ref.set(providerCommands, names),
     addSlashCommand: (command, handler) =>
       SubscriptionRef.modifyEffect(commands, (all) => {
@@ -520,9 +536,9 @@ const make = Effect.gen(function* () {
           Ref.update(generators, (all) => all.filter((other) => other !== entry)),
         ),
       ),
-    addAgentInstructions: (text) =>
-      Effect.sync(() => ({ text })).pipe(
-        Effect.tap((entry) => Ref.update(instructions, (all) => [...all, entry])),
+    addAgentInstructions: (pluginId, text) =>
+      Effect.sync(() => ({ pluginId, text })).pipe(
+        Effect.tap((entry) => Ref.update(instructions, (all) => inPluginOrder(all, entry))),
         Effect.map((entry) =>
           Ref.update(instructions, (all) => all.filter((other) => other !== entry)),
         ),

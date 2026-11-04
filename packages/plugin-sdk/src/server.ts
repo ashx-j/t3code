@@ -167,6 +167,7 @@ export interface PluginSlashCommandInvocation {
   /** The text after `/name`, trimmed. */
   readonly args: string;
   readonly createdBy: "user" | "agent";
+  readonly creationSource: PluginOutgoingMessage["creationSource"];
   readonly attachments: PluginOutgoingMessage["attachments"];
 }
 
@@ -226,7 +227,20 @@ export interface PluginTextGenerationTasks {
     readonly output: { readonly title: string; readonly body: string };
   };
   readonly branchName: {
-    readonly input: { readonly cwd: string; readonly message: string };
+    readonly input: {
+      readonly cwd: string;
+      readonly message: string;
+      /**
+       * How the user wants branches named in Settings. In `custom` mode the answer is the whole
+       * branch name, following `instructions`; otherwise T3 lowercases it, and in `static` mode
+       * adds `prefix`.
+       */
+      readonly naming?: {
+        readonly mode: "static" | "semantic" | "custom";
+        readonly prefix: string;
+        readonly instructions: string;
+      };
+    };
     readonly output: { readonly branch: string };
   };
   readonly reviewGuide: {
@@ -423,10 +437,10 @@ export interface PluginApi {
   };
   readonly turns: {
     /**
-     * Runs each time a run ends, in order; a failed run the user retries arrives again when it ends.
-     * The plugin's storage keeps the position, so runs that end while the plugin is off are
-     * delivered when it starts again. The first registration starts from now. Register handlers in
-     * the same order on every activation. Slash command replies are not runs and never arrive.
+     * Runs each time a run ends, in order; a failed run the user retries arrives again. Runs that
+     * end while the plugin is off arrive when it starts; the first registration starts from now.
+     * Register handlers in the same order on every activation. A slash command reply arrives only
+     * as `rolled_back`, when a revert removes it.
      */
     readonly afterRunCompleted: (
       handler: (run: PluginCompletedRun) => void | Promise<void>,
@@ -536,15 +550,18 @@ export interface PluginApi {
     readonly registerDriver: (driver: PluginSourceControlDriver) => Promise<void>;
   };
   readonly mcp: {
-    /** Offers a tool to agents in every thread until the plugin deactivates. */
+    /**
+     * Offers a tool to agents in every thread. MCP cannot take a tool back, so after the plugin
+     * deactivates it stays listed and answers that the plugin is disabled until it starts again.
+     */
     readonly registerTool: (tool: PluginMcpTool, handler: PluginMcpToolHandler) => void;
   };
   readonly http: {
     /**
-     * Serves `method path` under `/api/plugins/<pluginId>` with the same sign-in as the rest of
-     * `/api`: GET needs the `orchestration:read` scope, other methods `orchestration:operate`. A
-     * path ending in `/*` answers every path below it; the longest match wins. Handlers never see
-     * the `authorization`, `cookie` or `dpop` headers.
+     * Serves `method path` under `/api/plugins/<pluginId>` with `/api`'s sign-in: GET needs
+     * `orchestration:read`, so read-only sessions reach it and it must not change anything; other
+     * methods need `orchestration:operate`. A path ending in `/*` answers every path below it, the
+     * longest match winning. Handlers never see the `authorization`, `cookie` or `dpop` headers.
      */
     readonly route: (
       method: "GET" | "POST" | "PUT" | "DELETE",
