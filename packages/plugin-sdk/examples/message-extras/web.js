@@ -68,7 +68,7 @@ var web_default = defineWebPlugin({
       }),
     );
     api.ui.replace("timeline.item", (step) =>
-      step.item.type === "command_execution" && typeof step.item.input === "string"
+      step.item.type === "command_execution"
         ? /* @__PURE__ */ jsxs("div", {
             className: "message-extras-terminal",
             children: [

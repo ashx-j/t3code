@@ -151,7 +151,11 @@ const queueSync = () => {
   syncQueued = true;
   queueMicrotask(() => {
     syncQueued = false;
-    const sent = [...commands.values()];
+    // In a fixed order, so the menu and tray don't reshuffle as plugins load in parallel, and a
+    // reload sends the same list.
+    const sent = [...commands.values()].toSorted((left, right) =>
+      left.command.localeCompare(right.command),
+    );
     void window.desktopBridge
       ?.setPluginCommands(sent)
       // An older desktop app resolves with nothing.

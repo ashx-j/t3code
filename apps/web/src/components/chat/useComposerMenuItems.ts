@@ -19,6 +19,7 @@ import {
   withLinkedComposerPullRequestsFirst,
 } from "@t3tools/shared/composerPullRequestMatches";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
+import { scoreQueryMatch } from "@t3tools/shared/searchRanking";
 
 import type { ComposerTrigger } from "../../composer-logic";
 import type { DraftId } from "../../composerDraftStore";
@@ -209,7 +210,6 @@ export function useComposerMenuItems({
               query: composerTrigger.query,
             })
           : []),
-        ...matchPluginMentionItems(pluginMentionItems, composerTrigger.query),
         ...workspaceEntries.entries.map((entry) => ({
           id: `path:${entry.kind}:${entry.path}`,
           type: "path" as const,
@@ -219,6 +219,8 @@ export function useComposerMenuItems({
           label: basenameOfPath(entry.path),
           description: entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))),
         })),
+        // After files, which are what `@` is mostly for.
+        ...matchPluginMentionItems(pluginMentionItems, composerTrigger.query),
       ];
     }
     if (composerTrigger.kind === "slash-command") {
@@ -435,20 +437,42 @@ export function useComposerMenuItems({
 
 const PLUGIN_MENTION_LIMIT = 8;
 
+/** Plugin items for a typed query, best match first, as thread items need a query too. */
 function matchPluginMentionItems(
   items: ReadonlyArray<PluginMentionItem>,
   query: string,
 ): ComposerCommandItem[] {
   const needle = query.trim().toLowerCase();
+  if (needle === "") return [];
+  const scoreOf = (item: PluginMentionItem) => {
+    const scores = [
+      scoreQueryMatch({
+        value: item.label.toLowerCase(),
+        query: needle,
+        exactBase: 0,
+        prefixBase: 2,
+        boundaryBase: 4,
+        includesBase: 6,
+      }),
+      scoreQueryMatch({
+        value: item.description.toLowerCase(),
+        query: needle,
+        exactBase: 20,
+        prefixBase: 22,
+        boundaryBase: 24,
+        includesBase: 26,
+      }),
+    ].filter((score) => score !== null);
+    return scores.length === 0 ? null : Math.min(...scores);
+  };
   return items
-    .filter(
-      (item) =>
-        needle === "" ||
-        item.label.toLowerCase().includes(needle) ||
-        item.description.toLowerCase().includes(needle),
-    )
+    .flatMap((item) => {
+      const score = scoreOf(item);
+      return score === null ? [] : [{ item, score }];
+    })
+    .toSorted((left, right) => left.score - right.score)
     .slice(0, PLUGIN_MENTION_LIMIT)
-    .map((item) => ({
+    .map(({ item }) => ({
       id: item.key,
       type: "plugin-mention" as const,
       contextId: item.contextId,

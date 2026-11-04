@@ -74,7 +74,7 @@ var web_default = defineWebPlugin({
         }),
     });
     api.injectStyles(`
-.hello-web-panel { display: grid; gap: 0.25rem; padding: 1rem; font-size: 0.875rem; border-top: 2px solid var(--color-primary); }
+.hello-web-panel { display: grid; gap: 0.25rem; padding: 1rem; font-size: 0.875rem; border-top: 2px solid var(--primary); }
 .hello-web-muted { color: var(--muted-foreground); }
 .hello-web-text { font-size: 0.875rem; }
 .hello-web-chart { display: flex; height: 4rem; align-items: flex-end; gap: 0.25rem; }

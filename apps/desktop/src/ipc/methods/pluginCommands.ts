@@ -134,14 +134,17 @@ export const installPluginCommands = Effect.fn("desktop.ipc.installPluginCommand
         }
         if (Equal.equals(commands, current)) {
           // Another app may have let go of a shortcut since; take it now.
-          refused = refused.filter(({ command, reason }) => {
-            if (reason !== "taken") return true;
+          refused = refused.flatMap((refusal) => {
+            if (refusal.reason !== "taken" && refusal.reason !== "snap-shot") return [refusal];
             const globalShortcut = commands.find(
-              (entry) => entry.command === command,
+              (entry) => entry.command === refusal.command,
             )?.globalShortcut;
-            return (
-              globalShortcut === undefined || bindShortcut(command, globalShortcut) !== undefined
-            );
+            if (globalShortcut === undefined) return [refusal];
+            // Plugin shortcuts are bound now, so only a SnapShot refusal asks whether it's held.
+            const reason =
+              (refusal.reason === "snap-shot" ? checkShortcut(globalShortcut) : undefined) ??
+              bindShortcut(refusal.command, globalShortcut);
+            return reason === undefined ? [] : [{ command: refusal.command, reason }];
           });
           return refused;
         }

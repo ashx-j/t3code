@@ -261,7 +261,11 @@ export interface WebPluginApi {
     readonly register: (panel: WebPluginRightPanel) => void;
   };
   readonly settings: {
-    /** Replaces the generated settings form on the Plugins page. */
+    /**
+     * Shows on the Plugins page in place of the generated settings form. On a plugin installed in
+     * several environments it changes the main environment's copy, and the generated form, when
+     * the schema has fields, stays below it for every copy.
+     */
     readonly registerPanel: (component: WebPluginComponent) => void;
   };
   readonly commands: {
@@ -279,7 +283,7 @@ export interface WebPluginApi {
     /**
      * Offers items in the composer's `@` menu, matched against what the user types. A picked item
      * shows as a chip, and the agent gets its `text`, as it is when the message is sent, beside
-     * the message. Each call replaces the plugin's list.
+     * the message. Each call replaces the plugin's list; past 500 items the rest are left out.
      */
     readonly setMentionItems: (
       items: ReadonlyArray<{

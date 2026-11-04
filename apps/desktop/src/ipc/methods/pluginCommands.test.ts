@@ -140,13 +140,17 @@ it.effect("runs plugin shortcuts in the background and says why it refuses one",
       );
       // A reloaded page that sends the same list still learns what was refused.
       assert.deepEqual(yield* Effect.promise(() => send(commands)), expected);
-      // Once the other app lets go of a shortcut, the same list takes it.
+      // Once another app or SnapShot lets go of a shortcut, the same list takes it.
       native.takenElsewhere.delete("Control+Shift+Q");
+      native.heldBySnapShot.delete("Alt+S");
       assert.deepEqual(
         yield* Effect.promise(() => send(commands)),
-        expected.filter(({ command }) => command !== "plugin.timer.taken"),
+        expected.filter(
+          ({ command }) => command !== "plugin.timer.taken" && command !== "plugin.timer.snap",
+        ),
       );
       assert.isTrue(native.shortcuts.has("Control+Shift+Q"));
+      assert.isTrue(native.shortcuts.has("Alt+S"));
 
       native.shortcuts.get("CommandOrControl+Shift+Y")!();
       assert.isFalse(yield* Queue.take(reveals));

@@ -84,6 +84,21 @@ const versionAtom = Atom.make(0).pipe(Atom.keepAlive);
 
 const bump = () => appAtomRegistry.set(versionAtom, appAtomRegistry.get(versionAtom) + 1);
 
+/**
+ * Hands back the previous list while it holds the same entries, so a registry change that
+ * doesn't touch a reader's list doesn't re-render the composer that reads it.
+ */
+const stableList = <Entry>() => {
+  let previous: ReadonlyArray<Entry> = [];
+  return (next: ReadonlyArray<Entry>) => {
+    if (next.length === previous.length && next.every((entry, i) => entry === previous[i])) {
+      return previous;
+    }
+    previous = next;
+    return next;
+  };
+};
+
 export const pluginContributionKey = (environmentId: EnvironmentId, pluginId: string) =>
   `${environmentId}\u0000${pluginId}`;
 export const pluginRightPanelKey = (environmentId: EnvironmentId, pluginId: string, name: string) =>
@@ -111,12 +126,15 @@ export const pluginRightPanelAtom = Atom.family((key: string) =>
   }),
 );
 
-export const pluginRightPanelsAtom = Atom.family((environmentId: string) =>
-  Atom.make((get) => {
+export const pluginRightPanelsAtom = Atom.family((environmentId: string) => {
+  const stable = stableList<PluginRightPanelEntry>();
+  return Atom.make((get) => {
     get(versionAtom);
-    return [...rightPanels.values()].filter((entry) => entry.environmentId === environmentId);
-  }),
-);
+    return stable(
+      [...rightPanels.values()].filter((entry) => entry.environmentId === environmentId),
+    );
+  });
+});
 
 export interface PluginSettingsPanelEntry {
   readonly component: ComponentType;
@@ -185,12 +203,13 @@ export function pluginCommandLabel(command: string): string | undefined {
   return undefined;
 }
 
-export const pluginCommandsAtom = Atom.family((environmentId: string) =>
-  Atom.make((get) => {
+export const pluginCommandsAtom = Atom.family((environmentId: string) => {
+  const stable = stableList<PluginCommandEntry>();
+  return Atom.make((get) => {
     get(versionAtom);
-    return [...commands.values()].filter((entry) => entry.environmentId === environmentId);
-  }),
-);
+    return stable([...commands.values()].filter((entry) => entry.environmentId === environmentId));
+  });
+});
 
 /**
  * When plugins claim the same slash command or code block language, the one whose id sorts first
@@ -237,21 +256,6 @@ export function registerPluginSlashCommand(entry: PluginSlashCommandEntry): () =
     bump();
   };
 }
-
-/**
- * Hands back the previous list while it holds the same entries, so a registry change that
- * doesn't touch a reader's list doesn't re-render the composer that reads it.
- */
-const stableList = <Entry>() => {
-  let previous: ReadonlyArray<Entry> = [];
-  return (next: ReadonlyArray<Entry>) => {
-    if (next.length === previous.length && next.every((entry, i) => entry === previous[i])) {
-      return previous;
-    }
-    previous = next;
-    return next;
-  };
-};
 
 export const pluginSlashCommandsAtom = Atom.family((environmentId: string) => {
   const stable = stableList<PluginSlashCommandEntry>();
@@ -666,9 +670,10 @@ export function registerPluginSidebarSection(entry: PluginSidebarSectionEntry): 
   };
 }
 
+const stableSidebarSections = stableList<PluginSidebarSectionEntry>();
 export const pluginSidebarSectionsAtom = Atom.make((get) => {
   get(versionAtom);
-  return [...sidebarSections.values()];
+  return stableSidebarSections([...sidebarSections.values()]);
 });
 
 export interface PluginMentionItem {

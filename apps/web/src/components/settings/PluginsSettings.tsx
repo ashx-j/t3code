@@ -747,8 +747,8 @@ function PluginRow({
   const contributionKey = pluginContributionKey(environmentId, plugin.id);
   const customSettings = useAtomValue(pluginSettingsPanelAtom(contributionKey));
   const webFailure = useAtomValue(pluginWebFailureAtom(contributionKey));
-  const hasSettings =
-    customSettings !== undefined || pluginSettingsForm(plugin.settingsSchema).kind !== "none";
+  const hasGeneratedForm = pluginSettingsForm(plugin.settingsSchema).kind !== "none";
+  const hasSettings = customSettings !== undefined || hasGeneratedForm;
   const runOn = async (
     on: ReadonlyArray<PluginCopy>,
     action: (copy: PluginCopy) => Promise<unknown>,
@@ -907,13 +907,13 @@ function PluginRow({
             {copies.length > 1 ? (
               <>
                 <p className="pb-3 text-xs text-muted-foreground">
-                  {first.plugin.settingsSchema === undefined
-                    ? `This panel changes ${first.label} only.`
-                    : `This panel changes ${first.label} only. The form below changes every environment.`}
+                  {hasGeneratedForm
+                    ? `This panel changes ${first.label} only. The form below changes every environment.`
+                    : `This panel changes ${first.label} only.`}
                 </p>
-                {first.plugin.settingsSchema === undefined ? null : (
+                {hasGeneratedForm ? (
                   <PluginSettingsEditor first={first} copies={copies} labelled={labelled} />
-                )}
+                ) : null}
               </>
             ) : null}
           </>

@@ -46,7 +46,7 @@ export default defineWebPlugin({
     });
     // Its own classes: T3's Tailwind classes exist only while T3's own code happens to use them.
     api.injectStyles(`
-.hello-web-panel { display: grid; gap: 0.25rem; padding: 1rem; font-size: 0.875rem; border-top: 2px solid var(--color-primary); }
+.hello-web-panel { display: grid; gap: 0.25rem; padding: 1rem; font-size: 0.875rem; border-top: 2px solid var(--primary); }
 .hello-web-muted { color: var(--muted-foreground); }
 .hello-web-text { font-size: 0.875rem; }
 .hello-web-chart { display: flex; height: 4rem; align-items: flex-end; gap: 0.25rem; }

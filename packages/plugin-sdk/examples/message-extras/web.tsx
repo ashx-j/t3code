@@ -56,7 +56,7 @@ export default defineWebPlugin({
       </div>
     ));
     api.ui.replace("timeline.item", (step) =>
-      step.item.type === "command_execution" && typeof step.item.input === "string" ? (
+      step.item.type === "command_execution" ? (
         <div className="message-extras-terminal">
           <pre>
             <b>$ {step.item.input}</b>
