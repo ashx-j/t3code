@@ -36,8 +36,13 @@ const css = `
   margin-inline-start: -0.25rem;
   margin-block-end: 0.25rem;
 }
+/* Effort keeps its width like the old row's, so the row folds instead of squeezing it. Codex's
+   effort picker would otherwise shrink to an empty box. */
 .classic-composer-effort {
   display: contents;
+  & > * {
+    flex-shrink: 0;
+  }
 }
 /* Permissions and the plan toggle sit 4px apart, as one block like T3's own row. */
 .classic-composer-access {
@@ -136,7 +141,9 @@ const css = `
 /* 2. Hook: data-chat-provider-model-picker, and data-composer-shortcut, which T3's keyboard
       shortcuts use to find the effort and permissions pickers. The old pickers ended in a
       chevron, 8px in from their edge. In T3's folded row, its menu button keeps no chevron. The
-      model's name stays whole, so a narrowing row folds effort and permissions first. */
+      model's name stays whole, so a narrowing row folds effort and permissions first. The
+      chevrons are drawn last on ::before, since T3's pickers use ::after as their tap area on
+      touch screens. */
 .classic-composer-pickers > [data-chat-provider-model-picker] {
   flex-shrink: 0;
 }
@@ -147,8 +154,9 @@ const css = `
     [data-resting-block] [data-composer-shortcut]
   ) {
   padding-inline: 0.5rem;
-  &::after {
+  &::before {
     content: "";
+    order: 1;
     width: 0.625rem;
     height: 0.875rem;
     flex-shrink: 0;
@@ -157,9 +165,20 @@ const css = `
   }
 }
 
-/* 3. Hook: the Lucide class on T3's Full access icon, the only thing that marks it. Full access
-      showed an open lock before the redesign. Here and in every menu that lists it. */
-svg.lucide-shield-off {
+/* 3. Hook: the Lucide class on T3's Full access icon, the only thing that marks it, inside T3's
+      permissions controls: the row's picker, the drawer, the permissions section of every menu
+      that lists the modes, the model picker's permissions button, and the default permissions
+      setting with its list, the only list that holds the lock and pen icons of T3's other modes.
+      Full access showed an open lock before the redesign. Other plugins keep their own icon. */
+:is(
+    [data-composer-shortcut~="composer.mode"],
+    [data-slot="composer-context-strip"],
+    [data-composer-permissions],
+    [data-composer-permissions-trigger],
+    [aria-label="Default permissions"],
+    [data-slot="select-popup"]:has(svg.lucide-lock):has(svg.lucide-pen-line)
+  )
+  svg.lucide-shield-off {
   background-color: currentColor;
   mask: ${lockOpen} center / contain no-repeat;
   & > * {
@@ -176,9 +195,19 @@ svg.lucide-shield-off {
   margin: -1rem ${drawerInset} 0;
   padding: 1.25rem 0.5rem 0.25rem;
   gap: 0.25rem;
-  /* The pull request and branch sit at the drawer's right end at every width. An auto margin
-     would read as used width to T3, which then hides the drawer's labels. */
-  justify-content: space-between;
+  /* The pull request and branch sit at the drawer's right end at every width, with the
+     permissions after them when T3's own row leaves those to the drawer. Their icons, and the
+     branch's chevron, sat 2px into their padding. */
+  & > :has([data-slot="combobox-trigger"]) {
+    margin-inline-start: auto;
+    & svg,
+    & [data-slot="combobox-trigger"]::before {
+      margin-inline: -0.125rem;
+    }
+    & ~ [aria-label^="Permissions"] {
+      margin-inline-start: 0;
+    }
+  }
   &::before {
     content: "";
     position: absolute;
@@ -190,20 +219,14 @@ svg.lucide-shield-off {
     /* The top 15px sit under the card. */
     mask-image: linear-gradient(transparent 15px, black 15px);
   }
-  & button:is([data-composer-context-control], [data-slot="combobox-trigger"])::after {
+  & button:is([data-composer-context-control], [data-slot="combobox-trigger"])::before {
     content: "";
+    order: 1;
     width: 0.75rem;
     height: 0.75rem;
     flex-shrink: 0;
     background-color: currentColor;
     mask: ${drawerChevron} center / contain no-repeat;
-  }
-  /* The branch picker's icons sat 2px into its padding. */
-  & [data-slot="combobox-trigger"] {
-    & > svg,
-    &::after {
-      margin-inline: -0.125rem;
-    }
   }
 }
 /* In dark, the drawer is glass like the card, the card casts a shadow onto it, and it has a faint
