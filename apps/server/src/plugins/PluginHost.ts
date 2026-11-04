@@ -38,6 +38,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { HttpClient } from "effect/http";
 
 import packageJson from "../../package.json" with { type: "json" };
@@ -192,6 +193,10 @@ export class PluginHost extends Context.Service<
     readonly list: Effect.Effect<ReadonlyArray<PluginState>>;
     /** The current list, then the whole list after every change. */
     readonly streamStates: Stream.Stream<ReadonlyArray<PluginState>>;
+    /** Whether agents get the `t3_plugins_*` tools now, then after every change. */
+    readonly agentTools: Stream.Stream<boolean>;
+    /** Turns the `t3_plugins_*` tools on or off for agents, overriding the default. */
+    readonly setAgentTools: (enabled: boolean) => Effect.Effect<boolean, PluginConfigError>;
     /** Persists the flag, then waits for activation or deactivation to finish. */
     readonly setEnabled: (
       pluginId: PluginId,
@@ -308,6 +313,8 @@ type PluginSettingsError =
 const PluginsConfigFile = Schema.StructWithRest(
   Schema.Struct({
     enabled: Schema.optionalKey(Schema.Record(Schema.String, Schema.Boolean)),
+    /** The user's choice for the `t3_plugins_*` agent tools; unset, they follow whether any plugin exists. */
+    agentTools: Schema.optionalKey(Schema.Boolean),
     devPaths: Schema.optionalKey(Schema.Array(Schema.String)),
     /** Where each plugin installed through `install` came from, so `update` can fetch it again. */
     sources: Schema.optionalKey(Schema.Record(Schema.String, PluginInstallSource)),
@@ -484,6 +491,7 @@ const make = Effect.gen(function* () {
   const changes = yield* PubSub.sliding<ReadonlyArray<PluginState>>(1);
   const lifecycle = yield* Semaphore.make(1);
   const publishLock = yield* Semaphore.make(1);
+  const agentToolsOffered = yield* SubscriptionRef.make(false);
   // Update checks write plugins.json outside the lifecycle lock, so every read that is written
   // back, or kept as the current config, holds this one.
   const configLock = yield* Semaphore.make(1);
@@ -517,12 +525,23 @@ const make = Effect.gen(function* () {
   // rescans on every visit, and a list sent again would make every client and provider stream
   // rebuild what it already shows.
   let published: ReadonlyArray<PluginState> = [];
+  // Unless the user chose, agents get the management tools once the environment has a plugin, so an
+  // environment without plugins pays nothing for them.
+  const syncAgentTools = Effect.gen(function* () {
+    const choice = (yield* Ref.get(pluginsConfig)).agentTools;
+    const offered = choice ?? published.length > 0;
+    yield* services.mcpTools.offerManagementTools(offered);
+    if ((yield* SubscriptionRef.get(agentToolsOffered)) !== offered) {
+      yield* SubscriptionRef.set(agentToolsOffered, offered);
+    }
+  });
   // Reading and publishing under one lock, so a slower fiber cannot publish an older list last.
   const publishUnderLock = publishLock.withPermits(1)(
     Effect.gen(function* () {
       const all = yield* Ref.get(records);
       const states = yield* statesOf(all);
-      if (Equal.equals(states, published)) return;
+      // Still synced, so a saved choice applies at startup in an environment with no plugins.
+      if (Equal.equals(states, published)) return yield* syncAgentTools;
       yield* services.mcpTools.setInstalledPlugins(states);
       const active = all.flatMap((record, index) =>
         states[index]?.status === "active" ? [record.plugin] : [],
@@ -552,6 +571,7 @@ const make = Effect.gen(function* () {
       );
       yield* PubSub.publish(changes, states);
       published = states;
+      yield* syncAgentTools;
     }),
   );
   // A caller that disconnects mid-publish must not leave a change it made unsent.
@@ -1636,6 +1656,12 @@ const make = Effect.gen(function* () {
     installFiles,
     update,
     checkUpdates: checkUpdates(),
+    agentTools: SubscriptionRef.changes(agentToolsOffered),
+    setAgentTools: Effect.fn("PluginHost.setAgentTools")(function* (enabled) {
+      yield* writeConfig((current) => ({ ...current, agentTools: enabled }));
+      yield* publishLock.withPermits(1)(syncAgentTools);
+      return enabled;
+    }),
     uninstall,
     check: Effect.fn("PluginHost.check")(function* (target) {
       const { folder, state } =

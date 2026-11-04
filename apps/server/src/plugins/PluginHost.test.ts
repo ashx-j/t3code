@@ -1596,6 +1596,9 @@ module.exports = { activate(api) {
         yield* Effect.gen(function* () {
           const host = yield* PluginHost.PluginHost;
           yield* waitForStatuses(host, {});
+          // Agents get the plugin tools once a plugin exists, unless the user chose otherwise.
+          const agentTools = Stream.runHead(host.agentTools).pipe(Effect.map(Option.getOrThrow));
+          assert.isFalse(yield* agentTools);
 
           // A folder that is not a plugin, such as a home folder, is refused before it is copied.
           const notInstalled = yield* host
@@ -1607,6 +1610,9 @@ module.exports = { activate(api) {
           const source = { type: "path" as const, path: `${fixturesDir}hello-plugin` };
           const installed = yield* host.install(source);
           assert.deepStrictEqual(installed.installSource, source);
+          assert.isTrue(yield* agentTools);
+          yield* host.setAgentTools(false);
+          assert.isFalse(yield* agentTools);
           const updated = yield* host.update(hello);
           assert.include(updated, { status: "active" });
           assert.notStrictEqual(updated.revision, installed.revision);

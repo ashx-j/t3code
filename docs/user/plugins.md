@@ -27,13 +27,13 @@ run plugins. A plugin with no server code or agent skills only changes the app, 
 app's main environment only. The list then shows each plugin once, and turning it on or off,
 changing its settings, updating or removing it applies to every environment that has it.
 
-Once an environment has a plugin, agents can also install, remove, turn on and off, call and
-change the settings of plugins when you ask them to. Only an agent in a thread set to **Full
-access**, and not in Plan mode, can do this, or an outside agent you approved with **Full
-access**. Agents from linked environments can't. Any agent can read a plugin's settings, with
-secrets hidden. T3 Code checks the thread's permission mode, not whether the person who started
-the thread may change Settings. Agents in an environment with no plugins don't see these
-tools, so the first plugin comes from Settings.
+With **Plugin tools for agents** on in **Settings → Plugins**, agents can also install, remove,
+turn on and off, call and change the settings of plugins when you ask them to. Only an agent in a
+thread set to **Full access**, and not in Plan mode, can do this, or an outside agent you approved
+with **Full access**. Agents from linked environments can't. Any agent can read a plugin's
+settings, with secrets hidden. T3 Code checks the thread's permission mode, not whether the person
+who started the thread may change Settings. Until you change the switch, it is on once the
+environment has a plugin, so turn it on first if you want an agent to add the first one.
 
 ## Update a plugin
 
@@ -74,7 +74,8 @@ commands you always allow. The request still appears in the thread, and you can 
 while the plugin decides. If no plugin answers within a few seconds, it waits for you as usual.
 
 A plugin can also change a message before it is sent, or stop it and say why. A stopped message
-stays in the composer, so you can edit it and send it again.
+stays in the composer, so you can edit it and send it again. Slash commands are never changed or
+stopped by plugins.
 
 Plugins can add slash commands. They appear in the composer's `/` menu with the agent's own
 commands. A command that runs on the server shows in every app, and one that runs in the app shows

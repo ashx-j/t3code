@@ -169,8 +169,16 @@ export type PluginListInput = typeof PluginListInput.Type;
 
 export const PluginListResult = Schema.Struct({
   plugins: ForwardCompatibleArray(PluginState),
+  /** Whether agents get the `t3_plugins_*` tools. Older servers leave it out. */
+  agentTools: Schema.optionalKey(Schema.Boolean),
 });
 export type PluginListResult = typeof PluginListResult.Type;
+
+export const PluginSetAgentToolsInput = Schema.Struct({ enabled: Schema.Boolean });
+export type PluginSetAgentToolsInput = typeof PluginSetAgentToolsInput.Type;
+
+export const PluginSetAgentToolsResult = Schema.Struct({ agentTools: Schema.Boolean });
+export type PluginSetAgentToolsResult = typeof PluginSetAgentToolsResult.Type;
 
 export const PluginSetEnabledInput = Schema.Struct({
   pluginId: PluginId,

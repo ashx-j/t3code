@@ -213,8 +213,8 @@ export interface PluginHooksRegistry {
   ) => Effect.Effect<Effect.Effect<void>>;
   /**
    * The text to send, or a plugin's reply to record instead. Every hook sees the message in plugin
-   * id order, and a block stops the rest. For a slash command, a name in T3's, the provider's or a
-   * plugin's list, hooks may only block; then a plugin's command runs its handler.
+   * id order, and a block stops the rest. A slash command, a name in T3's, the provider's or a
+   * plugin's list, skips the hooks; a plugin's command then runs its handler.
    */
   readonly beforeDispatch: (
     message: PluginOutgoingMessage,
@@ -426,12 +426,9 @@ const make = Effect.gen(function* () {
       ),
     );
   };
-  // Changed text would change what a slash command does, so a command's hooks may only block it.
-  const runHooks = (
-    message: PluginOutgoingMessage,
-    alreadyAccepted: Effect.Effect<boolean>,
-    onlyBlocks = false,
-  ) =>
+  // Hooks never see a command: changed text would change what it does, and blocking one would keep
+  // T3, the provider or a plugin from doing its job.
+  const runHooks = (message: PluginOutgoingMessage, alreadyAccepted: Effect.Effect<boolean>) =>
     Ref.get(hooks).pipe(
       Effect.flatMap((all) =>
         all.length === 0
@@ -445,13 +442,7 @@ const make = Effect.gen(function* () {
                 (text, entry) =>
                   entry
                     .run({ ...message, text })
-                    .pipe(
-                      Effect.flatMap((outcome) =>
-                        onlyBlocks && outcome !== undefined && !("block" in outcome)
-                          ? Effect.succeed(text)
-                          : applyOutcome(text, outcome),
-                      ),
-                    ),
+                    .pipe(Effect.flatMap((outcome) => applyOutcome(text, outcome))),
               ),
             ),
       ),
@@ -471,21 +462,23 @@ const make = Effect.gen(function* () {
       return Effect.all([SubscriptionRef.get(commands), Ref.get(hooks)]).pipe(
         Effect.flatMap(([all, hooked]) => {
           const entry = handling(all).find((candidate) => candidate.command.name === name);
-          if (entry === undefined && (hooked.length === 0 || T3_SLASH_COMMAND_NAMES.has(name))) {
-            return runHooks(message, alreadyAccepted, true);
-          }
+          if (T3_SLASH_COMMAND_NAMES.has(name)) return Effect.succeed(message.text);
+          if (entry === undefined && hooked.length === 0) return Effect.succeed(message.text);
           return providerHas(name, message.threadId, providerInstanceId, entry?.command).pipe(
             Effect.flatMap((owned) =>
-              owned || entry === undefined
-                ? runHooks(message, alreadyAccepted, owned)
-                : unlessAccepted(
-                    alreadyAccepted,
-                    message.text,
-                    runHooks(message, Effect.succeed(false), true).pipe(
-                      Effect.andThen(entry.run({ ...message, args: match?.[2]?.trim() ?? "" })),
-                      Effect.flatMap((outcome) => applyCommandOutcome(message.text, outcome)),
+              owned
+                ? Effect.succeed(message.text)
+                : entry === undefined
+                  ? runHooks(message, alreadyAccepted)
+                  : unlessAccepted(
+                      alreadyAccepted,
+                      message.text,
+                      entry
+                        .run({ ...message, args: match?.[2]?.trim() ?? "" })
+                        .pipe(
+                          Effect.flatMap((outcome) => applyCommandOutcome(message.text, outcome)),
+                        ),
                     ),
-                  ),
             ),
           );
         }),
@@ -502,7 +495,9 @@ const make = Effect.gen(function* () {
                     ? Effect.succeed(text)
                     : isCommand(text, read).pipe(
                         Effect.flatMap((command) =>
-                          runHooks({ ...read, text }, alreadyAccepted, command),
+                          command
+                            ? Effect.succeed(text)
+                            : runHooks({ ...read, text }, alreadyAccepted),
                         ),
                       ),
                 ),

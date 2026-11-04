@@ -462,8 +462,8 @@ export interface PluginApi {
     /**
      * Sees each message, edited queued message and delegated task prompt before it is sent, after
      * earlier hooks' changes, plugins in id order. A block stops the rest; a hook slower than 2
-     * seconds or one that throws is skipped. Only a block applies to a slash command, a name T3,
-     * the agent or a plugin lists. A task prompt's `threadId` is the task's new thread.
+     * seconds or one that throws is skipped. Slash commands, names T3, the agent or a plugin lists,
+     * never reach it. A task prompt's `threadId` is the task's new thread.
      */
     readonly beforeDispatch: (
       hook: (
@@ -474,7 +474,7 @@ export interface PluginApi {
   readonly slashCommands: {
     /**
      * Lists `/name` with every provider's commands; messages starting with it run `handler` instead
-     * of being sent, unless a send hook blocks them, and throwing or 10 seconds blocks the message.
+     * of being sent, without passing send hooks, and throwing or 10 seconds blocks the message.
      * Names are lowercase letters, digits and `-`, not T3 Code's; a provider's own command of the
      * name wins, and of plugins sharing one, the id that sorts first.
      */

@@ -391,6 +391,8 @@ import {
   PluginReportWebFailureInput,
   PluginMutationResult,
   PluginReloadInput,
+  PluginSetAgentToolsInput,
+  PluginSetAgentToolsResult,
   PluginSetEnabledInput,
   PluginSettingsGetInput,
   PluginSettingsResult,
@@ -574,6 +576,7 @@ export const WS_METHODS = {
   pluginsList: "plugins.list",
   pluginsSubscribeStates: "plugins.subscribeStates",
   pluginsSetEnabled: "plugins.setEnabled",
+  pluginsSetAgentTools: "plugins.setAgentTools",
   pluginsReload: "plugins.reload",
   pluginsInstall: "plugins.install",
   pluginsInstallFiles: "plugins.installFiles",
@@ -2011,6 +2014,12 @@ const WsPluginsSetEnabledRpc = Rpc.make(WS_METHODS.pluginsSetEnabled, {
   error: PluginRpcError,
 });
 
+const WsPluginsSetAgentToolsRpc = Rpc.make(WS_METHODS.pluginsSetAgentTools, {
+  payload: PluginSetAgentToolsInput,
+  success: PluginSetAgentToolsResult,
+  error: PluginRpcError,
+});
+
 const WsPluginsReloadRpc = Rpc.make(WS_METHODS.pluginsReload, {
   payload: PluginReloadInput,
   success: PluginMutationResult,
@@ -2176,6 +2185,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPluginsListRpc,
   WsPluginsSubscribeStatesRpc,
   WsPluginsSetEnabledRpc,
+  WsPluginsSetAgentToolsRpc,
   WsPluginsReloadRpc,
   WsPluginsInstallRpc,
   WsPluginsInstallFilesRpc,

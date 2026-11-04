@@ -186,10 +186,11 @@ with the last 256 ended runs: runs that end while a plugin is off arrive when it
 before it has handled one, and a run updated again after it ended (a checkpoint landing on an
 interrupted run) is not delivered twice, while a retry, which sets the failed run back to
 `preparing`, makes it deliverable again, and a revert delivers a run once more as `rolled_back`. Command replies are recorded with `run.created` alone, so
-one arrives only when a revert rolls it back. For a slash command, a name in T3's, the provider's or a plugin's list, hooks may
-only block, because changed text would change what the command does; other text that starts with
-`/`, such as a path, gets every hook. A queued edit reads its run's provider; a delegated task that
-names no model is checked without one, so any `/name` there may only be blocked. Hooks see the message's `creationSource`, because text the
+one arrives only when a revert rolls it back. A slash command, a name in T3's, the provider's or a plugin's list, skips the hooks,
+because changed text would change what the command does and a block would keep T3, the agent or a
+plugin from doing its job; other text that starts with `/`, such as a path, gets every hook. A
+queued edit reads its run's provider; a delegated task that names no model is checked without one,
+so any `/name` there skips them. Hooks see the message's `creationSource`, because text the
 server writes, such as the usage-limit resume, is sent as the user.
 
 `turns.onRuntimeRequest` reacts to stored events too and answers through the same
@@ -205,7 +206,7 @@ plugin reloads, it also reads the pending requests of threads that may be live.
 
 A server plugin's slash commands are provider slash commands: the server adds them to every
 provider's lists where it adds `/usage-limits`, so every client lists them with no plugin code, and
-the `beforeDispatch` path runs the plugin's handler after hooks that may only block. A provider's own command
+the `beforeDispatch` path runs the plugin's handler without the send hooks. A provider's own command
 of the same name wins in that provider's lists and when a message goes to it, so a plugin cannot
 take `/review` from an agent that has one. That includes the commands of the thread's folder
 (its worktree, else its project root), which the composer lists from the provider's workspace
@@ -388,6 +389,8 @@ check, so a restart before the next check is due starts no network request.
 ## Nothing installed costs nothing
 
 Plugins activate after the server is listening, each in its own fiber. Clients show plugin UI only
-when the environment advertises `plugins`. Plugin MCP tools, the `t3_plugins_*` management
-tools among them, are registered only once a plugin is installed, because every agent turn pays
-for the advertised tool list. MCP has no tool removal, so they stay until the server restarts.
+when the environment advertises `plugins`. Plugin MCP tools are registered only when a plugin adds
+them, and the `t3_plugins_*` management tools follow the Settings switch, which until the user sets
+it (`agentTools` in `plugins.json`) is on once a plugin is installed, because every agent turn pays
+for the advertised tool list. MCP has no tool removal, so a session that listed a tool keeps it,
+and a withdrawn one refuses every call.

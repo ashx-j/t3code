@@ -95,7 +95,7 @@ it.effect(
       );
 
       // A queued edit knows its run's provider, so only a name in a command list is a command,
-      // which hooks may only block.
+      // which skips the hooks.
       yield* hooks.setProviderSlashCommands(() => Effect.succeed(["review"]));
       const rewrite = (text: string) =>
         hooks

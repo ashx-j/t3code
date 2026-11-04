@@ -957,6 +957,8 @@ function rootProviderThreadsForProvider(
 }
 
 function isHandoffSourceRun(run: OrchestrationV2Run): boolean {
+  // A plugin command's reply never ran a provider, so it carries no history to hand off.
+  if (isCommandReplyRun(run)) return false;
   return run.status === "completed" || run.status === "failed" || run.status === "interrupted";
 }
 
@@ -1778,7 +1780,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
-      const latestCompletedRun = projection.runs.findLast((run) => run.status === "completed");
+      const latestCompletedRun = projection.runs.findLast(
+        (run) => run.status === "completed" && !isCommandReplyRun(run),
+      );
       const latestHandoffRun = projection.runs.findLast(isHandoffSourceRun);
       const targetLastCompletedRun = lastDeliveredRunForProviderThread(
         projection,
@@ -4459,6 +4463,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Merge-back source run ${sourceRun.id} is ${sourceRun.status}; only provider-finished runs are supported.`,
       });
     }
+    if (isCommandReplyRun(sourceRun)) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Merge-back source run ${sourceRun.id} is a plugin command's reply, which has no agent turn to bring back.`,
+      });
+    }
 
     const forkTransfer = sourceProjection.contextTransfers.findLast(
       (transfer) =>
@@ -6109,7 +6120,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     const ordinal = nextRunOrdinal(projection);
     const runId = idAllocator.derive.run({ threadId: command.threadId, ordinal });
-    const latestCompletedRun = projection.runs.findLast((run) => run.status === "completed");
+    const latestCompletedRun = projection.runs.findLast(
+      (run) => run.status === "completed" && !isCommandReplyRun(run),
+    );
     const latestHandoffRun = projection.runs.findLast(isHandoffSourceRun);
     const legacyImportItems =
       projection.thread.historyOrigin === "v1_import"

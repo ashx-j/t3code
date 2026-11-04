@@ -32,6 +32,10 @@ export function createPluginEnvironmentAtoms<R, E>(
       label: "environment-data:plugins:set-enabled",
       tag: WS_METHODS.pluginsSetEnabled,
     }),
+    setAgentTools: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:plugins:set-agent-tools",
+      tag: WS_METHODS.pluginsSetAgentTools,
+    }),
     reloadPlugin: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:plugins:reload",
       tag: WS_METHODS.pluginsReload,

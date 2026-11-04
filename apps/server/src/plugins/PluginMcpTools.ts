@@ -183,11 +183,13 @@ export class PluginMcpTools extends Context.Service<
     }) => Effect.Effect<void, PluginMcpToolNameError>;
     /** MCP has no tool removal, so each of the plugin's tools answers "disabled" instead. */
     readonly unregisterPlugin: (pluginId: PluginId) => Effect.Effect<void>;
-    /**
-     * Offers the `t3_plugins_*` management tools once a plugin is installed; agents without
-     * plugins never pay for them.
-     */
+    /** The plugins `t3_plugins_list` reports. */
     readonly setInstalledPlugins: (plugins: ReadonlyArray<PluginState>) => Effect.Effect<void>;
+    /**
+     * Offers or withdraws the `t3_plugins_*` management tools. MCP has no tool removal, so a
+     * session that already listed them keeps them, and they refuse every call.
+     */
+    readonly offerManagementTools: (offered: boolean) => Effect.Effect<void>;
     /** Connects the management tools to the plugin host. */
     readonly setHostActions: (actions: PluginMcpHostActions) => Effect.Effect<void>;
     /** Hands `publish` every tool now and each change until the scope closes. */
@@ -494,22 +496,39 @@ const make = () => {
         });
       }
     }),
-    setInstalledPlugins: Effect.fn("PluginMcpTools.setInstalledPlugins")(function* (plugins) {
-      installed = plugins;
-      // Once advertised it stays: the list then reads empty when the last plugin is removed.
-      if (plugins.length > 0 && !tools.has(PLUGINS_LIST_TOOL)) {
-        for (const entry of [
-          pluginsList,
-          pluginsInvoke,
-          pluginsSetEnabled,
-          pluginsInstall,
-          pluginsUninstall,
-          pluginsReload,
-          pluginsCheck,
-          pluginsSettings,
-        ]) {
+    setInstalledPlugins: Effect.fn("PluginMcpTools.setInstalledPlugins")((plugins) =>
+      Effect.sync(() => {
+        installed = plugins;
+      }),
+    ),
+    offerManagementTools: Effect.fn("PluginMcpTools.offerManagementTools")(function* (offered) {
+      if (offered === tools.has(PLUGINS_LIST_TOOL)) return;
+      const managementTools = [
+        pluginsList,
+        pluginsInvoke,
+        pluginsSetEnabled,
+        pluginsInstall,
+        pluginsUninstall,
+        pluginsReload,
+        pluginsCheck,
+        pluginsSettings,
+      ];
+      for (const entry of managementTools) {
+        if (offered) {
           yield* publish(entry);
+          continue;
         }
+        tools.delete(entry.name);
+        const turnedOff = {
+          ...entry,
+          call: () =>
+            Effect.fail(
+              new PluginMcpManagementError({
+                reason: "Plugin tools for agents are turned off in Settings > Plugins.",
+              }),
+            ),
+        };
+        for (const publisher of publishers) yield* publisher(turnedOff);
       }
     }),
     setHostActions: Effect.fn("PluginMcpTools.setHostActions")((actions) =>

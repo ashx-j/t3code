@@ -183,7 +183,7 @@ it.effect(
 );
 
 it.effect(
-  "plugins change, block or handle user messages, may only block slash commands, and skip notifications",
+  "plugins change, block or handle user messages, leave slash commands alone, and skip notifications",
   () => {
     const threadId = ThreadId.make("thread:thread-management:chokepoint");
     const dispatched: Array<string> = [];
@@ -278,7 +278,7 @@ it.effect(
       yield* threads.dispatch(message("path", undefined, "/etc/hosts is broken"));
       // A name in no command list is text too.
       yield* threads.dispatch(message("unlisted", undefined, "/please fix the build"));
-      // A command's text stays as sent, but a hook can still block it.
+      // Commands skip the hooks: their text stays as sent, and no hook can block them.
       // Claude plugin commands and MCP prompts are named with ":" and "_".
       yield* hooks.setProviderSlashCommands(() =>
         Effect.succeed(["review", "acme:ship", "mcp__docs__search"]),
@@ -287,12 +287,9 @@ it.effect(
       yield* threads.dispatch(message("namespaced-command", undefined, "/acme:ship now"));
       yield* threads.dispatch(message("mcp-prompt", undefined, "/mcp__docs__search hooks"));
       for (const [index, text] of ["/goal token", "/review token", "/deploy token"].entries()) {
-        const refused = yield* Effect.flip(
-          threads.dispatch(message(`blocked-command-${index}`, undefined, text)),
-        );
-        expect(userFacingDispatchErrorMessage(refused)).toBe("Guard: Remove the token first.");
+        yield* threads.dispatch(message(`command-${index}`, undefined, text));
       }
-      expect(deploys).toBe(1);
+      expect(deploys).toBe(2);
       // A steer that missed its turn sends the recorded message again under a new command id.
       yield* threads.dispatch({
         ...message("steer-again", undefined, "Fix the build.\n\nProject uses pnpm."),
@@ -337,6 +334,9 @@ it.effect(
         "/review now",
         "/acme:ship now",
         "/mcp__docs__search hooks",
+        "/goal token",
+        "/review token",
+        "Deploy token now.",
         "Fix the build.\n\nProject uses pnpm.",
         "edited Fix the tests.\n\nProject uses pnpm.",
         "task Check the tests.",

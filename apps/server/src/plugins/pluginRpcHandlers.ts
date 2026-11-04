@@ -10,6 +10,7 @@ import {
   type PluginReloadInput,
   type PluginReportWebFailureInput,
   type PluginRescanInput,
+  type PluginSetAgentToolsInput,
   type PluginSetEnabledInput,
   type PluginSettingsGetInput,
   type PluginSettingsUpdateInput,
@@ -19,6 +20,7 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import { rpcAuthorizationError } from "../auth/RpcAuthorization.ts";
@@ -35,9 +37,22 @@ export const makePluginRpcHandlers = (
   scopes: ReadonlyArray<AuthEnvironmentScope>,
 ) => ({
   [WS_METHODS.pluginsList]: (_input: PluginListInput) =>
-    pluginHost.list.pipe(Effect.map((plugins) => ({ plugins }))),
+    Effect.all({
+      plugins: pluginHost.list,
+      agentTools: pluginHost.agentTools.pipe(
+        Stream.runHead,
+        Effect.map(Option.getOrElse(() => false)),
+      ),
+    }),
   [WS_METHODS.pluginsSubscribeStates]: (_input: PluginListInput) =>
-    pluginHost.streamStates.pipe(Stream.map((plugins) => ({ plugins }))),
+    Stream.zipLatest(pluginHost.streamStates, pluginHost.agentTools).pipe(
+      Stream.map(([plugins, agentTools]) => ({ plugins, agentTools })),
+    ),
+  [WS_METHODS.pluginsSetAgentTools]: (input: PluginSetAgentToolsInput) =>
+    pluginHost.setAgentTools(input.enabled).pipe(
+      Effect.map((agentTools) => ({ agentTools })),
+      Effect.mapError((error) => new PluginError({ message: error.message })),
+    ),
   [WS_METHODS.pluginsSetEnabled]: (input: PluginSetEnabledInput) =>
     pluginHost.setEnabled(input.pluginId, input.enabled).pipe(
       Effect.map((plugin) => ({ plugin })),

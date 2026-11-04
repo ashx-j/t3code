@@ -288,6 +288,7 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
       serverFailure: "timer threw",
     };
     yield* tools.setInstalledPlugins([installed, shadowedLink]);
+    yield* tools.offerManagementTools(true);
     assert.includeMembers(yield* toolNames, [
       "t3_plugins_list",
       "t3_plugins_invoke",
@@ -380,6 +381,12 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
       text: '{"settings":{"mode":"b"}}',
     });
     assert.deepStrictEqual(settingsPatches, [{ pluginId: "mcp-plugin", patch: { mode: "b" } }]);
+    // Turned off in Settings: a session that already listed the tools keeps them, and they refuse.
+    yield* tools.offerManagementTools(false);
+    const refused = yield* call("t3_plugins_list", readOnlyClient);
+    assert.isTrue(refused.isError);
+    assert.include(refused.text, "turned off in Settings > Plugins");
+    yield* tools.offerManagementTools(true);
     // One linked copy that isn't in use is unlinked by its folder, as Settings does it.
     yield* call("t3_plugins_uninstall", fullAccessClient, {
       pluginId: "mcp-plugin",

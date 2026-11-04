@@ -465,8 +465,19 @@ function PluginList({
     error === null ? [] : [several ? `${target.label}: ${error}` : error],
   );
   const updatable = copies.filter(fromGitOrNpm);
+  const agentTools = loaded.flatMap(({ target }, index) => {
+    const value = AsyncResult.getOrElse(
+      lists[index] ?? AsyncResult.initial(true),
+      () => null,
+    )?.agentTools;
+    // Servers from before the switch leave it out.
+    return value === undefined ? [] : [{ environmentId: target.environmentId, value }];
+  });
   return (
     <>
+      {agentTools.length === 0 ? null : (
+        <AgentToolsRow environmentId={main.environmentId} environments={agentTools} />
+      )}
       {targets.map((target) => (
         <ScanPluginsFolder key={target.environmentId} environmentId={target.environmentId} />
       ))}
@@ -925,6 +936,45 @@ function PluginRow({
         )
       ) : null}
     </SettingsRow>
+  );
+}
+
+/**
+ * Whether agents get the tools that list, install, check and change plugins. Until the user picks,
+ * they follow whether the environment has a plugin.
+ */
+function AgentToolsRow(props: {
+  readonly environmentId: EnvironmentId;
+  readonly environments: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly value: boolean;
+  }>;
+}) {
+  const canChange = useAtomValue(
+    pluginEnvironment.setAgentTools.permissionAtom(props.environmentId),
+  );
+  const setAgentTools = useAtomCommand(pluginEnvironment.setAgentTools, "plugin tools for agents");
+  const [busy, setBusy] = useState(false);
+  return (
+    <SettingsRow
+      title="Plugin tools for agents"
+      description="Lets agents list, install, check and change plugins. Changing them still needs a thread set to Full access."
+      control={
+        <Switch
+          checked={props.environments.every((environment) => environment.value)}
+          disabled={busy || !canChange}
+          aria-label="Plugin tools for agents"
+          onCheckedChange={(enabled) => {
+            setBusy(true);
+            void Promise.all(
+              props.environments.map((environment) =>
+                setAgentTools({ environmentId: environment.environmentId, input: { enabled } }),
+              ),
+            ).finally(() => setBusy(false));
+          }}
+        />
+      }
+    />
   );
 }
 
