@@ -101,8 +101,9 @@ A replaceable part (`ui.replace`) hands the plugin T3's own controls as elements
 wired, so a plugin rearranges T3's code instead of copying it and keeps working when T3 changes a
 control's internals. Unused pieces are elements that never render, and `original` is the part as
 T3 draws it, also drawn when a replacement throws. Replacements apply in every environment's
-threads, like injected styles, and stack per part: the newest wins, and unloading it brings back the
-one before. Parts have their own version atom because they sit on hot paths such as the composer
+threads, like injected styles, and stack per part: the plugin whose id sorts first wins, as for
+slash commands, so parallel loading can't change the winner; within one plugin its newest wins, and
+unloading it brings back the one before. Parts have their own version atom because they sit on hot paths such as the composer
 and every timeline row. A replacement that throws records the failure on its plugin's row, which
 is why each registered replacement carries its plugin and environment. The `app.pageFrame` part's
 `page` piece renders Settings or Usage beside the thread kept mounted under it; `index.css` hides
