@@ -140,10 +140,11 @@ export class PluginNoServerError extends Schema.TaggedError<PluginNoServerError>
 
 export class PluginMethodNotFoundError extends Schema.TaggedError<PluginMethodNotFoundError>()(
   "PluginMethodNotFoundError",
-  { pluginId: PluginId, method: Schema.String },
+  { pluginId: PluginId, method: Schema.String, methods: Schema.Array(Schema.String) },
 ) {
+  // The methods it has, since nothing else lists them to an agent.
   override get message(): string {
-    return `Plugin ${this.pluginId} has no method ${this.method}.`;
+    return `Plugin ${this.pluginId} has no method ${this.method}. Its methods: ${this.methods.join(", ") || "none"}.`;
   }
 }
 
@@ -1750,6 +1751,7 @@ const make = Effect.gen(function* () {
         return yield* new PluginMethodNotFoundError({
           pluginId: request.pluginId,
           method: request.method,
+          methods: [...activation.methods.keys()],
         });
       }
       if (

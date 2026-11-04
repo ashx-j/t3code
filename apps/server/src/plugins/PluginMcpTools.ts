@@ -12,7 +12,7 @@ import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 
 import { abortEffect, errorText } from "./api/facade.ts";
-import type { PluginCheckReport } from "./pluginCheck.ts";
+import { FRAGILE_CODES, type PluginCheckReport } from "./pluginCheck.ts";
 
 // MCP clients reject longer tool names.
 const MAX_TOOL_NAME_CHARS = 64;
@@ -120,8 +120,16 @@ const decodeSettingsInput = Schema.decodeUnknownEffect(
   Schema.Struct({ pluginId: PluginId, values: Schema.optional(Schema.JsonObject) }),
 );
 const decodeInstallInput = Schema.decodeUnknownEffect(
-  Schema.Struct({ source: PluginInstallSource }),
+  Schema.Struct({
+    path: Schema.optional(Schema.String),
+    link: Schema.optional(Schema.Boolean),
+    gitUrl: Schema.optional(Schema.String),
+    gitRef: Schema.optional(Schema.String),
+    npmPackage: Schema.optional(Schema.String),
+    npmVersion: Schema.optional(Schema.String),
+  }),
 );
+const decodeInstallSource = Schema.decodeUnknownEffect(PluginInstallSource);
 const decodeUninstallInput = Schema.decodeUnknownEffect(
   Schema.Struct({
     pluginId: PluginId,
@@ -137,6 +145,12 @@ const decodeCheckInput = Schema.decodeUnknownEffect(
   ]),
 );
 
+const CHECK_NEXT = "Run t3_plugins_check for the cause and a fix.";
+const failed = (state: PluginState) =>
+  state.failure !== undefined ||
+  state.webFailure !== undefined ||
+  state.serverFailure !== undefined;
+
 // What a lifecycle tool returns: enough to see whether the plugin runs, and why not.
 const toolState = (state: PluginState) => ({
   id: state.id,
@@ -150,9 +164,21 @@ const toolState = (state: PluginState) => ({
   ...(state.linkedFolder === undefined ? {} : { linkedFolder: state.linkedFolder }),
 });
 
+// Hints that cost nothing until they apply, instead of in every turn's tool descriptions.
+const lifecycleResult = (state: PluginState) => {
+  const next = failed(state)
+    ? CHECK_NEXT
+    : state.hasWeb && state.status === "active"
+      ? "Its web half loads in open T3 Code windows after this returns; t3_plugins_list then shows any webFailure."
+      : undefined;
+  return { ...toolState(state), ...(next === undefined ? {} : { next }) };
+};
+
 /** One tool as `/mcp` advertises it. `call` runs it; McpHttpServer checks `access` first. */
 export interface PluginMcpToolEntry {
   readonly name: string;
+  /** Shown to people in MCP clients, not to the model. */
+  readonly title?: string;
   readonly description: string;
   readonly inputSchema: Schema.JsonObject;
   /** Picked per call by a tool whose input decides whether it reads or changes something. */
@@ -210,12 +236,51 @@ const make = () => {
     run: (actions: PluginMcpHostActions) => Effect.Effect<A, { readonly message: string }>,
   ) =>
     hostActions === undefined
-      ? Effect.fail(new PluginMcpManagementError({ reason: "Plugins are still starting." }))
+      ? Effect.fail(
+          new PluginMcpManagementError({
+            reason: "Plugins are still starting. Call again in a moment.",
+          }),
+        )
       : run(hostActions).pipe(
           Effect.mapError((error) => new PluginMcpManagementError({ reason: error.message })),
         );
   const invalidInput = (cause: { readonly message: string }) =>
     new PluginMcpManagementError({ reason: `Invalid input: ${cause.message}` });
+  // The tool takes flat fields, which agents fill in more reliably than a tagged union.
+  const installSourceOf = (input: {
+    readonly path?: string | undefined;
+    readonly link?: boolean | undefined;
+    readonly gitUrl?: string | undefined;
+    readonly gitRef?: string | undefined;
+    readonly npmPackage?: string | undefined;
+    readonly npmVersion?: string | undefined;
+  }) => {
+    const given = [input.path, input.gitUrl, input.npmPackage].filter(
+      (value) => value !== undefined,
+    );
+    if (given.length !== 1) {
+      return Effect.fail(invalidInput({ message: "Give one of path, gitUrl or npmPackage." }));
+    }
+    return decodeInstallSource(
+      input.path !== undefined
+        ? {
+            type: "path",
+            path: input.path,
+            ...(input.link === undefined ? {} : { link: input.link }),
+          }
+        : input.gitUrl !== undefined
+          ? {
+              type: "git",
+              url: input.gitUrl,
+              ...(input.gitRef === undefined ? {} : { ref: input.gitRef }),
+            }
+          : {
+              type: "npm",
+              name: input.npmPackage,
+              ...(input.npmVersion === undefined ? {} : { version: input.npmVersion }),
+            },
+    ).pipe(Effect.mapError(invalidInput));
+  };
 
   const publish = Effect.fnUntraced(function* (entry: PluginMcpToolEntry) {
     tools.set(entry.name, entry);
@@ -224,35 +289,39 @@ const make = () => {
 
   const pluginsList: PluginMcpToolEntry = {
     name: PLUGINS_LIST_TOOL,
-    description:
-      "List the plugins installed in this T3 Code environment, with each one's status, whether it is enabled, why its last start, its web half in the browser or its server code outside a call (serverFailure, such as in a timer) failed, if any did, and the linkedFolder of each copy loaded from a folder with link: true.",
+    title: "List plugins",
+    description: "List installed plugins with status, failures, and slash commands.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     access: "read",
     call: () =>
       (hostActions?.slashCommands ?? Effect.succeed([])).pipe(
         Effect.map((commands) => ({
-          plugins: installed.map((plugin) => ({
-            ...toolState(plugin),
-            name: plugin.name,
-            version: plugin.version ?? null,
-            slashCommands: commands
+          plugins: installed.map((plugin) => {
+            const slashCommands = commands
               .filter((command) => command.pluginId === plugin.id)
-              .map((command) => `/${command.name}`),
-          })),
+              .map((command) => `/${command.name}`);
+            return {
+              ...toolState(plugin),
+              name: plugin.name,
+              ...(plugin.version === undefined ? {} : { version: plugin.version }),
+              ...(slashCommands.length === 0 ? {} : { slashCommands }),
+            };
+          }),
+          ...(installed.some(failed) ? { next: CHECK_NEXT } : {}),
         })),
       ),
   };
 
   const pluginsInvoke: PluginMcpToolEntry = {
     name: PLUGINS_INVOKE_TOOL,
-    description:
-      "Call a method an installed plugin registered, with optional JSON input, and return its result. Use t3_plugins_list to see plugins.",
+    title: "Call a plugin method",
+    description: "Call a method a plugin registered with `api.rpc.register`.",
     inputSchema: {
       type: "object",
       properties: {
         pluginId: { type: "string" },
         method: { type: "string" },
-        input: { description: "JSON passed to the method." },
+        input: {},
       },
       required: ["pluginId", "method"],
       additionalProperties: false,
@@ -269,8 +338,8 @@ const make = () => {
 
   const pluginsSetEnabled: PluginMcpToolEntry = {
     name: PLUGINS_SET_ENABLED_TOOL,
-    description:
-      "Turn an installed plugin on or off and return its new status, with why it failed if it did, including serverFailure for its server code failing outside a call.",
+    title: "Enable or disable a plugin",
+    description: "Enable or disable a plugin. Enable only what the user asked for.",
     inputSchema: {
       type: "object",
       properties: { pluginId: { type: "string" }, enabled: { type: "boolean" } },
@@ -284,77 +353,51 @@ const make = () => {
         Effect.flatMap((request) =>
           withHost((actions) => actions.setEnabled(request.pluginId, request.enabled)),
         ),
-        Effect.map(toolState),
+        Effect.map(lifecycleResult),
       ),
   };
 
   const pluginsInstall: PluginMcpToolEntry = {
     name: PLUGINS_INSTALL_TOOL,
+    title: "Install a plugin",
     description:
-      "Install a plugin into this T3 Code environment from a folder on the server, a git repository or npm, then enable it. While writing a plugin, install its folder with link: true: T3 loads the folder where it is, so editing files and calling t3_plugins_reload is the whole loop, and uninstalling only unlinks it. Run t3_plugins_check on a plugin to find problems. Plugins run with T3 Code's own access, so only install what the user asked for.",
+      "Install and enable a plugin from a folder `path`, git or npm. Plugins run with T3 Code's access, so install only what the user asked for. While writing one, install its folder with `link: true`, then edit it and call `t3_plugins_reload`.",
     inputSchema: {
       type: "object",
       properties: {
-        source: {
-          oneOf: [
-            {
-              type: "object",
-              properties: {
-                type: { const: "path" },
-                path: { type: "string" },
-                link: {
-                  type: "boolean",
-                  description: "Load the folder in place instead of copying it.",
-                },
-              },
-              required: ["type", "path"],
-            },
-            {
-              type: "object",
-              properties: {
-                type: { const: "git" },
-                url: { type: "string" },
-                ref: { type: "string" },
-              },
-              required: ["type", "url"],
-            },
-            {
-              type: "object",
-              properties: {
-                type: { const: "npm" },
-                name: { type: "string" },
-                version: {
-                  type: "string",
-                  description: "An exact version such as 1.2.3. Leave it out for the latest.",
-                },
-              },
-              required: ["type", "name"],
-            },
-          ],
-        },
+        path: { type: "string" },
+        link: { type: "boolean" },
+        gitUrl: { type: "string" },
+        gitRef: { type: "string" },
+        npmPackage: { type: "string" },
+        npmVersion: { type: "string" },
       },
-      required: ["source"],
       additionalProperties: false,
     },
     access: "write",
     call: (input) =>
       decodeInstallInput(input).pipe(
         Effect.mapError(invalidInput),
-        Effect.flatMap((request) => withHost((actions) => actions.install(request.source))),
-        Effect.map(toolState),
+        Effect.flatMap((request) =>
+          installSourceOf(request).pipe(
+            Effect.flatMap((source) => withHost((actions) => actions.install(source))),
+          ),
+        ),
+        Effect.map(lifecycleResult),
       ),
   };
 
   const pluginsUninstall: PluginMcpToolEntry = {
     name: PLUGINS_UNINSTALL_TOOL,
+    title: "Remove a plugin",
     description:
-      "Remove an installed plugin, or unlink one installed with link: true. Set removeData to also delete its settings and stored data. When a linked copy is not the one in use, pass its linkedFolder from t3_plugins_list to unlink only that copy.",
+      "Remove a plugin. A linked one is only unlinked; its folder stays. `removeData` also deletes its settings and storage.",
     inputSchema: {
       type: "object",
       properties: {
         pluginId: { type: "string" },
         removeData: { type: "boolean" },
-        linkedFolder: { type: "string" },
+        linkedFolder: { type: "string", description: "Unlink only the copy from this folder." },
       },
       required: ["pluginId"],
       additionalProperties: false,
@@ -374,8 +417,8 @@ const make = () => {
 
   const pluginsReload: PluginMcpToolEntry = {
     name: PLUGINS_RELOAD_TOOL,
-    description:
-      "Restart an installed plugin with its current files, including a changed t3-plugin.json, and return its status and why it failed, if it did, including serverFailure for its server code failing outside a call. Run t3_plugins_check on it to find the cause of a failure. An open T3 Code window loads its web half after this returns; t3_plugins_list then shows whether that failed.",
+    title: "Reload a plugin",
+    description: "Restart a plugin from its current files, t3-plugin.json included.",
     inputSchema: {
       type: "object",
       properties: { pluginId: { type: "string" } },
@@ -387,19 +430,20 @@ const make = () => {
       decodeReloadInput(input).pipe(
         Effect.mapError(invalidInput),
         Effect.flatMap((request) => withHost((actions) => actions.reload(request.pluginId))),
-        Effect.map(toolState),
+        Effect.map(lifecycleResult),
       ),
   };
 
   const pluginsCheck: PluginMcpToolEntry = {
     name: PLUGINS_CHECK_TOOL,
+    title: "Check a plugin",
     description:
-      'Check a plugin for problems without running it: its manifest, its T3 Code version range, its entry files, how its web bundle was built, and CSS or selectors likely to break when T3 Code updates. Give pluginId for an installed plugin, or path for a plugin folder on the server; for an installed plugin it also reports why its last start or its web half failed. Returns each problem with a one-line fix. The "Keeping a plugin working across T3 updates" section of the @t3tools/plugin-sdk README explains the warnings.',
+      "Find a plugin's problems, each with a fix, without running it: its failures, manifest, build, and code likely to break when T3 updates. Pass `pluginId` or a folder `path`.",
     inputSchema: {
       type: "object",
       properties: {
-        pluginId: { type: "string", description: "An installed plugin's id." },
-        path: { type: "string", description: "A plugin folder on the server." },
+        pluginId: { type: "string" },
+        path: { type: "string" },
       },
       additionalProperties: false,
     },
@@ -409,18 +453,28 @@ const make = () => {
       decodeCheckInput(input).pipe(
         Effect.mapError(() => invalidInput({ message: "Give either pluginId or path." })),
         Effect.flatMap((target) => withHost((actions) => actions.check(target))),
+        Effect.map((report) =>
+          report.findings.some((finding) => FRAGILE_CODES.has(finding.code))
+            ? {
+                ...report,
+                readme:
+                  'The "Keeping a plugin working across T3 updates" section of the @t3tools/plugin-sdk README explains these warnings.',
+              }
+            : report,
+        ),
       ),
   };
 
   const pluginsSettings: PluginMcpToolEntry = {
     name: PLUGINS_SETTINGS_TOOL,
+    title: "Plugin settings",
     description:
-      "Read an installed plugin's saved settings and its settingsSchema, which lists every setting with its type and default, or change them by passing values: each key sets that setting, and null removes it so the plugin reads its default. A change the schema rejects returns why. Secrets read as redacted.",
+      "Read a plugin's settings and settingsSchema, or change them with `values`. Omitted keys are unchanged; null resets one to its default.",
     inputSchema: {
       type: "object",
       properties: {
         pluginId: { type: "string" },
-        values: { type: "object", description: "Settings to change. Leave out to read them." },
+        values: { type: "object" },
       },
       required: ["pluginId"],
       additionalProperties: false,

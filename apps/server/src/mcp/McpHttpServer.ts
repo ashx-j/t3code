@@ -1182,7 +1182,10 @@ export const layerPluginTools = Layer.effectDiscard(
           name: entry.name,
           description: entry.description,
           inputSchema: entry.inputSchema,
-          annotations: { readOnlyHint: entry.access === "read" },
+          annotations: {
+            ...(entry.title === undefined ? {} : { title: entry.title }),
+            readOnlyHint: entry.access === "read",
+          },
         }),
         annotations: Context.empty(),
         handle: (payload) =>

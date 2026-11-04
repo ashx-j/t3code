@@ -174,7 +174,7 @@ export const writesWithCapability = <P, A, E, R>(handle: (params: P) => Effect.E
   );
 
 const pluginToolFullAccessRequired =
-  "This plugin tool changes things, so it runs only from a thread set to Full access and not in Plan mode, or for an outside agent approved with Full access. Ask the user to switch this thread to Full access and leave Plan mode, then call it again.";
+  "Plugin tools that change things need this thread in Full access and out of Plan mode, or an outside agent approved with Full access. Ask the user to switch, then call again.";
 
 /**
  * For tools whose access is data, registered while the server runs (plugin tools): `read`

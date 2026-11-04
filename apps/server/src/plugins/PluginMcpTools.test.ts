@@ -242,6 +242,7 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
     const checked: Array<unknown> = [];
     const uninstalled: Array<unknown> = [];
     const settingsPatches: Array<unknown> = [];
+    const installedFrom: Array<unknown> = [];
     yield* tools.setHostActions({
       invoke: (pluginId, method, input) =>
         Effect.sync(() => {
@@ -250,7 +251,11 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
         }),
       setEnabled: (pluginId, enabled) =>
         Effect.succeed({ ...installed, id: pluginId, enabled, serverFailure: "timer threw" }),
-      install: () => Effect.succeed(installed),
+      install: (source) =>
+        Effect.sync(() => {
+          installedFrom.push(source);
+          return installed;
+        }),
       uninstall: (pluginId, removeData, linkedFolder) =>
         Effect.sync(() => {
           uninstalled.push({ pluginId, removeData, linkedFolder });
@@ -323,8 +328,21 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
             slashCommands: ["/deploy"],
           },
         ],
+        // A failure in the list points to the check, so the descriptions don't have to.
+        next: "Run t3_plugins_check for the cause and a fix.",
       }),
     });
+    // Flat fields, mapped to one install source; exactly one of them names it.
+    yield* call("t3_plugins_install", fullAccessClient, { path: "/home/user/plugin", link: true });
+    assert.deepStrictEqual(installedFrom, [
+      { type: "path", path: "/home/user/plugin", link: true },
+    ]);
+    const ambiguous = yield* call("t3_plugins_install", fullAccessClient, {
+      path: "/home/user/plugin",
+      npmPackage: "acme-plugin",
+    });
+    assert.isTrue(ambiguous.isError);
+    assert.include(ambiguous.text, "Give one of path, gitUrl or npmPackage.");
     const ping = { pluginId: "mcp-plugin", method: "ping", input: { n: 1 } };
     assert.isTrue((yield* call("t3_plugins_invoke", readOnlyClient, ping)).isError);
     assert.deepStrictEqual(yield* call("t3_plugins_invoke", fullAccessClient, ping), {
@@ -339,7 +357,7 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
       }),
       {
         isError: false,
-        text: '{"id":"mcp-plugin","status":"active","enabled":false,"serverFailure":"timer threw"}',
+        text: '{"id":"mcp-plugin","status":"active","enabled":false,"serverFailure":"timer threw","next":"Run t3_plugins_check for the cause and a fix."}',
       },
     );
     // A failed reload says why, so an agent can fix the plugin without opening Settings.
@@ -347,7 +365,7 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
       yield* call("t3_plugins_reload", fullAccessClient, { pluginId: "mcp-plugin" }),
       {
         isError: false,
-        text: '{"id":"mcp-plugin","status":"failed","enabled":true,"failure":"load: Cannot find module \'./util\'"}',
+        text: '{"id":"mcp-plugin","status":"failed","enabled":true,"failure":"load: Cannot find module \'./util\'","next":"Run t3_plugins_check for the cause and a fix."}',
       },
     );
     const unnamed = yield* call("t3_plugins_check", readOnlyClient, {});

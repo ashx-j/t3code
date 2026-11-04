@@ -96,6 +96,9 @@ const FRAGILE_PATTERNS: ReadonlyArray<{
   },
 ];
 
+/** Codes of the findings the SDK README's update section explains. */
+export const FRAGILE_CODES: ReadonlySet<string> = new Set(FRAGILE_PATTERNS.map(({ code }) => code));
+
 // Every static or dynamic import specifier, minified or not.
 const IMPORT_SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s*)(["'])([^"'\n]+)\1/g;
 // React's internals export, which only a bundled copy of React carries.

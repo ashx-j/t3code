@@ -241,8 +241,8 @@ Settings → Plugins, and T3 draws its own part where it threw until the plugin 
 An agent writing a plugin installs its folder in place with `t3_plugins_install` and
 `link: true`, then edits the files and calls `t3_plugins_reload` to load them. Nothing is copied,
 and unlinking leaves the folder alone. `t3_plugins_check` lists what will stop the plugin from
-loading and what is likely to break in a T3 update. These tools appear once an environment has a
-plugin. Without an agent, add the folder to `devPaths` in `plugins.json` in the T3 Code data
+loading and what is likely to break in a T3 update. Settings → Plugins has a switch for these tools;
+until the user sets it, they appear once an environment has a plugin. Without an agent, add the folder to `devPaths` in `plugins.json` in the T3 Code data
 directory, turn the plugin on in Settings → Plugins, and use **Reload** after each change.
 
 To install a finished plugin, drag its folder onto Settings → Plugins, or use **Add plugin** with a
