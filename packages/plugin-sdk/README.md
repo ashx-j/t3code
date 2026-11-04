@@ -221,7 +221,7 @@ durable thing T3 offers for it:
 
 An agent can run the `t3_plugins_check` tool on a plugin to find the patterns above, so it knows
 what to recheck after an update. A replacement that throws shows a note on its plugin's row in
-Settings → Plugins, and T3 draws its own part until the plugin reloads.
+Settings → Plugins, and T3 draws its own part where it threw until the plugin reloads.
 
 ## Developing a plugin
 
