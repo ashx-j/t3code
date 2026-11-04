@@ -535,12 +535,15 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
           }
         : selection,
     ]);
-    const unsupported = yield* service
-      .generateText({ cwd: "/tmp", prompt: "hello", modelSelection: selection })
-      .pipe(Effect.flip);
+    // The fallback cannot run a prompt either, so a free-form prompt never moves to it.
+    const unsupported = yield* service.generateText!({
+      cwd: "/tmp",
+      prompt: "hello",
+      modelSelection: selection,
+    }).pipe(Effect.flip);
     expect(unsupported).toMatchObject({
       _tag: "TextGenerationUnsupportedError",
-      instanceId: exhausted ? fallback : primary,
+      instanceId: primary,
     });
   }),
 );

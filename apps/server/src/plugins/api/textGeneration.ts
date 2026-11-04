@@ -1,3 +1,4 @@
+import { TextGenerationUnsupportedError } from "@t3tools/contracts";
 import type { PluginApi } from "@t3tools/plugin-sdk/server";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -6,7 +7,7 @@ import * as Option from "effect/Option";
 import type * as ServerSettings from "../../serverSettings.ts";
 import type * as TextGeneration from "../../textGeneration/TextGeneration.ts";
 import type * as PluginHooks from "../PluginHooks.ts";
-import { type FacadeContext, stopOnAbort } from "./facade.ts";
+import { type FacadeContext, refused, stopOnAbort } from "./facade.ts";
 
 // T3's own generators call a model and take seconds, so a plugin gets as long before T3 takes over.
 const TEXT_GENERATION_DEADLINE = Duration.seconds(30);
@@ -25,18 +26,21 @@ export const makeGenerateText =
   ): PluginApi["textGeneration"]["generate"] =>
   ({ prompt, signal }) => {
     if (typeof prompt !== "string" || prompt.trim().length === 0) {
-      return Promise.reject(new TypeError("textGeneration.generate needs a prompt."));
+      return refused(new TypeError("textGeneration.generate needs a prompt."));
     }
+    const { generateText } = services.textGeneration;
     return facade.call(
       Effect.gen(function* () {
         const settings = yield* services.serverSettings.getSettings;
-        const generated = yield* services.textGeneration
-          .generateText({
-            cwd: rootDir,
-            prompt,
-            modelSelection: settings.textGenerationModelSelection,
-          })
-          .pipe(stopOnAbort(facade.activation, signal));
+        const modelSelection = settings.textGenerationModelSelection;
+        if (generateText === undefined) {
+          return yield* new TextGenerationUnsupportedError({
+            instanceId: modelSelection.instanceId,
+          });
+        }
+        const generated = yield* generateText({ cwd: rootDir, prompt, modelSelection }).pipe(
+          stopOnAbort(facade.activation, signal),
+        );
         return generated.text;
       }),
     );

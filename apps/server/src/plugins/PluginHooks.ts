@@ -1,9 +1,11 @@
 import type {
+  OrchestrationV2CreationSource,
   ServerProvider,
   ServerProviderSkill,
   ServerProviderSlashCommand,
   ThreadId,
 } from "@t3tools/contracts";
+import { T3_SLASH_COMMAND_NAMES } from "@t3tools/shared/slashCommands";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -17,6 +19,8 @@ export interface PluginOutgoingMessage {
   readonly messageId: string;
   readonly text: string;
   readonly createdBy: "user" | "agent";
+  /** `server` for text T3 or a plugin wrote, such as a usage-limit resume. */
+  readonly creationSource: OrchestrationV2CreationSource;
   readonly attachments: ReadonlyArray<{
     readonly type: string;
     readonly name: string;
@@ -205,9 +209,9 @@ export interface PluginHooksRegistry {
     hook: BeforeDispatchHook,
   ) => Effect.Effect<Effect.Effect<void>>;
   /**
-   * The text to send, or a plugin's reply to record instead. A plugin's slash command runs its
-   * handler instead of the hooks; other slash commands pass unchanged. Otherwise every hook sees
-   * the message in plugin id order, and a block stops the rest.
+   * The text to send, or a plugin's reply to record instead. Every hook sees the message in plugin
+   * id order, and a block stops the rest. For a slash command, a name in T3's, the provider's or a
+   * plugin's list, hooks may only block; then a plugin's command runs its handler.
    */
   readonly beforeDispatch: (
     message: PluginOutgoingMessage,
@@ -222,7 +226,8 @@ export interface PluginHooksRegistry {
   /**
    * Runs the hooks, not slash commands, on text that reaches an agent without a new message: a
    * queued message's edit or a delegated task's prompt. `message` is read only when a hook would
-   * run, and nothing there means the text is not the sender's own, so it passes unchanged.
+   * run, and nothing there means the text is not the sender's own, so it passes unchanged. Hooks
+   * may only block text that starts like a slash command.
    */
   readonly beforeRewrite: (
     text: string,
@@ -353,9 +358,10 @@ const make = Effect.gen(function* () {
   // `<instance>/<command>` pairs already logged, so a busy thread logs its collision once.
   const loggedCollisions = new Set<string>();
   const providerHas = (
-    command: PluginSlashCommand,
+    name: string,
     threadId: ThreadId,
     providerInstanceId: Effect.Effect<string | undefined> | undefined,
+    shadowed: PluginSlashCommand | undefined,
   ): Effect.Effect<boolean> =>
     providerInstanceId === undefined
       ? Effect.succeed(false)
@@ -365,18 +371,16 @@ const make = Effect.gen(function* () {
               ? Effect.succeed(false)
               : Ref.get(providerCommands).pipe(
                   Effect.flatMap((names) => names(instanceId, threadId)),
-                  Effect.map((names) => names.includes(command.name)),
+                  Effect.map((names) => names.includes(name)),
                   Effect.tap((has) => {
-                    const key = `${instanceId}/${command.name}`;
-                    if (!has || loggedCollisions.has(key)) return Effect.void;
+                    const key = `${instanceId}/${name}`;
+                    if (!has || shadowed === undefined || loggedCollisions.has(key)) {
+                      return Effect.void;
+                    }
                     loggedCollisions.add(key);
                     return Effect.logWarning(
                       "a provider's own slash command is used instead of a plugin's",
-                      {
-                        pluginId: command.pluginId,
-                        command: command.name,
-                        instanceId,
-                      },
+                      { pluginId: shadowed.pluginId, command: name, instanceId },
                     );
                   }),
                 ),
@@ -393,7 +397,12 @@ const make = Effect.gen(function* () {
         accepted ? Effect.succeed(text) : run,
       ),
     );
-  const runHooks = (message: PluginOutgoingMessage, alreadyAccepted: Effect.Effect<boolean>) =>
+  // Changed text would change what a slash command does, so a command's hooks may only block it.
+  const runHooks = (
+    message: PluginOutgoingMessage,
+    alreadyAccepted: Effect.Effect<boolean>,
+    onlyBlocks = false,
+  ) =>
     Ref.get(hooks).pipe(
       Effect.flatMap((all) =>
         all.length === 0
@@ -407,7 +416,13 @@ const make = Effect.gen(function* () {
                 (text, entry) =>
                   entry
                     .run({ ...message, text })
-                    .pipe(Effect.flatMap((outcome) => applyOutcome(text, outcome))),
+                    .pipe(
+                      Effect.flatMap((outcome) =>
+                        onlyBlocks && outcome !== undefined && !("block" in outcome)
+                          ? Effect.succeed(text)
+                          : applyOutcome(text, outcome),
+                      ),
+                    ),
               ),
             ),
       ),
@@ -419,47 +434,53 @@ const make = Effect.gen(function* () {
         Effect.map((entry) => Ref.update(hooks, (all) => all.filter((other) => other !== entry))),
       ),
     beforeDispatch: (message, alreadyAccepted, providerInstanceId) => {
-      // Text that only starts with a slash, such as a path, is not a command.
+      // Text that only starts with a slash, such as a path or "/please", is not a command; only a
+      // name in T3's, the provider's or a plugin's list is.
       const match = SLASH_COMMAND.exec(message.text.trimStart());
-      if (match === null) return runHooks(message, alreadyAccepted);
-      return SubscriptionRef.get(commands).pipe(
-        Effect.flatMap((all) => {
-          const entry = handling(all).find((candidate) => candidate.command.name === match[1]);
-          if (entry === undefined) return Effect.succeed(message.text);
-          return providerHas(entry.command, message.threadId, providerInstanceId).pipe(
+      const name = match?.[1];
+      if (name === undefined) return runHooks(message, alreadyAccepted);
+      return Effect.all([SubscriptionRef.get(commands), Ref.get(hooks)]).pipe(
+        Effect.flatMap(([all, hooked]) => {
+          const entry = handling(all).find((candidate) => candidate.command.name === name);
+          if (entry === undefined && (hooked.length === 0 || T3_SLASH_COMMAND_NAMES.has(name))) {
+            return runHooks(message, alreadyAccepted, true);
+          }
+          return providerHas(name, message.threadId, providerInstanceId, entry?.command).pipe(
             Effect.flatMap((owned) =>
-              owned
-                ? Effect.succeed(message.text)
+              owned || entry === undefined
+                ? runHooks(message, alreadyAccepted, owned)
                 : unlessAccepted(
                     alreadyAccepted,
                     message.text,
-                    entry
-                      .run({ ...message, args: match[2]?.trim() ?? "" })
-                      .pipe(
-                        Effect.flatMap((outcome) => applyCommandOutcome(message.text, outcome)),
-                      ),
+                    runHooks(message, Effect.succeed(false), true).pipe(
+                      Effect.andThen(entry.run({ ...message, args: match?.[2]?.trim() ?? "" })),
+                      Effect.flatMap((outcome) => applyCommandOutcome(message.text, outcome)),
+                    ),
                   ),
             ),
           );
         }),
       );
     },
+    // Without the message's provider, any `/name` may be a command, so hooks may only block it.
     beforeRewrite: (text, message, alreadyAccepted) =>
-      SLASH_COMMAND.test(text.trimStart())
-        ? Effect.succeed(text)
-        : Ref.get(hooks).pipe(
-            Effect.flatMap((all) =>
-              all.length === 0
-                ? Effect.succeed(text)
-                : message.pipe(
-                    Effect.flatMap((read) =>
-                      read === undefined
-                        ? Effect.succeed(text)
-                        : runHooks({ ...read, text }, alreadyAccepted),
-                    ),
-                  ),
-            ),
-          ),
+      Ref.get(hooks).pipe(
+        Effect.flatMap((all) =>
+          all.length === 0
+            ? Effect.succeed(text)
+            : message.pipe(
+                Effect.flatMap((read) =>
+                  read === undefined
+                    ? Effect.succeed(text)
+                    : runHooks(
+                        { ...read, text },
+                        alreadyAccepted,
+                        SLASH_COMMAND.test(text.trimStart()),
+                      ),
+                ),
+              ),
+        ),
+      ),
     setProviderSlashCommands: (names) => Ref.set(providerCommands, names),
     addSlashCommand: (command, handler) =>
       SubscriptionRef.modifyEffect(commands, (all) => {

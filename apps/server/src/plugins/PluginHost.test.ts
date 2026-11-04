@@ -1085,7 +1085,12 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           listProjectThreads: () => Effect.succeed([]),
           getThreadShell: () =>
-            Effect.succeed({ id: threadId, projectId, worktreePath: null } as never),
+            Effect.succeed({
+              id: threadId,
+              projectId,
+              worktreePath: null,
+              deletedAt: null,
+            } as never),
           settleThread: (input) =>
             Effect.sync(() => {
               dispatched.push({ type: "thread.settle", ...input } as never);
@@ -1163,6 +1168,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
               messageId: "message:context",
               text: "Ship it #context",
               createdBy: "user",
+              creationSource: "web",
               attachments: [],
             },
             notAccepted,
@@ -1176,6 +1182,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
               messageId: "message:workbench",
               text,
               createdBy: "user",
+              creationSource: "web",
               attachments: [],
             },
             notAccepted,
@@ -1245,6 +1252,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
               messageId: "message:workbench",
               text: "/deploy staging",
               createdBy: "user",
+              creationSource: "web",
               attachments: [],
             },
             notAccepted,

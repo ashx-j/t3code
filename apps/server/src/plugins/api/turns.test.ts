@@ -71,6 +71,7 @@ it.effect(
               messageId: "message:hooks",
               text,
               createdBy: "user",
+              creationSource: "web",
               attachments: [],
             },
             notAccepted,
@@ -164,7 +165,15 @@ it.effect("delivers each ended run once and resumes after the last one it handle
       ["run:13:interrupted"],
     );
     assert.deepStrictEqual(yield* activate([runUpdateOf(15, "run:12", "failed")]), []);
-    assert.deepStrictEqual(requests, [9, 9, 12, 13]);
+    // A retry starts the failed run again, and it ends a second time.
+    assert.deepStrictEqual(
+      yield* activate([
+        runUpdateOf(16, "run:12", "preparing"),
+        runUpdateOf(17, "run:12", "completed"),
+      ]),
+      ["run:12:completed"],
+    );
+    assert.deepStrictEqual(requests, [9, 9, 12, 13, 13]);
   }).pipe(Effect.provide(PluginHooks.layer)),
 );
 
@@ -218,6 +227,7 @@ it.effect("drops what a plugin answers after it is turned off", () =>
       messageId: "message:late",
       text,
       createdBy: "user" as const,
+      creationSource: "web" as const,
       attachments: [],
     });
     const [generate] = yield* hooks.textGenerators("threadTitle");

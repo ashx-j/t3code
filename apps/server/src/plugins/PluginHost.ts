@@ -58,7 +58,7 @@ import * as SourceControlDrivers from "../sourceControl/builtInDrivers.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import { NON_INTERACTIVE_GIT_ENV } from "../vcs/GitVcsDriverCore.ts";
+import { STATUS_UPSTREAM_REFRESH_ENV } from "../vcs/GitVcsDriverCore.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { forkParked } from "../serverActivation.ts";
 import {
@@ -1081,7 +1081,7 @@ const make = Effect.gen(function* () {
       timeout: "2 minutes",
       env: {
         ...process.env,
-        ...NON_INTERACTIVE_GIT_ENV,
+        ...STATUS_UPSTREAM_REFRESH_ENV,
         GIT_ALLOW_PROTOCOL: "https:http:ssh:git:file",
       },
     });
@@ -1496,14 +1496,9 @@ const make = Effect.gen(function* () {
         yield* settingsStore
           .clear(pluginId, settingsSchema)
           .pipe(Effect.mapError(installFailed("The plugin is removed, but its settings are not.")));
-        const keys = yield* services.storage
-          .list(pluginId)
+        yield* services.storage
+          .clear(pluginId)
           .pipe(Effect.mapError(installFailed("The plugin is removed, but its storage is not.")));
-        for (const key of keys) {
-          yield* services.storage
-            .remove(pluginId, key)
-            .pipe(Effect.mapError(installFailed("The plugin is removed, but its storage is not.")));
-        }
       }
     },
   );
@@ -1734,7 +1729,11 @@ const make = Effect.gen(function* () {
     install: service.install,
     uninstall: service.uninstall,
     check: service.check,
-    getSettings: service.getSettings,
+    getSettings: Effect.fn("PluginHost.getSettingsForAgent")(function* (pluginId) {
+      const { settingsSchema } = yield* manifestFor(pluginId);
+      const settings = yield* settingsStore.getForClient(pluginId, settingsSchema);
+      return settingsSchema === undefined ? { settings } : { settings, settingsSchema };
+    }),
     updateSettings: service.updateSettings,
     slashCommands: services.hooks.currentSlashCommands,
   });

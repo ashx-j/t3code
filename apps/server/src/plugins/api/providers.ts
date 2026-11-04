@@ -43,7 +43,7 @@ import * as Stream from "effect/Stream";
 import type { BuiltInDriversEnv } from "../../provider/builtInDrivers.ts";
 import type * as ProviderDriverRegistration from "../../provider/ProviderDriverRegistration.ts";
 import { makeAcpAgentDriver } from "../acpAgentDriver.ts";
-import type { FacadeContext } from "./facade.ts";
+import { type FacadeContext, refused } from "./facade.ts";
 
 // Modules the server already uses, so handing them over grows nothing.
 const PROVIDER_RUNTIME: PluginProviderRuntime = {
@@ -238,19 +238,25 @@ export const makeProvidersApi = (
   // Resolves once the driver's instances are built; it leaves again when the plugin turns off.
   const register = (driver: AnyProviderDriver<BuiltInDriversEnv>) => {
     if (activation.controller.signal.aborted) {
-      return Promise.reject(new Error("This plugin activation has ended."));
+      return refused(new Error("This plugin activation has ended."));
     }
-    return facade.call(services.providerDrivers.add(driver)).then((remove) => {
-      const removeNow = () =>
-        facade.fork(
-          remove.pipe(
-            Effect.tap(() => Effect.logInfo("plugin provider driver removed", { pluginId })),
-          ),
-        );
-      // Registered while the plugin was being turned off: take it out again at once.
-      if (activation.controller.signal.aborted) return removeNow();
-      activation.controller.signal.addEventListener("abort", removeNow, { once: true });
-    });
+    return facade.call(
+      services.providerDrivers.add(driver).pipe(
+        Effect.flatMap((remove) =>
+          Effect.sync(() => {
+            const removeNow = () =>
+              facade.fork(
+                remove.pipe(
+                  Effect.tap(() => Effect.logInfo("plugin provider driver removed", { pluginId })),
+                ),
+              );
+            // Registered while the plugin was being turned off: take it out again at once.
+            if (activation.controller.signal.aborted) return removeNow();
+            activation.controller.signal.addEventListener("abort", removeNow, { once: true });
+          }),
+        ),
+      ),
+    );
   };
   return {
     runtime: PROVIDER_RUNTIME,
@@ -262,14 +268,14 @@ export const makeProvidersApi = (
         typeof driver.defaultConfig !== "function" ||
         typeof driver.create !== "function"
       ) {
-        return Promise.reject(
+        return refused(
           new TypeError(
             "A provider driver needs a driverKind, metadata.displayName, a configSchema from runtime.Schema, defaultConfig and create.",
           ),
         );
       }
       const client = checkClient(driver.client);
-      if (typeof client === "string") return Promise.reject(new TypeError(client));
+      if (typeof client === "string") return refused(new TypeError(client));
       return register(guardedDriver(driver, client));
     },
     registerAcpAgent: (agent) => {
@@ -283,7 +289,7 @@ export const makeProvidersApi = (
         (agent.env !== undefined && !isStringRecord(agent.env)) ||
         (agent.models !== undefined && !isModelList(agent.models))
       ) {
-        return Promise.reject(
+        return refused(
           new TypeError(
             "An ACP agent needs a kind, a label and a command, with string arguments, environment and models.",
           ),
@@ -293,7 +299,7 @@ export const makeProvidersApi = (
         settingsSchema: acpAgentSettingsSchema(agent.command),
         ...(agent.iconUrl === undefined ? {} : { iconUrl: agent.iconUrl }),
       });
-      if (typeof client === "string") return Promise.reject(new TypeError(client));
+      if (typeof client === "string") return refused(new TypeError(client));
       return register(withClientDriver(makeAcpAgentDriver({ ...agent, kind }), client));
     },
   };

@@ -23,6 +23,7 @@ import { SECRET_REDACTED } from "../settingsSecrets.ts";
 
 // The Settings page shows the summary, so it stays readable when a patch breaks many fields.
 const MAX_VALIDATION_SUMMARY_LENGTH = 1000;
+const MAX_SCHEMA_REASON_LENGTH = 500;
 
 const persistenceOperations = {
   read: "read the settings",
@@ -48,11 +49,13 @@ export class PluginSettingsSchemaError extends Schema.TaggedError<PluginSettings
   "PluginSettingsSchemaError",
   {
     pluginId: PluginId,
+    /** The importer's reason, which comes from the plugin's own manifest. */
+    reason: Schema.String,
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `Plugin ${this.pluginId} has a settings schema T3 Code cannot validate.`;
+    return `Plugin ${this.pluginId} has a settings schema T3 Code cannot validate: ${this.reason}`;
   }
 }
 
@@ -197,6 +200,26 @@ const compileSettingsSchema = (settingsSchema: Schema.JsonObject) =>
     ),
   );
 
+const importerReason = (cause: unknown) =>
+  (cause instanceof Error ? cause.message : String(cause)).slice(0, MAX_SCHEMA_REASON_LENGTH);
+
+/**
+ * What would make saving a plugin's settings fail whatever the user enters: a schema the importer
+ * cannot read, or a top-level default its own field rejects. Fields with no default are the
+ * user's to fill, so `required` is left out when checking the defaults.
+ */
+export const settingsSchemaProblem = (settingsSchema: Schema.JsonObject) => {
+  const { required: _required, ...withoutRequired } = settingsSchema;
+  const validator = compileSettingsSchema(withoutRequired);
+  if (Result.isFailure(validator)) {
+    return { kind: "unreadable", reason: importerReason(validator.failure) } as const;
+  }
+  const validation = validator.success(defaultsOf(settingsSchema));
+  return Result.isFailure(validation)
+    ? ({ kind: "default", reason: summarizeIssue(validation.failure.issue) } as const)
+    : undefined;
+};
+
 const make = Effect.gen(function* () {
   const { stateDir } = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -219,7 +242,13 @@ const make = Effect.gen(function* () {
     }
     return Result.isSuccess(validator)
       ? Effect.succeed(validator.success)
-      : Effect.fail(new PluginSettingsSchemaError({ pluginId, cause: validator.failure }));
+      : Effect.fail(
+          new PluginSettingsSchemaError({
+            pluginId,
+            reason: importerReason(validator.failure),
+            cause: validator.failure,
+          }),
+        );
   };
 
   // Shares the span of the public operation that reads.

@@ -30,9 +30,9 @@ changing its settings, updating or removing it applies to every environment that
 Once an environment has a plugin, agents can also install, remove, turn on and off, call and
 change the settings of plugins when you ask them to. Only an agent in a thread set to **Full
 access**, and not in Plan mode, can do this, or an outside agent you approved with **Full
-access**. Any agent can read a plugin's settings, with secrets hidden. Agents from linked
-environments can't. T3 Code checks the thread's permission mode, not whether the person who
-started the thread may change Settings. Agents in an environment with no plugins don't see these
+access**. Agents from linked environments can't. Any agent can read a plugin's settings, with
+secrets hidden. T3 Code checks the thread's permission mode, not whether the person who started
+the thread may change Settings. Agents in an environment with no plugins don't see these
 tools, so the first plugin comes from Settings.
 
 ## Update a plugin
@@ -117,7 +117,8 @@ enabled.
 Plugins that draw web UI load in the web and desktop apps, from the app's main environment: the
 desktop app's own server, or the server the web app was opened from. Plugins on other environments
 you connect show in **Settings → Plugins**, but their UI doesn't load. The mobile app doesn't show
-plugin UI, settings or themes.
+plugin UI, settings or themes, and a plugin page's `t3code://plugins/...` link opens only in the
+desktop and web apps.
 
 In the desktop app a plugin can also add its commands to these places. Every plugin command is also
 in the command palette.

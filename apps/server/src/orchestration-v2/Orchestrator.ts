@@ -8602,7 +8602,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
   ) {
     const projection = yield* projectionStore
-      .getThreadRecords(command.threadId, ["runs"], { turnItemTypes: [], messageRoles: [] })
+      .getThreadRecords(command.threadId, ["runs", "providerThreads"], {
+        turnItemTypes: [],
+        messageRoles: [],
+      })
       .pipe(
         Effect.mapError(
           (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
@@ -8623,12 +8626,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     const now = yield* DateTime.now;
     const ordinal = nextRunOrdinal(projection);
-    const modelSelection = command.modelSelection ?? projection.thread.modelSelection;
+    // A reply stays with the provider the thread runs on. Under a provider the user just picked,
+    // it would pass for that provider's last turn, and its first real turn would get no handoff.
+    const activeInstanceId = projection.providerThreads.find(
+      (providerThread) => providerThread.id === projection.thread.activeProviderThreadId,
+    )?.providerInstanceId;
+    const selected = command.modelSelection ?? projection.thread.modelSelection;
+    const modelSelection =
+      activeInstanceId === undefined || activeInstanceId === selected.instanceId
+        ? selected
+        : (projection.runs.findLast(
+            (candidate) => candidate.providerInstanceId === activeInstanceId,
+          )?.modelSelection ?? selected);
     const run: OrchestrationV2Run = {
       id: idAllocator.derive.run({ threadId: command.threadId, ordinal }),
       threadId: command.threadId,
       ordinal,
-      providerInstanceId: modelSelection.instanceId,
+      providerInstanceId: activeInstanceId ?? modelSelection.instanceId,
       modelSelection,
       providerThreadId: null,
       userMessageId: command.messageId,

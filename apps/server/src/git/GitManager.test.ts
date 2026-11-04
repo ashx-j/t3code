@@ -133,7 +133,7 @@ const created = (calls: ReadonlyArray<FakeProviderCall>) =>
       : [],
   );
 
-type FakeGitTextGeneration = Omit<TextGeneration.TextGeneration["Service"], "generateText">;
+type FakeGitTextGeneration = TextGeneration.TextGeneration["Service"];
 
 function runGitSyncForFakeCheckout(cwd: string, args: readonly string[]): void {
   const result = NodeChildProcess.spawnSync("git", args, {
@@ -337,7 +337,6 @@ function createTextGeneration(
         ),
       ),
     generateReviewGuide: (input) => implementation.generateReviewGuide(input),
-    generateText: () => Effect.die("GitManager never asks for free-form text."),
   };
 }
 

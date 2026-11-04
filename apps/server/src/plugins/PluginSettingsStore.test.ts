@@ -62,6 +62,12 @@ it.layer(NodeServices.layer)("PluginSettingsStore", (it) => {
       assert.include(error.message, 'at ["count"]: Expected a value greater than or equal to 0');
       assert.include(error.message, 'at ["extra"]: Expected no excess property');
       assert.deepStrictEqual(yield* store.get(hello, settingsSchema), { count: 1 });
+
+      const unreadable = yield* Effect.flip(
+        store.update(hello, { type: "object", properties: { count: { $ref: "#/$defs/no" } } }, {}),
+      );
+      assert.strictEqual(unreadable._tag, "PluginSettingsSchemaError");
+      assert.include(unreadable.message, 'Missing definition "no"');
     }).pipe(Effect.provide(layerTest())),
   );
 

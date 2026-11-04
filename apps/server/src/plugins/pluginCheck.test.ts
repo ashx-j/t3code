@@ -53,7 +53,14 @@ it.layer(NodeServices.layer)("checkPluginFolder", (it) => {
   it.effect("warns about bare imports and markup or colors tied to T3's current look", () =>
     Effect.gen(function* () {
       const folder = yield* writeFolder({
-        "t3-plugin.json": manifest({ engines: { t3: ">=99.0.0" }, web: "dist/web.js" }),
+        "t3-plugin.json": manifest({
+          engines: { t3: ">=99.0.0" },
+          web: "dist/web.js",
+          settingsSchema: {
+            type: "object",
+            properties: { interval: { type: "integer", minimum: 1, default: 0 } },
+          },
+        }),
         "dist/web.js": [
           'import{jsx as e}from"react/jsx-runtime";',
           "const css = `",
@@ -70,6 +77,7 @@ it.layer(NodeServices.layer)("checkPluginFolder", (it) => {
         report.findings.map((finding) => [finding.code, finding.file]),
         [
           ["engine-range", "t3-plugin.json"],
+          ["settings-default-invalid", "t3-plugin.json"],
           ["bundle-imports", "dist/web.js"],
           ["aria-label-selector", "dist/web.js"],
           ["data-slot-selector", "dist/web.js"],
@@ -92,7 +100,19 @@ it.layer(NodeServices.layer)("checkPluginFolder", (it) => {
   it.effect("finds nothing in a plugin built with the preset that uses theme variables", () =>
     Effect.gen(function* () {
       const folder = yield* writeFolder({
-        "t3-plugin.json": manifest({ server: "dist/server.cjs", web: "dist/web.js" }),
+        "t3-plugin.json": manifest({
+          server: "dist/server.cjs",
+          web: "dist/web.js",
+          // A required field with no default is the user's to fill, not a broken default.
+          settingsSchema: {
+            type: "object",
+            required: ["token"],
+            properties: {
+              token: { type: "string" },
+              interval: { type: "integer", minimum: 1, default: 5 },
+            },
+          },
+        }),
         "dist/server.cjs": "module.exports = { activate() {} };",
         "dist/web.js": [
           "const host = globalThis.__t3PluginHost.react;",
@@ -102,6 +122,19 @@ it.layer(NodeServices.layer)("checkPluginFolder", (it) => {
       });
       const report = yield* checkPluginFolder(folder, SERVER_VERSION);
       assert.deepStrictEqual(report, { folder, pluginId: "checked", findings: [] });
+    }),
+  );
+
+  it.effect("reports a settings schema T3 cannot read with the importer's reason", () =>
+    Effect.gen(function* () {
+      const folder = yield* writeFolder({
+        "t3-plugin.json": manifest({
+          settingsSchema: { type: "object", properties: { mode: { $ref: "#/$defs/missing" } } },
+        }),
+      });
+      const [finding] = (yield* checkPluginFolder(folder, SERVER_VERSION)).findings;
+      assert.strictEqual(finding?.code, "settings-schema-unreadable");
+      assert.include(finding?.problem, 'Missing definition "missing"');
     }),
   );
 });

@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import type { PluginApi, PluginDefinition } from "@t3tools/plugin-sdk/server";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import { McpSchema, McpServer } from "effect/ai";
@@ -119,7 +120,7 @@ const activateFixture = Effect.fn(function* () {
     mcp: makeMcpApi(facade, { mcpTools: yield* PluginMcpTools.PluginMcpTools }),
   };
   yield* Effect.promise(() => Promise.resolve(definition.activate(api as PluginApi)));
-  return api;
+  return { ...api, activation };
 });
 
 const installed: PluginState = {
@@ -187,6 +188,30 @@ it.effect("answer under plg_ names with access checks, then answer disabled", ()
       text: "Plugin mcp-plugin failed in fail: boom",
     });
 
+    // A call to a handler that ignores its abort signal ends when the plugin turns off.
+    const reached = Promise.withResolvers<void>();
+    api.mcp.registerTool(
+      {
+        name: "hang",
+        description: "Never answers.",
+        inputSchema: { type: "object" },
+        access: "read",
+      },
+      () => {
+        reached.resolve();
+        return new Promise(() => undefined);
+      },
+    );
+    const hanging = yield* call("plg_mcp-plugin_hang", threadCaller).pipe(
+      Effect.forkChild({ startImmediately: true }),
+    );
+    yield* Effect.promise(() => reached.promise);
+    api.activation.controller.abort();
+    assert.deepStrictEqual(yield* Fiber.join(hanging), {
+      isError: true,
+      text: "Plugin mcp-plugin is disabled.",
+    });
+
     const tools = yield* PluginMcpTools.PluginMcpTools;
     yield* tools.unregisterPlugin(mcpPlugin);
     assert.deepStrictEqual(yield* call("plg_mcp-plugin_echo", threadCaller, { text: "hi" }), {
@@ -227,7 +252,8 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
           checked.push(target);
           return { folder: "/home/user/plugin", pluginId: null, findings: [] };
         }),
-      getSettings: () => Effect.succeed({ mode: "a" }),
+      getSettings: () =>
+        Effect.succeed({ settings: { mode: "a" }, settingsSchema: { type: "object" } }),
       updateSettings: (pluginId, patch) =>
         Effect.sync(() => {
           settingsPatches.push({ pluginId, patch });
@@ -317,8 +343,16 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
     // Reading settings is a read; changing them needs write access.
     assert.deepStrictEqual(
       yield* call("t3_plugins_settings", readOnlyClient, { pluginId: "mcp-plugin" }),
-      { isError: false, text: '{"settings":{"mode":"a"}}' },
+      { isError: false, text: '{"settings":{"mode":"a"},"settingsSchema":{"type":"object"}}' },
     );
+    const readOnlyHints = new Map(
+      (yield* McpServer.McpServer).tools.map(({ tool }) => [
+        tool.name,
+        tool.annotations?.readOnlyHint,
+      ]),
+    );
+    assert.isTrue(readOnlyHints.get("t3_plugins_list"));
+    assert.isFalse(readOnlyHints.get("t3_plugins_settings"));
     const change = { pluginId: "mcp-plugin", values: { mode: "b" } };
     assert.isTrue((yield* call("t3_plugins_settings", readOnlyClient, change)).isError);
     assert.deepStrictEqual(yield* call("t3_plugins_settings", fullAccessClient, change), {

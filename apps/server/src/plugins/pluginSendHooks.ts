@@ -85,6 +85,7 @@ export const makePluginSendHooks = Effect.gen(function* () {
       messageId,
       text: message.text,
       createdBy: message.createdBy,
+      creationSource: message.creationSource,
       attachments: attachmentsSeen(attachments ?? message.attachments),
       ...modelSeen(run.modelSelection),
     };
@@ -117,6 +118,7 @@ export const makePluginSendHooks = Effect.gen(function* () {
               messageId: command.messageId,
               text: command.text,
               createdBy: command.createdBy,
+              creationSource: command.creationSource,
               attachments: attachmentsSeen(command.attachments),
               ...modelSeen(command.modelSelection),
             },
@@ -183,6 +185,7 @@ export const makePluginSendHooks = Effect.gen(function* () {
           messageId: derive.delegatedTaskMessage({ commandId: command.commandId }),
           text: command.task,
           createdBy: command.createdBy,
+          creationSource: command.creationSource,
           attachments: [],
           ...modelSeen(command.modelSelection),
         };

@@ -11,6 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 
+import { abortEffect } from "./api/facade.ts";
 import type { PluginCheckReport } from "./pluginCheck.ts";
 
 // MCP clients reject longer tool names.
@@ -89,10 +90,13 @@ export interface PluginMcpHostActions {
   readonly check: (
     target: { readonly pluginId: PluginId } | { readonly path: string },
   ) => Effect.Effect<PluginCheckReport, { readonly message: string }>;
-  /** Saved settings as clients see them, with secrets redacted. */
+  /** Saved settings as clients see them, with secrets redacted, and the schema that lists them. */
   readonly getSettings: (
     pluginId: PluginId,
-  ) => Effect.Effect<Schema.JsonObject, { readonly message: string }>;
+  ) => Effect.Effect<
+    { readonly settings: Schema.JsonObject; readonly settingsSchema?: Schema.JsonObject },
+    { readonly message: string }
+  >;
   readonly updateSettings: (
     pluginId: PluginId,
     patch: Schema.JsonObject,
@@ -151,7 +155,7 @@ export interface PluginMcpToolEntry {
   readonly name: string;
   readonly description: string;
   readonly inputSchema: Schema.JsonObject;
-  /** Picked per call by a tool that changes nothing but reads more with write access. */
+  /** Picked per call by a tool whose input decides whether it reads or changes something. */
   readonly access: PluginRpcAccess | ((input: Schema.JsonObject) => PluginRpcAccess);
   readonly call: (
     input: Schema.JsonObject,
@@ -174,6 +178,8 @@ export class PluginMcpTools extends Context.Service<
         input: Schema.JsonObject,
         context: { readonly signal: AbortSignal; readonly threadId: string | null },
       ) => Promise<Schema.Json>;
+      /** Aborts when the plugin turns off; a call still running then answers that it is disabled. */
+      readonly deactivated: AbortSignal;
     }) => Effect.Effect<void, PluginMcpToolNameError>;
     /** MCP has no tool removal, so each of the plugin's tools answers "disabled" instead. */
     readonly unregisterPlugin: (pluginId: PluginId) => Effect.Effect<void>;
@@ -417,7 +423,7 @@ const make = () => {
   const pluginsSettings: PluginMcpToolEntry = {
     name: PLUGINS_SETTINGS_TOOL,
     description:
-      "Read an installed plugin's saved settings, or change them by passing values: each key sets that setting, and null removes it so the plugin reads its default. The plugin's settingsSchema in t3-plugin.json lists its settings, and a change the schema rejects returns why. Secrets read as redacted.",
+      "Read an installed plugin's saved settings and its settingsSchema, which lists every setting with its type and default, or change them by passing values: each key sets that setting, and null removes it so the plugin reads its default. A change the schema rejects returns why. Secrets read as redacted.",
     inputSchema: {
       type: "object",
       properties: {
@@ -435,15 +441,21 @@ const make = () => {
           withHost((actions) =>
             values === undefined
               ? actions.getSettings(pluginId)
-              : actions.updateSettings(pluginId, values),
+              : actions
+                  .updateSettings(pluginId, values)
+                  .pipe(Effect.map((settings) => ({ settings }))),
           ),
         ),
-        Effect.map((settings) => ({ settings })),
       ),
   };
 
   return PluginMcpTools.of({
-    register: Effect.fn("PluginMcpTools.register")(function* ({ pluginId, tool, handler }) {
+    register: Effect.fn("PluginMcpTools.register")(function* ({
+      pluginId,
+      tool,
+      handler,
+      deactivated,
+    }) {
       const name = `plg_${pluginId}_${tool.name}`;
       if (!TOOL_NAME_PATTERN.test(tool.name) || name.length > MAX_TOOL_NAME_CHARS) {
         return yield* new PluginMcpToolNameError({ pluginId });
@@ -458,18 +470,24 @@ const make = () => {
         inputSchema: tool.inputSchema,
         access: tool.access,
         call: (input, caller) =>
-          Effect.tryPromise({
-            try: (signal) => handler(input, { signal, threadId: caller.threadId }),
-            catch: failed,
-          }).pipe(
-            Effect.flatMap((output: unknown) =>
-              output === undefined
-                ? Effect.succeed(null)
-                : isJson(output)
-                  ? Effect.succeed(output)
-                  : Effect.fail(
-                      failed(new TypeError("The tool returned a value that is not JSON.")),
-                    ),
+          Effect.raceFirst(
+            Effect.tryPromise({
+              try: (signal) => handler(input, { signal, threadId: caller.threadId }),
+              catch: failed,
+            }).pipe(
+              Effect.flatMap((output: unknown) =>
+                output === undefined
+                  ? Effect.succeed(null)
+                  : isJson(output)
+                    ? Effect.succeed(output)
+                    : Effect.fail(
+                        failed(new TypeError("The tool returned a value that is not JSON.")),
+                      ),
+              ),
+            ),
+            // A handler that ignores its abort signal must not hold the agent's call open.
+            abortEffect(deactivated).pipe(
+              Effect.andThen(Effect.fail(new PluginMcpToolDisabledError({ pluginId }))),
             ),
           ),
       });

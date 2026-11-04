@@ -98,13 +98,17 @@ export const makeTurnsApi = (
       runHandlers += 1;
       const cursorKey = `${T3_STORAGE_PREFIX}turns.afterRunCompleted.${runHandlers}`;
       void (async () => {
-        const cursor = readCursor(await api.storage.get(cursorKey));
-        let sequence = cursor?.sequence;
-        const handled = new Set(cursor?.runIds ?? []);
+        let sequence: number | undefined;
+        let handled: Set<string> | undefined;
         // The stream can end with an error when the reader falls far behind; resume from the
         // saved position instead of going quiet until the plugin restarts.
         while (!activation.controller.signal.aborted) {
           try {
+            if (handled === undefined) {
+              const cursor = readCursor(await api.storage.get(cursorKey));
+              sequence = cursor?.sequence;
+              handled = new Set(cursor?.runIds ?? []);
+            }
             if (sequence === undefined) {
               // Saved before any run ends, so runs that end while the plugin is off arrive when
               // it starts again, even if it never handled one.
@@ -114,8 +118,12 @@ export const makeTurnsApi = (
             for await (const stored of api.runEvents(sequence)) {
               const run = stored.event.payload;
               if (!isJsonObject(run) || typeof run.status !== "string") continue;
-              if (!TERMINAL_RUN_STATUSES.has(run.status)) continue;
               const runId = String(run.id);
+              // A retry restarts the same run, which then ends again.
+              if (!TERMINAL_RUN_STATUSES.has(run.status)) {
+                handled.delete(runId);
+                continue;
+              }
               if (handled.has(runId)) continue;
               try {
                 await handler({
@@ -149,7 +157,14 @@ export const makeTurnsApi = (
             await Effect.runPromiseWith(facade.context)(Effect.sleep(RESUME_DELAY_MS));
           }
         }
-      })().catch(() => undefined);
+      })().catch((error) =>
+        Effect.runForkWith(facade.context)(
+          Effect.logWarning("plugin afterRunCompleted stopped", {
+            pluginId,
+            failure: String(error).slice(0, 500),
+          }),
+        ),
+      );
     },
     onRuntimeRequest: (handler) => {
       const { activation, pluginId } = facade;
@@ -183,6 +198,7 @@ export const makeTurnsApi = (
                     messageId: message.messageId,
                     text: message.text,
                     createdBy: message.createdBy,
+                    creationSource: message.creationSource,
                     attachments: message.attachments,
                     ...(message.model === undefined ? {} : { model: message.model }),
                   }),

@@ -5,6 +5,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -96,6 +97,8 @@ export class PluginStorage extends Context.Service<
       pluginId: PluginId,
       prefix?: string,
     ) => Effect.Effect<ReadonlyArray<string>, PluginStoragePersistenceError>;
+    /** Deletes every key of the plugin, without creating the database when there is none. */
+    readonly clear: (pluginId: PluginId) => Effect.Effect<void, PluginStoragePersistenceError>;
   }
 >()("t3/plugins/PluginStorage") {}
 
@@ -110,6 +113,7 @@ const checkKey = (pluginId: PluginId, key: string) =>
 
 const make = Effect.gen(function* () {
   const { stateDir } = yield* ServerConfig.ServerConfig;
+  const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const layerScope = yield* Effect.scope;
   const filename = path.join(stateDir, "plugins.sqlite");
@@ -231,7 +235,31 @@ const make = Effect.gen(function* () {
       ),
   );
 
-  return PluginStorage.of({ get, set, remove, list });
+  const clear = Effect.fn("PluginStorage.clear")(
+    function* (pluginId: PluginId) {
+      const exists = yield* fileSystem
+        .exists(filename)
+        .pipe(
+          Effect.mapError(
+            (cause) => new PluginStoragePersistenceError({ pluginId, operation: "open", cause }),
+          ),
+        );
+      if (!exists) return;
+      const sql = yield* open(pluginId);
+      yield* sql`DELETE FROM plugin_storage WHERE plugin_id = ${pluginId}`;
+    },
+    (effect, pluginId) =>
+      effect.pipe(
+        Effect.catchTags({
+          SqlError: (cause) =>
+            Effect.fail(
+              new PluginStoragePersistenceError({ pluginId, operation: "remove", cause }),
+            ),
+        }),
+      ),
+  );
+
+  return PluginStorage.of({ get, set, remove, list, clear });
 });
 
 export const layer = Layer.effect(PluginStorage, make);

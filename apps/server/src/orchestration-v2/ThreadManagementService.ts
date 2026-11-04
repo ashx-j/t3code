@@ -44,6 +44,7 @@ import {
 import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
 import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
 import { AgentScope } from "@t3tools/shared/AgentScope";
+import { isCommandReplyRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -424,6 +425,8 @@ export interface ThreadManagementServiceShape {
   readonly listProjectThreads: (input: {
     readonly projectId?: ProjectId | undefined;
     readonly includeSubagents: boolean;
+    /** Archived threads instead of active ones. */
+    readonly archived?: boolean;
   }) => Effect.Effect<ReadonlyArray<OrchestrationV2ThreadShell>, ThreadManagementError>;
   readonly sendToThread: (
     input: ThreadManagementSendInput,
@@ -523,7 +526,11 @@ export function isTerminalRunStatus(
 export function latestRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs">,
 ): OrchestrationV2Run | undefined {
-  return projection.runs.toSorted((left, right) => right.ordinal - left.ordinal)[0];
+  // A plugin's reply to a slash command sent mid-turn takes the next ordinal; the turn is the work.
+  const busy = projection.runs.some((run) => !isTerminalRunStatus(run.status));
+  return projection.runs
+    .toSorted((left, right) => right.ordinal - left.ordinal)
+    .find((run) => !busy || !isCommandReplyRun(run));
 }
 
 function latestRestartContinuation(
@@ -784,7 +791,7 @@ const make = Effect.gen(function* () {
   const listProjectThreads: ThreadManagementServiceShape["listProjectThreads"] = (input) =>
     orchestrator
       .getShellSnapshot({
-        location: "active",
+        location: input.archived === true ? "archive" : "active",
         ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
       })
       .pipe(

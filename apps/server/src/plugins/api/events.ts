@@ -5,6 +5,8 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import type * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
+import { projectDomainEventForWire } from "../../orchestration-v2/WireProjection.ts";
+import type { OrchestrationEventStoreError } from "../../persistence/Errors.ts";
 import type * as OrchestrationEventStore from "../../persistence/OrchestrationEventStore.ts";
 import type { FacadeContext } from "./facade.ts";
 
@@ -29,8 +31,10 @@ interface EventServices {
 }
 
 /**
- * Stored events for a plugin. `sliding` drops the oldest when the plugin falls behind, so it can
- * never hold the server back; `suspend` waits instead, for host features that must see every event.
+ * Stored events for a plugin. Events already stored are read from the database as the plugin asks
+ * for them, so a plugin resuming from an old sequence gets every one. Once it has caught up,
+ * `sliding` drops the oldest when the plugin falls behind, so it can never hold the server back;
+ * `suspend` waits instead, for host features that must see every event.
  */
 export const storedEvents = (
   facade: FacadeContext,
@@ -46,27 +50,54 @@ export const storedEvents = (
   }
   const types = new Set(options.types);
   const [onlyType] = types;
-  const start =
-    options.afterSequence === undefined
-      ? services.eventStore.latestAgentSequence()
-      : Effect.succeed(options.afterSequence);
-  // One type is filtered by the event sink before anything is decoded for the plugin. Several
-  // types share one unfiltered stream, so events still arrive in sequence order.
-  const stream = Stream.unwrap(
-    start.pipe(
-      Effect.map((afterSequence) =>
-        types.size === 1 && onlyType !== undefined
-          ? services.orchestrator.streamStoredEventsFrom({
-              afterSequence,
-              // An unknown type matches no stored event.
-              eventType: onlyType as OrchestrationV2DomainEvent["type"],
-            })
-          : services.orchestrator
-              .streamStoredEventsFrom({ afterSequence })
-              .pipe(Stream.filter((stored) => types.has(stored.event.type))),
+  // One type is filtered before anything is decoded for the plugin; an unknown type matches no
+  // stored event. Several types share one unfiltered stream, so events still arrive in order.
+  const filter =
+    types.size === 1 && onlyType !== undefined
+      ? { eventType: onlyType as OrchestrationV2DomainEvent["type"] }
+      : {};
+  const matching = <E>(stream: Stream.Stream<OrchestrationV2StoredEvent, E>) =>
+    filter.eventType === undefined
+      ? stream.pipe(Stream.filter((stored) => types.has(stored.event.type)))
+      : stream;
+  const live = (afterSequence: number) =>
+    matching(services.orchestrator.streamStoredEventsFrom({ afterSequence, ...filter })).pipe(
+      Stream.map(toPluginEvent),
+      Stream.buffer({ capacity: PLUGIN_EVENT_BUFFER, strategy }),
+    );
+  // Reads up to the newest event, then again from there, until nothing new was stored meanwhile.
+  const from = (
+    afterSequence: number,
+  ): Stream.Stream<
+    PluginStoredEvent,
+    Orchestrator.OrchestratorV2Error | OrchestrationEventStoreError
+  > =>
+    Stream.unwrap(
+      services.eventStore.latestAgentSequence().pipe(
+        Effect.map((newest) =>
+          newest <= afterSequence
+            ? live(afterSequence)
+            : Stream.concat(
+                matching(
+                  services.eventStore.readAgentEvents({
+                    afterSequence,
+                    throughSequence: newest,
+                    ...filter,
+                  }),
+                ).pipe(
+                  Stream.map((stored) =>
+                    toPluginEvent({ ...stored, event: projectDomainEventForWire(stored.event) }),
+                  ),
+                ),
+                from(newest),
+              ),
+        ),
       ),
-    ),
-  ).pipe(Stream.map(toPluginEvent), Stream.buffer({ capacity: PLUGIN_EVENT_BUFFER, strategy }));
+    );
+  const stream =
+    options.afterSequence === undefined
+      ? Stream.unwrap(services.eventStore.latestAgentSequence().pipe(Effect.map(live)))
+      : from(options.afterSequence);
   return facade.iterate(stream, options.signal);
 };
 

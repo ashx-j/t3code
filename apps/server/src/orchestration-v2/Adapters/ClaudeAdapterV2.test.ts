@@ -560,7 +560,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     assert.isFalse(overrides.allowedTools?.includes(ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_WILDCARD));
   });
 
-  it("invalidates live-query reuse when MCP credentials rotate", () => {
+  it("invalidates live-query reuse when MCP credentials rotate or plugins change", () => {
     const threadId = ThreadId.make("thread-claude-mcp-credential-rotation");
     const mcpSession = mcpSessionFor(threadId);
     const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
@@ -583,6 +583,14 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       }),
     );
     assert.notEqual(rotatedKey, initialKey);
+
+    // A plugin turned on or off changes what a new process loads, so the live one is replaced.
+    const withPlugin = ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(
+      queryPolicy,
+      ClaudeAdapterV2.claudeMcpQueryOverrides({ mcpSession, readOnlySandbox: false }),
+      { instructions: ["Use pnpm."], skillFolders: [] },
+    );
+    assert.notEqual(withPlugin, initialKey);
   });
 
   it("matches the read-only allowlist to the orchestrator toolkit annotations", () => {
