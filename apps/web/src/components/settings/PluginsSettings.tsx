@@ -10,6 +10,7 @@ import {
   ChevronUpIcon,
   DownloadIcon,
   FolderDownIcon,
+  InfoIcon,
   RotateCwIcon,
   SlidersHorizontalIcon,
   Trash2Icon,
@@ -39,6 +40,7 @@ import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/qu
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Badge } from "../ui/badge";
 import { Checkbox } from "../ui/checkbox";
+import { Collapsible, CollapsiblePanel } from "../ui/collapsible";
 import {
   Dialog,
   DialogDescription,
@@ -54,6 +56,7 @@ import { Label } from "../ui/label";
 import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { JsonSchemaSettingsForm } from "./JsonSchemaSettingsForm";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
@@ -201,7 +204,7 @@ function PluginsPage({
               title="Add a plugin"
               description={
                 installer.installing === null
-                  ? "Drop plugin folders on this page, or pick one with Add plugin. Plugins run with the same access as T3 Code, so install only code you trust."
+                  ? "Drop a plugin folder here or use Add plugin. Install only plugins you trust."
                   : `Installing ${installer.installing}…`
               }
               control={
@@ -507,7 +510,7 @@ function PluginList({
         ) : rows.length === 0 && errors.length === 0 ? (
           <SettingsRow
             title="No plugins installed"
-            description="Drop a plugin folder on this page to add it."
+            description="Drop a plugin folder here to add it."
           />
         ) : (
           rows.map((row) => (
@@ -567,8 +570,8 @@ function CheckPluginUpdates({
         updates > 0
           ? `${updates === 1 ? "1 plugin has" : `${updates} plugins have`} an update.`
           : checked
-            ? "Plugins installed from git or npm are up to date."
-            : "T3 Code checks plugins installed from git or npm once a day."
+            ? "Plugins from git or npm are up to date."
+            : "Plugins from git or npm are checked once a day."
       }
       control={
         <div className="flex items-center gap-2">
@@ -614,6 +617,17 @@ function CheckPluginUpdates({
     />
   );
 }
+
+/**
+ * Where a plugin that changes the app runs, as the installer decides: with no server code or agent
+ * skills it goes to the main environment only, and the app loads plugin UI from there alone.
+ */
+const webReach = (plugin: PluginState) =>
+  !plugin.hasServer && plugin.hasSkills !== true
+    ? "Changes only this app. It runs from your main environment and isn't installed on remote servers."
+    : plugin.hasWeb
+      ? "Its web part runs in this app from your main environment only. Remote servers get just its server side."
+      : null;
 
 /** A git commit is shown short, an npm version as it is. */
 const updateLabel = (version: string) =>
@@ -828,9 +842,33 @@ function PluginRow({
     ),
     ...(webFailure === undefined ? [] : [`Web part failed: ${webFailure}`]),
   ];
+  const reach = webReach(plugin);
   const row = (
     <SettingsRow
-      title={plugin.name}
+      title={
+        reach === null ? (
+          plugin.name
+        ) : (
+          <span className="inline-flex items-center gap-1">
+            {plugin.name}
+            <Tooltip>
+              <TooltipTrigger
+                delay={200}
+                render={
+                  <Button
+                    size="icon-micro"
+                    variant="ghost-muted"
+                    aria-label={`Where ${plugin.name} runs`}
+                  >
+                    <InfoIcon className="size-3.5" />
+                  </Button>
+                }
+              />
+              <TooltipPopup side="top">{reach}</TooltipPopup>
+            </Tooltip>
+          </span>
+        )
+      }
       description={
         <>
           {plugin.description}
@@ -955,20 +993,24 @@ function PluginRow({
       }
     />
   );
-  if (shadowed || !hasSettings || !settingsOpen) return row;
+  if (shadowed || !hasSettings) return row;
   return (
     <>
       {row}
-      {/* Lined like the card's own rows, as an Advanced fold's rows are. */}
-      <div className="[&>*+*]:border-t [&>*+*]:border-border/50">
-        <PluginSettingsRows
-          first={first}
-          copies={copies}
-          labelled={labelled}
-          customSettings={customSettings}
-          hasGeneratedForm={hasGeneratedForm}
-        />
-      </div>
+      {/* `contents`, so the card's line between rows falls inside the panel and slides in with it. */}
+      <Collapsible open={settingsOpen} onOpenChange={setSettingsOpen} className="contents">
+        <CollapsiblePanel>
+          <div className="border-t border-border/50 [&>*+*]:border-t [&>*+*]:border-border/50">
+            <PluginSettingsRows
+              first={first}
+              copies={copies}
+              labelled={labelled}
+              customSettings={customSettings}
+              hasGeneratedForm={hasGeneratedForm}
+            />
+          </div>
+        </CollapsiblePanel>
+      </Collapsible>
     </>
   );
 }
@@ -1007,10 +1049,7 @@ function PluginSettingsRows({
   );
 }
 
-/**
- * Whether agents get the tools that list, install, check and change plugins. Until the user picks,
- * they follow whether the environment has a plugin.
- */
+/** Whether agents get the tools that list, install, check and change plugins. Off by default. */
 function AgentToolsRow(props: {
   readonly environmentId: EnvironmentId;
   readonly environments: ReadonlyArray<{
@@ -1026,7 +1065,7 @@ function AgentToolsRow(props: {
   return (
     <SettingsRow
       title="Plugin tools for agents"
-      description="Lets agents list, install, check and change plugins. Changing them still needs a thread set to Full access."
+      description="Lets agents manage plugins. Changes need a thread in Full access."
       control={
         <Switch
           checked={props.environments.every((environment) => environment.value)}
