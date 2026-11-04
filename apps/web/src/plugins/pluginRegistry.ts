@@ -410,10 +410,16 @@ const replacements: { [Part in PluginPartName]: Array<PluginReplacementEntry<Par
 // re-render them.
 const replacementsVersionAtom = Atom.make(0).pipe(Atom.keepAlive);
 
+// The plugin whose id sorts first wins, as for slash commands, so parallel loading can't change
+// which one draws a part; within one plugin its newest replacement wins.
 const replacementAtom = <Part extends PluginPartName>(part: Part) =>
   Atom.make((get) => {
     get(replacementsVersionAtom);
-    return replacements[part].at(-1);
+    return replacements[part].reduce<PluginReplacementEntry<Part> | undefined>(
+      (winner, entry) =>
+        winner === undefined || entry.owner.pluginId <= winner.owner.pluginId ? entry : winner,
+      undefined,
+    );
   });
 
 export const pluginReplacementAtoms: {

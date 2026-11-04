@@ -948,7 +948,8 @@ function RemovePluginPopover({
   const checkboxId = useId();
   const label = unlink ? "Unlink" : "Remove";
   return (
-    <Popover>
+    // Each opening starts unticked, so a cancelled choice to delete data can't carry over.
+    <Popover onOpenChange={(open) => open && setRemoveData(false)}>
       <PopoverTrigger
         render={
           <Button

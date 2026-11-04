@@ -118,7 +118,7 @@ const handleCheckForUpdatesMenuClick = Effect.gen(function* () {
   yield* checkForUpdatesFromMenu;
 }).pipe(Effect.withSpan("desktop.menu.handleCheckForUpdatesClick"));
 
-/** One submenu per plugin, in the order its commands arrived; none when no command asks. */
+/** One submenu per plugin, in the order the page sends commands; none when no command asks. */
 const pluginMenuTemplate = (
   commands: ReadonlyArray<DesktopPluginCommand>,
   run: (command: string) => void,

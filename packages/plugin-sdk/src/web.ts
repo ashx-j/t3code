@@ -356,7 +356,7 @@ export interface WebPluginApi {
   readonly ui: {
     /**
      * Draws one of T3's parts until the plugin unloads. When several plugins replace the same
-     * part, the one loaded last wins. If the component throws, T3 draws its own part.
+     * part, the one whose id sorts first wins. If the component throws, T3 draws its own part.
      */
     readonly replace: <Part extends keyof WebPluginParts>(
       part: Part,

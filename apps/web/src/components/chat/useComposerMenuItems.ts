@@ -193,6 +193,7 @@ export function useComposerMenuItems({
   const items = ((): ComposerCommandItem[] => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
+      const pluginMentions = matchPluginMentionItems(pluginMentionItems, composerTrigger.query);
       return [
         ...matchComposerThreadItems({
           shells: environmentThreadShells,
@@ -210,6 +211,8 @@ export function useComposerMenuItems({
               query: composerTrigger.query,
             })
           : []),
+        // A plugin item whose name starts with the query beats a fuzzy file match.
+        ...pluginMentions.named,
         ...workspaceEntries.entries.map((entry) => ({
           id: `path:${entry.kind}:${entry.path}`,
           type: "path" as const,
@@ -219,8 +222,8 @@ export function useComposerMenuItems({
           label: basenameOfPath(entry.path),
           description: entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))),
         })),
-        // After files, which are what `@` is mostly for.
-        ...matchPluginMentionItems(pluginMentionItems, composerTrigger.query),
+        // The rest after files, which are what `@` is mostly for.
+        ...pluginMentions.rest,
       ];
     }
     if (composerTrigger.kind === "slash-command") {
@@ -437,13 +440,16 @@ export function useComposerMenuItems({
 
 const PLUGIN_MENTION_LIMIT = 8;
 
-/** Plugin items for a typed query, best match first, as thread items need a query too. */
+/**
+ * Plugin items for a typed query, best match first, as thread items need a query too. `named`
+ * holds those whose name is the query or starts with it.
+ */
 function matchPluginMentionItems(
   items: ReadonlyArray<PluginMentionItem>,
   query: string,
-): ComposerCommandItem[] {
+): { readonly named: ComposerCommandItem[]; readonly rest: ComposerCommandItem[] } {
   const needle = query.trim().toLowerCase();
-  if (needle === "") return [];
+  if (needle === "") return { named: [], rest: [] };
   const scoreOf = (item: PluginMentionItem) => {
     const scores = [
       scoreQueryMatch({
@@ -465,18 +471,28 @@ function matchPluginMentionItems(
     ].filter((score) => score !== null);
     return scores.length === 0 ? null : Math.min(...scores);
   };
-  return items
-    .flatMap((item) => {
+  const matches = items
+    .flatMap((item, index) => {
       const score = scoreOf(item);
-      return score === null ? [] : [{ item, score }];
+      return score === null ? [] : [{ item, score, index }];
     })
-    .toSorted((left, right) => left.score - right.score)
+    // Equal matches show the newest first, as a plugin adds new items at the end.
+    .toSorted((left, right) => left.score - right.score || right.index - left.index)
     .slice(0, PLUGIN_MENTION_LIMIT)
     .map(({ item }) => ({
-      id: item.key,
-      type: "plugin-mention" as const,
-      contextId: item.contextId,
-      label: item.label,
-      description: item.description ? `${item.description} · ${item.pluginName}` : item.pluginName,
+      named: item.label.toLowerCase().startsWith(needle),
+      entry: {
+        id: item.key,
+        type: "plugin-mention" as const,
+        contextId: item.contextId,
+        label: item.label,
+        description: item.description
+          ? `${item.description} · ${item.pluginName}`
+          : item.pluginName,
+      },
     }));
+  return {
+    named: matches.filter((match) => match.named).map((match) => match.entry),
+    rest: matches.filter((match) => !match.named).map((match) => match.entry),
+  };
 }

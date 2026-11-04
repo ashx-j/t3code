@@ -7,6 +7,7 @@ import { AppAtomRegistryProvider, appAtomRegistry } from "../rpc/atomRegistry";
 import { PluginReplaceable } from "./PluginReplaceable";
 import {
   pluginContributionKey,
+  pluginReplacementAtoms,
   pluginWebFailureAtom,
   registerPluginReplacement,
 } from "./pluginRegistry";
@@ -61,6 +62,16 @@ describe("PluginReplaceable", () => {
     await expect.element(page.getByText("Second: Attach")).toBeVisible();
     unregisterSecond();
     await expect.element(page.getByText("First: ModelSend")).toBeVisible();
+    // Another plugin loading later doesn't take over: the id that sorts first keeps the part.
+    using _later = {
+      [Symbol.dispose]: registerPluginReplacement("composer.controls", () => <p>Later plugin</p>, {
+        ...owner,
+        pluginId: "zz-later",
+      }),
+    };
+    expect(appAtomRegistry.get(pluginReplacementAtoms["composer.controls"])?.owner.pluginId).toBe(
+      "restyle",
+    );
   });
 
   it("draws T3's own part when the replacement throws, and says so on the plugin's row", async () => {

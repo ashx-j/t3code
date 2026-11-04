@@ -142,8 +142,12 @@ export const installPluginCommands = Effect.fn("desktop.ipc.installPluginCommand
             if (globalShortcut === undefined) return [refusal];
             // Plugin shortcuts are bound now, so only a SnapShot refusal asks whether it's held.
             const reason =
-              (refusal.reason === "snap-shot" ? checkShortcut(globalShortcut) : undefined) ??
-              bindShortcut(refusal.command, globalShortcut);
+              (refusal.reason === "snap-shot"
+                ? // Another plugin command may have bound it once SnapShot let go.
+                  registered.includes(globalShortcut)
+                  ? "taken"
+                  : checkShortcut(globalShortcut)
+                : undefined) ?? bindShortcut(refusal.command, globalShortcut);
             return reason === undefined ? [] : [{ command: refusal.command, reason }];
           });
           return refused;
@@ -168,7 +172,10 @@ export const installPluginCommands = Effect.fn("desktop.ipc.installPluginCommand
           tray?.setContextMenu(
             Electron.Menu.buildFromTemplate([
               ...trayCommands.map((entry) => ({
-                label: entry.title,
+                // The plugin's name only where 2 plugins' items share a title.
+                label: trayCommands.some((other) => other !== entry && other.title === entry.title)
+                  ? `${entry.pluginName}: ${entry.title}`
+                  : entry.title,
                 click: () => runCommand(entry.command),
               })),
               { type: "separator" },

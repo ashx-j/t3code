@@ -136,8 +136,14 @@ const isWebPluginDefinition = (value: unknown): value is WebPluginDefinition =>
   "activate" in value &&
   typeof value.activate === "function";
 
+// A plugin can throw anything; a thrown string is still its message.
 const errorText = (error: unknown) =>
-  (error instanceof Error ? error.message : "The plugin's web bundle failed.").slice(0, 500);
+  (error instanceof Error
+    ? error.message
+    : typeof error === "string" && error !== ""
+      ? error
+      : "The plugin's web bundle failed."
+  ).slice(0, 500);
 
 // Bearer and cookie sessions can fetch plugin files directly. A DPoP proof needs the relay
 // signer, which only the client runtime holds.
@@ -225,7 +231,11 @@ const pluginActionEntry = <Place extends PluginActionPlace>(
   owner: PluginOwner,
   action: WebPluginAction<PluginActionContexts[Place]>,
 ): PluginActionEntry<Place> => {
-  if (!COMMAND_ID.test(action.id)) throw new TypeError(`"${action.id}" is not a valid action id.`);
+  if (!COMMAND_ID.test(action.id)) {
+    throw new TypeError(
+      `"${action.id}" is not a valid action id: use lowercase letters, digits and hyphens, up to 32.`,
+    );
+  }
   if (typeof action.title !== "string") throw new TypeError(`"${action.id}" needs a text title.`);
   return {
     key: `plugin:${owner.pluginId}:${action.id}`,
@@ -281,6 +291,8 @@ function makeWebPluginApi({
     environmentId,
     rpc: {
       invoke: async (method, input) => {
+        // A leftover timer from an unloaded start must not keep calling the new server half.
+        if (!active()) throw new Error(`${pluginId} is no longer loaded here.`);
         const result = await runAtomCommand(
           appAtomRegistry,
           pluginEnvironment.invokePlugin,
@@ -354,7 +366,7 @@ function makeWebPluginApi({
               !command.keywords.every((keyword) => typeof keyword === "string")))
         ) {
           throw new TypeError(
-            `"${command.id}" needs a valid id, a text title and keywords that are text.`,
+            `"${command.id}" needs an id of lowercase letters, digits and hyphens, up to 32, starting with a letter or digit, a text title, and keywords that are text.`,
           );
         }
         const keybindingCommand = `plugin.${pluginId}.${command.id}` as const;
@@ -468,7 +480,14 @@ function makeWebPluginApi({
       },
       setMentionItems: (items) => {
         if (!active()) return;
-        const entries = items.slice(0, 500).map((item) => {
+        // One entry per id, the first one, so chips and the menu stay unambiguous.
+        const seen = new Set<string>();
+        const unique = items.filter((item) => {
+          if (typeof item.id === "string" && seen.has(item.id)) return false;
+          seen.add(item.id);
+          return true;
+        });
+        const entries = unique.slice(0, 500).map((item) => {
           const description = item.description ?? "";
           if (
             typeof item.id !== "string" ||
