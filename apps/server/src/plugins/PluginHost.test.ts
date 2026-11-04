@@ -386,6 +386,10 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
           ],
           skillFolders: [{ plugin: agentFolder, skills: `${agentFolder}/skills` }],
         });
+        // In plugin id order, so a restart changes neither Claude's process key nor Codex's keys.
+        const removeEarlier = yield* hooks.addAgentInstructions("aaa-plugin", "Earlier.");
+        assert.strictEqual((yield* hooks.agentContext)?.instructions[0], "Earlier.");
+        yield* removeEarlier;
         assert.deepStrictEqual((yield* fs.readDirectory(agentFolder)).toSorted(), [
           ".claude-plugin",
           "skills",
@@ -847,6 +851,41 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
             ],
           ],
         );
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("lists plugin code that fails outside a call instead of stopping the server", () =>
+    Effect.gen(function* () {
+      yield* writeInstalledPlugin(
+        "leaky",
+        `module.exports = { activate(api) {
+  api.rpc.register("throwLater", () => { setTimeout(() => { throw new Error("thrown in a timer"); }, 0); }, { access: "read" });
+  api.rpc.register("awaitLater", () => { setTimeout(async () => { await api.threads.read("thread:gone"); }, 0); }, { access: "read" });
+} };`,
+      );
+      yield* writePluginsConfig({ enabled: { leaky: true } });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const id = PluginId.make("leaky");
+        yield* waitForStatuses(host, { leaky: "active" });
+        const failureAfter = (method: string, previous: string | undefined) =>
+          host.invoke({ pluginId: id, method, input: undefined, scopes: operate }).pipe(
+            Effect.andThen(
+              host.streamStates.pipe(
+                Stream.map((states) => stateOf(states, id)?.serverFailure),
+                Stream.filter((failure) => failure !== undefined && failure !== previous),
+                Stream.runHead,
+                Effect.map(Option.getOrThrow),
+              ),
+            ),
+          );
+
+        const thrown = yield* failureAfter("throwLater", undefined);
+        assert.strictEqual(thrown, "thrown in a timer");
+        // An awaited API call fails away from the plugin's own frames, so its error names it.
+        assert.isString(yield* failureAfter("awaitLater", thrown));
+        assert.include(stateOf(yield* host.list, id), { status: "active" });
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
@@ -1475,6 +1514,13 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           .handle({ pluginId: helloWeb, request: { ...request, path: "/assets/..%2Fserver.cjs" } })
           .pipe(Effect.flip);
         assert.strictEqual(escaped._tag, "PluginHttpHandlerError");
+        for (const path of ["/assets/%E0%A4%A", "/assets/"]) {
+          const missing = yield* routes.handle({
+            pluginId: helloWeb,
+            request: { ...request, path },
+          });
+          assert.strictEqual(missing.status, 404);
+        }
 
         yield* host.setEnabled(helloWeb, false);
         const missing = yield* routes.handle({ pluginId: helloWeb, request }).pipe(Effect.flip);
@@ -1866,23 +1912,59 @@ module.exports = { activate() {} };`,
     }).pipe(Effect.provide(layerConfig())),
   );
 
-  it.effect("finishes starting before a slow plugin finishes activating", () =>
-    Effect.gen(function* () {
-      const gate = Promise.withResolvers<void>();
-      Reflect.set(globalThis, "__t3PluginHostTestGate", gate.promise);
-      yield* writeInstalledPlugin(
-        "slow",
-        `module.exports = { activate() { return globalThis.__t3PluginHostTestGate; } };`,
-      );
-      yield* writePluginsConfig({ enabled: { slow: true } });
-      yield* Effect.gen(function* () {
-        const host = yield* PluginHost.PluginHost;
-        yield* waitForStatuses(host, { slow: "loading" });
-        gate.resolve();
-        yield* waitForStatuses(host, { slow: "active" });
-      }).pipe(Effect.provide(layerHost()));
-      Reflect.deleteProperty(globalThis, "__t3PluginHostTestGate");
-    }).pipe(Effect.provide(layerConfig())),
+  it.effect(
+    "finishes starting before a slow plugin finishes activating, and a rescan meanwhile keeps it",
+    () =>
+      Effect.gen(function* () {
+        const gate = Promise.withResolvers<void>();
+        const cleanupStarted = Promise.withResolvers<void>();
+        const cleanupGate = Promise.withResolvers<void>();
+        Reflect.set(globalThis, "__t3PluginHostTestGate", gate.promise);
+        Reflect.set(globalThis, "__t3PluginHostCleanupStarted", cleanupStarted.resolve);
+        Reflect.set(globalThis, "__t3PluginHostCleanupGate", cleanupGate.promise);
+        yield* writeInstalledPlugin(
+          "slow",
+          `module.exports = { activate(api) {
+  api.rpc.register("ping", () => "pong", { access: "read" });
+  return globalThis.__t3PluginHostTestGate;
+} };`,
+        );
+        const goes = yield* writeInstalledPlugin(
+          "goes",
+          `module.exports = { activate(api) {
+  api.onDeactivate(() => { globalThis.__t3PluginHostCleanupStarted(); return globalThis.__t3PluginHostCleanupGate; });
+} };`,
+        );
+        yield* writePluginsConfig({ enabled: { slow: true, goes: true } });
+        yield* Effect.gen(function* () {
+          const host = yield* PluginHost.PluginHost;
+          const fs = yield* FileSystem.FileSystem;
+          yield* waitForStatuses(host, { slow: "loading", goes: "active" });
+
+          // The rescan stops the removed plugin while the slow one finishes starting.
+          yield* fs.remove(goes, { recursive: true });
+          const rescanning = yield* host.rescan.pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Effect.promise(() => cleanupStarted.promise);
+          gate.resolve();
+          yield* waitForStatuses(host, { slow: "active" });
+          cleanupGate.resolve();
+          yield* Fiber.join(rescanning);
+
+          assert.strictEqual(stateOf(yield* host.list, "slow")?.status, "active");
+          assert.strictEqual(
+            yield* host.invoke({
+              pluginId: PluginId.make("slow"),
+              method: "ping",
+              input: undefined,
+              scopes: operate,
+            }),
+            "pong",
+          );
+        }).pipe(Effect.provide(layerHost()));
+        Reflect.deleteProperty(globalThis, "__t3PluginHostTestGate");
+        Reflect.deleteProperty(globalThis, "__t3PluginHostCleanupStarted");
+        Reflect.deleteProperty(globalThis, "__t3PluginHostCleanupGate");
+      }).pipe(Effect.provide(layerConfig())),
   );
 });
 

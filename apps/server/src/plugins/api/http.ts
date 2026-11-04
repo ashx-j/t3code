@@ -25,6 +25,7 @@ export const makeHttpApi = (
             Promise.resolve().then(() =>
               handler(request, { signal: AbortSignal.any([signal, deactivated]) }),
             ),
+          deactivated,
         }),
       );
       if (Exit.isFailure(registered)) {

@@ -58,7 +58,14 @@ it.layer(NodeServices.layer)("checkPluginFolder", (it) => {
           web: "dist/web.js",
           settingsSchema: {
             type: "object",
-            properties: { interval: { type: "integer", minimum: 1, default: 0 } },
+            properties: {
+              interval: { type: "integer", minimum: 1, default: 0 },
+              // Only top-level string secrets reach the secret store.
+              auth: {
+                type: "object",
+                properties: { token: { type: "string", format: "t3-secret" } },
+              },
+            },
           },
         }),
         "dist/web.js": [
@@ -78,6 +85,7 @@ it.layer(NodeServices.layer)("checkPluginFolder", (it) => {
         [
           ["engine-range", "t3-plugin.json"],
           ["settings-default-invalid", "t3-plugin.json"],
+          ["secret-not-stored", "t3-plugin.json"],
           ["bundle-imports", "dist/web.js"],
           ["aria-label-selector", "dist/web.js"],
           ["data-slot-selector", "dist/web.js"],
@@ -94,6 +102,10 @@ it.layer(NodeServices.layer)("checkPluginFolder", (it) => {
         report.findings.find((finding) => finding.code === "bundle-imports")?.problem,
         '"react/jsx-runtime"',
       );
+      assert.include(
+        report.findings.find((finding) => finding.code === "secret-not-stored")?.problem,
+        "/properties/auth/properties/token",
+      );
     }),
   );
 
@@ -108,7 +120,7 @@ it.layer(NodeServices.layer)("checkPluginFolder", (it) => {
             type: "object",
             required: ["token"],
             properties: {
-              token: { type: "string" },
+              token: { type: "string", format: "t3-secret" },
               interval: { type: "integer", minimum: 1, default: 5 },
             },
           },

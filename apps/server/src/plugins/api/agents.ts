@@ -25,6 +25,7 @@ export const makeAgentsApi = (
     }
     const remove = Effect.runSyncWith(facade.context)(
       services.hooks.addAgentInstructions(
+        facade.pluginId,
         `<t3_code_plugin name="${pluginName.replaceAll('"', "'")}">\n${text.trim()}\n</t3_code_plugin>`,
       ),
     );

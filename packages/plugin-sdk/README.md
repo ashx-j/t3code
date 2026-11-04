@@ -31,11 +31,12 @@ Vite preset below.
   (`plugin.<id>.<command>`).
 - `engines.t3` is a semver range. A server outside it refuses to start the plugin and says why.
 - `server` must be CommonJS ending in `.cjs`. `web` is a single-file ES module.
-- `settingsSchema` is JSON Schema. T3 Code draws a form from it on the Plugins page, and fields with
-  `"format": "t3-secret"` are stored in the server's secret store and never shown again. The form
-  covers top-level strings, numbers, integers, booleans, `enum`s of strings or numbers, and arrays
-  of strings. One property of any other shape, such as an object or a nullable type, turns the whole
-  form into a JSON box. Every save is checked against the schema with the top-level `default`s
+- `settingsSchema` is JSON Schema. T3 Code draws a form from it on the Plugins page, and top-level
+  string fields with `"format": "t3-secret"` are stored in the server's secret store and never shown
+  again. `t3-secret` anywhere else is saved as plain text, and `t3_plugins_check` warns about it.
+  The form covers top-level strings, numbers, integers, booleans, `enum`s of strings or numbers,
+  and arrays of strings. One property of any other shape, such as an object or a nullable type,
+  turns the whole form into a JSON box. Every save is checked against the schema with the top-level `default`s
   filled in, so a default its own field rejects refuses every save; `t3_plugins_check` reports it.
   Agents read the settings and the schema, and change settings, with the `t3_plugins_settings`
   tool.

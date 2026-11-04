@@ -4840,8 +4840,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }),
     );
 
-  const listWorktrees: GitVcsDriver.GitVcsDriver["Service"]["listWorktrees"] = (cwd) =>
-    executeWorktreeList("GitVcsDriver.listWorktrees", cwd, []).pipe(
+  const worktreesOf = (operation: string, cwd: string) =>
+    executeWorktreeList(operation, cwd, []).pipe(
       // A `prunable` record's directory is gone; another checkout may now sit there.
       Effect.map(({ stdout }) =>
         stdout.split("\0\0").flatMap((record) => {
@@ -4859,8 +4859,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         }),
       ),
     );
+  const listWorktrees: GitVcsDriver.GitVcsDriver["Service"]["listWorktrees"] = (cwd) =>
+    worktreesOf("GitVcsDriver.listWorktrees", cwd);
   const listWorktreePaths: GitVcsDriver.GitVcsDriver["Service"]["listWorktreePaths"] = (cwd) =>
-    listWorktrees(cwd).pipe(Effect.map((worktrees) => worktrees.map((worktree) => worktree.path)));
+    worktreesOf("GitVcsDriver.listWorktreePaths", cwd).pipe(
+      Effect.map((worktrees) => worktrees.map((worktree) => worktree.path)),
+    );
 
   const withListRefsInvalidation = <A, E>(
     cwd: string,

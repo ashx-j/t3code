@@ -116,9 +116,11 @@ enabled.
 
 Plugins that draw web UI load in the web and desktop apps, from the app's main environment: the
 desktop app's own server, or the server the web app was opened from. Plugins on other environments
-you connect show in **Settings → Plugins**, but their UI doesn't load. The mobile app doesn't show
-plugin UI, settings or themes, and a plugin page's `t3code://plugins/...` link opens only in the
-desktop and web apps.
+you connect show in **Settings → Plugins**, but their UI doesn't load. Buttons, menu items, badges,
+slash commands that run in the app, `@` items, banners, right panels and tool views show only in
+the main environment's threads. Replaced parts of the app, code blocks, pages, sidebar sections and
+command palette commands show wherever you are. The mobile app doesn't show plugin UI, settings
+or themes, and a plugin page's `t3code://plugins/...` link opens only in the desktop and web apps.
 
 In the desktop app a plugin can also add its commands to these places. Every plugin command is also
 in the command palette.

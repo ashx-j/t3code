@@ -66,7 +66,10 @@ export const PluginManifest = Schema.Struct({
   engines: Schema.Struct({ t3: PluginEngineRange }),
   server: Schema.optionalKey(PluginServerEntryPath),
   web: Schema.optionalKey(PluginEntryPath),
-  /** JSON Schema for the plugin's settings. Fields with `format: "t3-secret"` are write-only. */
+  /**
+   * JSON Schema for the plugin's settings. Top-level string fields with `format: "t3-secret"` are
+   * write-only and kept in the secret store; `t3-secret` anywhere else is saved as plain text.
+   */
   settingsSchema: Schema.optionalKey(Schema.JsonObject),
   /** Shown to the user before enabling. Not enforced: plugins are trusted code. */
   permissions: Schema.optionalKey(
@@ -147,6 +150,8 @@ export const PluginState = Schema.Struct({
   hasSkills: Schema.optionalKey(Schema.Boolean),
   /** Why its web half failed in a client since it last started, as that client reported it. */
   webFailure: Schema.optionalKey(Schema.String),
+  /** Why its server code failed outside a call since it last started, such as in a timer. */
+  serverFailure: Schema.optionalKey(Schema.String),
   settingsSchema: Schema.optionalKey(Schema.JsonObject),
   contributes: Schema.optionalKey(PluginContributions),
 });

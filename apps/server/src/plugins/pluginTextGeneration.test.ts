@@ -44,15 +44,23 @@ it.effect("asks plugins before T3, skipping slow or unusable answers, and cleans
       return new Promise(() => undefined);
     });
     textGeneration.register("branchName", () => ({ branch: "" }));
-    textGeneration.register("branchName", ({ message }) => ({ branch: `Fix ${message}` }));
+    // Plugins get the user's branch naming, and their answer is formatted with it like T3's.
+    textGeneration.register("branchName", ({ message, naming }) => ({
+      branch: `${naming?.instructions} ${message}`,
+    }));
 
     const naming = yield* generation
-      .generateBranchName({ cwd: "/repo", message: "the login bug", modelSelection })
+      .generateBranchName({
+        cwd: "/repo",
+        message: "the login bug",
+        naming: { mode: "static", prefix: "ash", instructions: "Fix" },
+        modelSelection,
+      })
       .pipe(Effect.forkChild({ startImmediately: true }));
     yield* Effect.promise(() => asked.promise);
     yield* TestClock.adjust("30 seconds");
     const { branch } = yield* Fiber.join(naming);
-    assert.strictEqual(branch, "fix-the-login-bug");
+    assert.strictEqual(branch, "ash/fix-the-login-bug");
 
     // No plugin generates titles, so T3 does.
     assert.deepStrictEqual(

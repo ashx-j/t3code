@@ -24,12 +24,17 @@ export interface FacadeContext {
   readonly iterate: <A, E>(stream: Stream.Stream<A, E>, signal?: AbortSignal) => AsyncIterable<A>;
 }
 
+const PLUGIN_COMMAND_PREFIX = "command:plugin:";
+
 /** A fresh id for a command a plugin causes, which names the plugin. */
 export const newCommandId = (pluginId: string, crypto: Crypto.Crypto) =>
   crypto.randomUUIDv4().pipe(
     Effect.orDie,
-    Effect.map((id) => CommandId.make(`command:plugin:${pluginId}:${id}`)),
+    Effect.map((id) => CommandId.make(`${PLUGIN_COMMAND_PREFIX}${pluginId}:${id}`)),
   );
+
+export const isPluginCommand = (commandId: CommandId) =>
+  commandId.startsWith(PLUGIN_COMMAND_PREFIX);
 
 /**
  * Hands a plugin a promise whose failure only the plugin sees: one it never awaits must not be an
@@ -43,12 +48,15 @@ const forPlugin = <A>(promise: Promise<A>): Promise<A> => {
 /** A plugin API call refused before it ran, such as one with a bad argument. */
 export const refused = (error: Error): Promise<never> => forPlugin(Promise.reject(error));
 
-class PluginApiCallError extends Error {
+/** Carries its plugin, so a failure no plugin code handles is still the plugin's. */
+export class PluginApiCallError extends Error {
   readonly code: string;
-  constructor(code: string, message: string) {
+  readonly pluginId: PluginId;
+  constructor(pluginId: PluginId, code: string, message: string) {
     super(message);
     this.name = "PluginApiError";
     this.code = code;
+    this.pluginId = pluginId;
   }
 }
 
@@ -86,7 +94,13 @@ export const makeFacadeContext = (input: {
     // Cleanups may still save state; afterwards a disabled plugin's leftovers cannot act.
     call: (effect) =>
       activation.ended.signal.aborted
-        ? refused(new PluginApiCallError("PluginDeactivated", "This plugin activation has ended."))
+        ? refused(
+            new PluginApiCallError(
+              pluginId,
+              "PluginDeactivated",
+              "This plugin activation has ended.",
+            ),
+          )
         : forPlugin(
             runExit(effect).then((exit) => {
               if (Exit.isSuccess(exit)) return exit.value;
@@ -99,6 +113,7 @@ export const makeFacadeContext = (input: {
                   ? error._tag
                   : "PluginApiFailure";
               throw new PluginApiCallError(
+                pluginId,
                 code,
                 error instanceof Error ? error.message : "The plugin API call failed.",
               );
