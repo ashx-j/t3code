@@ -26,15 +26,26 @@ const css = `
     --accent: var(--sidebar-row-active);
   }
 
-  /* 3. The composer card and tool error icons keep T3's own colors. For a theme, T3 mixes the
-        card's outline and top highlight from the input and toolbar colors, fills it with the
-        raised surface, and takes the error icon from errorForeground. Hook:
-        data-slot="composer-shell", where T3 sets them. */
+  /* 3. The composer card, the banners and /, @ and $ menus above it, and tool error icons keep
+        T3's own colors. For a theme, T3 mixes their outlines and the card's top highlight from
+        the input and toolbar colors, fills them with the raised surface, which is 20% white in
+        light, and takes the error icon from errorForeground. Error and warning banners keep the
+        edge T3 tints for them. Hooks: data-slot="composer-shell", where T3 sets them for the
+        card, and data-composer-banner-surface with its data-variant for the banners and menus. */
   &:not(.dark) {
     --tool-error-icon: var(--error);
     & [data-slot="composer-shell"] {
       --chat-composer-glass-surface: var(--card);
       --chat-composer-outline: rgb(0 0 0 / 8%);
+    }
+    & [data-composer-banner-surface] {
+      --chat-composer-attached-surface: var(--chat-composer-glass-surface, var(--card));
+    }
+    & [data-composer-banner-surface]:is([data-variant="default"], [data-variant="info"], [data-variant="success"]) {
+      --chat-composer-attached-outline: var(
+        --chat-composer-outline,
+        color-mix(in srgb, var(--contrast-foreground) 8%, transparent)
+      );
     }
   }
   &.dark {
@@ -42,6 +53,9 @@ const css = `
     & [data-slot="composer-shell"] {
       --chat-composer-outline: rgb(255 255 255 / 5%);
       --chat-composer-highlight: rgb(255 255 255 / 3%);
+    }
+    & [data-composer-banner-surface]:is([data-variant="default"], [data-variant="info"], [data-variant="success"]) {
+      --chat-composer-attached-outline: var(--chat-composer-outline, rgb(255 255 255 / 5%));
     }
   }
 
@@ -141,6 +155,16 @@ const css = `
     &:hover {
       background: rgb(0 0 0 / 65%);
     }
+  }
+
+  /* 8. Chat code blocks keep their own fill and edge, a light gray card in light and a faint fill
+        with no edge in dark, where T3 paints them with the theme's code colors. Diffs and T3's
+        other code surfaces keep the code colors. revert-layer hands each property back to the
+        block's own classes. Hook: the chat-markdown-codeblock class inside .chat-markdown and
+        .composer-tiptap, T3's own selector for the themed look. */
+  & :is(.chat-markdown, .composer-tiptap) .chat-markdown-codeblock {
+    border-color: revert-layer;
+    background-color: revert-layer;
   }
 }
 `;

@@ -1,7 +1,7 @@
 {
   "id": "surface",
   "name": "Surface",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Surface's look: calm neutral grays in dark, T3's own colors in light, with cards, rounder corners and color only where something needs attention.",
   "engines": {
     "t3": ">=0.1.5"
