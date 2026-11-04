@@ -14,6 +14,9 @@ const lockOpen = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/s
 // How far the drawer sits in from each side of the card. T3 sets it on the composer shell, where
 // its banners use it too, so the drawer follows if T3 changes it.
 const drawerInset = "var(--chat-composer-drawer-inset, 1.375rem)";
+// The drawer's bottom corners round like the card. Tailwind emits --radius-2xl only while T3's own
+// code uses it, so it falls back to T3's value.
+const cardRadius = "var(--radius-2xl, calc(var(--radius) + 8px))";
 
 // The plugin's own elements. The old row sat 16px in from the card's right and bottom edges, and
 // 12px on a narrow screen with the model picker pulled 4px toward the edge, switching at the same
@@ -33,9 +36,15 @@ const css = `
   margin-inline-start: -0.25rem;
   margin-block-end: 0.25rem;
 }
-.classic-composer-effort,
-.classic-composer-access {
+.classic-composer-effort {
   display: contents;
+}
+/* Permissions and the plan toggle sit 4px apart, as one block like T3's own row. */
+.classic-composer-access {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.25rem;
 }
 .classic-composer-send,
 .classic-composer-folded {
@@ -85,13 +94,13 @@ const css = `
   gap: 1rem;
   & p {
     margin: 0;
-    font-size: var(--text-sm);
+    font-size: var(--text-sm, 0.875rem);
     font-weight: 500;
   }
   & p + p {
     margin-top: 0.125rem;
     color: var(--muted-foreground);
-    font-size: var(--text-xs);
+    font-size: var(--text-xs, 0.75rem);
     font-weight: 400;
   }
 }
@@ -102,14 +111,19 @@ const css = `
 
 /* 1. Hook: data-chat-composer-actions and data-chat-composer-controls, which T3's composer reads.
       A narrow row hands over to T3's own row, the only one that folds pickers into a menu, and
-      puts the pickers back on the left. */
+      puts the pickers back on the left, with the menu button against the model like the old
+      row's. The context meter and send keep the 8px the actions box put between them. */
 .classic-composer-folded {
   & [data-chat-composer-actions="right"] {
     display: contents;
+    & > :not([data-chat-composer-controls="footer"]) + * {
+      margin-inline-start: 0.5rem;
+    }
   }
   & [data-chat-composer-controls="footer"] {
     order: -1;
     justify-content: flex-start;
+    gap: 0;
     margin-inline: -0.25rem 0.5rem;
   }
 }
@@ -170,9 +184,9 @@ svg.lucide-shield-off {
     position: absolute;
     inset: 0;
     z-index: -1;
-    border: 1px solid var(--chat-composer-outline);
-    border-radius: 0 0 var(--radius-2xl) var(--radius-2xl);
-    background-color: var(--chat-composer-glass-surface);
+    border: 1px solid var(--chat-composer-outline, var(--border));
+    border-radius: 0 0 ${cardRadius} ${cardRadius};
+    background-color: var(--chat-composer-glass-surface, var(--card));
     /* The top 15px sit under the card. */
     mask-image: linear-gradient(transparent 15px, black 15px);
   }
@@ -197,7 +211,7 @@ svg.lucide-shield-off {
 .dark [data-slot="composer-context-strip"]::before {
   background-color: color-mix(
     in oklab,
-    var(--chat-composer-glass-surface) var(--glass-opacity, 100%),
+    var(--chat-composer-glass-surface, var(--card)) var(--glass-opacity, 100%),
     transparent
   );
   -webkit-backdrop-filter: blur(var(--glass-blur, 0)) saturate(var(--glass-saturation, 1));
@@ -355,9 +369,10 @@ function ClassicRow({ pieces }: { readonly pieces: WebPluginParts["composer.cont
             <span className="classic-composer-effort">{pieces.effort}</span>
             <span className="classic-composer-access">{pieces.access}</span>
           </div>
+          {/* T3's order, which its own row keeps when the row folds. */}
           <div className="classic-composer-send">
-            {pieces.buttons}
             {pieces.attach}
+            {pieces.buttons}
             {pieces.actions}
           </div>
         </>

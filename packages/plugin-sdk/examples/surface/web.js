@@ -4,6 +4,9 @@
 // renames stops matching.
 const css = `
 :root[data-theme-id="surface"] {
+  /* Tailwind emits its radius and text size tokens only while T3's own code uses them, so each
+     one read here falls back to T3's value. */
+
   /* 1. Buttons, inputs, pickers and sidebar rows round like cards. The theme's radius only sets
         --radius, and T3 keeps a separate --control-radius. */
   --control-radius: 0.625rem;
@@ -54,7 +57,7 @@ const css = `
   & [data-thread-details-card] section {
     padding: 0.25rem;
     border: 1px solid var(--border);
-    border-radius: var(--radius-2xl);
+    border-radius: var(--radius-2xl, calc(var(--radius) + 8px));
     background: var(--card);
     /* The composer's own shadows. T3 builds them into its classes, so no variable carries them. */
     box-shadow: 0 1px 2px rgb(0 0 0 / 5%);
@@ -75,13 +78,13 @@ const css = `
     margin-bottom: 0;
   }
   & [data-thread-details-card] section h3 {
-    font-size: var(--text-xs);
-    line-height: var(--text-xs--line-height);
+    font-size: var(--text-xs, 0.75rem);
+    line-height: var(--text-xs--line-height, calc(1 / 0.75));
     font-weight: 400;
   }
   & [data-thread-details-card] section > :last-child {
     padding: 0.125rem;
-    border-radius: var(--radius-xl);
+    border-radius: var(--radius-xl, calc(var(--radius) + 4px));
     background: var(--surface-raised);
   }
 
@@ -90,7 +93,7 @@ const css = `
         T3's flat sections. */
   & [data-slot="settings-group"][class~="bg-card/40"]:not([data-provider-detail] *) {
     border-color: var(--border);
-    border-radius: var(--radius-2xl);
+    border-radius: var(--radius-2xl, calc(var(--radius) + 8px));
     background: var(--card);
   }
 
@@ -99,12 +102,12 @@ const css = `
         its tabs, which a tooltip trigger keeps when its own data-slot replaces the toggle's. */
   & [data-slot="toggle-group"][data-variant="segmented"] {
     border: 1px solid var(--border);
-    border-radius: var(--radius-xl);
+    border-radius: var(--radius-xl, calc(var(--radius) + 4px));
   }
   & [data-slot="toggle-group"][data-variant="segmented"] > [data-variant="segmented"] {
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-lg, var(--radius));
     &::before {
-      border-radius: calc(var(--radius-lg) - 1px);
+      border-radius: calc(var(--radius-lg, var(--radius)) - 1px);
     }
   }
   &.dark [data-slot="toggle-group"][data-variant="segmented"] {
@@ -122,7 +125,7 @@ const css = `
         it no hook but its label, so this is the one rule that matches text. */
   & button[aria-label="Stop generation"] {
     border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-lg, var(--radius));
     background: rgb(0 0 0 / 5%);
     color: var(--destructive);
     box-shadow: 0 1px 2px rgb(0 0 0 / 5%);

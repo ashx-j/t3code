@@ -24,6 +24,7 @@ var chevron = chevronSvg(2.25);
 var drawerChevron = chevronSvg(1.75);
 var lockOpen = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='18' height='11' x='3' y='11' rx='2' ry='2'/%3E%3Cpath d='M7 11V7a5 5 0 0 1 9.9-1'/%3E%3C/svg%3E")`;
 var drawerInset = "var(--chat-composer-drawer-inset, 1.375rem)";
+var cardRadius = "var(--radius-2xl, calc(var(--radius) + 8px))";
 var css = `
 .classic-composer {
   display: flex;
@@ -39,9 +40,15 @@ var css = `
   margin-inline-start: -0.25rem;
   margin-block-end: 0.25rem;
 }
-.classic-composer-effort,
-.classic-composer-access {
+.classic-composer-effort {
   display: contents;
+}
+/* Permissions and the plan toggle sit 4px apart, as one block like T3's own row. */
+.classic-composer-access {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.25rem;
 }
 .classic-composer-send,
 .classic-composer-folded {
@@ -91,13 +98,13 @@ var css = `
   gap: 1rem;
   & p {
     margin: 0;
-    font-size: var(--text-sm);
+    font-size: var(--text-sm, 0.875rem);
     font-weight: 500;
   }
   & p + p {
     margin-top: 0.125rem;
     color: var(--muted-foreground);
-    font-size: var(--text-xs);
+    font-size: var(--text-xs, 0.75rem);
     font-weight: 400;
   }
 }
@@ -108,14 +115,19 @@ var css = `
 
 /* 1. Hook: data-chat-composer-actions and data-chat-composer-controls, which T3's composer reads.
       A narrow row hands over to T3's own row, the only one that folds pickers into a menu, and
-      puts the pickers back on the left. */
+      puts the pickers back on the left, with the menu button against the model like the old
+      row's. The context meter and send keep the 8px the actions box put between them. */
 .classic-composer-folded {
   & [data-chat-composer-actions="right"] {
     display: contents;
+    & > :not([data-chat-composer-controls="footer"]) + * {
+      margin-inline-start: 0.5rem;
+    }
   }
   & [data-chat-composer-controls="footer"] {
     order: -1;
     justify-content: flex-start;
+    gap: 0;
     margin-inline: -0.25rem 0.5rem;
   }
 }
@@ -176,9 +188,9 @@ svg.lucide-shield-off {
     position: absolute;
     inset: 0;
     z-index: -1;
-    border: 1px solid var(--chat-composer-outline);
-    border-radius: 0 0 var(--radius-2xl) var(--radius-2xl);
-    background-color: var(--chat-composer-glass-surface);
+    border: 1px solid var(--chat-composer-outline, var(--border));
+    border-radius: 0 0 ${cardRadius} ${cardRadius};
+    background-color: var(--chat-composer-glass-surface, var(--card));
     /* The top 15px sit under the card. */
     mask-image: linear-gradient(transparent 15px, black 15px);
   }
@@ -203,7 +215,7 @@ svg.lucide-shield-off {
 .dark [data-slot="composer-context-strip"]::before {
   background-color: color-mix(
     in oklab,
-    var(--chat-composer-glass-surface) var(--glass-opacity, 100%),
+    var(--chat-composer-glass-surface, var(--card)) var(--glass-opacity, 100%),
     transparent
   );
   -webkit-backdrop-filter: blur(var(--glass-blur, 0)) saturate(var(--glass-saturation, 1));
@@ -368,7 +380,7 @@ function ClassicRow({ pieces }) {
               }),
               /* @__PURE__ */ jsxs("div", {
                 className: "classic-composer-send",
-                children: [pieces.buttons, pieces.attach, pieces.actions],
+                children: [pieces.attach, pieces.buttons, pieces.actions],
               }),
             ],
           }),
