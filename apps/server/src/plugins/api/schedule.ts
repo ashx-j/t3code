@@ -1,5 +1,6 @@
 import { ScheduledTaskSchedule } from "@t3tools/contracts";
 import type { PluginApi } from "@t3tools/plugin-sdk/server";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -8,7 +9,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { nextScheduledRunAt } from "../../scheduledTasks/Schedule.ts";
-import type { FacadeContext } from "./facade.ts";
+import { type FacadeContext, PluginCodeError } from "./facade.ts";
 
 const MIN_INTERVAL_MS = 1000;
 const WALL_CLOCK_CHECK_MS = 60_000;
@@ -23,13 +24,11 @@ export const makeScheduleApi = (facade: FacadeContext): PluginApi["schedule"] =>
   };
   // Waits, runs the handler, and repeats. Runs never overlap: the next wait starts when a run finishes.
   const start = (wait: Effect.Effect<void>, handler: () => void | Promise<void>) => {
-    const tick = Effect.tryPromise(() => Promise.resolve().then(handler)).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("plugin scheduled work failed", {
-          pluginId: facade.pluginId,
-          failure: String(cause).slice(0, 500),
-        }),
-      ),
+    const tick = Effect.tryPromise({
+      try: () => facade.asPlugin(() => Promise.resolve().then(handler)),
+      catch: (cause) => new PluginCodeError({ cause }),
+    }).pipe(
+      Effect.catchCause((cause) => Effect.sync(() => facade.reportFailure(Cause.squash(cause)))),
     );
     const fiber = Effect.runForkWith(facade.context)(
       wait.pipe(Effect.andThen(tick), Effect.forever),

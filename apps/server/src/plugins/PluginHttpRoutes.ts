@@ -19,12 +19,11 @@ import {
 import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
 
 import { authenticateRawRouteWithScope } from "../http.ts";
-import { abortEffect } from "./api/facade.ts";
+import { abortEffect, errorText } from "./api/facade.ts";
 
 const ROUTE_PREFIX = "/api/plugins";
 const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_PATH_CHARS = 1024;
-const MAX_REASON_CHARS = 500;
 const METHODS = ["GET", "POST", "PUT", "DELETE"] as const;
 type PluginHttpMethod = (typeof METHODS)[number];
 // The caller's credentials stay with the server; a plugin that logs headers cannot leak them.
@@ -106,17 +105,6 @@ export class PluginHttpRoutes extends Context.Service<
     >;
   }
 >()("t3/plugins/PluginHttpRoutes") {}
-
-const errorText = (cause: unknown) => {
-  let text = "Unknown error";
-  try {
-    text =
-      cause instanceof Error && typeof cause.message === "string" ? cause.message : String(cause);
-  } catch {
-    // Plugin code can throw values whose conversion to a string throws again.
-  }
-  return text.slice(0, MAX_REASON_CHARS);
-};
 
 const isValidPath = (path: string) =>
   path.startsWith("/") && path.length <= MAX_PATH_CHARS && !/[?#\s]/.test(path);

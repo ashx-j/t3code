@@ -43,7 +43,7 @@ import * as Stream from "effect/Stream";
 import type { BuiltInDriversEnv } from "../../provider/builtInDrivers.ts";
 import type * as ProviderDriverRegistration from "../../provider/ProviderDriverRegistration.ts";
 import { makeAcpAgentDriver } from "../acpAgentDriver.ts";
-import { type FacadeContext, refused } from "./facade.ts";
+import { errorText, type FacadeContext, refused } from "./facade.ts";
 
 // Modules the server already uses, so handing them over grows nothing.
 const PROVIDER_RUNTIME: PluginProviderRuntime = {
@@ -80,16 +80,8 @@ const PROVIDER_RUNTIME: PluginProviderRuntime = {
 
 const isDriverKind = Schema.is(ProviderDriverKind);
 // The registry holds its lock while `create` runs, so one that never finishes would stop every
-// provider change. Shorter than the activate deadline, since `registerDriver` waits for it.
+// provider change. Each instance gets its own deadline, one after another.
 const CREATE_DEADLINE = Duration.seconds(20);
-
-const errorText = (error: unknown) => {
-  try {
-    return (error instanceof Error ? error.message : String(error)).slice(0, 500);
-  } catch {
-    return "Unknown error";
-  }
-};
 
 const isJsonObject = Schema.is(Schema.JsonObject);
 

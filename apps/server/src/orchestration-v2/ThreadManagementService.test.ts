@@ -374,15 +374,13 @@ it.effect(
 
     return Effect.gen(function* () {
       const hooks = yield* PluginHooks.PluginHooks;
-      yield* hooks
-        .addSlashCommand(
-          { pluginId: "deployer", pluginName: "Deployer", name: "deploy" },
-          (outgoing) =>
-            Effect.sleep(Duration.seconds(4)).pipe(
-              Effect.as({ text: `Deploy ${outgoing.args} now.` }),
-            ),
-        )
-        .pipe(Effect.asVoid);
+      const removeDeploy = yield* hooks.addSlashCommand(
+        { pluginId: "deployer", pluginName: "Deployer", name: "deploy" },
+        (outgoing) =>
+          Effect.sleep(Duration.seconds(4)).pipe(
+            Effect.as({ text: `Deploy ${outgoing.args} now.` }),
+          ),
+      );
       const threads = yield* ThreadManagementService.ThreadManagementService;
       const deploying = yield* threads
         .dispatch(message("deploy", "/deploy staging"))
@@ -390,14 +388,25 @@ it.effect(
       const testing = yield* threads
         .dispatch(message("tests", "And run the tests."))
         .pipe(Effect.forkChild({ startImmediately: true }));
+      // The plugin turns off mid-command; the thread's next message still waits its turn.
+      yield* removeDeploy;
+      const shipping = yield* threads
+        .dispatch(message("ship", "Then ship it."))
+        .pipe(Effect.forkChild({ startImmediately: true }));
       yield* threads.dispatch(
         message("elsewhere", "Unrelated.", ThreadId.make("thread:thread-management:elsewhere")),
       );
       yield* TestClock.adjust(Duration.seconds(4));
       yield* Fiber.join(deploying);
       yield* Fiber.join(testing);
+      yield* Fiber.join(shipping);
 
-      expect(texts).toEqual(["Unrelated.", "Deploy staging now.", "And run the tests."]);
+      expect(texts).toEqual([
+        "Unrelated.",
+        "Deploy staging now.",
+        "And run the tests.",
+        "Then ship it.",
+      ]);
     }).pipe(Effect.provide(layerTest));
   },
 );

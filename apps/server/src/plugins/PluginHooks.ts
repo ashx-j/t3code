@@ -8,6 +8,7 @@ import type {
 import { T3_SLASH_COMMAND_NAMES } from "@t3tools/shared/slashCommands";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -228,8 +229,8 @@ export interface PluginHooksRegistry {
   /**
    * Runs the hooks, not slash commands, on text that reaches an agent without a new message: a
    * queued message's edit or a delegated task's prompt. `message` is read only when a hook would
-   * run, and nothing there means the text is not the sender's own, so it passes unchanged. Hooks
-   * may only block text that starts like a slash command.
+   * run; nothing there means the text is not the sender's own, so it passes unchanged. A command
+   * may only be blocked, and with no model in `message`, any `/name` counts as one.
    */
   readonly beforeRewrite: (
     text: string,
@@ -410,6 +411,21 @@ const make = Effect.gen(function* () {
         accepted ? Effect.succeed(text) : run,
       ),
     );
+  // A name in T3's, the provider's or a plugin's list. Without the message's provider, any `/name`
+  // may be a command.
+  const isCommand = (text: string, message: PluginOutgoingMessage): Effect.Effect<boolean> => {
+    const name = SLASH_COMMAND.exec(text.trimStart())?.[1];
+    if (name === undefined) return Effect.succeed(false);
+    const instanceId = message.model?.instanceId;
+    if (instanceId === undefined || T3_SLASH_COMMAND_NAMES.has(name)) return Effect.succeed(true);
+    return SubscriptionRef.get(commands).pipe(
+      Effect.flatMap((all) =>
+        all.some((entry) => entry.command.name === name)
+          ? Effect.succeed(true)
+          : providerHas(name, message.threadId, Effect.succeed(instanceId), undefined),
+      ),
+    );
+  };
   // Changed text would change what a slash command does, so a command's hooks may only block it.
   const runHooks = (
     message: PluginOutgoingMessage,
@@ -475,7 +491,6 @@ const make = Effect.gen(function* () {
         }),
       );
     },
-    // Without the message's provider, any `/name` may be a command, so hooks may only block it.
     beforeRewrite: (text, message, alreadyAccepted) =>
       Ref.get(hooks).pipe(
         Effect.flatMap((all) =>
@@ -485,10 +500,10 @@ const make = Effect.gen(function* () {
                 Effect.flatMap((read) =>
                   read === undefined
                     ? Effect.succeed(text)
-                    : runHooks(
-                        { ...read, text },
-                        alreadyAccepted,
-                        SLASH_COMMAND.test(text.trimStart()),
+                    : isCommand(text, read).pipe(
+                        Effect.flatMap((command) =>
+                          runHooks({ ...read, text }, alreadyAccepted, command),
+                        ),
                       ),
                 ),
               ),
@@ -543,8 +558,14 @@ const make = Effect.gen(function* () {
           Ref.update(instructions, (all) => all.filter((other) => other !== entry)),
         ),
       ),
+    // Every plugin state change sets them, and each emission rebuilds every client's provider list.
     setSkillFolders: (folders, listed) =>
-      Ref.set(skillFolders, folders).pipe(Effect.andThen(SubscriptionRef.set(skills, listed))),
+      Ref.set(skillFolders, folders).pipe(
+        Effect.andThen(SubscriptionRef.get(skills)),
+        Effect.flatMap((current) =>
+          Equal.equals(current, listed) ? Effect.void : SubscriptionRef.set(skills, listed),
+        ),
+      ),
     currentSkills: SubscriptionRef.get(skills),
     skills: SubscriptionRef.changes(skills),
     agentContext: Effect.all([Ref.get(instructions), Ref.get(skillFolders)]).pipe(

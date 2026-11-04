@@ -4,12 +4,13 @@ import type {
   PluginCompletedRun,
   PluginStoredEvent,
 } from "@t3tools/plugin-sdk/server";
+import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import type * as PluginHooks from "../PluginHooks.ts";
-import type { FacadeContext } from "./facade.ts";
+import { type FacadeContext, PluginCodeError } from "./facade.ts";
 import type { RuntimeRequestHooks } from "./runtimeRequests.ts";
 
 /** T3 keeps its own records in a plugin's storage under this prefix, out of the plugin's reach. */
@@ -56,6 +57,9 @@ const isJsonObject = (value: unknown): value is Record<string, unknown> =>
 // Ended runs remembered with the cursor: a run can be updated again after it ends (a checkpoint
 // lands on an interrupted run), and those later updates must not deliver it twice.
 const REMEMBERED_RUNS = 256;
+// Marks a remembered run whose rollback was delivered: a revert rolls back a run plugins already
+// heard end, and they hear of it once more.
+const ROLLED_BACK_SUFFIX = "#rolled_back";
 const RESUME_DELAY_MS = 1000;
 
 interface RunCursor {
@@ -122,9 +126,11 @@ export const makeTurnsApi = (
               // A retry restarts the same run, which then ends again.
               if (!TERMINAL_RUN_STATUSES.has(run.status)) {
                 handled.delete(runId);
+                handled.delete(`${runId}${ROLLED_BACK_SUFFIX}`);
                 continue;
               }
-              if (handled.has(runId)) continue;
+              const key = run.status === "rolled_back" ? `${runId}${ROLLED_BACK_SUFFIX}` : runId;
+              if (handled.has(key)) continue;
               try {
                 await handler({
                   runId,
@@ -133,14 +139,9 @@ export const makeTurnsApi = (
                   run: stored.event.payload as PluginCompletedRun["run"],
                 });
               } catch (error) {
-                Effect.runForkWith(facade.context)(
-                  Effect.logWarning("plugin afterRunCompleted handler failed", {
-                    pluginId,
-                    failure: String(error).slice(0, 500),
-                  }),
-                );
+                facade.reportFailure(error);
               }
-              handled.add(runId);
+              handled.add(key);
               const [oldest] = handled;
               if (handled.size > REMEMBERED_RUNS && oldest !== undefined) handled.delete(oldest);
               sequence = stored.sequence;
@@ -176,9 +177,20 @@ export const makeTurnsApi = (
         answer: (request, signal) =>
           deactivated.aborted
             ? Promise.resolve(undefined)
-            : Promise.resolve()
-                .then(() => handler(request, { signal: AbortSignal.any([signal, deactivated]) }))
-                .then((answer) => (deactivated.aborted ? undefined : answer)),
+            : facade
+                .asPlugin(() =>
+                  Promise.resolve().then(() =>
+                    handler(request, { signal: AbortSignal.any([signal, deactivated]) }),
+                  ),
+                )
+                .then(
+                  (answer) => (deactivated.aborted ? undefined : answer),
+                  // No answer leaves the request to the user.
+                  (error: unknown) => {
+                    facade.reportFailure(error);
+                    return undefined;
+                  },
+                ),
       });
       deactivated.addEventListener("abort", remove, { once: true });
     },
@@ -191,19 +203,23 @@ export const makeTurnsApi = (
         services.hooks.addBeforeDispatch(pluginId, (message) =>
           activation.controller.signal.aborted
             ? Effect.sync(() => undefined)
-            : Effect.tryPromise(() =>
-                Promise.resolve().then(() =>
-                  hook({
-                    threadId: message.threadId,
-                    messageId: message.messageId,
-                    text: message.text,
-                    createdBy: message.createdBy,
-                    creationSource: message.creationSource,
-                    attachments: message.attachments,
-                    ...(message.model === undefined ? {} : { model: message.model }),
-                  }),
-                ),
-              ).pipe(
+            : Effect.tryPromise({
+                try: () =>
+                  facade.asPlugin(() =>
+                    Promise.resolve().then(() =>
+                      hook({
+                        threadId: message.threadId,
+                        messageId: message.messageId,
+                        text: message.text,
+                        createdBy: message.createdBy,
+                        creationSource: message.creationSource,
+                        attachments: message.attachments,
+                        ...(message.model === undefined ? {} : { model: message.model }),
+                      }),
+                    ),
+                  ),
+                catch: (cause) => new PluginCodeError({ cause }),
+              }).pipe(
                 Effect.timeoutOption(BEFORE_DISPATCH_DEADLINE),
                 Effect.map(
                   Option.match({
@@ -215,10 +231,10 @@ export const makeTurnsApi = (
                   }),
                 ),
                 Effect.catchCause((cause) =>
-                  Effect.logWarning("plugin beforeDispatch hook failed", {
-                    pluginId,
-                    failure: String(cause).slice(0, 500),
-                  }).pipe(Effect.as(undefined)),
+                  Effect.sync(() => {
+                    facade.reportFailure(Cause.squash(cause));
+                    return undefined;
+                  }),
                 ),
               ),
         ),

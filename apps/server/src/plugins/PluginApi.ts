@@ -120,9 +120,16 @@ export const makePluginApi = (input: {
   readonly activation: PluginActivation;
   readonly context: Context.Context<never>;
   readonly services: PluginApiServices;
+  /** Failures of plugin callbacks that only T3 waits on, shown on the plugin's row. */
+  readonly onFailure: (error: unknown) => void;
 }): PluginApi => {
   const { id, activation, context, services } = input;
-  const facade = makeFacadeContext({ pluginId: id, activation, context });
+  const facade = makeFacadeContext({
+    pluginId: id,
+    activation,
+    context,
+    onFailure: input.onFailure,
+  });
   const { call } = facade;
   const log =
     (level: "Debug" | "Info" | "Warn" | "Error") =>

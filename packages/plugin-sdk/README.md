@@ -89,6 +89,15 @@ module.exports = {
 Everything a plugin registers is released when it is disabled, reloaded or uninstalled; add your
 own cleanup with `api.onDeactivate`.
 
+A failure in plugin code that nothing awaits, such as a throw in a timer, a schedule or a hook,
+doesn't stop T3 Code. It shows on the plugin's row in Settings → Plugins and in
+`t3_plugins_check`. Give every child process, socket and stream you create an `'error'` listener
+anyway: Node reports an unhandled `'error'` event as a crash, and T3 Code can't always tell it came
+from your plugin.
+
+HTTP route handlers get the request body as UTF-8 text, so a binary upload arrives corrupted, and a
+query key that appears twice keeps its last value.
+
 ## Agent providers and source control hosts
 
 An ACP agent needs no Effect code:
@@ -215,6 +224,9 @@ durable thing T3 offers for it:
   `app.pageFrame` gets T3's header with all of that, so don't resize or pad it.
 - **Compare ids, not text.** `app.sidebar`'s `page` and `app.pageFrame`'s `kind` are stable ids;
   labels such as `Settings` can change.
+- **Expect `timeline.item` to change.** Its `item` is the step as T3 sends it to clients
+  (`OrchestrationV2TurnItem`), not a plugin type, so its fields can change between releases. Read
+  the fields you need defensively and fall back to `original`.
 - **Ship what the plugin runs.** Adding a folder leaves out `.git` and `node_modules`, and npm
   installs don't install dependencies, so build everything into the files the manifest names.
 - **Ask for a seam.** When T3 doesn't hand over what you need, ask for a piece, part or token on

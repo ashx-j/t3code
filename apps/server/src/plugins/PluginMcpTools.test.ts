@@ -161,6 +161,20 @@ it.effect("answer under plg_ names with access checks, then answer disabled", ()
         ),
       TypeError,
     );
+    // Anthropic's API refuses the whole tool list over one of these at the top.
+    assert.throws(
+      () =>
+        api.mcp.registerTool(
+          {
+            name: "either",
+            description: "Takes one of two shapes.",
+            inputSchema: { type: "object", oneOf: [{ required: ["a"] }, { required: ["b"] }] },
+            access: "read",
+          },
+          () => null,
+        ),
+      /oneOf at the top of its input schema/,
+    );
 
     const names = yield* toolNames;
     assert.includeMembers(names, ["plg_mcp-plugin_echo", "plg_mcp-plugin_touch"]);
@@ -234,7 +248,8 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
           invoked.push({ pluginId, method, input });
           return "pong";
         }),
-      setEnabled: (pluginId, enabled) => Effect.succeed({ ...installed, id: pluginId, enabled }),
+      setEnabled: (pluginId, enabled) =>
+        Effect.succeed({ ...installed, id: pluginId, enabled, serverFailure: "timer threw" }),
       install: () => Effect.succeed(installed),
       uninstall: (pluginId, removeData, linkedFolder) =>
         Effect.sync(() => {
@@ -270,6 +285,7 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
       status: "failed",
       linkedFolder: "/home/user/plugin",
       failure: { stage: "discovery", message: "Another copy is used." },
+      serverFailure: "timer threw",
     };
     yield* tools.setInstalledPlugins([installed, shadowedLink]);
     assert.includeMembers(yield* toolNames, [
@@ -299,6 +315,7 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
             status: "failed",
             enabled: true,
             failure: "discovery: Another copy is used.",
+            serverFailure: "timer threw",
             linkedFolder: "/home/user/plugin",
             name: "MCP tools",
             version: "0.1.0",
@@ -319,7 +336,10 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
         pluginId: "mcp-plugin",
         enabled: false,
       }),
-      { isError: false, text: '{"id":"mcp-plugin","status":"active","enabled":false}' },
+      {
+        isError: false,
+        text: '{"id":"mcp-plugin","status":"active","enabled":false,"serverFailure":"timer threw"}',
+      },
     );
     // A failed reload says why, so an agent can fix the plugin without opening Settings.
     assert.deepStrictEqual(

@@ -8,7 +8,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import type * as PluginHooks from "../PluginHooks.ts";
-import type { FacadeContext } from "./facade.ts";
+import { errorText, type FacadeContext } from "./facade.ts";
 
 // The sender waits on the command, so it gets longer than a hook but still a bound.
 const SLASH_COMMAND_DEADLINE = Duration.seconds(10);
@@ -32,16 +32,6 @@ const outcomeOf = (result: PluginSlashCommandResult, pluginName: string) => {
     return { text: result.text };
   }
   return undefined;
-};
-
-const errorText = (error: unknown) => {
-  let text = "Unknown error";
-  try {
-    text = error instanceof Error ? error.message : String(error);
-  } catch {
-    // Plugin code can throw values whose conversion to a string throws again.
-  }
-  return text.slice(0, MAX_TEXT_CHARS);
 };
 
 class PluginSlashCommandError extends Schema.TaggedError<PluginSlashCommandError>()(
@@ -78,18 +68,20 @@ export const makeSlashCommandsApi = (
         (message) =>
           Effect.tryPromise({
             try: (signal) =>
-              Promise.resolve().then(() =>
-                handler(
-                  {
-                    threadId: message.threadId,
-                    messageId: message.messageId,
-                    name: command.name,
-                    args: message.args,
-                    createdBy: message.createdBy,
-                    creationSource: message.creationSource,
-                    attachments: message.attachments,
-                  },
-                  { signal: AbortSignal.any([signal, activation.controller.signal]) },
+              facade.asPlugin(() =>
+                Promise.resolve().then(() =>
+                  handler(
+                    {
+                      threadId: message.threadId,
+                      messageId: message.messageId,
+                      name: command.name,
+                      args: message.args,
+                      createdBy: message.createdBy,
+                      creationSource: message.creationSource,
+                      attachments: message.attachments,
+                    },
+                    { signal: AbortSignal.any([signal, activation.controller.signal]) },
+                  ),
                 ),
               ),
             catch: (error) => new PluginSlashCommandError({ reason: errorText(error) }),

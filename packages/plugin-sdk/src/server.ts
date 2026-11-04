@@ -60,8 +60,10 @@ export interface PluginHttpRequest {
   readonly method: string;
   /** The path after `/api/plugins/<pluginId>`, starting with `/`. */
   readonly path: string;
+  /** A key repeated in the query string keeps its last value. */
   readonly query: Readonly<Record<string, string>>;
   readonly headers: Readonly<Record<string, string>>;
+  /** The body decoded as UTF-8 text, so binary bodies arrive corrupted. */
   readonly body: string;
 }
 

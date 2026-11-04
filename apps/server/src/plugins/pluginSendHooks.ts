@@ -260,7 +260,10 @@ export const makePluginSendHooks = Effect.gen(function* () {
     return threadId === undefined
       ? send
       : hooks.handlesMessages.pipe(
-          Effect.flatMap((handled) => (handled ? inThreadOrder(threadId, send) : send)),
+          // A message still in line keeps the next one behind it after the last plugin stops.
+          Effect.flatMap((handled) =>
+            handled || lines.has(threadId) ? inThreadOrder(threadId, send) : send,
+          ),
         );
   };
 });

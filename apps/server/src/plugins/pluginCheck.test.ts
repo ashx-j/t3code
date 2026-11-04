@@ -63,7 +63,7 @@ it.layer(NodeServices.layer)("checkPluginFolder", (it) => {
               // Only top-level string secrets reach the secret store.
               auth: {
                 type: "object",
-                properties: { token: { type: "string", format: "t3-secret" } },
+                properties: { "api/token": { type: "string", format: "t3-secret" } },
               },
             },
           },
@@ -104,7 +104,7 @@ it.layer(NodeServices.layer)("checkPluginFolder", (it) => {
       );
       assert.include(
         report.findings.find((finding) => finding.code === "secret-not-stored")?.problem,
-        "/properties/auth/properties/token",
+        "/properties/auth/properties/api~1token",
       );
     }),
   );
@@ -132,6 +132,10 @@ it.layer(NodeServices.layer)("checkPluginFolder", (it) => {
         ].join("\n"),
         "theme.css": ":root { --accent: #ff00aa; }",
       });
+      // A link out of the folder is not the plugin's to quote.
+      const fs = yield* FileSystem.FileSystem;
+      const elsewhere = yield* writeFolder({ "private.css": ".lucide-key { color: #ff0000; }" });
+      yield* fs.symlink(`${elsewhere}/private.css`, `${folder}/linked.css`);
       const report = yield* checkPluginFolder(folder, SERVER_VERSION);
       assert.deepStrictEqual(report, { folder, pluginId: "checked", findings: [] });
     }),

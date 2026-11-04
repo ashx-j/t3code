@@ -9,6 +9,8 @@ import type { FacadeContext } from "./facade.ts";
 
 const isAccess = Schema.is(Schema.Literals(["read", "write"]));
 const isJsonObject = Schema.is(Schema.JsonObject);
+// Anthropic's API refuses a tool whose input schema combines schemas at its top level.
+const TOP_LEVEL_COMBINATORS = ["anyOf", "oneOf", "allOf"];
 
 export const makeMcpApi = (
   facade: FacadeContext,
@@ -34,13 +36,21 @@ export const makeMcpApi = (
           `Tool "${tool.name}" needs a description and an object JSON Schema for its input.`,
         );
       }
+      const combinator = TOP_LEVEL_COMBINATORS.find((keyword) => keyword in tool.inputSchema);
+      if (combinator !== undefined) {
+        throw new TypeError(
+          `Tool "${tool.name}" has ${combinator} at the top of its input schema, which model APIs refuse. Put the alternatives in a property instead.`,
+        );
+      }
       const registered = Effect.runSyncExitWith(facade.context)(
         services.mcpTools.register({
           pluginId,
           tool,
           handler: (input, { signal, threadId }) =>
-            Promise.resolve().then(() =>
-              handler(input, { signal: AbortSignal.any([signal, deactivated]), threadId }),
+            facade.asPlugin(() =>
+              Promise.resolve().then(() =>
+                handler(input, { signal: AbortSignal.any([signal, deactivated]), threadId }),
+              ),
             ),
           deactivated,
         }),
