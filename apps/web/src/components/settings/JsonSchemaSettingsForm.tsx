@@ -139,7 +139,7 @@ export function JsonSchemaSettingsForm({
   };
 
   return (
-    <div className="space-y-3 border-t py-3">
+    <div className="space-y-3">
       {form.kind === "json" ? (
         <Textarea
           aria-label={`${label} settings JSON`}
@@ -192,8 +192,8 @@ function JsonSchemaFieldView({
       : field.kind === "list"
         ? field.defaultValue.join(", ")
         : String(field.defaultValue);
-  return (
-    <div className="space-y-1">
+  const heading = (
+    <>
       <Label htmlFor={id}>
         {field.label}
         {field.required ? " *" : ""}
@@ -201,9 +201,20 @@ function JsonSchemaFieldView({
       {field.description ? (
         <p className="text-xs text-muted-foreground">{field.description}</p>
       ) : null}
-      {field.kind === "boolean" ? (
+    </>
+  );
+  if (field.kind === "boolean") {
+    return (
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0 space-y-1">{heading}</div>
         <Switch id={id} checked={value === true} onCheckedChange={onChange} />
-      ) : field.kind === "select" ? (
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-1">
+      {heading}
+      {field.kind === "select" ? (
         <Select
           value={text === "" ? UNSET_OPTION : text}
           onValueChange={(next) =>

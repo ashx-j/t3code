@@ -13,7 +13,15 @@ import {
   SlidersHorizontalIcon,
   Trash2Icon,
 } from "lucide-react";
-import { type DragEvent, useContext, useEffect, useId, useRef, useState } from "react";
+import {
+  type DragEvent,
+  type ReactNode,
+  useContext,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 
 import { cn } from "../../lib/utils";
 import { droppedFolders, type PluginFolder, pickedFolder } from "../../plugins/pluginFolders";
@@ -37,6 +45,7 @@ import {
   DialogPanel,
   DialogPopup,
   DialogTitle,
+  DialogTrigger,
 } from "../ui/dialog";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
@@ -64,7 +73,7 @@ export function PluginsSettings() {
   if (scope.kind === "unavailable") {
     return (
       <SettingsPageContainer>
-        <SettingsSection title="Plugins" variant="plain">
+        <SettingsSection title="Plugins">
           <SettingsRow title={scope.message} />
         </SettingsSection>
       </SettingsPageContainer>
@@ -182,8 +191,12 @@ function PluginsPage({
             .then((installed) => installed && setAdding(false));
         }}
       >
-        <SettingsSection title="Plugins" variant="plain">
-          {main === undefined ? null : (
+        {main === undefined ? (
+          <SettingsSection title="Plugins">
+            <PluginsUnavailable environments={environments} />
+          </SettingsSection>
+        ) : (
+          <PluginList main={main} targets={targets}>
             <SettingsRow
               title="Add a plugin"
               description={
@@ -204,13 +217,8 @@ function PluginsPage({
             >
               <InstallProblems problems={installer.problems} />
             </SettingsRow>
-          )}
-          {main === undefined ? (
-            <PluginsUnavailable environments={environments} />
-          ) : (
-            <PluginList main={main} targets={targets} />
-          )}
-        </SettingsSection>
+          </PluginList>
+        )}
         {main === undefined ? null : (
           <AddPluginDialog
             open={adding}
@@ -435,15 +443,18 @@ const fromGitOrNpm = (copy: PluginCopy) =>
   copy.plugin.installSource !== undefined && copy.plugin.installSource.type !== "path";
 
 /**
- * Each plugin once, however many of `targets` have it, and actions on a row apply to every copy.
- * `main` comes first in `targets` and decides which actions are offered.
+ * The page's own settings, with `children` first, then each plugin once, however many of `targets`
+ * have it. Actions on a row apply to every copy. `main` comes first in `targets` and decides which
+ * actions are offered.
  */
 function PluginList({
   main,
   targets,
+  children,
 }: {
   readonly main: PluginTarget;
   readonly targets: ReadonlyArray<PluginTarget>;
+  readonly children: ReactNode;
 }) {
   const lists = useAtomValue(
     pluginListsAtom(JSON.stringify(targets.map((target) => target.environmentId))),
@@ -475,37 +486,42 @@ function PluginList({
   });
   return (
     <>
-      {agentTools.length === 0 ? null : (
-        <AgentToolsRow environmentId={main.environmentId} environments={agentTools} />
-      )}
+      <SettingsSection title="Plugins">
+        {children}
+        {agentTools.length === 0 ? null : (
+          <AgentToolsRow environmentId={main.environmentId} environments={agentTools} />
+        )}
+        {updatable.length === 0 ? null : (
+          <CheckPluginUpdates environmentId={main.environmentId} copies={updatable} />
+        )}
+      </SettingsSection>
       {targets.map((target) => (
         <ScanPluginsFolder key={target.environmentId} environmentId={target.environmentId} />
       ))}
-      {errors.map((error) => (
-        <SettingsRow key={error} title="Could not load plugins" description={error} />
-      ))}
-      {updatable.length === 0 ? null : (
-        <CheckPluginUpdates environmentId={main.environmentId} copies={updatable} />
-      )}
-      {loaded.every(({ plugins, error }) => plugins === null && error === null) ? (
-        <SettingsRow title="Loading plugins…" role="status" />
-      ) : rows.length === 0 && errors.length === 0 ? (
-        <SettingsRow
-          title="No plugins installed"
-          description="Drop a plugin folder on this page to add it."
-        />
-      ) : (
-        rows.map((row) => (
-          <PluginRow
-            key={row.key}
-            environmentId={main.environmentId}
-            first={row.first}
-            copies={row.copies}
-            shadowed={row.shadowed}
-            labelled={several}
+      <SettingsSection title="Installed plugins">
+        {errors.map((error) => (
+          <SettingsRow key={error} title="Could not load plugins" description={error} />
+        ))}
+        {loaded.every(({ plugins, error }) => plugins === null && error === null) ? (
+          <SettingsRow title="Loading plugins…" role="status" />
+        ) : rows.length === 0 && errors.length === 0 ? (
+          <SettingsRow
+            title="No plugins installed"
+            description="Drop a plugin folder on this page to add it."
           />
-        ))
-      )}
+        ) : (
+          rows.map((row) => (
+            <PluginRow
+              key={row.key}
+              environmentId={main.environmentId}
+              first={row.first}
+              copies={row.copies}
+              shadowed={row.shadowed}
+              labelled={several}
+            />
+          ))
+        )}
+      </SettingsSection>
     </>
   );
 }
@@ -537,14 +553,13 @@ function CheckPluginUpdates({
   readonly copies: ReadonlyArray<PluginCopy>;
 }) {
   const canCheck = useAtomValue(pluginEnvironment.checkPluginUpdates.permissionAtom(environmentId));
+  const canUpdate = useAtomValue(pluginEnvironment.updatePlugin.permissionAtom(environmentId));
   const check = useAtomCommand(pluginEnvironment.checkPluginUpdates, "plugin update check");
-  const [busy, setBusy] = useState(false);
+  const update = useAtomCommand(pluginEnvironment.updatePlugin, "plugin update");
+  const [busy, setBusy] = useState<"checking" | "updating" | null>(null);
   const [checked, setChecked] = useState(false);
-  const updates = new Set(
-    copies
-      .filter((copy) => copy.plugin.availableUpdate !== undefined)
-      .map((copy) => copy.plugin.id),
-  ).size;
+  const outdated = copies.filter((copy) => copy.plugin.availableUpdate !== undefined);
+  const updates = new Set(outdated.map((copy) => copy.plugin.id)).size;
   return (
     <SettingsRow
       title="Updates"
@@ -556,23 +571,45 @@ function CheckPluginUpdates({
             : "T3 Code checks plugins installed from git or npm once a day."
       }
       control={
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={busy || !canCheck}
-          onClick={async () => {
-            setBusy(true);
-            const results = await Promise.all(
-              [...new Set(copies.map((copy) => copy.environmentId))].map((target) =>
-                check({ environmentId: target, input: {} }),
-              ),
-            );
-            setBusy(false);
-            setChecked(results.every((result) => result._tag === "Success"));
-          }}
-        >
-          {busy ? "Checking…" : "Check for updates"}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy !== null || !canCheck}
+            onClick={async () => {
+              setBusy("checking");
+              const results = await Promise.all(
+                [...new Set(copies.map((copy) => copy.environmentId))].map((target) =>
+                  check({ environmentId: target, input: {} }),
+                ),
+              );
+              setBusy(null);
+              setChecked(results.every((result) => result._tag === "Success"));
+            }}
+          >
+            {busy === "checking" ? "Checking…" : "Check for updates"}
+          </Button>
+          {updates > 0 ? (
+            <Button
+              size="sm"
+              disabled={busy !== null || !canUpdate}
+              onClick={async () => {
+                setBusy("updating");
+                await Promise.all(
+                  outdated.map((copy) =>
+                    update({
+                      environmentId: copy.environmentId,
+                      input: { pluginId: copy.plugin.id },
+                    }),
+                  ),
+                );
+                setBusy(null);
+              }}
+            >
+              {busy === "updating" ? "Updating…" : "Update all"}
+            </Button>
+          ) : null}
+        </div>
       }
     />
   );
@@ -753,7 +790,6 @@ function PluginRow({
   const uninstall = useAtomCommand(pluginEnvironment.uninstallPlugin, "plugin removal");
   const update = useAtomCommand(pluginEnvironment.updatePlugin, "plugin update");
   const [busy, setBusy] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   // Plugin UI loads from the main environment only, so its settings panel and web failure do too.
   const contributionKey = pluginContributionKey(environmentId, plugin.id);
   const customSettings = useAtomValue(pluginSettingsPanelAtom(contributionKey));
@@ -838,15 +874,13 @@ function PluginRow({
         ) : (
           <>
             {hasSettings ? (
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                aria-label={`Settings for ${plugin.name}`}
-                aria-expanded={settingsOpen}
-                onClick={() => setSettingsOpen((open) => !open)}
-              >
-                <SlidersHorizontalIcon className="size-4" />
-              </Button>
+              <PluginSettingsDialog
+                first={first}
+                copies={copies}
+                labelled={labelled}
+                customSettings={customSettings}
+                hasGeneratedForm={hasGeneratedForm}
+              />
             ) : null}
             <Button
               size="icon-sm"
@@ -912,30 +946,63 @@ function PluginRow({
           </>
         )
       }
-    >
-      {settingsOpen ? (
-        customSettings === undefined ? (
-          <PluginSettingsEditor first={first} copies={copies} labelled={labelled} />
-        ) : (
-          <>
-            <PluginCustomSettings entry={customSettings} />
-            {/* The plugin's own panel talks to the main environment's copy alone. */}
-            {copies.length > 1 ? (
-              <>
-                <p className="pb-3 text-xs text-muted-foreground">
-                  {hasGeneratedForm
-                    ? `This panel changes ${first.label} only. The form below changes every environment.`
-                    : `This panel changes ${first.label} only.`}
-                </p>
-                {hasGeneratedForm ? (
-                  <PluginSettingsEditor first={first} copies={copies} labelled={labelled} />
-                ) : null}
-              </>
-            ) : null}
-          </>
-        )
-      ) : null}
-    </SettingsRow>
+    />
+  );
+}
+
+/** The settings button and the dialog it opens: the plugin's own panel, or the generated form. */
+function PluginSettingsDialog({
+  first,
+  copies,
+  labelled,
+  customSettings,
+  hasGeneratedForm,
+}: {
+  readonly first: PluginCopy;
+  readonly copies: ReadonlyArray<PluginCopy>;
+  readonly labelled: boolean;
+  readonly customSettings: PluginSettingsPanelEntry | undefined;
+  readonly hasGeneratedForm: boolean;
+}) {
+  const { plugin } = first;
+  return (
+    <Dialog>
+      <DialogTrigger
+        render={
+          <Button size="icon-sm" variant="ghost" aria-label={`Settings for ${plugin.name}`} />
+        }
+      >
+        <SlidersHorizontalIcon className="size-4" />
+      </DialogTrigger>
+      <DialogPopup>
+        <DialogHeader>
+          <DialogTitle>{plugin.name}</DialogTitle>
+          {plugin.description ? <DialogDescription>{plugin.description}</DialogDescription> : null}
+        </DialogHeader>
+        <DialogPanel>
+          {customSettings === undefined ? (
+            <PluginSettingsEditor first={first} copies={copies} labelled={labelled} />
+          ) : (
+            <>
+              <PluginCustomSettings entry={customSettings} />
+              {/* The plugin's own panel talks to the main environment's copy alone. */}
+              {copies.length > 1 ? (
+                <>
+                  <p className="text-xs text-muted-foreground">
+                    {hasGeneratedForm
+                      ? `This panel changes ${first.label} only. The form below changes every environment.`
+                      : `This panel changes ${first.label} only.`}
+                  </p>
+                  {hasGeneratedForm ? (
+                    <PluginSettingsEditor first={first} copies={copies} labelled={labelled} />
+                  ) : null}
+                </>
+              ) : null}
+            </>
+          )}
+        </DialogPanel>
+      </DialogPopup>
+    </Dialog>
   );
 }
 
@@ -1053,7 +1120,7 @@ function RemovePluginPopover({
 function PluginCustomSettings(props: { readonly entry: PluginSettingsPanelEntry }) {
   const Panel = props.entry.component;
   return (
-    <div className="border-t py-3">
+    <div>
       <PluginRenderBoundary
         owner={props.entry.owner}
         what="Its settings panel"
@@ -1086,8 +1153,8 @@ function PluginSettingsEditor({
       input: { pluginId: first.plugin.id },
     }),
   );
-  if (query.error) return <p className="py-2 text-xs text-destructive">{query.error}</p>;
-  if (!query.data) return <p className="py-2 text-xs text-muted-foreground">Loading settings…</p>;
+  if (query.error) return <p className="text-xs text-destructive">{query.error}</p>;
+  if (!query.data) return <p className="text-xs text-muted-foreground">Loading settings…</p>;
   return (
     <PluginSettingsFormView
       first={first}

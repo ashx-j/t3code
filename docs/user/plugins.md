@@ -43,8 +43,10 @@ if that fails. An npm plugin without a pinned version updates to the package's l
 Plugins added by dropping or choosing a folder update the same way they were added.
 
 T3 Code checks plugins added from a git repository or npm once a day and marks the ones with a
-newer version as **Update available**. **Check for updates** on the Plugins page checks now.
-Plugins installed before this check existed show updates only after their next update.
+newer version as **Update available**. **Check for updates** on the Plugins page checks now, and
+**Update all** updates every marked plugin. The update button at the bottom of the sidebar also
+updates your main environment's plugins along with T3 Code and your providers. Plugins installed
+before this check existed show updates only after their next update.
 
 ## Turn a plugin on or off
 
