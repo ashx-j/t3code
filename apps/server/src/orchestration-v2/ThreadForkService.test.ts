@@ -262,7 +262,7 @@ it.effect("rejects in-progress, rolled-back and plugin reply fork sources", () =
       assert.equal(error.targetThreadId, targetThreadId);
       assert.equal(error.cause, ThreadForkService.forkableSourceRunStatusError(sourceRun));
     }
-    const reply = { ...makeSourceRun("completed"), providerThreadId: null };
+    const reply = { ...makeSourceRun("completed"), providerThreadId: null, commandReply: true };
     const replyError = yield* planFork(reply).pipe(Effect.flip);
     assert.equal(replyError.cause, ThreadForkService.commandReplyForkSourceError(reply));
   }),

@@ -401,6 +401,7 @@ describe("thread workflows", () => {
           ordinal: 4,
           rootNodeId: null,
           providerThreadId: null,
+          commandReply: true,
         },
       ],
     } as never;

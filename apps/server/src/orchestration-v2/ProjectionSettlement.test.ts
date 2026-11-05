@@ -88,7 +88,7 @@ const createRun = Effect.fn(function* (
       modelSelection,
       providerThreadId: null,
       userMessageId: MessageId.make(`message:${runId}`),
-      rootNodeId: NodeId.make(`node:${runId}`),
+      rootNodeId: null,
       activeAttemptId: null,
       status,
       requestedAt: old,
@@ -268,6 +268,7 @@ it.effect(
           completedAt: now,
           checkpointId: null,
           contextHandoffId: null,
+          commandReply: true,
         },
       });
       const candidates = yield* store.getSettlementCandidates();

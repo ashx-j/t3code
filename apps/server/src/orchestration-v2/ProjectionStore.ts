@@ -3810,8 +3810,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       const run = sql.literal(alias);
       return sql`(
         ${run}.status = 'completed'
-        AND ${run}.provider_thread_id IS NULL
-        AND json_extract(${run}.payload_json, '$.rootNodeId') IS NULL
+        AND IFNULL(json_extract(${run}.payload_json, '$.commandReply'), 0) = 1
       )`;
     };
 

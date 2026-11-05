@@ -7175,7 +7175,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("visited projection", (it) => {
                 modelSelection,
                 providerThreadId: null,
                 userMessageId: messageId,
-                rootNodeId: NodeId.make(`${runId}:root`),
+                rootNodeId: null,
                 activeAttemptId: null,
                 status: "completed" as const,
                 queuePosition: null,

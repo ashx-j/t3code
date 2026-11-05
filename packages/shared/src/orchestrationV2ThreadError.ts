@@ -52,11 +52,11 @@ export function threadErrorSummary(
   };
 }
 
-/** A plugin command's reply: recorded as an already finished run that never ran an agent. */
+/** A plugin command's reply that still stands: recorded as a finished run that no agent ran. */
 export function isCommandReplyRun(
-  run: Pick<OrchestrationV2Run, "status" | "rootNodeId" | "providerThreadId">,
+  run: Pick<OrchestrationV2Run, "status" | "commandReply">,
 ): boolean {
-  return run.status === "completed" && run.rootNodeId === null && run.providerThreadId === null;
+  return run.status === "completed" && run.commandReply === true;
 }
 
 export function latestExecutedRun(

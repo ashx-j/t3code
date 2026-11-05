@@ -326,8 +326,7 @@ describe("V2 client presentation", () => {
       modelSelection: v2Projection.thread.modelSelection,
       providerThreadId: null,
       userMessageId: MessageId.make("message-background-presentation"),
-      // Every agent run gets a root node; a finished run without one is a command reply.
-      rootNodeId: NodeId.make("node-background-root"),
+      rootNodeId: null,
       activeAttemptId: null,
       status: "waiting" as const,
       requestedAt: now,

@@ -8667,6 +8667,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       completedAt: now,
       checkpointId: null,
       contextHandoffId: null,
+      commandReply: true,
     };
     // What the sender sent, as the message and as its turn item.
     const sent = {

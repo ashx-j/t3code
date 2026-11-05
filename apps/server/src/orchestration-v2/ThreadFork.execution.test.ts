@@ -98,7 +98,7 @@ it.effect("a persisted fork leaves PR watching with its parent until explicitly 
             modelSelection,
             providerThreadId: null,
             userMessageId: MessageId.make("fork-watch-source-message"),
-            rootNodeId: NodeId.make("fork-watch-source-root"),
+            rootNodeId: null,
             activeAttemptId: null,
             status: "completed",
             requestedAt: now,
@@ -660,7 +660,7 @@ const writeParentRun = (input: {
   readonly text: string;
   /** A checkpointed run on a native provider thread, which `latest_stable` forks start from. */
   readonly stable?: boolean;
-  /** A plugin command's reply: finished, with no root node and no provider thread. */
+  /** A plugin command's reply: finished, marked as a reply, with no root node. */
   readonly reply?: boolean;
 }) =>
   Effect.gen(function* () {
@@ -718,8 +718,8 @@ const writeParentRun = (input: {
             modelSelection,
             providerThreadId,
             userMessageId: messageId,
-            // Every agent run gets a root node; a finished run without one is a plugin's reply.
-            rootNodeId: input.reply === true ? null : NodeId.make(`${input.runId}:root`),
+            rootNodeId: null,
+            ...(input.reply === true ? { commandReply: true } : {}),
             activeAttemptId: null,
             status: input.status,
             queuePosition: null,

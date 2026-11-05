@@ -215,7 +215,8 @@ register one name: the one whose id sorts first handles it, so start order never
 winner, and the other keeps the rest of its commands. A handler's `reply` turns
 the message into the internal `thread.command-reply.record` command under the message's command id,
 so a retry replays it. The orchestrator records the sent message and an `assistant_message` reply
-as a run that is already completed, with no provider thread, attempt or checkpoint: clients drop a
+as a run that is already completed and marked `commandReply`, with no provider thread, attempt or
+checkpoint: clients drop a
 sent message once a user message with its id exists, and paged clients drop run-less items. A
 reply takes the next ordinal even while a turn runs, so the thread shell leaves reply runs out
 like idle compactions (`isSilentRunForShell` and its SQL twin), and `latestExecutedRun` and its

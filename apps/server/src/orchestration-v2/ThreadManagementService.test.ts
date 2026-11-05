@@ -466,6 +466,7 @@ it("latestRun passes over a slash command reply recorded while a turn runs", () 
       status,
       rootNodeId: reply ? null : NodeId.make(`node:${id}`),
       providerThreadId: reply ? null : ProviderThreadId.make(`provider-thread:${id}`),
+      ...(reply ? { commandReply: true } : {}),
     }) as OrchestrationV2Run;
   const reply = run("run:reply", 2, "completed", true);
   expect(
