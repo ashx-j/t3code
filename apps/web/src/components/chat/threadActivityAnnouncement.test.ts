@@ -2,6 +2,7 @@ import {
   MessageId,
   type OrchestrationV2Run,
   ProviderInstanceId,
+  ProviderThreadId,
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -134,7 +135,9 @@ describe("nextThreadAnnouncement", () => {
         ordinal,
         providerInstanceId: ProviderInstanceId.make("codex"),
         modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
-        providerThreadId: null,
+        // A run an agent ran has a provider thread; a completed one without is a plugin's reply.
+        providerThreadId:
+          status === "cancelled" ? null : ProviderThreadId.make("provider-thread-1"),
         userMessageId: MessageId.make(`message-${ordinal}`),
         rootNodeId: null,
         activeAttemptId: null,
