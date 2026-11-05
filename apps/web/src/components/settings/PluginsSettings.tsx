@@ -463,6 +463,8 @@ function PluginList({
     pluginListsAtom(JSON.stringify(targets.map((target) => target.environmentId))),
   );
   const several = targets.length > 1;
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const remoteInView = targets.some((target) => target.environmentId !== primaryEnvironmentId);
   const loaded = targets.map((target, index) => {
     const result = lists[index] ?? AsyncResult.initial(true);
     return {
@@ -521,6 +523,7 @@ function PluginList({
               copies={row.copies}
               shadowed={row.shadowed}
               labelled={several}
+              remoteInView={remoteInView}
             />
           ))
         )}
@@ -787,6 +790,7 @@ function PluginRow({
   copies,
   shadowed,
   labelled,
+  remoteInView,
 }: {
   /** The main environment in view. Its permissions decide which actions are offered. */
   readonly environmentId: EnvironmentId;
@@ -796,6 +800,8 @@ function PluginRow({
   readonly shadowed: boolean;
   /** Problems name their environment, because several are in view. */
   readonly labelled: boolean;
+  /** A server other than the main environment is in view, so the row says where app changes run. */
+  readonly remoteInView: boolean;
 }) {
   const { plugin } = first;
   const canManage = useAtomValue(pluginEnvironment.setPluginEnabled.permissionAtom(environmentId));
@@ -842,7 +848,7 @@ function PluginRow({
     ),
     ...(webFailure === undefined ? [] : [`Web part failed: ${webFailure}`]),
   ];
-  const reach = webReach(plugin);
+  const reach = remoteInView ? webReach(plugin) : null;
   const row = (
     <SettingsRow
       title={
