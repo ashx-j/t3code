@@ -5,8 +5,8 @@ import { AsyncResult, Atom } from "effect/reactivity";
 
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { pluginEnvironment } from "../state/plugins";
-import { primaryServerConfigAtom } from "../state/server";
 import { useAtomCommand } from "../state/use-atom-command";
+import { followedPluginEnvironmentAtom } from "./pluginFollow";
 
 export type PluginUpdateOutcome =
   | { readonly environmentId: EnvironmentId; readonly status: "updated" }
@@ -27,13 +27,13 @@ const updatablePluginsAtom = Atom.family((environmentId: EnvironmentId) =>
 );
 
 /**
- * Plugin updates for the global update button. Only the main environment's: the plugin loader
- * already follows its list, so this opens no stream of its own.
+ * Plugin updates for the global update button. Only the main environment's, read once the plugin
+ * starter follows its list after startup, so this opens no stream of its own.
  */
 export function usePluginUpdates(labelOf: (environmentId: EnvironmentId) => string) {
   const environmentId = usePrimaryEnvironmentId();
-  const config = useAtomValue(primaryServerConfigAtom);
-  const follows = environmentId !== null && config?.environment.capabilities.plugins === true;
+  const followed = useAtomValue(followedPluginEnvironmentAtom);
+  const follows = environmentId !== null && followed === environmentId;
   const plugins = useAtomValue(follows ? updatablePluginsAtom(environmentId) : NO_UPDATES);
   const canUpdate = useAtomValue(
     follows ? pluginEnvironment.updatePlugin.permissionAtom(environmentId) : NO_PERMISSION,
