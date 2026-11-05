@@ -178,6 +178,11 @@ describe("thread execution presentation", () => {
     const projection = { ...v2Projection, runs: [queuedRun, runningRun], updatedAt: now };
 
     expect(deriveLatestThreadRun(projection)?.runId).toBe(queuedRun.id);
+    // A plugin command's reply doesn't stand in for them.
+    const reply = { ...run("run-reply", 3, "completed"), completedAt: now, commandReply: true };
+    expect(deriveLatestThreadRun({ ...projection, runs: [...projection.runs, reply] })?.runId).toBe(
+      queuedRun.id,
+    );
     expect(deriveThreadActivityRun(projection)).toMatchObject({
       runId: runningRun.id,
       status: "running",

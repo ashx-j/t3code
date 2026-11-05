@@ -1,0 +1,8 @@
+{
+  "id": "secrets-plugin",
+  "name": "Deployer",
+  "version": "0.1.0",
+  "description": "Test fixture that asks the user for a secret in a thread.",
+  "engines": { "t3": ">=0.1.0" },
+  "server": "./server.cjs"
+}

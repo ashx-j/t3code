@@ -14,12 +14,18 @@ import {
   fallbackTextGenerationModelSelection,
 } from "@t3tools/shared/serverSettings";
 import * as ServerSettings from "../serverSettings.ts";
-import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
-import { TextGenerationError } from "@t3tools/contracts";
+import type {
+  ProviderTextGeneration,
+  TextGenerationInput,
+  TextGenerationResult,
+} from "@t3tools/provider-core/server/textGeneration";
+import { TextGenerationError, TextGenerationUnsupportedError } from "@t3tools/contracts";
 
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
+import * as PluginHooks from "../plugins/PluginHooks.ts";
+import { withPluginTextGeneration } from "../plugins/pluginTextGeneration.ts";
 import * as ThreadTitleLinks from "./ThreadTitleLinks.ts";
 
 export type {
@@ -31,15 +37,27 @@ export type {
   PrContentGenerationResult,
   ReviewGuideGenerationInput,
   ReviewGuideGenerationResult,
+  TextGenerationInput,
+  TextGenerationResult,
   ThreadTitleGenerationInput,
   ThreadTitleGenerationResult,
 } from "@t3tools/provider-core/server/textGeneration";
 
-export class TextGeneration extends Context.Service<TextGeneration, ProviderTextGeneration>()(
-  "t3/textGeneration/TextGeneration",
-) {}
+export class TextGeneration extends Context.Service<
+  TextGeneration,
+  Omit<ProviderTextGeneration, "generateText"> & {
+    /**
+     * Answers a free-form prompt for plugins; fails when the selected model's provider cannot run
+     * one. Optional, so fakes that never write free-form text need not stub it.
+     */
+    readonly generateText?: (
+      input: TextGenerationInput,
+    ) => Effect.Effect<TextGenerationResult, TextGenerationError | TextGenerationUnsupportedError>;
+  }
+>()("t3/textGeneration/TextGeneration") {}
 
 type TextGenerationOp =
+  | "generateText"
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"
@@ -72,19 +90,16 @@ export const make = Effect.gen(function* () {
   const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   const sourceControl = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
-  const generate = Effect.fn("TextGeneration.generate")(function* <A>(
+  const generate = Effect.fn("TextGeneration.generate")(function* <A, E = never>(
     operation: TextGenerationOp,
     selection: ModelSelection,
     invoke: (
       service: ProviderTextGeneration,
       modelSelection: ModelSelection,
-    ) => Effect.Effect<A, TextGenerationError>,
+    ) => Effect.Effect<A, TextGenerationError | E>,
   ) {
-    const snapshots = yield* registry.listInstances.pipe(
-      Effect.flatMap((instances) =>
-        Effect.forEach(instances, (instance) => instance.snapshot.getSnapshot),
-      ),
-    );
+    const instances = yield* registry.listInstances;
+    const snapshots = yield* Effect.forEach(instances, (instance) => instance.snapshot.getSnapshot);
     const now = DateTime.toEpochMillis(yield* DateTime.now);
     const limited = exhaustedUsageWindow(
       snapshots.find((provider) => provider.instanceId === selection.instanceId),
@@ -116,6 +131,12 @@ export const make = Effect.gen(function* () {
               isProviderAvailable(provider) &&
               isProviderTextGenerationCapable(provider) &&
               (operation !== "generateReviewGuide" || INVESTIGATING_DRIVERS.has(driver)) &&
+              (operation !== "generateText" ||
+                instances.some(
+                  (instance) =>
+                    instance.instanceId === instanceId &&
+                    instance.textGeneration.generateText !== undefined,
+                )) &&
               !exhaustedUsageWindow(provider, now, defaultTextGenerationModel(driver))
             );
           },
@@ -126,7 +147,8 @@ export const make = Effect.gen(function* () {
       Effect.flatMap((service) => invoke(service, selection)),
     );
   });
-  return TextGeneration.of({
+  const pluginHooks = yield* PluginHooks.PluginHooks;
+  const own: ProviderTextGeneration = {
     generateCommitMessage: Effect.fn("TextGeneration.generateCommitMessage")(function (input) {
       return generate("generateCommitMessage", input.modelSelection, (service, modelSelection) =>
         service.generateCommitMessage({ ...input, modelSelection }),
@@ -167,6 +189,19 @@ export const make = Effect.gen(function* () {
               modelSelection,
             });
           }),
+      );
+    }),
+  };
+  // Plugins supply the task texts; a free-form prompt is what a plugin itself asks for.
+  return TextGeneration.of({
+    ...withPluginTextGeneration(pluginHooks, own),
+    generateText: Effect.fn("TextGeneration.generateText")(function (input) {
+      return generate("generateText", input.modelSelection, (service, modelSelection) =>
+        service.generateText === undefined
+          ? Effect.fail(
+              new TextGenerationUnsupportedError({ instanceId: modelSelection.instanceId }),
+            )
+          : service.generateText({ ...input, modelSelection }),
       );
     }),
   });

@@ -191,6 +191,14 @@
       "types": "./src/state/git.ts",
       "default": "./src/state/git.ts"
     },
+    "./state/plugins": {
+      "types": "./src/state/plugins.ts",
+      "default": "./src/state/plugins.ts"
+    },
+    "./plugins/settings-form": {
+      "types": "./src/plugins/pluginSettingsForm.ts",
+      "default": "./src/plugins/pluginSettingsForm.ts"
+    },
     "./state/command-output": {
       "types": "./src/state/commandOutput.ts",
       "default": "./src/state/commandOutput.ts"

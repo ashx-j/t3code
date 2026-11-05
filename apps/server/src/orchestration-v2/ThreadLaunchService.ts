@@ -990,14 +990,17 @@ const make = Effect.gen(function* () {
           const runCreated = dispatched.storedEvents.find(
             (stored) => stored.event.type === "run.created",
           );
-          runId = runCreated?.event.type === "run.created" ? runCreated.event.payload.id : null;
-          if (runId === null) {
+          if (runCreated?.event.type !== "run.created") {
             return yield* mapError(
               input,
               "dispatch-message",
               threadId,
             )("Initial message was accepted without a durable run.");
           }
+          // A plugin that answered the message recorded a finished run; the workspace is prepared
+          // as for a launch without a message.
+          runId =
+            runCreated.event.payload.status === "completed" ? null : runCreated.event.payload.id;
         }
 
         const projection = yield* threads

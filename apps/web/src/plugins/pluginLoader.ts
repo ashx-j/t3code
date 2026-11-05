@@ -1,0 +1,841 @@
+import {
+  RegistryContext,
+  useAtomMount,
+  useAtomRefresh,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from "@effect/atom-react";
+import { T3_SLASH_COMMAND_NAMES } from "@t3tools/shared/slashCommands";
+import type { PreparedHttpAuthorization } from "@t3tools/client-runtime/connection";
+import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { ThreadId, type EnvironmentId, type PluginState } from "@t3tools/contracts";
+import {
+  type HOST_ATOM_REACT_EXPORTS,
+  type HOST_UI_EXPORTS,
+  type WebPluginAction,
+  type WebPluginApi,
+  type WebPluginDefinition,
+} from "@t3tools/plugin-sdk/web";
+import { AsyncResult } from "effect/reactivity";
+import * as React from "react";
+import * as ReactDOM from "react-dom";
+import * as jsxRuntime from "react/jsx-runtime";
+
+import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "../components/ui/empty";
+import { Input } from "../components/ui/input";
+import { Label } from "../components/ui/label";
+import { Switch } from "../components/ui/switch";
+import { Textarea } from "../components/ui/textarea";
+import { toastManager } from "../components/ui/toast";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { registerCommands, type CommandHandlers } from "../shortcuts/dispatcher";
+import {
+  isDesktopPluginCommand,
+  registerDesktopPluginCommand,
+  releaseDesktopPluginCommands,
+} from "./desktopPluginCommands";
+import { pluginEnvironment } from "../state/plugins";
+import { readPreparedConnection } from "../state/session";
+import {
+  registerPluginBanner,
+  registerPluginCodeBlock,
+  registerPluginCommand,
+  registerPluginAction,
+  pluginPageKey,
+  registerPluginPage,
+  registerPluginReplacement,
+  registerPluginRightPanel,
+  registerPluginSidebarSection,
+  registerPluginSlashCommand,
+  registerPluginToolRenderer,
+  registerPluginSettingsPanel,
+  pluginContributionKey,
+  capPluginMentionText,
+  pluginMentionContextId,
+  setPluginComposerCollapseOnScroll,
+  setPluginMentionItems,
+  setPluginThreadBadge,
+  setPluginWebFailure,
+  type PluginActionContexts,
+  type PluginActionEntry,
+  type PluginActionPlace,
+  type PluginOwner,
+} from "./pluginRegistry";
+import { isLoadableWebPlugin } from "./pluginWatch";
+
+const PANEL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
+const COMMAND_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
+// The server's rule for a plugin's own tool names.
+const TOOL_NAME = /^[a-zA-Z0-9_-]+$/;
+const BADGE_TONES = new Set(["info", "success", "warning", "error"]);
+const TOAST_TYPES = new Set(["info", "success", "warning", "error"]);
+const CODE_LANGUAGE = /^[a-z0-9][a-z0-9+#.-]{0,31}$/;
+// Languages the app already draws itself.
+const BUILT_IN_LANGUAGES = new Set(["mermaid", "math"]);
+
+/**
+ * Bundles import React and the UI kit from here instead of shipping their own copies; the SDK's
+ * Vite preset rewrites those imports to this object. `atomReact` lists only hooks the app already
+ * bundles, because a namespace import would keep every export in the startup chunk.
+ */
+const installHostModules = () =>
+  Reflect.set(globalThis, "__t3PluginHost", {
+    react: React,
+    reactDom: ReactDOM,
+    jsxRuntime,
+    atomReact: {
+      RegistryContext,
+      useAtomMount,
+      useAtomRefresh,
+      useAtomSet,
+      useAtomSubscribe,
+      useAtomValue,
+    } satisfies Record<(typeof HOST_ATOM_REACT_EXPORTS)[number], unknown>,
+    ui: {
+      Badge,
+      Button,
+      Empty,
+      EmptyContent,
+      EmptyDescription,
+      EmptyHeader,
+      EmptyMedia,
+      EmptyTitle,
+      Input,
+      Label,
+      Switch,
+      Textarea,
+    } satisfies Record<(typeof HOST_UI_EXPORTS)[number], unknown>,
+  });
+
+/** Tells the server why a plugin's web half failed, so agents' plugin tools can say. */
+const reportWebFailure = (environmentId: EnvironmentId, plugin: PluginState, message: string) => {
+  if (plugin.revision === undefined) return;
+  void runAtomCommand(
+    appAtomRegistry,
+    pluginEnvironment.reportPluginWebFailure,
+    { environmentId, input: { pluginId: plugin.id, revision: plugin.revision, message } },
+    // A client without settings access may not report; the Plugins page still shows it.
+    { reportFailure: false, reportDefect: false },
+  );
+};
+
+const isWebPluginDefinition = (value: unknown): value is WebPluginDefinition =>
+  typeof value === "object" &&
+  value !== null &&
+  "activate" in value &&
+  typeof value.activate === "function";
+
+// A plugin can throw anything; a thrown string is still its message.
+const errorText = (error: unknown) =>
+  (error instanceof Error
+    ? error.message
+    : typeof error === "string" && error !== ""
+      ? error
+      : "The plugin's web bundle failed."
+  ).slice(0, 500);
+
+// Bearer and cookie sessions can fetch plugin files directly. A DPoP proof needs the relay
+// signer, which only the client runtime holds.
+async function pluginFileRequestInit(
+  authorization: PreparedHttpAuthorization | null,
+  url: URL,
+): Promise<RequestInit> {
+  if (authorization === null) return { credentials: "include" };
+  if (authorization._tag === "Bearer") {
+    return { headers: { authorization: `Bearer ${authorization.token}` } };
+  }
+  const headers = await runAtomCommand(
+    appAtomRegistry,
+    pluginEnvironment.pluginFileHeaders,
+    { authorization, url: url.href },
+    { reportFailure: false },
+  );
+  if (headers._tag !== "Success")
+    throw new Error("Could not authorize the request over T3 Connect.");
+  return { headers: { ...headers.value } };
+}
+
+class PluginFileRequestError extends Error {
+  constructor(
+    readonly status: number,
+    filePath: string,
+  ) {
+    super(`The request for ${filePath} failed with ${status}.`);
+  }
+}
+
+// A dropped connection or a gateway error, such as one bad gateway over T3 Connect, can pass.
+const isPassingDownloadFailure = (error: unknown) =>
+  error instanceof TypeError ||
+  (error instanceof PluginFileRequestError && [502, 503, 504].includes(error.status));
+const DOWNLOAD_RETRY_DELAYS_MS = [1_000, 5_000, 30_000];
+
+async function fetchPluginFile(
+  environmentId: EnvironmentId,
+  plugin: PluginState,
+  filePath: string,
+): Promise<Response> {
+  const connection = readPreparedConnection(environmentId);
+  if (connection === null) throw new Error("The environment is not connected.");
+  const authorization = connection.httpAuthorization;
+  const url = new URL(
+    `/api/plugins/${encodeURIComponent(plugin.id)}${filePath}`,
+    connection.httpBaseUrl,
+  );
+  url.searchParams.set("v", plugin.version ?? "0");
+  const response = await fetch(url, await pluginFileRequestInit(authorization, url));
+  if (!response.ok) throw new PluginFileRequestError(response.status, filePath);
+  return response;
+}
+
+// A bare import() cannot send credentials, so the bundle runs from an object URL.
+async function importBundle(code: string) {
+  const objectUrl = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
+  try {
+    const module: unknown = await import(/* @vite-ignore */ objectUrl);
+    const definition =
+      typeof module === "object" && module !== null && "default" in module
+        ? module.default
+        : undefined;
+    if (!isWebPluginDefinition(definition)) {
+      throw new Error("The web bundle does not export a plugin with an activate function.");
+    }
+    return definition;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+/** Runs plugin code from a user action; a failure becomes an error toast. */
+const runReportingFailure = (label: string, run: () => void | Promise<void>) => {
+  void Promise.resolve()
+    .then(run)
+    .catch((error: unknown) => {
+      toastManager.add({ type: "error", title: `${label} failed`, description: errorText(error) });
+    });
+};
+
+// Builds a toolbar or menu entry from a plugin's action; `run` reports failures as toasts.
+const pluginActionEntry = <Place extends PluginActionPlace>(
+  owner: PluginOwner,
+  action: WebPluginAction<PluginActionContexts[Place]>,
+): PluginActionEntry<Place> => {
+  if (!COMMAND_ID.test(action.id)) {
+    throw new TypeError(
+      `"${action.id}" is not a valid action id: use lowercase letters, digits and hyphens, up to 32.`,
+    );
+  }
+  if (typeof action.title !== "string") throw new TypeError(`"${action.id}" needs a text title.`);
+  return {
+    key: `plugin:${owner.pluginId}:${action.id}`,
+    environmentId: owner.environmentId,
+    title: action.title,
+    icon: action.icon,
+    owner,
+    run: (context) => runReportingFailure(action.title, () => action.run(context)),
+  };
+};
+
+interface WebPluginApiContext {
+  readonly environmentId: EnvironmentId;
+  readonly plugin: PluginState;
+  /**
+   * Keeps a cleanup for unload, or runs it at once when the plugin is already unloaded. Returns the
+   * function that forgets the cleanup without running it.
+   */
+  readonly track: (cleanup: () => void) => () => void;
+  /** One dispatcher scope shared by every plugin; commands add and remove their own entries. */
+  readonly shortcutHandlers: () => CommandHandlers;
+  readonly navigate: (path: string) => void;
+  /** False once the plugin unloaded: a timer or callback it left behind must change nothing. */
+  readonly active: () => boolean;
+}
+
+function makeWebPluginApi({
+  environmentId,
+  plugin,
+  track,
+  shortcutHandlers,
+  navigate,
+  active,
+}: WebPluginApiContext): WebPluginApi {
+  const pluginId = plugin.id;
+  const assetUrls = new Map<string, Promise<string>>();
+  let bannerCount = 0;
+  // One cleanup each for a plugin's badges and `@` items, however often it updates them.
+  const badgedThreads = new Set<string>();
+  let badgesTracked = false;
+  let mentionCleanupTracked = false;
+  let collapseCleanupTracked = false;
+  // Shared by everything the plugin draws, so a render failure reaches its row and agents once.
+  const owner: PluginOwner = {
+    environmentId,
+    pluginId,
+    pluginName: plugin.name,
+    report: (message) => reportWebFailure(environmentId, plugin, message),
+  };
+  return {
+    version: 1,
+    id: pluginId,
+    environmentId,
+    rpc: {
+      invoke: async (method, input) => {
+        // A leftover timer from an unloaded start must not keep calling the new server half.
+        if (!active()) throw new Error(`${pluginId} is no longer loaded here.`);
+        const result = await runAtomCommand(
+          appAtomRegistry,
+          pluginEnvironment.invokePlugin,
+          {
+            environmentId,
+            input: { pluginId, method, ...(input === undefined ? {} : { input }) },
+          },
+          { reportFailure: false },
+        );
+        if (result._tag === "Success") return result.value.output;
+        // The server's reason, so the plugin's UI can say why its own call failed.
+        const failure = squashAtomCommandFailure(result);
+        throw new Error(
+          failure instanceof Error && failure.message !== ""
+            ? failure.message
+            : `${pluginId}.${method} failed.`,
+        );
+      },
+      subscribe: (channel, onValue) => {
+        const atom = pluginEnvironment.pluginChannel({
+          environmentId,
+          input: { pluginId, channel },
+        });
+        // `immediate` reads the atom, which starts its stream; a bare subscribe on an atom no one
+        // has read yet waits for a change that never comes.
+        const stop = appAtomRegistry.subscribe(
+          atom,
+          (result) => {
+            if (AsyncResult.isSuccess(result)) onValue(result.value.value);
+          },
+          { immediate: true },
+        );
+        const untrack = track(stop);
+        return () => {
+          untrack();
+          stop();
+        };
+      },
+    },
+    rightPanel: {
+      register: (panel) => {
+        if (!PANEL_NAME.test(panel.name) || typeof panel.title !== "string") {
+          throw new TypeError(`"${panel.name}" needs a valid name and a text title.`);
+        }
+        track(
+          registerPluginRightPanel({
+            environmentId,
+            pluginId,
+            name: panel.name,
+            title: panel.title,
+            component: panel.component,
+            owner,
+          }),
+        );
+      },
+    },
+    settings: {
+      registerPanel: (component) => {
+        // A replaced start's late panel would take the current start's place, then remove it.
+        if (!active()) return;
+        track(registerPluginSettingsPanel({ component, owner }));
+      },
+    },
+    commands: {
+      register: (command) => {
+        if (
+          !COMMAND_ID.test(command.id) ||
+          typeof command.title !== "string" ||
+          (command.keywords !== undefined &&
+            (!Array.isArray(command.keywords) ||
+              !command.keywords.every((keyword) => typeof keyword === "string")))
+        ) {
+          throw new TypeError(
+            `"${command.id}" needs an id of lowercase letters, digits and hyphens, up to 32, starting with a letter or digit, a text title, and keywords that are text.`,
+          );
+        }
+        const keybindingCommand = `plugin.${pluginId}.${command.id}` as const;
+        const run = () => runReportingFailure(command.title, command.run);
+        // Checked before anything is registered, so a plugin that catches the error is left with
+        // nothing half added.
+        const desktopCommand =
+          command.desktop === undefined
+            ? undefined
+            : {
+                command: keybindingCommand,
+                title: command.title,
+                pluginName: plugin.name,
+                menu: command.desktop.menu === true,
+                ...(command.desktop.tray === true ? { tray: true } : {}),
+                ...(command.desktop.globalShortcut === undefined
+                  ? {}
+                  : { globalShortcut: command.desktop.globalShortcut }),
+              };
+        if (desktopCommand !== undefined && !isDesktopPluginCommand(desktopCommand)) {
+          throw new TypeError(
+            `Command "${command.id}" can't go in the desktop menus: it needs a title of up to 200 characters and a shortcut such as CommandOrControl+Shift+Y.`,
+          );
+        }
+        track(
+          registerPluginCommand({
+            environmentId,
+            pluginId,
+            pluginName: plugin.name,
+            command: keybindingCommand,
+            title: command.title,
+            keywords: command.keywords ?? [],
+            run,
+          }),
+        );
+        if (desktopCommand !== undefined) {
+          track(registerDesktopPluginCommand(desktopCommand, run));
+        }
+        const handlers = shortcutHandlers();
+        handlers[keybindingCommand] = (event) => {
+          event.preventDefault();
+          run();
+        };
+        track(() => {
+          delete handlers[keybindingCommand];
+        });
+      },
+    },
+    composer: {
+      showBanner: (banner) => {
+        if (
+          typeof banner.title !== "string" ||
+          (banner.description !== undefined && typeof banner.description !== "string")
+        ) {
+          throw new TypeError("A banner needs a text title, and its description must be text.");
+        }
+        // Banner keys restart with each start, so a replaced start's banner would take the
+        // current one's place.
+        if (!active()) return () => {};
+        bannerCount += 1;
+        // Hiding also drops the cleanup, so many short-lived banners don't pile up until unload.
+        let untrack = () => {};
+        const hide = () => {
+          untrack();
+          removeBanner();
+        };
+        const removeBanner: () => void = registerPluginBanner({
+          key: `${pluginId}:${bannerCount}`,
+          environmentId,
+          pluginId,
+          variant: banner.variant ?? "info",
+          title: banner.title,
+          ...(banner.description === undefined ? {} : { description: banner.description }),
+          dismiss: hide,
+        });
+        untrack = track(removeBanner);
+        return hide;
+      },
+      registerSlashCommand: (command) => {
+        if (!COMMAND_ID.test(command.name)) {
+          throw new TypeError(`"${command.name}" is not a valid slash command name.`);
+        }
+        if (T3_SLASH_COMMAND_NAMES.has(command.name)) {
+          throw new TypeError(`/${command.name} is one of T3's own commands.`);
+        }
+        if (typeof command.description !== "string") {
+          throw new TypeError(`/${command.name} needs a text description for the / menu.`);
+        }
+        track(
+          registerPluginSlashCommand({
+            environmentId,
+            pluginId,
+            pluginName: plugin.name,
+            name: command.name,
+            description: command.description,
+            run: (context) => runReportingFailure(`/${command.name}`, () => command.run(context)),
+          }),
+        );
+      },
+      addButton: (button) => {
+        track(registerPluginAction("composer", pluginActionEntry(owner, button)));
+      },
+      setCollapseOnScroll: (enabled) => {
+        if (!active()) return;
+        const key = pluginContributionKey(environmentId, pluginId);
+        setPluginComposerCollapseOnScroll(key, enabled === true);
+        if (!collapseCleanupTracked) {
+          collapseCleanupTracked = true;
+          track(() => setPluginComposerCollapseOnScroll(key, false));
+        }
+      },
+      setMentionItems: (items) => {
+        if (!active()) return;
+        // One entry per id, the first one, so chips and the menu stay unambiguous.
+        const seen = new Set<string>();
+        const unique = items.filter((item) => {
+          if (typeof item.id === "string" && seen.has(item.id)) return false;
+          seen.add(item.id);
+          return true;
+        });
+        const entries = unique.slice(0, 500).map((item) => {
+          const description = item.description ?? "";
+          if (
+            typeof item.id !== "string" ||
+            typeof item.label !== "string" ||
+            typeof item.text !== "string" ||
+            typeof description !== "string"
+          ) {
+            throw new TypeError("`@` items need a text id, label and text.");
+          }
+          return {
+            key: `plugin-mention:${pluginId}:${item.id}`,
+            contextId: pluginMentionContextId(environmentId, pluginId, item.id),
+            pluginName: plugin.name,
+            label: item.label,
+            description,
+            // Longer text would fail the whole send.
+            text: capPluginMentionText(item.text),
+          };
+        });
+        setPluginMentionItems(environmentId, pluginId, entries);
+        if (!mentionCleanupTracked) {
+          mentionCleanupTracked = true;
+          track(() => setPluginMentionItems(environmentId, pluginId, []));
+        }
+      },
+    },
+    threads: {
+      addMenuItem: (item) => {
+        track(registerPluginAction("threadMenu", pluginActionEntry(owner, item)));
+      },
+      addHeaderButton: (button) => {
+        track(registerPluginAction("threadHeader", pluginActionEntry(owner, button)));
+      },
+      setBadge: (threadId, badge) => {
+        if (!active()) return;
+        const threadKey = scopedThreadKey(scopeThreadRef(environmentId, ThreadId.make(threadId)));
+        if (badge === null) {
+          badgedThreads.delete(threadKey);
+          setPluginThreadBadge(threadKey, pluginId, null);
+          return;
+        }
+        const tone = badge.tone ?? "info";
+        if (typeof badge.label !== "string" || !BADGE_TONES.has(tone)) {
+          throw new TypeError("A badge needs a text label and a known tone.");
+        }
+        setPluginThreadBadge(threadKey, pluginId, { label: badge.label, tone });
+        if (!badgesTracked) {
+          badgesTracked = true;
+          track(() => {
+            for (const key of badgedThreads) setPluginThreadBadge(key, pluginId, null);
+            badgedThreads.clear();
+          });
+        }
+        badgedThreads.add(threadKey);
+      },
+    },
+    pages: {
+      register: (page) => {
+        if (!COMMAND_ID.test(page.name) || typeof page.title !== "string") {
+          throw new TypeError(`"${page.name}" needs a valid name and a text title.`);
+        }
+        track(
+          registerPluginPage(pluginPageKey(pluginId, page.name), {
+            title: page.title,
+            component: page.component,
+            owner,
+          }),
+        );
+      },
+    },
+    sidebar: {
+      addSection: (section) => {
+        if (!COMMAND_ID.test(section.id) || typeof section.title !== "string") {
+          throw new TypeError(`"${section.id}" needs a valid id and a text title.`);
+        }
+        track(
+          registerPluginSidebarSection({
+            key: `${environmentId}\u0000${pluginId}\u0000${section.id}`,
+            title: section.title,
+            component: section.component,
+            owner,
+          }),
+        );
+      },
+    },
+    messages: {
+      addAction: (action) => {
+        track(registerPluginAction("message", pluginActionEntry(owner, action)));
+      },
+    },
+    assetUrl: (name) => {
+      const cached = assetUrls.get(name);
+      if (cached !== undefined) return cached;
+      const url = fetchPluginFile(
+        environmentId,
+        plugin,
+        `/assets/${name.split("/").map(encodeURIComponent).join("/")}`,
+      )
+        .then((response) => response.blob())
+        .then((blob) => {
+          const objectUrl = URL.createObjectURL(blob);
+          track(() => URL.revokeObjectURL(objectUrl));
+          return objectUrl;
+        });
+      assetUrls.set(name, url);
+      // A failed fetch is asked again next time instead of failing for the plugin's lifetime.
+      url.catch(() => {
+        if (assetUrls.get(name) === url) assetUrls.delete(name);
+      });
+      return url;
+    },
+    markdown: {
+      registerCodeBlock: (renderer) => {
+        if (!CODE_LANGUAGE.test(renderer.language) || BUILT_IN_LANGUAGES.has(renderer.language)) {
+          throw new TypeError(`"${renderer.language}" is not a language plugins can draw.`);
+        }
+        track(registerPluginCodeBlock(renderer.language, { component: renderer.component, owner }));
+      },
+    },
+    timeline: {
+      registerToolRenderer: (renderer) => {
+        // The tool's own name, as the server half registered it, without the `plg_` prefix.
+        if (
+          typeof renderer.tool !== "string" ||
+          !TOOL_NAME.test(renderer.tool) ||
+          renderer.tool.startsWith(`plg_${pluginId}_`)
+        ) {
+          throw new TypeError(
+            `"${String(renderer.tool)}" is not a tool name this plugin registers. Use the name given to api.mcp.registerTool, without plg_<id>_.`,
+          );
+        }
+        track(
+          registerPluginToolRenderer({
+            environmentId,
+            toolName: `plg_${pluginId}_${renderer.tool}`,
+            component: renderer.component,
+            owner,
+          }),
+        );
+      },
+    },
+    ui: {
+      replace: (part, component) => {
+        track(registerPluginReplacement(part, component, owner));
+      },
+    },
+    injectStyles: (css) => {
+      const style = document.createElement("style");
+      style.dataset.plugin = pluginId;
+      style.textContent = css;
+      document.head.append(style);
+      track(() => style.remove());
+    },
+    navigate: (path) => {
+      if (!path.startsWith("/")) throw new TypeError(`"${path}" is not an app path.`);
+      if (active()) navigate(path);
+    },
+    toast: (message) => {
+      if (
+        typeof message.title !== "string" ||
+        (message.description !== undefined && typeof message.description !== "string") ||
+        (message.type !== undefined && !TOAST_TYPES.has(message.type))
+      ) {
+        throw new TypeError("A toast needs a text title, text description and a known type.");
+      }
+      if (!active()) return;
+      toastManager.add({
+        type: message.type ?? "info",
+        title: message.title,
+        ...(message.description === undefined ? {} : { description: message.description }),
+      });
+    },
+    onDeactivate: (cleanup) => {
+      track(cleanup);
+    },
+  };
+}
+
+interface LoadedPlugin {
+  /** Version and start revision: a change of either loads the bundle again. */
+  readonly key: string;
+  readonly cleanups: Set<() => void>;
+  disposed: boolean;
+}
+
+// The server gives `activate` 30 seconds; a bundle that never loads or settles fails the same way
+// instead of holding up every other plugin behind it.
+const WEB_PLUGIN_DEADLINE_MS = 30_000;
+
+const withDeadline = async <A>(work: Promise<A>, what: string) => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${what} took longer than 30 seconds.`)),
+      WEB_PLUGIN_DEADLINE_MS,
+    );
+  });
+  try {
+    return await Promise.race([work, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+const loadKey = (plugin: PluginState) => `${plugin.version ?? ""}:${plugin.revision ?? ""}`;
+
+const runCleanups = (cleanups: Iterable<() => void>) => {
+  for (const cleanup of [...cleanups].toReversed()) {
+    try {
+      cleanup();
+    } catch {
+      // A plugin's cleanup must not keep the others from running.
+    }
+  }
+};
+
+/**
+ * Loads the environment's active web plugins and follows plugin state until stopped. Each plugin
+ * fails alone: a failed fetch, import or activate is recorded for the Plugins page.
+ */
+export function startPluginLoader(
+  environmentId: EnvironmentId,
+  navigate: (path: string) => void,
+): () => void {
+  installHostModules();
+  const shortcutHandlers: CommandHandlers = {};
+  // Registered with the first plugin command, so key presses pay nothing until one exists.
+  let stopShortcuts: (() => void) | undefined;
+  const claimShortcutHandlers = () => {
+    // A command registered after stop (a slow `activate`) must not add a scope nobody removes.
+    if (!stopped) stopShortcuts ??= registerCommands(shortcutHandlers);
+    return shortcutHandlers;
+  };
+  const loaded = new Map<PluginState["id"], LoadedPlugin>();
+  let stopped = false;
+
+  const unload = (pluginId: PluginState["id"]) => {
+    const plugin = loaded.get(pluginId);
+    if (plugin === undefined) return;
+    loaded.delete(pluginId);
+    plugin.disposed = true;
+    runCleanups(plugin.cleanups);
+  };
+
+  const load = async (plugin: PluginState) => {
+    const entry: LoadedPlugin = { key: loadKey(plugin), cleanups: new Set(), disposed: false };
+    loaded.set(plugin.id, entry);
+    // Cleared here rather than once `activate` resolves, so a part that throws while it awaits
+    // keeps its note.
+    setPluginWebFailure(environmentId, plugin.id, undefined);
+    // Registrations that arrive after unload, from a slow `activate` or a later callback, are
+    // undone at once instead of outliving the plugin.
+    const track = (cleanup: () => void) => {
+      if (entry.disposed) runCleanups([cleanup]);
+      else entry.cleanups.add(cleanup);
+      return () => {
+        entry.cleanups.delete(cleanup);
+      };
+    };
+    let downloaded = false;
+    const download = () =>
+      withDeadline(
+        fetchPluginFile(environmentId, plugin, "/web.js").then((response) => response.text()),
+        "Loading the web bundle",
+      );
+    try {
+      let bundle: string | undefined;
+      for (const delay of [...DOWNLOAD_RETRY_DELAYS_MS, undefined]) {
+        try {
+          bundle = await download();
+          break;
+        } catch (error) {
+          if (delay === undefined || !isPassingDownloadFailure(error)) throw error;
+          await new Promise((resume) => setTimeout(resume, delay));
+          if (entry.disposed) return;
+        }
+      }
+      if (bundle === undefined) return;
+      downloaded = true;
+      if (entry.disposed) return;
+      // A bundle's top-level `await` can hang too.
+      const definition = await withDeadline(importBundle(bundle), "Loading the web bundle");
+      if (stopped || entry.disposed) return;
+      await withDeadline(
+        Promise.resolve(
+          definition.activate(
+            makeWebPluginApi({
+              environmentId,
+              plugin,
+              track,
+              shortcutHandlers: claimShortcutHandlers,
+              navigate,
+              active: () => !stopped && !entry.disposed,
+            }),
+          ),
+        ),
+        "Starting the web half",
+      );
+    } catch (error) {
+      // A load that was replaced or stopped meanwhile has nothing to report.
+      if (entry.disposed) return;
+      entry.disposed = true;
+      runCleanups(entry.cleanups);
+      entry.cleanups.clear();
+      // A download that still fails after its retries is tried again on the next plugin update. A
+      // bundle that downloaded and then failed stays in `loaded`, so it waits for the plugin to
+      // restart instead of failing again on every change.
+      if (!downloaded) loaded.delete(plugin.id);
+      setPluginWebFailure(environmentId, plugin.id, errorText(error));
+      // Only the plugin's own failures reach agents. A failed download is this client's network,
+      // and clients that each report a different one would republish the list back and forth.
+      if (downloaded) reportWebFailure(environmentId, plugin, errorText(error));
+    }
+  };
+
+  const reconcile = (plugins: ReadonlyArray<PluginState>) => {
+    const wanted = new Map(
+      plugins.filter(isLoadableWebPlugin).map((plugin) => [plugin.id, plugin] as const),
+    );
+    for (const [pluginId, plugin] of loaded) {
+      const want = wanted.get(pluginId);
+      if (want === undefined || loadKey(want) !== plugin.key) unload(pluginId);
+    }
+    for (const plugin of plugins) {
+      if (!wanted.has(plugin.id)) setPluginWebFailure(environmentId, plugin.id, undefined);
+    }
+    // Not awaited, so a plugin that hangs until its deadline holds back neither the others nor
+    // the next change, such as turning another plugin off.
+    return [...wanted.values()].filter((plugin) => !loaded.has(plugin.id)).map(load);
+  };
+
+  let firstRoundStarted = false;
+  const stopFollowing = appAtomRegistry.subscribe(
+    pluginEnvironment.pluginsLive({ environmentId, input: {} }),
+    (result) => {
+      if (stopped || !AsyncResult.isSuccess(result)) return;
+      const loads = reconcile(result.value.plugins);
+      if (firstRoundStarted) return;
+      firstRoundStarted = true;
+      void Promise.allSettled(loads).then(releaseDesktopPluginCommands);
+    },
+    { immediate: true },
+  );
+
+  return () => {
+    stopped = true;
+    stopFollowing();
+    for (const pluginId of loaded.keys()) unload(pluginId);
+    stopShortcuts?.();
+  };
+}

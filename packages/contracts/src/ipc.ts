@@ -14,7 +14,7 @@ import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import { type ClientSettings, type QuitConfirmationMode, SnapShotShortcut } from "./settings.ts";
 import type { EditorId } from "./editor.ts";
-import type { PreviewForwardedShortcut } from "./keybindings.ts";
+import { PLUGIN_COMMAND_PATTERN, type PreviewForwardedShortcut } from "./keybindings.ts";
 
 import type {
   DesktopAppActivationRequest,
@@ -1008,6 +1008,47 @@ export const DesktopPreviewRecordingSaveInputSchema = Schema.Struct({
   data: Schema.Uint8Array,
 });
 
+/** A web plugin's command that the desktop app lists in its Plugins menu or binds to a global shortcut. */
+export const DesktopPluginCommandSchema = Schema.Struct({
+  /** Sent back to the renderer as the menu action when the item or shortcut fires. */
+  command: PLUGIN_COMMAND_PATTERN,
+  title: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+  pluginName: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+  menu: Schema.Boolean,
+  /** Lists the command in the tray icon's menu. */
+  tray: Schema.optional(Schema.Boolean),
+  /** An Electron accelerator, such as `CommandOrControl+Shift+Y`. */
+  globalShortcut: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
+});
+export type DesktopPluginCommand = typeof DesktopPluginCommandSchema.Type;
+
+export const DesktopPluginShortcutRefusalSchema = Schema.Struct({
+  command: Schema.String,
+  /**
+   * `taken`: another app holds it. `snap-shot`: T3's SnapShot shortcut holds it. `invalid`: not an
+   * accelerator. `no-modifier`: it would take a key apps type with. `unsupported`: Wayland.
+   */
+  reason: Schema.Literals(["taken", "snap-shot", "invalid", "no-modifier", "unsupported"]),
+});
+export type DesktopPluginShortcutRefusal = typeof DesktopPluginShortcutRefusalSchema.Type;
+
+/** The canvas the page paints in one appearance, as `#rrggbb`; null for plain black or white. */
+export const DesktopWindowCanvasSchema = Schema.Struct({
+  appearance: Schema.Literals(["light", "dark"]),
+  color: Schema.NullOr(Schema.String),
+});
+export type DesktopWindowCanvas = typeof DesktopWindowCanvasSchema.Type;
+
+/**
+ * What the page paints while Electron's native theme is light and while it is dark. A theme
+ * pinned to one appearance paints that appearance in both.
+ */
+export const DesktopWindowBackgroundSchema = Schema.Struct({
+  light: DesktopWindowCanvasSchema,
+  dark: DesktopWindowCanvasSchema,
+});
+export type DesktopWindowBackground = typeof DesktopWindowBackgroundSchema.Type;
+
 export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
@@ -1088,6 +1129,8 @@ export interface DesktopBridge {
   pickProjectFavicon: (initialPath?: string) => Promise<string | null>;
   pickThemeFiles: () => Promise<readonly PickedThemeFile[] | null>;
   setTheme: (theme: DesktopTheme) => Promise<void>;
+  /** The theme's canvases, which new windows start in so they don't flash black or white. */
+  setWindowBackground: (background: DesktopWindowBackground) => Promise<void>;
   showContextMenu: <T extends string>(
     items: readonly ContextMenuItem<T>[],
     position?: { x: number; y: number },
@@ -1099,6 +1142,13 @@ export interface DesktopBridge {
   checkSystemPermission: (pane: SystemSettingsPane) => Promise<boolean>;
   probeRemoteEditors: () => Promise<readonly EditorId[]>;
   pasteAsText: () => Promise<void>;
+  /**
+   * Replaces the plugin commands in the app menu and their global shortcuts. Resolves with the
+   * commands whose shortcut could not be bound, and why.
+   */
+  setPluginCommands: (
+    commands: readonly DesktopPluginCommand[],
+  ) => Promise<ReadonlyArray<DesktopPluginShortcutRefusal>>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   onSnapShotEvent: (listener: (event: DesktopSnapShotEvent) => void) => () => void;
   onQuitShortcut: (listener: (event: QuitShortcutHintEvent) => void) => () => void;

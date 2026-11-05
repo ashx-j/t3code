@@ -52,12 +52,20 @@ export function threadErrorSummary(
   };
 }
 
+/** A plugin command's reply that still stands: recorded as a finished run that no agent ran. */
+export function isCommandReplyRun(
+  run: Pick<OrchestrationV2Run, "status" | "commandReply">,
+): boolean {
+  return run.status === "completed" && run.commandReply === true;
+}
+
 export function latestExecutedRun(
   runs: ReadonlyArray<OrchestrationV2Run>,
 ): OrchestrationV2Run | null {
   let latest: OrchestrationV2Run | null = null;
   for (const run of runs) {
     if (run.status === "queued") continue;
+    if (isCommandReplyRun(run)) continue;
     if (run.status === "cancelled" && run.startedAt === null) continue;
     if (latest === null || runRanAfter(run, latest)) latest = run;
   }
@@ -103,6 +111,8 @@ export function latestUnheldRun(
   let latest: OrchestrationV2Run | null = null;
   for (const run of runs) {
     if (run.status === "queued" && run.queueHeld === true) continue;
+    // A command reply sent mid-turn must not stand in for the turn still running.
+    if (isCommandReplyRun(run)) continue;
     if (latest === null || run.ordinal > latest.ordinal) latest = run;
   }
   return latest;

@@ -144,4 +144,16 @@ describe("command dispatcher", () => {
     expect(newer).toHaveBeenCalledOnce();
     expect(older).toHaveBeenCalledOnce();
   });
+
+  it("runs a plugin command that arrived before its plugin registered it, once", async () => {
+    const run = vi.fn();
+    dispatchMenuAction("plugin.notes.open");
+    using stack = new DisposableStack();
+    stack.defer(registerMenuAction("plugin.notes.open", run));
+    await Promise.resolve();
+    stack.defer(registerMenuAction("plugin.notes.open", run));
+    await Promise.resolve();
+
+    expect(run).toHaveBeenCalledOnce();
+  });
 });

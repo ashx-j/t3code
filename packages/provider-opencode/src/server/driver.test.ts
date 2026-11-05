@@ -76,14 +76,20 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
     Effect.gen(function* () {
       serverStarts.length = 0;
       const instance = yield* create({}, noHttp);
+      const modelSelection = { instanceId: instance.instanceId, model: "opencode/big-pickle" };
       yield* Effect.flip(
         instance.textGeneration.generateThreadTitle({
           cwd: process.cwd(),
           message: "hello",
-          modelSelection: { instanceId: instance.instanceId, model: "opencode/big-pickle" },
+          modelSelection,
         }),
       );
       assert.deepStrictEqual(serverStarts, ["start"]);
+      // A free-form prompt, such as a plugin's, goes to the same server.
+      const { generateText } = instance.textGeneration;
+      if (generateText === undefined) return assert.fail("OpenCode runs free-form prompts.");
+      yield* Effect.flip(generateText({ cwd: process.cwd(), prompt: "hello", modelSelection }));
+      assert.deepStrictEqual(serverStarts, ["start", "start"]);
     }).pipe(Effect.scoped),
   );
 

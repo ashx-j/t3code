@@ -1,0 +1,8 @@
+{
+  "id": "provider-plugin",
+  "name": "Echo provider",
+  "version": "0.1.0",
+  "description": "Test fixture that adds a provider driver built with the host's runtime modules.",
+  "engines": { "t3": ">=0.1.0" },
+  "server": "./server.cjs"
+}

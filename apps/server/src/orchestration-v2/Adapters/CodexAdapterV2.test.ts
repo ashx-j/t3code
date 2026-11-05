@@ -222,35 +222,45 @@ describe("CodexAdapterV2 runtime policy", () => {
     }),
   );
 
-  it.effect("sends MCP app model context as untrusted Codex context", () =>
-    Effect.gen(function* () {
-      const policy = { runtimeMode: "full-access", interactionMode: "default", cwd: null } as const;
-      const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
-      const appContext = [{ key: "mcp_app_todos_list_todos_item-1", text: "Filtered to overdue" }];
-      const alone = yield* CodexAdapterV2.buildCodexTurnStartParams({
-        nativeThreadId: "native-app-context",
-        codexInput: [{ type: "text", text: "what's on my list?" }],
-        runtimePolicy: policy,
-        modelSelection,
-        appContext,
-      });
-      assert.deepEqual(alone.additionalContext, {
-        "mcp_app_todos_list_todos_item-1": { kind: "untrusted", value: "Filtered to overdue" },
-      });
-      const withT3 = yield* CodexAdapterV2.buildCodexTurnStartParams({
-        nativeThreadId: "native-app-context",
-        codexInput: [{ type: "text", text: "what's on my list?" }],
-        runtimePolicy: policy,
-        modelSelection,
-        hasT3Mcp: true,
-        appContext,
-      });
-      assert.deepEqual(withT3.additionalContext?.["mcp_app_todos_list_todos_item-1"], {
-        kind: "untrusted",
-        value: "Filtered to overdue",
-      });
-      assert.isDefined(withT3.additionalContext?.["t3_code_runtime"]);
-    }),
+  it.effect(
+    "sends MCP app model context as untrusted and plugin instructions as application context",
+    () =>
+      Effect.gen(function* () {
+        const policy = {
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: null,
+        } as const;
+        const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
+        const appContext = [
+          { key: "mcp_app_todos_list_todos_item-1", text: "Filtered to overdue" },
+        ];
+        const alone = yield* CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: "native-app-context",
+          codexInput: [{ type: "text", text: "what's on my list?" }],
+          runtimePolicy: policy,
+          modelSelection,
+          appContext,
+          pluginInstructions: ["Use pnpm."],
+        });
+        assert.deepEqual(alone.additionalContext, {
+          t3_code_plugin_01: { kind: "application", value: "Use pnpm." },
+          "mcp_app_todos_list_todos_item-1": { kind: "untrusted", value: "Filtered to overdue" },
+        });
+        const withT3 = yield* CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: "native-app-context",
+          codexInput: [{ type: "text", text: "what's on my list?" }],
+          runtimePolicy: policy,
+          modelSelection,
+          hasT3Mcp: true,
+          appContext,
+        });
+        assert.deepEqual(withT3.additionalContext?.["mcp_app_todos_list_todos_item-1"], {
+          kind: "untrusted",
+          value: "Filtered to overdue",
+        });
+        assert.isDefined(withT3.additionalContext?.["t3_code_runtime"]);
+      }),
   );
 });
 
@@ -1476,6 +1486,96 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
         ),
       ),
+  );
+
+  it.effect("asks an app server that refuses plugin skill folders once, not every turn", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "plugin-skills";
+      const first = codexReplayPreamble({ nativeThreadId, nativeTurnId: "first", prompt: "work" });
+      const second = codexReplayPreamble({
+        nativeThreadId,
+        nativeTurnId: "second",
+        prompt: "work",
+      });
+      const completed = (turnId: string): CodexReplay.CodexAppServerReplayEntry => ({
+        type: "emit_inbound",
+        label: `${turnId} completed`,
+        frame: {
+          method: "turn/completed",
+          params: {
+            threadId: nativeThreadId,
+            turn: makeCodexReplayTurn({ id: turnId, status: "completed" }),
+          },
+        },
+      });
+      const requests: string[] = [];
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "plugin-skills-unsupported",
+          entries: [
+            ...first.slice(0, 5),
+            {
+              type: "expect_outbound",
+              label: "skills/extraRoots/set",
+              frame: {
+                id: 3,
+                method: "skills/extraRoots/set",
+                params: { extraRoots: ["/plugins/notes/skills"] },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "skills/extraRoots/set",
+              frame: { id: 3, error: { code: -32601, message: "Method not found" } },
+            },
+            ...first.slice(5, 7).map((entry) => withReplayRequestId(entry, 4)),
+            first[7]!,
+            completed("first"),
+            ...second.slice(5, 7).map((entry) => withReplayRequestId(entry, 5)),
+            second[7]!,
+            completed("second"),
+          ],
+        }),
+        () => Effect.void,
+        (method) =>
+          Effect.sync(() => {
+            requests.push(method);
+          }),
+      );
+      const turn: ProviderAdapter.ProviderAdapterV2TurnInput = {
+        ...makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("first"),
+          text: "work",
+        }),
+        plugins: {
+          instructions: [],
+          skillFolders: [{ plugin: "/plugins/notes", skills: "/plugins/notes/skills" }],
+        },
+      };
+      yield* harness.runtime.startTurn(turn);
+      yield* harness.awaitTerminal(1);
+      yield* harness.runtime.startTurn({
+        ...turn,
+        runId: RunId.make("second"),
+        attemptId: RunAttemptId.make("second"),
+        rootNodeId: NodeId.make("second"),
+        runOrdinal: 2,
+        providerTurnOrdinal: 2,
+      });
+      yield* harness.awaitTerminal(2);
+      assert.deepEqual(
+        requests.filter((method) => method === "skills/extraRoots/set"),
+        ["skills/extraRoots/set"],
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
   );
 
   it.effect("adds the session MCP server without replacing launch-argument servers", () =>

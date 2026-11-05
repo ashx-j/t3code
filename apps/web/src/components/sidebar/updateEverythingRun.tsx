@@ -171,6 +171,8 @@ const SavedResult = Schema.Struct({
   localVersion: Schema.NullOr(Schema.String),
   updatedServers: Schema.Number,
   updatedProviders: Schema.Number,
+  // Results saved before plugin updates joined the run leave it out.
+  updatedPlugins: Schema.optionalKey(Schema.Number),
   failures: Schema.Array(Schema.String),
   handedOff: Schema.optional(Schema.Array(HandedOffServer)),
 });
@@ -203,6 +205,7 @@ export function saveUpdateEverythingResult(result: UpdateEverythingResult): void
         localVersion: result.localVersion,
         updatedServers: result.updatedServers,
         updatedProviders: result.updatedProviders,
+        updatedPlugins: result.updatedPlugins,
         failures: result.failures,
         handedOff,
       } satisfies typeof SavedResult.Type),
@@ -297,6 +300,7 @@ function followHandedOffServers(servers: ReadonlyArray<HandedOffServer>): void {
           localVersion: null,
           updatedServers,
           updatedProviders: 0,
+          updatedPlugins: 0,
           failures,
           restarting: [],
         });
@@ -326,7 +330,11 @@ export function startDesktopUpdateLaunchNotice(): () => void {
   const saved = takeSavedUpdateEverythingResult();
   if (saved) {
     const handedOff = saved.handedOff ?? [];
-    showUpdateEverythingResult({ ...saved, restarting: handedOff.map((server) => server.label) });
+    showUpdateEverythingResult({
+      ...saved,
+      updatedPlugins: saved.updatedPlugins ?? 0,
+      restarting: handedOff.map((server) => server.label),
+    });
     followHandedOffServers(handedOff);
   }
 

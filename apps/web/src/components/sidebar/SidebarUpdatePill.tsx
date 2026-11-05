@@ -399,6 +399,7 @@ function SidebarUpdateControl() {
       onOpenChange={setIsConfirmingEverything}
       version={everything.version}
       providerCount={everything.providerCount}
+      pluginCount={everything.pluginCount}
       rows={everything.rows}
       restarts={everything.restarts}
       onConfirm={() => void runEverything()}
@@ -425,6 +426,7 @@ function SidebarUpdateControl() {
                     localVersion: localUpdateVersion,
                     updatedServers: 0,
                     updatedProviders: 0,
+                    updatedPlugins: 0,
                     failures: [],
                     restarting: [],
                   });

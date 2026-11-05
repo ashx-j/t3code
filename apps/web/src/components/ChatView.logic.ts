@@ -1135,7 +1135,9 @@ export function hasServerAcknowledgedLocalDispatch(input: {
     return true;
   }
 
+  // A plugin command's reply records the message without a turn, so only the message changes.
   return (
+    latestUserMessageChanged ||
     latestRunChanged ||
     input.localDispatch.runtimeStatus !== (runtime?.status ?? null) ||
     input.localDispatch.runtimeUpdatedAt !== (runtime?.updatedAt ?? null)

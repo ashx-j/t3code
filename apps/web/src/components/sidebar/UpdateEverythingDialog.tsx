@@ -4,6 +4,7 @@ import { Atom } from "effect/reactivity";
 import { ChevronRightIcon } from "lucide-react";
 import { Fragment, type RefObject, useRef } from "react";
 
+import { cn } from "~/lib/utils";
 import { environmentThreadShells } from "~/state/threads";
 import {
   AlertDialog,
@@ -44,6 +45,7 @@ interface UpdateEverythingDialogProps {
   readonly onOpenChange: (open: boolean) => void;
   readonly version: string | null;
   readonly providerCount: number;
+  readonly pluginCount?: number;
   readonly rows: ReadonlyArray<UpdateEverythingRow>;
   readonly restarts: ReadonlyArray<RestartingMachine>;
   readonly onConfirm: () => void;
@@ -90,9 +92,23 @@ const APP_LABELS = {
   "desktop-app": "Desktop app",
 } as const;
 
+function NameList({ names }: { readonly names: ReadonlyArray<string> }) {
+  return (
+    <span>
+      {names.map((name, index) => (
+        <Fragment key={name}>
+          <span className="whitespace-nowrap">{name}</span>
+          {index < names.length - 1 ? ", " : null}
+        </Fragment>
+      ))}
+    </span>
+  );
+}
+
 function UpdateEverythingDialogContent({
   version,
   providerCount,
+  pluginCount = 0,
   rows,
   restarts,
   onConfirm,
@@ -122,8 +138,16 @@ function UpdateEverythingDialogContent({
   const running = stopped + continuing;
   const threads = `${running} running ${running === 1 ? "thread" : "threads"}`;
   const restarting = new Set(restarts.map((machine) => machine.environmentId));
-  const updating = rows.filter((row) => row.app !== null || row.providers.length > 0);
+  const updating = rows.filter(
+    (row) => row.app !== null || row.providers.length > 0 || row.plugins.length > 0,
+  );
   const skipped = rows.filter((row) => row.skipped !== null);
+  const counts = [
+    providerCount > 0
+      ? `${providerCount} provider ${providerCount === 1 ? "update" : "updates"}`
+      : null,
+    pluginCount > 0 ? `${pluginCount} plugin ${pluginCount === 1 ? "update" : "updates"}` : null,
+  ].filter((count) => count !== null);
 
   return (
     <>
@@ -137,10 +161,8 @@ function UpdateEverythingDialogContent({
               T3 Code <span className="font-mono text-xs">{version}</span>
             </>
           ) : null}
-          {version !== null && providerCount > 0 ? " · " : null}
-          {providerCount > 0
-            ? `${providerCount} provider ${providerCount === 1 ? "update" : "updates"}`
-            : null}
+          {version !== null && counts.length > 0 ? " · " : null}
+          {counts.join(" · ")}
         </AlertDialogDescription>
       </AlertDialogHeader>
       <ScrollArea scrollFade>
@@ -151,11 +173,19 @@ function UpdateEverythingDialogContent({
             </p>
           ))}
           {/* Machine names truncate first. Provider lists wrap between names, never inside one. */}
-          <div className="grid grid-cols-[minmax(4rem,max-content)_max-content_minmax(min-content,1fr)_max-content] gap-x-4 text-sm">
+          <div
+            className={cn(
+              "grid gap-x-4 text-sm",
+              pluginCount > 0
+                ? "grid-cols-[minmax(4rem,max-content)_max-content_minmax(min-content,1fr)_minmax(min-content,1fr)_max-content]"
+                : "grid-cols-[minmax(4rem,max-content)_max-content_minmax(min-content,1fr)_max-content]",
+            )}
+          >
             <div className="col-span-full grid grid-cols-subgrid border-b pb-1.5 text-muted-foreground text-xs">
               <span>Machine</span>
               <span>T3 Code</span>
               <span>Providers</span>
+              {pluginCount > 0 ? <span>Plugins</span> : null}
               <span />
             </div>
             {updating.map((row) => (
@@ -175,14 +205,8 @@ function UpdateEverythingDialogContent({
                     <span className="block text-muted-foreground text-xs">restarts last</span>
                   ) : null}
                 </span>
-                <span>
-                  {row.providers.map((provider, index) => (
-                    <Fragment key={provider}>
-                      <span className="whitespace-nowrap">{provider}</span>
-                      {index < row.providers.length - 1 ? ", " : null}
-                    </Fragment>
-                  ))}
-                </span>
+                <NameList names={row.providers} />
+                {pluginCount > 0 ? <NameList names={row.plugins} /> : null}
                 <span className="text-right">
                   {row.environmentId !== null && restarting.has(row.environmentId) ? (
                     <RunningThreads environmentId={row.environmentId} />

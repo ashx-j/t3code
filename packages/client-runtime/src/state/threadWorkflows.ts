@@ -5,6 +5,7 @@ import {
   type OrchestrationV2ProviderCapabilities,
 } from "@t3tools/contracts";
 import { copySorted } from "@t3tools/shared/Array";
+import { isCommandReplyRun } from "@t3tools/shared/orchestrationV2ThreadError";
 
 import type { ThreadStructure } from "./models.ts";
 
@@ -51,9 +52,12 @@ export function resolveActiveThreadRun(projection: Pick<Projection, "runs">): Ru
  * instead of falling through to an older fully checkpointed run.
  */
 export function resolveLatestMergeBackRun(projection: Projection): Run | null {
+  // A plugin command's reply has no provider turn to bring back.
   const latestProviderFinishedRun = projection.runs.reduce<Run | null>(
     (latest, run) =>
-      MERGE_BACK_RUN_STATUSES.has(run.status) && (latest === null || run.ordinal > latest.ordinal)
+      MERGE_BACK_RUN_STATUSES.has(run.status) &&
+      !isCommandReplyRun(run) &&
+      (latest === null || run.ordinal > latest.ordinal)
         ? run
         : latest,
     null,
@@ -186,6 +190,8 @@ export function canForkProjectedAssistantItem(input: {
   if (item.type !== "assistant_message" || item.runId === null || item.status !== "completed") {
     return false;
   }
+  // A plugin command's reply, written by the server, has no agent turn to fork from.
+  if (item.providerThreadId === null && item.nodeId === null) return false;
   if (input.capabilities === undefined) {
     // Historical and inherited rows may outlive their provider-session record.
     // Keep the portable server-side fallback available when capability evidence

@@ -236,6 +236,28 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
       ),
   );
 
+  it.effect("answers a free-form prompt through its structured output", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({ structured_output: { text: "  Two commits since Friday.  " } }),
+        argsMustContain: '--json-schema {"type":"object","properties":{"text":{"type":"string"}}',
+        stdinMustContain: "Summarize the week.",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateText!({
+            cwd: process.cwd(),
+            prompt: "Summarize the week.",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+            },
+          });
+          expect(generated).toEqual({ text: "Two commits since Friday." });
+        }),
+    ),
+  );
+
   it.effect(
     "generates thread titles outside the project with tools, skills, and hooks disabled",
     () =>

@@ -1,0 +1,249 @@
+# @t3tools/plugin-sdk
+
+Types and build helpers for T3 Code plugins. A plugin is a folder with a `t3-plugin.json` manifest,
+an optional server half that runs inside the T3 Code server, and an optional web half that runs in
+the web and desktop apps. Plugins are trusted code: they run with the same access as T3 Code.
+
+[`examples/`](./examples) has plugins to copy from. The plugins in [`fixtures/`](./fixtures) back
+the tests and are small and working too; `hello-web` uses most of the web API and is built with the
+Vite preset below.
+
+## Manifest
+
+```json
+{
+  "id": "hello-web",
+  "name": "Hello web",
+  "version": "0.1.0",
+  "description": "Shown on the Plugins page.",
+  "engines": { "t3": ">=0.1.6" },
+  "server": "./server.cjs",
+  "web": "./web.js",
+  "settingsSchema": {
+    "type": "object",
+    "properties": { "token": { "type": "string", "format": "t3-secret" } }
+  }
+}
+```
+
+- `id` uses lowercase letters, digits and hyphens. It names the plugin's folder, its HTTP routes
+  (`/api/plugins/<id>/…`), its agent tools (`plg_<id>_<tool>`) and its keybinding commands
+  (`plugin.<id>.<command>`).
+- `engines.t3` is a semver range. A server outside it refuses to start the plugin and says why.
+- `server` must be CommonJS ending in `.cjs`. `web` is a single-file ES module.
+- `settingsSchema` is JSON Schema. T3 Code draws a form from it on the Plugins page, and top-level
+  string fields with `"format": "t3-secret"` are stored in the server's secret store and never shown
+  again. `t3-secret` anywhere else is saved as plain text, and `t3_plugins_check` warns about it.
+  The form covers top-level strings, numbers, integers, booleans, `enum`s of strings or numbers,
+  and arrays of strings. One property of any other shape, such as an object or a nullable type,
+  turns the whole form into a JSON box. Every save is checked against the schema with the top-level `default`s
+  filled in, so a default its own field rejects refuses every save; `t3_plugins_check` reports it.
+  Agents read the settings and the schema, and change settings, with the `t3_plugins_settings`
+  tool.
+- A `themes/` folder of theme JSON files is published while the plugin is active, and an `assets/`
+  folder is served to the web half when the plugin has one. T3 Code remembers the published
+  themes, so the boot screen and the desktop window start in the active theme's colors. A theme
+  that sets `"sidebarArtwork": true` keeps the nightly and dev artwork in the sidebar, which T3
+  otherwise swaps for a label; the send button stays plain. `"radius"`, such as `"0.625rem"`, sets
+  T3's corner radius, and `success`, `successForeground`, `info` and `infoForeground` in a theme's
+  `colors` or `variants` set its status colors.
+- A `skills/` folder of `<name>/SKILL.md` skills reaches Claude and Codex agents while the plugin
+  is active, and the composer's `$` menu lists them for those agents with the plugin's name. Claude
+  invokes one as `<plugin id>:<folder>`, Codex by the `name` in its frontmatter. Nothing else in
+  the plugin's folder reaches agents. The skills are copied when the plugin starts, so **Reload**
+  picks up changes.
+
+## Server half
+
+```js
+/** @type {import("@t3tools/plugin-sdk/server").PluginDefinition} */
+module.exports = {
+  activate(api) {
+    api.rpc.register("greeting", () => "Hello", { access: "read" });
+    api.turns.afterRunCompleted((run) => api.log.info("run ended", { status: run.status }));
+  },
+};
+```
+
+`activate` receives the [`PluginApi`](./src/server.ts):
+
+- settings, storage, and RPC methods and channels for the web half;
+- stored orchestration events, run-completed hooks and notes in threads;
+- threads and projects: read, start, archive, snooze, settle and delete threads, add and change
+  projects, and list a project's git worktrees;
+- send hooks that add to, replace or block a message (slash commands never reach them), and
+  slash commands that run on the server and may answer in the thread without starting a turn;
+- answers to agents' approvals and questions, instructions for agents, and MCP tools for agents;
+- secrets the user enters on a card in a thread with a turn in progress;
+- the text T3 Code generates, such as thread titles and commit messages, and free-form text from
+  the text generation model chosen in the settings;
+- HTTP routes, schedules and server info;
+- ACP agents T3 Code runs by their command (`api.providers.registerAcpAgent`), with no Effect
+  code; the `acp-agent-plugin` fixture is a small one;
+- source control hosts (`api.sourceControl.registerDriver`), which join remote recognition and
+  pull requests; the `source-control-plugin` fixture is a minimal one;
+- provider drivers, built with `api.providers.runtime` and typed with
+  `@t3tools/plugin-sdk/server/providers`. These follow T3 Code's internal provider packages, which
+  change with every nightly, so build a provider plugin against the T3 Code version it runs on.
+
+Everything a plugin registers is released when it is disabled, reloaded or uninstalled; add your
+own cleanup with `api.onDeactivate`.
+
+A failure in plugin code that nothing awaits, such as a throw in a timer, a schedule or a hook,
+doesn't stop T3 Code. It shows on the plugin's row in Settings → Plugins and in
+`t3_plugins_check`. Give every child process, socket and stream you create an `'error'` listener
+anyway: Node reports an unhandled `'error'` event as a crash, and T3 Code can't always tell it came
+from your plugin.
+
+HTTP route handlers get the request body as UTF-8 text, so a binary upload arrives corrupted, and a
+query key that appears twice keeps its last value.
+
+## Agent providers and source control hosts
+
+An ACP agent needs no Effect code:
+
+```js
+api.providers.registerAcpAgent({
+  kind: "my-agent",
+  label: "My agent",
+  command: "my-agent",
+  args: ["acp"],
+});
+```
+
+T3 Code runs it with its shared ACP adapter and gives each instance a form for the command and
+arguments. The command must be an executable on the server, on its `PATH` or by absolute path. Do
+not use `process.execPath` as the fixture does: in the installed app it is T3 Code itself, not
+Node. Other providers, and source control hosts, are Effect code that runs in the server:
+build them with the modules in `api.providers.runtime` (and the helpers in
+`api.sourceControl.runtime`), never with an `effect` you import, because the server bundles its own
+copy. Types come from one import, `@t3tools/plugin-sdk/server/providers`, which re-exports T3 Code's
+internal provider and source control packages. Those change with every nightly, so build these
+plugins against the T3 Code version they run on and expect to update them often.
+
+What a provider driver may leave out:
+
+- **Models.** The driver lists them in its snapshot. T3 Code has no compatibility policy for a
+  plugin's driver, so it shows no version advisory.
+- **Usage limits.** Report them in the snapshot (`usageLimits`) and through `applyUsageLimits`.
+  The Usage page's history reads only T3 Code's own drivers, so a driver has no `usage` reader.
+- **Text generation.** Fail each method with `TextGenerationError` and set
+  `supportsTextGeneration: false` on the snapshot, so Settings doesn't offer the provider for
+  titles and commit messages and the usage-limit fallback skips it. T3 Code doesn't switch to
+  another provider when a method fails: the thread keeps its title and the commit fails.
+- **Client presentation.** `client.settingsSchema` (the JSON Schema format plugin settings use,
+  without `t3-secret` fields, because the form saves into the instance's config) and
+  `client.iconUrl` (https or `data:image`) give the provider a settings form and an icon; without
+  them the instance shows its name and status only. Users put secrets in the instance's
+  environment variables.
+
+## Web half
+
+```tsx
+import { Button } from "@t3tools/plugin-sdk/ui";
+import { defineWebPlugin } from "@t3tools/plugin-sdk/web";
+
+export default defineWebPlugin({
+  activate(api) {
+    api.rightPanel.register({
+      name: "hello",
+      title: "Hello",
+      component: () => <Button onClick={() => api.navigate("/settings/plugins")}>Settings</Button>,
+    });
+    api.commands.register({
+      id: "say-hello",
+      title: "Say hello",
+      run: () => api.toast({ title: "Hello" }),
+    });
+  },
+});
+```
+
+`activate` receives the [`WebPluginApi`](./src/web.ts): calls into the server half, right panels,
+a settings panel, palette commands (which the desktop app can also list in its menu or tray, or
+bind to a global shortcut), composer slash commands and banners, timeline renderers for the plugin's agent
+tools, renderers for fenced code languages, styles, assets, navigation and toasts.
+
+Plugins can also add buttons and menu items to T3's own toolbars and menus: under each message
+(`messages.addAction`), in the thread header (`threads.addHeaderButton`), beside the composer's
+attach button (`composer.addButton`) and in the thread actions menu (`threads.addMenuItem`).
+`threads.setBadge` shows a short badge on a thread's sidebar row and header.
+[`examples/review-flags`](./examples/review-flags) uses all of them. `composer.setMentionItems`
+offers items in the composer's `@` menu; a picked item shows as a chip, and the agent gets its text
+with the message. [`examples/quick-notes`](./examples/quick-notes) offers its notes that way.
+
+`pages.register` adds a full page at `/plugins/<pluginId>/<name>`, shown beside the sidebar in place
+of the thread; a `t3code://plugins/<pluginId>/<name>` link opens the desktop app on it, and `sidebar.addSection` adds a titled section under the thread list.
+[`examples/quick-notes`](./examples/quick-notes) keeps notes in its server half's storage and shows
+them in both.
+
+`api.ui.replace(part, component)` draws one of T3's own parts your way. The component receives
+T3's own controls as ready-made pieces to arrange, plus `original`, T3's own drawing of the part.
+The parts and their pieces are listed in `WebPluginParts`. If your component throws, T3 draws its
+own part. [`examples/classic-composer`](./examples/classic-composer) moves the composer's controls
+back to their layout from before T3's redesign and folds the composer while the timeline is
+scrolled up. [`examples/settings-pages`](./examples/settings-pages) shows Settings in place of the thread
+(`app.pageFrame`'s `page`) and lists its sections in the sidebar, with Back at the bottom
+(`app.sidebar`'s `nav` and `back`). `composer.setCollapseOnScroll(true)` folds the composer to one
+line on wide screens while the timeline is scrolled up, as it does on phones. [`examples/message-extras`](./examples/message-extras) adds a word count under assistant messages,
+redraws expanded commands and sums up diffs.
+
+Build it with the Vite preset, which makes the bundle use T3 Code's own React, atom hooks and UI
+components instead of shipping copies:
+
+```ts
+// vite.config.ts
+import { t3PluginWeb } from "@t3tools/plugin-sdk/vite";
+import { defineConfig } from "vite";
+
+export default defineConfig({ plugins: [t3PluginWeb({ entry: "web.tsx", outDir: "dist" })] });
+```
+
+Point the manifest's `web` at `dist/web.js`. Only the hooks listed in `HOST_ATOM_REACT_EXPORTS` and
+the components in `@t3tools/plugin-sdk/ui` are shared.
+
+## Keeping a plugin working across T3 updates
+
+Build the whole design; leaving a detail out because it might break is not the answer. T3 changes
+its markup, class names, labels and layout in most releases, so build each detail on the most
+durable thing T3 offers for it:
+
+- **Arrange pieces instead of rebuilding T3's controls.** `ui.replace` gives you T3's own controls,
+  already wired up. Place them, wrap them or leave them out. A copied control, with its markup,
+  icons and labels, misses every fix T3 makes to the real one.
+- **Style with theme tokens.** Colors, radii and fonts come from the theme. Set them in a theme
+  file in `themes/`, and use `var(--border)`, `var(--radius)` and the other tokens in your own
+  components instead of hex or rgb values.
+- **Reach into T3's markup only as a last resort.** Selectors on `aria-label`, `data-slot`, class
+  names such as `[class~="border-border/65"]` or `.lucide-shield-off`, and `:has()` break when T3
+  renames or moves things. Use one only when no theme value, piece or part does the job. Keep each
+  rule small and in one commented place, prefer one that falls back to T3's own look when the
+  markup changes, and list it in the plugin's README with the seam that would replace it.
+- **Leave T3's frame to T3.** The title bar row, the room for the window buttons on Windows and
+  Linux, drag areas, phone safe areas and breakpoints are T3's. A page shown through
+  `app.pageFrame` gets T3's header with all of that, so don't resize or pad it.
+- **Compare ids, not text.** `app.sidebar`'s `page` and `app.pageFrame`'s `kind` are stable ids;
+  labels such as `Settings` can change.
+- **Expect `timeline.item` to change.** Its `item` is the step as T3 sends it to clients
+  (`OrchestrationV2TurnItem`), not a plugin type, so its fields can change between releases. Read
+  the fields you need defensively and fall back to `original`.
+- **Ship what the plugin runs.** Adding a folder leaves out `.git` and `node_modules`, and npm
+  installs don't install dependencies, so build everything into the files the manifest names.
+- **Ask for a seam.** When T3 doesn't hand over what you need, ask for a piece, part or token on
+  the T3 Code repository instead of reaching into its markup.
+
+An agent can run the `t3_plugins_check` tool on a plugin to find the patterns above, so it knows
+what to recheck after an update. A replacement that throws shows a note on its plugin's row in
+Settings → Plugins, and T3 draws its own part where it threw until the plugin reloads.
+
+## Developing a plugin
+
+An agent writing a plugin installs its folder in place with `t3_plugins_install` and
+`link: true`, then edits the files and calls `t3_plugins_reload` to load them. Nothing is copied,
+and unlinking leaves the folder alone. `t3_plugins_check` lists what will stop the plugin from
+loading and what is likely to break in a T3 update. Settings → Plugins has a switch for these tools;
+until the user sets it, they appear once an environment has a plugin. Without an agent, add the folder to `devPaths` in `plugins.json` in the T3 Code data
+directory, turn the plugin on in Settings → Plugins, and use **Reload** after each change.
+
+To install a finished plugin, drag its folder onto Settings → Plugins, or use **Add plugin** with a
+folder, a git repository or an npm package.

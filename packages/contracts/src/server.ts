@@ -212,6 +212,11 @@ export const ServerProvider = Schema.Struct({
   // Validate driver-supplied remote icons against the driver's trusted origin.
   iconUrl: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(2_048))),
   badgeLabel: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * JSON Schema of the instance's `config`, sent by drivers that come from plugins so clients
+   * without a definition for the driver can still draw its settings form.
+   */
+  settingsSchema: Schema.optional(Schema.JsonObject),
   continuation: Schema.optional(ServerProviderContinuation),
   showInteractionModeToggle: Schema.optional(Schema.Boolean),
   reportsContextWindow: Schema.optional(Schema.Boolean),
@@ -564,6 +569,16 @@ const environmentThemeFields = {
       light: Schema.optional(EnvironmentThemeColors),
       dark: Schema.optional(EnvironmentThemeColors),
     }),
+  ),
+  /** Keeps the nightly and dev artwork in the sidebar, which T3 otherwise swaps for a label. */
+  sidebarArtwork: Schema.optional(Schema.Boolean),
+  /** T3's corner radius while the theme is on, such as `0.625rem`. */
+  radius: Schema.optional(
+    TrimmedNonEmptyString.check(
+      Schema.isPattern(/^(?:0|\d{1,2}(?:\.\d{1,3})?(?:px|rem))$/, {
+        expected: "a length such as 0.625rem or 10px",
+      }),
+    ),
   ),
 };
 

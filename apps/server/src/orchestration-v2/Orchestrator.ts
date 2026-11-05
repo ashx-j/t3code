@@ -5,6 +5,7 @@ import type {
   OrchestrationV2ThreadHistoryPage,
 } from "@t3tools/contracts";
 import {
+  isCommandReplyRun,
   latestExecutedRun,
   latestRootProviderFailure,
   runRanAfter,
@@ -559,6 +560,8 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
       return command.parentThreadId;
     case "secret_request.record":
     case "link_request.record":
+    case "thread.notification.record":
+    case "thread.command-reply.record":
       return command.threadId;
     case "thread.fork":
     case "thread.merge_back":
@@ -954,6 +957,8 @@ function rootProviderThreadsForProvider(
 }
 
 function isHandoffSourceRun(run: OrchestrationV2Run): boolean {
+  // A plugin command's reply never ran a provider, so it carries no history to hand off.
+  if (isCommandReplyRun(run)) return false;
   return run.status === "completed" || run.status === "failed" || run.status === "interrupted";
 }
 
@@ -1775,7 +1780,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
-      const latestCompletedRun = projection.runs.findLast((run) => run.status === "completed");
+      const latestCompletedRun = projection.runs.findLast(
+        (run) => run.status === "completed" && !isCommandReplyRun(run),
+      );
       const latestHandoffRun = projection.runs.findLast(isHandoffSourceRun);
       const targetLastCompletedRun = lastDeliveredRunForProviderThread(
         projection,
@@ -4456,6 +4463,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Merge-back source run ${sourceRun.id} is ${sourceRun.status}; only provider-finished runs are supported.`,
       });
     }
+    if (isCommandReplyRun(sourceRun)) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Merge-back source run ${sourceRun.id} is a plugin command's reply, which has no agent turn to bring back.`,
+      });
+    }
 
     const forkTransfer = sourceProjection.contextTransfers.findLast(
       (transfer) =>
@@ -5432,8 +5446,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection = yield* getProjectionWithPendingEvents(command.threadId, events);
     }
     const userMessages = projection.messages.filter((message) => message.role === "user");
+    // A plugin's command reply never reached the agent, so it leaves the title to be generated.
+    const replyRunIds = new Set(projection.runs.filter(isCommandReplyRun).map((run) => run.id));
     const onlyMaintenanceHistory =
-      userMessages.length > 0 && userMessages.every(isNativeMaintenanceCommand);
+      userMessages.length > 0 &&
+      userMessages.every(
+        (message) =>
+          isNativeMaintenanceCommand(message) ||
+          (message.runId !== null && replyRunIds.has(message.runId)),
+      );
     if (
       !isNativeMaintenanceCommand(command) &&
       ((command.titleSeed !== undefined &&
@@ -6099,7 +6120,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     const ordinal = nextRunOrdinal(projection);
     const runId = idAllocator.derive.run({ threadId: command.threadId, ordinal });
-    const latestCompletedRun = projection.runs.findLast((run) => run.status === "completed");
+    const latestCompletedRun = projection.runs.findLast(
+      (run) => run.status === "completed" && !isCommandReplyRun(run),
+    );
     const latestHandoffRun = projection.runs.findLast(isHandoffSourceRun);
     const legacyImportItems =
       projection.thread.historyOrigin === "v1_import"
@@ -8501,6 +8524,235 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     },
   );
+
+  /**
+   * Files the note under the latest settled run so it sorts after that run's output: run-less items
+   * sort before every run, and a note inside a running turn would split its live output.
+   */
+  const dispatchThreadNotificationRecord = Effect.fn(
+    "orchestrationV2.dispatch.threadNotificationRecord",
+  )(function* (
+    command: Extract<
+      OrchestrationV2InternalCommand,
+      { readonly type: "thread.notification.record" }
+    >,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const projection = yield* projectionStore
+      .getThreadRecords(command.threadId, ["runs", "turnItems", "attempts", "providerTurns"], {
+        turnItemTypes: [],
+        messageRoles: [],
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
+    if (projection.thread.deletedAt !== null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} is deleted.`,
+      });
+    }
+    const run = projection.runs
+      .filter((candidate) =>
+        ["completed", "failed", "cancelled", "interrupted"].includes(candidate.status),
+      )
+      .reduce<OrchestrationV2Run | undefined>(
+        (latest, candidate) =>
+          latest === undefined || candidate.ordinal > latest.ordinal ? candidate : latest,
+        undefined,
+      );
+    const now = yield* DateTime.now;
+    const turnItem: OrchestrationV2TurnItem = {
+      id: command.turnItemId,
+      threadId: command.threadId,
+      runId: run?.id ?? null,
+      nodeId: run?.rootNodeId ?? null,
+      providerThreadId: run?.providerThreadId ?? null,
+      providerTurnId: run === undefined ? null : (providerTurnForRun(projection, run)?.id ?? null),
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: yield* nextTurnItemOrdinal(projection),
+      status: "completed",
+      title: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      type: "notification",
+      ...command.notification,
+    };
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "turn-item.updated",
+      threadId: command.threadId,
+      ...(run === undefined
+        ? {}
+        : {
+            runId: run.id,
+            ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
+            providerInstanceId: run.providerInstanceId,
+          }),
+      occurredAt: now,
+      payload: turnItem,
+    });
+  });
+
+  /**
+   * A finished run of its own, without a provider thread or checkpoint: clients drop a sent message
+   * once its id is recorded, and paged clients drop run-less items.
+   */
+  const dispatchThreadCommandReplyRecord = Effect.fn(
+    "orchestrationV2.dispatch.threadCommandReplyRecord",
+  )(function* (
+    command: Extract<
+      OrchestrationV2InternalCommand,
+      { readonly type: "thread.command-reply.record" }
+    >,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const projection = yield* projectionStore
+      .getThreadRecords(command.threadId, ["runs", "providerThreads"], {
+        turnItemTypes: [],
+        messageRoles: [],
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
+    if (projection.thread.deletedAt !== null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} is deleted.`,
+      });
+    }
+    if (isProviderNativeSubagentThread(projection.thread)) {
+      return yield* new OrchestratorSubagentThreadReadOnlyError({
+        commandId: command.commandId,
+        threadId: command.threadId,
+      });
+    }
+    const now = yield* DateTime.now;
+    const ordinal = nextRunOrdinal(projection);
+    // A reply stays with the provider the thread runs on. Under a provider the user just picked,
+    // it would pass for that provider's last turn, and its first real turn would get no handoff.
+    const activeInstanceId = projection.providerThreads.find(
+      (providerThread) => providerThread.id === projection.thread.activeProviderThreadId,
+    )?.providerInstanceId;
+    const selected = command.modelSelection ?? projection.thread.modelSelection;
+    const modelSelection =
+      activeInstanceId === undefined || activeInstanceId === selected.instanceId
+        ? selected
+        : (projection.runs.findLast(
+            (candidate) => candidate.providerInstanceId === activeInstanceId,
+          )?.modelSelection ?? selected);
+    const run: OrchestrationV2Run = {
+      id: idAllocator.derive.run({ threadId: command.threadId, ordinal }),
+      threadId: command.threadId,
+      ordinal,
+      providerInstanceId: activeInstanceId ?? modelSelection.instanceId,
+      modelSelection,
+      providerThreadId: null,
+      userMessageId: command.messageId,
+      rootNodeId: null,
+      activeAttemptId: null,
+      status: "completed",
+      requestedAt: now,
+      startedAt: now,
+      completedAt: now,
+      checkpointId: null,
+      contextHandoffId: null,
+      commandReply: true,
+    };
+    // What the sender sent, as the message and as its turn item.
+    const sent = {
+      createdBy: command.createdBy,
+      creationSource: command.creationSource,
+      ...(command.scheduledTaskId === undefined
+        ? {}
+        : { scheduledTaskId: command.scheduledTaskId }),
+      ...(command.senderThreadId === undefined ? {} : { senderThreadId: command.senderThreadId }),
+      text: command.text,
+      ...(command.context ? { context: command.context } : {}),
+      attachments: command.attachments,
+    };
+    const messageFields = {
+      threadId: command.threadId,
+      runId: run.id,
+      nodeId: null,
+      streaming: false,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const userMessage: OrchestrationV2ConversationMessage = {
+      ...sent,
+      ...messageFields,
+      id: command.messageId,
+      role: "user",
+    };
+    const replyMessage: OrchestrationV2ConversationMessage = {
+      ...messageFields,
+      createdBy: "system",
+      creationSource: "server",
+      id: command.reply.messageId,
+      role: "assistant",
+      text: command.reply.text,
+      attachments: [],
+    };
+    const itemFields = {
+      threadId: command.threadId,
+      runId: run.id,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      status: "completed",
+      title: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+    } as const;
+    const itemOrdinal = yield* nextTurnItemOrdinal(projection);
+    const userItem: OrchestrationV2TurnItem = {
+      ...sent,
+      ...itemFields,
+      id: idAllocator.derive.userTurnItem({ messageId: userMessage.id }),
+      ordinal: itemOrdinal,
+      type: "user_message",
+      messageId: userMessage.id,
+      inputIntent: "turn_start",
+    };
+    const replyItem: OrchestrationV2TurnItem = {
+      ...itemFields,
+      id: idAllocator.derive.userTurnItem({ messageId: replyMessage.id }),
+      ordinal: itemOrdinal + 1,
+      type: "assistant_message",
+      messageId: replyMessage.id,
+      text: replyMessage.text,
+      streaming: false,
+    };
+    const emitEvent = emit(events, command);
+    const eventFields = {
+      threadId: command.threadId,
+      runId: run.id,
+      providerInstanceId: run.providerInstanceId,
+      occurredAt: now,
+    };
+    yield* emitEvent({ type: "run.created", ...eventFields, payload: run });
+    for (const [message, item] of [
+      [userMessage, userItem],
+      [replyMessage, replyItem],
+    ] as const) {
+      yield* emitEvent({ type: "message.updated", ...eventFields, payload: message });
+      yield* emitEvent({ type: "turn-item.updated", ...eventFields, payload: item });
+    }
+  });
 
   const dispatchSecretRequestRecord = Effect.fn("orchestrationV2.dispatch.secretRequestRecord")(
     function* (
@@ -13225,6 +13477,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "link_request.record":
         yield* dispatchLinkRequestRecord(command, events, effects);
+        break;
+      case "thread.notification.record":
+        yield* dispatchThreadNotificationRecord(command, events);
+        break;
+      case "thread.command-reply.record":
+        yield* dispatchThreadCommandReplyRecord(command, events);
         break;
       default:
         return yield* dispatchUnsupported(command);

@@ -106,7 +106,7 @@ const LIST_REFS_REFRESH_COALESCE_TTL = Duration.seconds(5);
 const LIST_REFS_REFRESH_FAILURE_COOLDOWN = Duration.seconds(30);
 const STATUS_DEFAULT_BRANCH_CACHE_TTL = Duration.minutes(5);
 const STATUS_ORIGIN_EXISTS_CACHE_TTL = Duration.minutes(5);
-const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
+export const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
   GCM_INTERACTIVE: "never",
   GIT_ASKPASS: "",
   GIT_TERMINAL_PROMPT: "0",
@@ -4840,18 +4840,30 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }),
     );
 
-  const listWorktreePaths: GitVcsDriver.GitVcsDriver["Service"]["listWorktreePaths"] = (cwd) =>
-    executeWorktreeList("GitVcsDriver.listWorktreePaths", cwd, []).pipe(
+  const worktreesOf = (operation: string, cwd: string) =>
+    executeWorktreeList(operation, cwd, []).pipe(
       // A `prunable` record's directory is gone; another checkout may now sit there.
       Effect.map(({ stdout }) =>
         stdout.split("\0\0").flatMap((record) => {
           const fields = record.split("\0");
           const worktree = fields.find((field) => field.startsWith("worktree "));
+          const branch = fields.find((field) => field.startsWith("branch refs/heads/"));
           return worktree === undefined || fields.some((field) => field.startsWith("prunable"))
             ? []
-            : [path.resolve(cwd, worktree.slice("worktree ".length))];
+            : [
+                {
+                  path: path.resolve(cwd, worktree.slice("worktree ".length)),
+                  branch: branch === undefined ? null : branch.slice("branch refs/heads/".length),
+                },
+              ];
         }),
       ),
+    );
+  const listWorktrees: GitVcsDriver.GitVcsDriver["Service"]["listWorktrees"] = (cwd) =>
+    worktreesOf("GitVcsDriver.listWorktrees", cwd);
+  const listWorktreePaths: GitVcsDriver.GitVcsDriver["Service"]["listWorktreePaths"] = (cwd) =>
+    worktreesOf("GitVcsDriver.listWorktreePaths", cwd).pipe(
+      Effect.map((worktrees) => worktrees.map((worktree) => worktree.path)),
     );
 
   const withListRefsInvalidation = <A, E>(
@@ -4996,5 +5008,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     initRepo: initRepoWithListRefsInvalidation,
     listLocalBranchNames,
     listWorktreePaths,
+    listWorktrees,
   });
 });

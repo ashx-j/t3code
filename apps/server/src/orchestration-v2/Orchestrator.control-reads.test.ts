@@ -18,6 +18,7 @@ import {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+import { latestExecutedRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -257,6 +258,172 @@ it.effect("marks a never-visited thread's first completion unread", () =>
       (yield* projections.getThreadShell(threadId))?.lastVisitedAt,
       ended.lastVisitedAt,
     );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("records a plugin's reply to a command as a finished run with no provider turn", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:plugin-reply");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-plugin-reply"),
+      threadId,
+      projectId: ProjectId.make("project:plugin-reply"),
+      title: "Plugin reply",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const commandId = CommandId.make("send-status");
+    const messageId = MessageId.make("message:status");
+    yield* orchestrator.dispatch({
+      type: "thread.command-reply.record",
+      commandId,
+      threadId,
+      messageId,
+      text: "/status",
+      attachments: [],
+      createdBy: "user",
+      creationSource: "web",
+      reply: { messageId: MessageId.make("message:status:reply"), text: "All good." },
+    });
+    // A client's retry of the message replays the reply instead of starting a turn.
+    const retried = yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId,
+      threadId,
+      messageId,
+      text: "/status",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    assert.isTrue(retried.replayed);
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("send-next"),
+      threadId,
+      messageId: MessageId.make("message:next"),
+      text: "Carry on",
+      attachments: [],
+      dispatchMode: { type: "defer_start" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+
+    const projection = yield* projections.getThreadProjection(threadId);
+    const [reply, next] = projection.runs;
+    assert.deepInclude(reply, {
+      ordinal: 1,
+      status: "completed",
+      userMessageId: messageId,
+      providerThreadId: null,
+      rootNodeId: null,
+      checkpointId: null,
+    });
+    assert.equal(next?.ordinal, 2);
+    // Only an agent run counts as the latest run, for Continue and usage-limit auto-resume.
+    assert.isNull(latestExecutedRun([reply!]));
+    // The reply never reached the agent, so the first real message titles the thread.
+    assert.equal(projection.thread.titleRegeneration?.requestId, "send-next");
+    assert.deepEqual(
+      projection.messages.map((message) => [message.runId, message.role, message.text]),
+      [
+        [reply!.id, "user", "/status"],
+        [reply!.id, "assistant", "All good."],
+        [next!.id, "user", "Carry on"],
+      ],
+    );
+    assert.deepEqual(
+      projection.turnItems
+        .filter((item) => item.runId === reply?.id)
+        .map((item) => [item.type, item.type === "user_message" ? item.inputIntent : null]),
+      [
+        ["user_message", "turn_start"],
+        ["assistant_message", null],
+      ],
+    );
+
+    // Sent under a provider the user just picked, the reply stays with the one the thread runs
+    // on, so that provider's first turn still gets the thread's context handed over.
+    yield* orchestrator.dispatch({
+      type: "thread.command-reply.record",
+      commandId: CommandId.make("send-status-after-switch"),
+      threadId,
+      messageId: MessageId.make("message:status-after-switch"),
+      text: "/status",
+      attachments: [],
+      modelSelection: { instanceId: ProviderInstanceId.make("claude"), model: "claude-haiku-5-5" },
+      createdBy: "user",
+      creationSource: "web",
+      reply: { messageId: MessageId.make("message:status-after-switch:reply"), text: "All good." },
+    });
+    const afterSwitch = (yield* projections.getThreadProjection(threadId)).runs.at(-1);
+    assert.deepInclude(afterSwitch, { providerInstanceId: instanceId, modelSelection });
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("files a plugin note under the latest finished run without starting a run", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:plugin-note");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-plugin-note"),
+      threadId,
+      projectId: ProjectId.make("project:plugin-note"),
+      title: "Plugin note",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const dispatch = (id: string) =>
+      orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(id),
+        threadId,
+        messageId: MessageId.make(id),
+        text: "Run in the background",
+        attachments: [],
+        dispatchMode: { type: "defer_start" },
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+    yield* dispatch("plugin-note-finished");
+    const finished = (yield* projections.getThreadProjection(threadId)).runs[0]!;
+    yield* orchestrator.dispatch({
+      type: "run.interrupt",
+      commandId: CommandId.make("interrupt-plugin-note"),
+      threadId,
+      runId: finished.id,
+    });
+    // A later run that hasn't finished must not receive the note.
+    yield* dispatch("plugin-note-pending");
+    yield* orchestrator.dispatch({
+      type: "thread.notification.record",
+      commandId: CommandId.make("record-plugin-note"),
+      threadId,
+      turnItemId: TurnItemId.make("plugin-note"),
+      notification: { source: { kind: "system" }, outcome: "updated", summary: "Digest: done" },
+    });
+    const projection = yield* projections.getThreadProjection(threadId);
+    assert.equal(projection.runs.length, 2);
+    const finishedItems = projection.turnItems.filter((item) => item.runId === finished.id);
+    const note = finishedItems.find((item) => item.id === "plugin-note");
+    assert.equal(note?.type, "notification");
+    assert.equal(note?.ordinal, Math.max(...finishedItems.map((item) => item.ordinal)));
   }).pipe(Effect.provide(layerTest)),
 );
 

@@ -1,0 +1,8 @@
+{
+  "id": "schedule-plugin",
+  "name": "Reminders",
+  "version": "0.1.0",
+  "description": "Test fixture that runs work at a time of day on chosen weekdays.",
+  "engines": { "t3": ">=0.1.0" },
+  "server": "./server.cjs"
+}

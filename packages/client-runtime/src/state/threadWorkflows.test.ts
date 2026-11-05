@@ -372,6 +372,20 @@ describe("thread workflows", () => {
         } as never,
       }),
     ).toBe(false);
+    // A plugin command's reply never ran an agent.
+    expect(
+      canForkProjectedAssistantItem({
+        projectedItem: {
+          item: {
+            type: "assistant_message",
+            runId: "reply",
+            status: "completed",
+            providerThreadId: null,
+            nodeId: null,
+          },
+        } as never,
+      }),
+    ).toBe(false);
   });
 
   it("merges the newest provider-finished run while checkpoint capture is pending", () => {
@@ -380,6 +394,15 @@ describe("thread workflows", () => {
         { id: "newest-queued", status: "queued", ordinal: 3 },
         { id: "older-completed", status: "completed", ordinal: 1 },
         { id: "newest-finished", status: "waiting", ordinal: 2 },
+        // A plugin command's reply has no provider turn to merge.
+        {
+          id: "plugin-reply",
+          status: "completed",
+          ordinal: 4,
+          rootNodeId: null,
+          providerThreadId: null,
+          commandReply: true,
+        },
       ],
     } as never;
 

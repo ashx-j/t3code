@@ -700,6 +700,8 @@ export const OrchestrationV2Run = Schema.Struct({
   ),
   delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionCohort),
   workspacePreparation: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+  /** A plugin slash command's reply, recorded as a run no agent ran. */
+  commandReply: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationV2Run = typeof OrchestrationV2Run.Type;
 
@@ -3540,6 +3542,32 @@ const OrchestrationV2InternalCommand = Schema.Union([
         notification: OrchestrationV2Notification,
       }),
     ),
+  }),
+  /** A server plugin's note in a thread. It starts no run and never reaches the agent. */
+  Schema.Struct({
+    type: Schema.Literal("thread.notification.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    turnItemId: TurnItemId,
+    notification: OrchestrationV2Notification,
+  }),
+  /**
+   * A server plugin's slash command answered in the thread: the sent message and the reply are
+   * recorded as a run that has already finished, so no provider turn starts.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.command-reply.record"),
+    ...OrchestrationV2CreationFields,
+    scheduledTaskId: Schema.optional(ScheduledTaskId),
+    senderThreadId: Schema.optional(ThreadId),
+    commandId: CommandId,
+    threadId: ThreadId,
+    messageId: MessageId,
+    text: Schema.String,
+    context: Schema.optional(OrchestrationMessageContext),
+    attachments: Schema.Array(ChatAttachment),
+    modelSelection: Schema.optional(ModelSelection),
+    reply: Schema.Struct({ messageId: MessageId, text: Schema.String }),
   }),
 ]);
 export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalCommand.Type;

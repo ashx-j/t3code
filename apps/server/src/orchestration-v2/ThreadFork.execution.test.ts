@@ -660,6 +660,8 @@ const writeParentRun = (input: {
   readonly text: string;
   /** A checkpointed run on a native provider thread, which `latest_stable` forks start from. */
   readonly stable?: boolean;
+  /** A plugin command's reply: finished, marked as a reply, with no root node. */
+  readonly reply?: boolean;
 }) =>
   Effect.gen(function* () {
     const eventSink = yield* EventSink.EventSinkV2;
@@ -717,6 +719,7 @@ const writeParentRun = (input: {
             providerThreadId,
             userMessageId: messageId,
             rootNodeId: null,
+            ...(input.reply === true ? { commandReply: true } : {}),
             activeAttemptId: null,
             status: input.status,
             queuePosition: null,
@@ -1155,6 +1158,30 @@ it.effect("merge-back rejects a second fork's context until the first is consume
       });
     const first = yield* forkAndRun("first");
     const second = yield* forkAndRun("second");
+    // A plugin command's reply never ran an agent, so it has nothing to bring back.
+    const reply = {
+      threadId: ThreadId.make("merge-back-guard-reply"),
+      runId: RunId.make("merge-back-guard-reply-run"),
+    };
+    yield* orchestrator.dispatch({
+      type: "thread.fork",
+      commandId: CommandId.make("merge-back-guard-fork-reply"),
+      sourceThreadId: parentId,
+      targetThreadId: reply.threadId,
+      sourcePoint: { type: "run", runId: parentRunId },
+      sideChat: true,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* writeParentRun({
+      ...reply,
+      ordinal: 1,
+      status: "completed",
+      text: "reply",
+      reply: true,
+    });
+    const replyRejected = yield* mergeBack("merge-back-guard-reply", reply).pipe(Effect.flip);
+    assert.include(String(replyRejected.cause), "plugin command's reply");
 
     yield* mergeBack("merge-back-guard-first", first);
     const rejected = yield* mergeBack("merge-back-guard-second", second).pipe(Effect.flip);

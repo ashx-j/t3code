@@ -1,0 +1,8 @@
+{
+  "id": "review-flags",
+  "name": "Review flags",
+  "version": "0.1.0",
+  "description": "Flags threads for review from a message, the thread header, the composer or the thread menu, and shows a Review badge on them.",
+  "engines": { "t3": ">=0.1.5" },
+  "web": "./web.js"
+}
