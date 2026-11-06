@@ -185,9 +185,8 @@ the components in `@t3tools/plugin-sdk/ui` are shared.
 
 ## Keeping a plugin working across T3 updates
 
-Build the whole design; leaving a detail out because it might break is not the answer. T3 changes
-its markup, class names, labels and layout in most releases, so build each detail on the most
-durable thing T3 offers for it:
+T3 changes its markup, class names, labels and layout in most releases. You don't need to drop
+parts of your design to survive that. Build each part on the most stable thing T3 offers for it:
 
 - **Arrange pieces instead of rebuilding T3's controls.** `ui.replace` gives you T3's own controls,
   already wired up. Place them, wrap them or leave them out. A copied control, with its markup,
@@ -210,18 +209,20 @@ durable thing T3 offers for it:
 - **Ask for a seam.** When T3 doesn't hand over what you need, ask for a piece, part or token on
   the T3 Code repository instead of reaching into its markup.
 
-An agent can run the `t3_plugins_check` tool on a plugin to find the patterns above, so it knows
-what to recheck after an update. A replacement that throws shows a note on its plugin's row in
-Settings → Plugins, and T3 draws its own part where it threw until the plugin reloads.
+After a T3 update, ask an agent to run `t3_plugins_check` on your plugin. It lists the patterns
+above that your plugin uses, so you know what to recheck. If one of your replacements throws,
+Settings → Plugins shows a note on the plugin's row, and T3 draws its own part there until the
+plugin reloads.
 
 ## Developing a plugin
 
 An agent writing a plugin installs its folder in place with `t3_plugins_install` and
 `link: true`, then edits the files and calls `t3_plugins_reload` to load them. Nothing is copied,
 and unlinking leaves the folder alone. `t3_plugins_check` lists what will stop the plugin from
-loading and what is likely to break in a T3 update. Settings → Plugins has a switch for these tools;
-until the user sets it, they appear once an environment has a plugin. Without an agent, add the folder to `devPaths` in `plugins.json` in the T3 Code data
-directory, turn the plugin on in Settings → Plugins, and use **Reload** after each change.
+loading and what is likely to break in a T3 update. Agents get these tools only after you turn on
+the switch for them in Settings → Plugins. They are off until then. Without an agent, add the
+folder to `devPaths` in `plugins.json` in the T3 Code data directory, turn the plugin on in
+Settings → Plugins, and use **Reload** after each change.
 
 To install a finished plugin, drag its folder onto Settings → Plugins, or use **Add plugin** with a
 folder, a git repository or an npm package.
