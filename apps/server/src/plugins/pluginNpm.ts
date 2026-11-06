@@ -36,7 +36,10 @@ const decodePackageDocument = Schema.decodeUnknownEffect(PackageDocument);
 
 const failed = (reason: string) => (cause: unknown) => new PluginNpmError({ reason, cause });
 
-/** The version `version` names, or the `latest` tag's, and its release from the registry. */
+/**
+ * The version `version` names, or the `latest` tag's, and its release from the registry. Untraced:
+ * it runs only inside `resolveVersion` and `fetch`, which have their spans.
+ */
 const readRelease = Effect.fnUntraced(function* (name: string, version: string | undefined) {
   const http = yield* HttpClient.HttpClient;
   // Scoped names keep their `@`; only the slash is encoded, as the registry expects.

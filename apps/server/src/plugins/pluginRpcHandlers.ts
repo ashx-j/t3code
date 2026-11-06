@@ -25,6 +25,7 @@ import * as Stream from "effect/Stream";
 
 import { rpcAuthorizationError } from "../auth/RpcAuthorization.ts";
 import * as PluginHost from "./PluginHost.ts";
+import type * as PluginInstaller from "./PluginInstaller.ts";
 
 const toRpcError = (pluginId: PluginId) => (error: { readonly message: string }) =>
   PluginHost.isPluginAccessDeniedError(error)
@@ -34,6 +35,7 @@ const toRpcError = (pluginId: PluginId) => (error: { readonly message: string })
 /** The `plugins.*` WebSocket handlers. `scopes` are the connected session's. */
 export const makePluginRpcHandlers = (
   pluginHost: PluginHost.PluginHost["Service"],
+  installer: PluginInstaller.PluginInstaller["Service"],
   scopes: ReadonlyArray<AuthEnvironmentScope>,
 ) => ({
   [WS_METHODS.pluginsList]: (_input: PluginListInput) =>
@@ -64,31 +66,31 @@ export const makePluginRpcHandlers = (
       Effect.mapError(toRpcError(input.pluginId)),
     ),
   [WS_METHODS.pluginsInstall]: (input: PluginInstallInput) =>
-    pluginHost.install(input.source).pipe(
+    installer.install(input.source).pipe(
       Effect.map((plugin) => ({ plugin })),
       Effect.mapError((error) => new PluginError({ message: error.message })),
     ),
   [WS_METHODS.pluginsInstallFiles]: (input: PluginInstallFilesInput) =>
-    pluginHost.installFiles(input.files).pipe(
+    installer.installFiles(input.files).pipe(
       Effect.map((plugin) => ({ plugin })),
       Effect.mapError((error) => new PluginError({ message: error.message })),
     ),
   [WS_METHODS.pluginsRescan]: (_input: PluginRescanInput) =>
     pluginHost.rescan.pipe(Effect.mapError((error) => new PluginError({ message: error.message }))),
   [WS_METHODS.pluginsUpdate]: (input: PluginUpdateInput) =>
-    pluginHost.update(input.pluginId).pipe(
+    installer.update(input.pluginId).pipe(
       Effect.map((plugin) => ({ plugin })),
       Effect.mapError(toRpcError(input.pluginId)),
     ),
   [WS_METHODS.pluginsCheckUpdates]: (_input: PluginCheckUpdatesInput) =>
-    pluginHost.checkUpdates.pipe(
+    installer.checkUpdates.pipe(
       Effect.map((plugins) => ({ plugins })),
       Effect.mapError((error) => new PluginError({ message: error.message })),
     ),
   [WS_METHODS.pluginsReportWebFailure]: (input: PluginReportWebFailureInput) =>
     pluginHost.reportWebFailure(input).pipe(Effect.mapError(toRpcError(input.pluginId))),
   [WS_METHODS.pluginsUninstall]: (input: PluginUninstallInput) =>
-    pluginHost
+    installer
       .uninstall(input.pluginId, input.removeData === true, input.linkedFolder)
       .pipe(Effect.as({ pluginId: input.pluginId }), Effect.mapError(toRpcError(input.pluginId))),
   [WS_METHODS.pluginsSettingsGet]: (input: PluginSettingsGetInput) =>

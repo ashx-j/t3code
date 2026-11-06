@@ -74,6 +74,7 @@ import type { AcpAgentDriverEnv } from "./acpAgentDriver.ts";
 import * as PluginHooks from "./PluginHooks.ts";
 import * as PluginHost from "./PluginHost.ts";
 import * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
+import * as PluginInstaller from "./PluginInstaller.ts";
 import * as PluginMcpTools from "./PluginMcpTools.ts";
 import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
@@ -691,6 +692,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
       const installedDir = yield* writeInstalledPlugin("installed-one", plugin("v1"));
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
+        const installer = yield* PluginInstaller.PluginInstaller;
         const id = PluginId.make("in-place");
         const which = host.invoke({
           pluginId: id,
@@ -698,7 +700,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           input: undefined,
           scopes: operate,
         });
-        assert.include(yield* host.install({ type: "path", path: folder, link: true }), {
+        assert.include(yield* installer.install({ type: "path", path: folder, link: true }), {
           status: "active",
           enabled: true,
           source: "dev",
@@ -710,24 +712,24 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         yield* writeFile(`${folder}/server.cjs`, plugin("v2"));
         yield* host.reload(id);
         assert.strictEqual(yield* which, "v2");
-        const copy = yield* host.install({ type: "path", path: folder }).pipe(Effect.flip);
+        const copy = yield* installer.install({ type: "path", path: folder }).pipe(Effect.flip);
         assert.match(copy.message, /is linked from .+\. Unlink it first\./);
         // A second copy of an installed plugin would share its id, so removing that copy would
         // delete the installed one.
         yield* waitForStatuses(host, { "installed-one": "disabled" });
-        const twice = yield* host
+        const twice = yield* installer
           .install({ type: "path", path: installedDir, link: true })
           .pipe(Effect.flip);
         assert.strictEqual(twice.message, "installed-one is already installed. Remove it first.");
         // Discovery would list it as installed too, so removing it would delete it.
         const unlisted = yield* writeInstalledPlugin("unlisted", plugin("v1"));
-        const inside = yield* host
+        const inside = yield* installer
           .install({ type: "path", path: unlisted, link: true })
           .pipe(Effect.flip);
         assert.include(inside.message, "is already in the plugins folder");
         yield* fs.remove(unlisted, { recursive: true });
 
-        yield* host.uninstall(id, false);
+        yield* installer.uninstall(id, false);
         assert.isTrue(yield* fs.exists(`${folder}/server.cjs`));
         // Forgotten, not only stopped: a rescan does not find it again.
         assert.isUndefined(stateOf((yield* host.rescan).plugins, "in-place"));
@@ -735,13 +737,13 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         // A copy put in the plugins folder by hand shadows the link. Unlinking leaves that copy
         // running with its data, which shares the id.
         const storage = yield* PluginStorage.PluginStorage;
-        yield* host.install({ type: "path", path: folder, link: true });
+        yield* installer.install({ type: "path", path: folder, link: true });
         yield* writeInstalledPlugin("in-place", plugin("installed"));
         yield* host.reload(id);
         yield* storage.set(id, "kept", true);
-        const keepsData = yield* host.uninstall(id, true, folder).pipe(Effect.flip);
+        const keepsData = yield* installer.uninstall(id, true, folder).pipe(Effect.flip);
         assert.include(keepsData.message, "Unlink it without removing data.");
-        yield* host.uninstall(id, false, folder);
+        yield* installer.uninstall(id, false, folder);
         const copies = (yield* host.rescan).plugins.filter((state) => state.id === "in-place");
         assert.deepStrictEqual(
           copies.map((state) => state.source),
@@ -753,11 +755,11 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
 
         // The other way round: removing the installed copy lists the link afresh, turned off like
         // any newly found copy, not stuck as the shadowed copy it was.
-        yield* host.uninstall(id, false);
-        yield* host.install({ type: "path", path: folder, link: true });
+        yield* installer.uninstall(id, false);
+        yield* installer.install({ type: "path", path: folder, link: true });
         yield* writeInstalledPlugin("in-place", plugin("installed"));
         yield* host.reload(id);
-        yield* host.uninstall(id, false);
+        yield* installer.uninstall(id, false);
         const left = (yield* host.list).filter((state) => state.id === "in-place");
         assert.deepStrictEqual(
           left.map((state) => [state.source, state.status, state.failure]),
@@ -766,7 +768,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         yield* host.setEnabled(id, true);
         assert.strictEqual(yield* which, "v2");
 
-        const notLinked = yield* host
+        const notLinked = yield* installer
           .uninstall(id, false, `${stateDir}/elsewhere`)
           .pipe(Effect.flip);
         assert.strictEqual(
@@ -784,7 +786,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           );
         }
         yield* host.rescan;
-        yield* host.uninstall(threeCopies, false);
+        yield* installer.uninstall(threeCopies, false);
         assert.deepStrictEqual(
           (yield* host.list)
             .filter((state) => state.id === threeCopies)
@@ -1533,31 +1535,32 @@ module.exports = { activate(api) {
         }));
         yield* Effect.gen(function* () {
           const host = yield* PluginHost.PluginHost;
+          const installer = yield* PluginInstaller.PluginInstaller;
           yield* waitForStatuses(host, {});
           // Agents get the plugin tools only once the user turns them on, plugins or not.
           const agentTools = Stream.runHead(host.agentTools).pipe(Effect.map(Option.getOrThrow));
           assert.isFalse(yield* agentTools);
 
           // A folder that is not a plugin, such as a home folder, is refused before it is copied.
-          const notInstalled = yield* host
+          const notInstalled = yield* installer
             .install({ type: "path", path: notPlugin })
             .pipe(Effect.flip);
           assert.strictEqual(notInstalled.message, "The source has no t3-plugin.json.");
           assert.notInclude(copiedFrom, notPlugin);
 
           const source = { type: "path" as const, path: `${fixturesDir}hello-plugin` };
-          const installed = yield* host.install(source);
+          const installed = yield* installer.install(source);
           assert.deepStrictEqual(installed.installSource, source);
           assert.isFalse(yield* agentTools);
           yield* host.setAgentTools(true);
           assert.isTrue(yield* agentTools);
           yield* host.setAgentTools(false);
           assert.isFalse(yield* agentTools);
-          const updated = yield* host.update(hello);
+          const updated = yield* installer.update(hello);
           assert.include(updated, { status: "active" });
           assert.notStrictEqual(updated.revision, installed.revision);
           // The same folder written another way is the same source.
-          assert.include(yield* host.install({ ...source, path: `${source.path}/` }), {
+          assert.include(yield* installer.install({ ...source, path: `${source.path}/` }), {
             status: "active",
           });
           assert.include(installed, {
@@ -1568,19 +1571,19 @@ module.exports = { activate(api) {
           });
           assert.isTrue(yield* fs.exists(`${stateDir}/plugins/hello-plugin/server.cjs`));
 
-          const failed = yield* host.install({ type: "path", path: broken }).pipe(Effect.flip);
+          const failed = yield* installer.install({ type: "path", path: broken }).pipe(Effect.flip);
           assert.strictEqual(failed._tag, "PluginInstallError");
           assert.include(stateOf(yield* host.list, hello), { status: "active" });
           assert.isTrue(yield* fs.exists(`${stateDir}/plugins/hello-plugin/server.cjs`));
 
-          yield* host.uninstall(hello, true);
+          yield* installer.uninstall(hello, true);
           assert.isUndefined(stateOf(yield* host.list, hello));
           assert.isFalse(yield* fs.exists(`${stateDir}/plugins/hello-plugin`));
 
           // A plugin linked into the plugins folder: removing it removes the link, not its source.
           yield* fs.symlink(`${fixturesDir}hello-plugin`, `${stateDir}/plugins/hello-plugin`);
           yield* host.reload(hello).pipe(Effect.ignore);
-          yield* host.uninstall(hello, false);
+          yield* installer.uninstall(hello, false);
           assert.isFalse(yield* fs.exists(`${stateDir}/plugins/hello-plugin`));
           assert.isTrue(yield* fs.exists(`${fixturesDir}hello-plugin/server.cjs`));
 
@@ -1595,26 +1598,29 @@ module.exports = { activate(api) {
             }),
           );
           yield* host.rescan;
-          const occupied = yield* host.install(source).pipe(Effect.flip);
+          const occupied = yield* installer.install(source).pipe(Effect.flip);
           assert.strictEqual(
             occupied.message,
             "The plugins folder already has a hello-plugin folder holding hand-copied. Move it, then install again.",
           );
           assert.include(stateOf(yield* host.list, "hand-copied"), { status: "disabled" });
-          yield* host.uninstall(PluginId.make("hand-copied"), false);
+          yield* installer.uninstall(PluginId.make("hand-copied"), false);
 
           npmLatest = "1.0.0";
-          const fromNpm = yield* host.install({ type: "npm", name: "npm-hello" });
+          const fromNpm = yield* installer.install({ type: "npm", name: "npm-hello" });
           assert.include(fromNpm, { id: PluginId.make("npm-hello"), status: "active" });
-          assert.isUndefined(stateOf(yield* host.checkUpdates, "npm-hello")?.availableUpdate);
-          const ranged = yield* host
+          assert.isUndefined(stateOf(yield* installer.checkUpdates, "npm-hello")?.availableUpdate);
+          const ranged = yield* installer
             .install({ type: "npm", name: "npm-hello", version: "^1.0.0" })
             .pipe(Effect.flip);
           assert.match(ranged.message, /not an exact version\. Use one such as 1\.2\.3/);
           npmLatest = "1.1.0";
-          assert.deepStrictEqual(stateOf(yield* host.checkUpdates, "npm-hello")?.availableUpdate, {
-            version: "1.1.0",
-          });
+          assert.deepStrictEqual(
+            stateOf(yield* installer.checkUpdates, "npm-hello")?.availableUpdate,
+            {
+              version: "1.1.0",
+            },
+          );
           // Another source claiming an installed id is refused before anything moves.
           const impostor = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-plugin-impostor-" });
           const impostorManifest = JSON.stringify({
@@ -1624,9 +1630,11 @@ module.exports = { activate(api) {
             engines: { t3: ">=0.1.0" },
           });
           yield* writeFile(`${impostor}/t3-plugin.json`, impostorManifest);
-          const takeover = yield* host.install({ type: "path", path: impostor }).pipe(Effect.flip);
+          const takeover = yield* installer
+            .install({ type: "path", path: impostor })
+            .pipe(Effect.flip);
           assert.match(takeover.message, /already installed from somewhere else/);
-          const dropped = yield* host
+          const dropped = yield* installer
             .installFiles([
               { path: "t3-plugin.json", contents: new TextEncoder().encode(impostorManifest) },
             ])
@@ -1634,13 +1642,13 @@ module.exports = { activate(api) {
           assert.match(dropped.message, /already installed from somewhere else/);
           // Updating a disabled plugin keeps it disabled.
           yield* host.setEnabled(PluginId.make("npm-hello"), false);
-          const npmUpdated = yield* host.update(PluginId.make("npm-hello"));
+          const npmUpdated = yield* installer.update(PluginId.make("npm-hello"));
           assert.include(npmUpdated, { enabled: false });
           assert.isUndefined(npmUpdated.availableUpdate);
           // So is the same package with a version pinned.
           const pinned = { type: "npm" as const, name: "npm-hello", version: "1.0.0" };
-          assert.deepStrictEqual((yield* host.install(pinned)).installSource, pinned);
-          const tampered = yield* host
+          assert.deepStrictEqual((yield* installer.install(pinned)).installSource, pinned);
+          const tampered = yield* installer
             .install({ type: "npm", name: "npm-tampered" })
             .pipe(Effect.flip);
           assert.match(tampered.message, /integrity/);
@@ -1664,16 +1672,17 @@ module.exports = { activate(api) {
         JSON.stringify({ id: "notes", name: "Notes", version, engines: { t3: ">=0.1.0" } });
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
+        const installer = yield* PluginInstaller.PluginInstaller;
         yield* waitForStatuses(host, {});
         // The docs point people at the plugins folder, so a rescan makes sure it exists.
         yield* host.rescan;
         assert.isTrue(yield* fs.exists(`${stateDir}/plugins`));
 
-        const installed = yield* host.installFiles(helloFiles);
+        const installed = yield* installer.installFiles(helloFiles);
         assert.include(installed, { id: hello, status: "active", enabled: true });
         assert.isUndefined(installed.installSource);
         // The same folder dropped again replaces it.
-        const replaced = yield* host.installFiles(helloFiles);
+        const replaced = yield* installer.installFiles(helloFiles);
         assert.notStrictEqual(replaced.revision, installed.revision);
 
         // Copied in by hand under any name, a plugin is listed on the next rescan, turned off.
@@ -1690,7 +1699,7 @@ module.exports = { activate(api) {
         assert.include(stateOf((yield* host.rescan).plugins, "notes"), { version: "1.0.5" });
 
         // A dropped folder replaces a plugin copied in by hand, in the folder it was copied to.
-        yield* host.installFiles([
+        yield* installer.installFiles([
           { path: "t3-plugin.json", contents: new TextEncoder().encode(notesManifest("1.1.0")) },
         ]);
         assert.include(stateOf(yield* host.list, "notes"), { version: "1.1.0", enabled: false });
@@ -1698,7 +1707,7 @@ module.exports = { activate(api) {
           "My Notes",
           "hello-plugin",
         ]);
-        yield* host.uninstall(PluginId.make("notes"), false);
+        yield* installer.uninstall(PluginId.make("notes"), false);
         assert.isFalse(yield* fs.exists(`${stateDir}/plugins/My Notes`));
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
@@ -2065,9 +2074,9 @@ it.live("lists a project's git worktrees for a plugin", () =>
 
 it.live("keeps a git URL's credentials out of a failed install's reason", () =>
   Effect.gen(function* () {
-    const host = yield* PluginHost.PluginHost;
+    const installer = yield* PluginInstaller.PluginInstaller;
     // Git prints `user:token@host` for a git:// URL it cannot reach.
-    const failed = yield* host
+    const failed = yield* installer
       .install({ type: "git", url: "git://ash:secret-token@127.0.0.1:1/plugin.git" })
       .pipe(Effect.flip);
     assert.match(failed.message, /^git clone failed: /);

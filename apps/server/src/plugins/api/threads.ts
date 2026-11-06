@@ -131,6 +131,7 @@ export const makeThreadsApi = (
         );
       }),
     );
+  // A decode and one service call, which has its own span.
   const shellOf = Effect.fnUntraced(function* (threadId: string) {
     const id = yield* decodeThreadId(threadId);
     const shell = yield* threads.getThreadShell(id);

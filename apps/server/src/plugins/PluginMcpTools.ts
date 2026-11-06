@@ -282,6 +282,7 @@ const make = () => {
     ).pipe(Effect.mapError(invalidInput));
   };
 
+  // Inside `register`, `unregisterPlugin` or `offerManagementTools`, which have their spans.
   const publish = Effect.fnUntraced(function* (entry: PluginMcpToolEntry) {
     tools.set(entry.name, entry);
     for (const publisher of publishers) yield* publisher(entry);

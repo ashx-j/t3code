@@ -198,6 +198,7 @@ export const makeRuntimeRequestHooks = (input: {
       Effect.orElseSucceed(() => false),
     );
 
+  // `ask` and `consider` run for every request and turn item event while a hook is registered.
   const ask = Effect.fnUntraced(function* (
     target: { readonly threadId: ThreadId; readonly requestId: RuntimeRequestId },
     request: PluginRuntimeRequest,

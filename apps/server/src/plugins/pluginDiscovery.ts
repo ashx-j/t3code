@@ -61,6 +61,7 @@ export const discoverPlugins = Effect.fn("PluginDiscovery.discover")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
+  // The helpers below run for every plugin folder inside the discovery span.
   const readManifest = Effect.fnUntraced(function* (rootDir: string) {
     const manifestPath = path.join(rootDir, PLUGIN_MANIFEST_FILE);
     const info = yield* fs.stat(manifestPath).pipe(Effect.option);
