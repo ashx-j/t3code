@@ -6,6 +6,7 @@ import {
   sanitizeThreadTitle,
 } from "@t3tools/provider-core/server/textGenerationUtils";
 import { formatGeneratedBranchName, sanitizeFeatureBranchName } from "@t3tools/shared/git";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -25,6 +26,10 @@ const decodeGuide = Schema.decodeUnknownOption(
   Schema.toCodecJson(Schema.Struct({ stops: Schema.Array(PullRequestReviewGuideStop) })),
 );
 
+// T3 waits for plugins before it calls its own model, so hung plugins delay its text this much at
+// most. That still leaves time for a template or a quick API call.
+const PLUGINS_BUDGET = Duration.seconds(5);
+
 const omitUndefined = (input: Record<string, Schema.Json | undefined>): Schema.JsonObject => {
   const request: Record<string, Schema.Json> = {};
   for (const [key, value] of Object.entries(input)) if (value !== undefined) request[key] = value;
@@ -32,8 +37,9 @@ const omitUndefined = (input: Record<string, Schema.Json | undefined>): Schema.J
 };
 
 /**
- * Asks plugins for each generated text before T3's own generator, in the order they registered.
- * Their answers get the cleanup T3 gives model output; with no usable answer T3 generates as usual.
+ * Asks plugins for each generated text before T3's own generator, in plugin id order, within one
+ * budget for all of them. Their answers get the cleanup T3 gives model output; with no usable
+ * answer in time T3 generates as usual.
  */
 export const withPluginTextGeneration = (
   hooks: PluginHooksRegistry,
@@ -53,10 +59,18 @@ export const withPluginTextGeneration = (
               const request = omitUndefined(input);
               for (const generate of generators) {
                 const answer = decode(yield* generate(request));
-                if (Option.isSome(answer)) return answer.value;
+                if (Option.isSome(answer)) return answer;
               }
-              return yield* fallback;
-            }),
+              return Option.none<A>();
+            }).pipe(
+              Effect.timeoutOption(PLUGINS_BUDGET),
+              Effect.flatMap((answer) =>
+                Option.match(Option.flatten(answer), {
+                  onNone: () => fallback,
+                  onSome: Effect.succeed,
+                }),
+              ),
+            ),
       ),
     );
   return {

@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import { PluginId, ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as PubSub from "effect/PubSub";
 import * as TestClock from "effect/testing/TestClock";
@@ -58,7 +59,7 @@ it.effect("asks plugins before T3, skipping slow or unusable answers, and cleans
       })
       .pipe(Effect.forkChild({ startImmediately: true }));
     yield* Effect.promise(() => asked.promise);
-    yield* TestClock.adjust("30 seconds");
+    yield* TestClock.adjust("3 seconds");
     const { branch } = yield* Fiber.join(naming);
     assert.strictEqual(branch, "ash/fix-the-login-bug");
 
@@ -98,5 +99,33 @@ it.effect("asks plugins before T3, skipping slow or unusable answers, and cleans
       modelSelection,
     });
     assert.strictEqual(commit.subject, "Start with a verb. Prefix with fix");
+
+    // Hung plugins share one budget, then T3 writes the text.
+    const hung = () => new Promise<never>(() => undefined);
+    (yield* textGenerationOf("hung-a")).register("prContent", hung);
+    (yield* textGenerationOf("hung-b")).register("prContent", hung);
+    const pr = yield* generation
+      .generatePrContent({
+        cwd: "/repo",
+        baseBranch: "main",
+        headBranch: "fix",
+        commitSummary: "",
+        diffSummary: "",
+        diffPatch: "",
+        modelSelection,
+      })
+      .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+    yield* TestClock.adjust("5 seconds");
+    assert.deepStrictEqual(
+      pr.pollUnsafe(),
+      Exit.succeed(
+        Exit.fail(
+          new TextGenerationError({
+            operation: "generatePrContent",
+            detail: "T3's generator was asked.",
+          }),
+        ),
+      ),
+    );
   }).pipe(Effect.provide(PluginHooks.layer)),
 );

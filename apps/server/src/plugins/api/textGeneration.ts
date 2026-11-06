@@ -10,8 +10,8 @@ import type * as TextGeneration from "../../textGeneration/TextGeneration.ts";
 import type * as PluginHooks from "../PluginHooks.ts";
 import { type FacadeContext, PluginCodeError, refused, stopOnAbort } from "./facade.ts";
 
-// T3's own generators call a model and take seconds, so a plugin gets as long before T3 takes over.
-const TEXT_GENERATION_DEADLINE = Duration.seconds(30);
+// Less than the 5 seconds all plugins share for one text, so one that hangs leaves the next time.
+const TEXT_GENERATION_DEADLINE = Duration.seconds(3);
 const KINDS = new Set(["threadTitle", "commitMessage", "prContent", "branchName", "reviewGuide"]);
 const isKind = (kind: string): kind is PluginHooks.PluginTextGenerationKind => KINDS.has(kind);
 
