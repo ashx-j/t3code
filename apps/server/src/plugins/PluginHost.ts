@@ -393,7 +393,6 @@ const toState = (
           ...(manifest.settingsSchema === undefined
             ? {}
             : { settingsSchema: manifest.settingsSchema }),
-          ...(manifest.contributes === undefined ? {} : { contributes: manifest.contributes }),
         }),
     permissions: manifest?.permissions ?? [],
     source: record.plugin.source,

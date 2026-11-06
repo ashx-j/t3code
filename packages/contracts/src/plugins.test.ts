@@ -14,7 +14,6 @@ const manifest = {
   web: "dist/web.js",
   settingsSchema: { type: "object", properties: { greeting: { type: "string" } } },
   permissions: ["Reads thread titles"],
-  contributes: {},
 };
 
 describe("PluginManifest", () => {
@@ -28,13 +27,16 @@ describe("PluginManifest", () => {
     );
   });
 
+  it("loads a manifest written when it could have `contributes`, without the key", () => {
+    expect(decodeManifest({ ...manifest, contributes: { panels: [] } })).toEqual(manifest);
+  });
+
   it.each([
     ["a missing id", { id: undefined }],
     ["an id with uppercase letters", { id: "Hello" }],
     ["an id with an underscore", { id: "hello_plugin" }],
     ["a version that is not semver", { version: "1.0" }],
     ["an engines range the host cannot evaluate", { engines: { t3: "~0.1.6" } }],
-    ["an unknown contribution kind", { contributes: { panels: [] } }],
     ["a server entry that escapes the plugin directory", { server: "../other/server.cjs" }],
     ["an absolute server entry", { server: "/usr/lib/server.cjs" }],
     ["a Windows server entry", { server: "C:\\plugins\\server.cjs" }],

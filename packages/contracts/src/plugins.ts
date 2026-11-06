@@ -50,13 +50,6 @@ const PluginServerEntryPath = PluginEntryPath.check(
   Schema.isPattern(/\.cjs$/, { expected: "a CommonJS file ending in .cjs" }),
 );
 
-// Each phase that designs a declarative contribution kind adds its key here. Unknown keys fail
-// decoding, so a plugin written for a newer T3 says why instead of silently losing a contribution.
-export const PluginContributions = Schema.StructWithRest(Schema.Struct({}), [
-  Schema.Record(Schema.String, Schema.Never.annotate({ message: "Unknown contribution kind" })),
-]);
-export type PluginContributions = typeof PluginContributions.Type;
-
 /** `t3-plugin.json` at the root of a plugin directory. */
 export const PluginManifest = Schema.Struct({
   id: PluginId,
@@ -77,7 +70,6 @@ export const PluginManifest = Schema.Struct({
       Schema.isMaxLength(32),
     ),
   ),
-  contributes: Schema.optionalKey(PluginContributions),
 });
 export type PluginManifest = typeof PluginManifest.Type;
 
@@ -153,7 +145,6 @@ export const PluginState = Schema.Struct({
   /** Why its server code failed outside a call since it last started, such as in a timer. */
   serverFailure: Schema.optionalKey(Schema.String),
   settingsSchema: Schema.optionalKey(Schema.JsonObject),
-  contributes: Schema.optionalKey(PluginContributions),
 });
 export type PluginState = typeof PluginState.Type;
 
