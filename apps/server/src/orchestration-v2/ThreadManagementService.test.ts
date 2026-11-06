@@ -129,9 +129,6 @@ const layerDispatchChokepointTest =
               if (command.type === "message.dispatch") texts.push(command.text);
               if (command.type === "queued-run.edit") texts.push(`edited ${command.text}`);
               if (command.type === "delegated_task.request") texts.push(`task ${command.task}`);
-              if (command.type === "thread.command-reply.record") {
-                texts.push(`${command.commandId} replied ${command.reply.text}`);
-              }
               return { sequence: 1, storedEvents: [] } as never;
             }),
         }),
@@ -236,16 +233,9 @@ it.effect(
             }),
         )
         .pipe(Effect.asVoid);
-      yield* hooks
-        .addSlashCommand({ pluginId: "deployer", pluginName: "Deployer", name: "status" }, () =>
-          Effect.succeed({ reply: "Staging is up to date." }),
-        )
-        .pipe(Effect.asVoid);
       const threads = yield* ThreadManagementService.ThreadManagementService;
       yield* threads.dispatch(message("user"));
       yield* threads.dispatch(message("plugin-command", undefined, "/deploy staging"));
-      // A reply keeps the message's command id, so a retry replays it instead of running a turn.
-      yield* threads.dispatch(message("plugin-reply", undefined, "/status"));
       // A retry of an accepted command id replays it; plugins already saw it once.
       const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
       const replayed = message("replayed", undefined, "/deploy staging");
@@ -325,7 +315,6 @@ it.effect(
       expect(texts).toEqual([
         "Fix the build.\n\nProject uses pnpm.",
         "Deploy staging now.",
-        "command:thread-management:hooks-plugin-reply replied Staging is up to date.",
         "/deploy staging",
         "Fix the build.",
         "/goal clear",
@@ -457,25 +446,6 @@ it.effect(
     }).pipe(Effect.provide(layerTest));
   },
 );
-
-it("latestRun passes over a slash command reply recorded while a turn runs", () => {
-  const run = (id: string, ordinal: number, status: OrchestrationV2Run["status"], reply = false) =>
-    ({
-      id: RunId.make(id),
-      ordinal,
-      status,
-      rootNodeId: reply ? null : NodeId.make(`node:${id}`),
-      providerThreadId: reply ? null : ProviderThreadId.make(`provider-thread:${id}`),
-      ...(reply ? { commandReply: true } : {}),
-    }) as OrchestrationV2Run;
-  const reply = run("run:reply", 2, "completed", true);
-  expect(
-    ThreadManagementService.latestRun({ runs: [run("run:turn", 1, "running"), reply] })?.id,
-  ).toBe("run:turn");
-  expect(
-    ThreadManagementService.latestRun({ runs: [run("run:turn", 1, "completed"), reply] })?.id,
-  ).toBe("run:reply");
-});
 
 it.effect("waitForThread follows a restart continuation instead of the cut run", () =>
   Effect.gen(function* () {

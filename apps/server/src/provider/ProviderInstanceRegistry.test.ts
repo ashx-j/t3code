@@ -858,7 +858,7 @@ describe("ProviderInstanceRegistry added drivers", () => {
       }).pipe(Effect.provide(noSecrets), Effect.scoped),
   );
 
-  it.effect("keeps a throwing plugin driver to its own unavailable instance, with its form", () =>
+  it.effect("keeps an added driver's form on an instance whose config does not decode", () =>
     Effect.gen(function* () {
       const builtInId = ProviderInstanceId.make("builtIn");
       const { registry, addDriver } = yield* makeProviderInstanceRegistry({
@@ -870,9 +870,7 @@ describe("ProviderInstanceRegistry added drivers", () => {
       const _remove = yield* addDriver({
         ...driverFor(pluginKind),
         metadata: { displayName: "Plugin", client: { settingsSchema } },
-        defaultConfig: () => {
-          throw new Error("no default config");
-        },
+        configSchema: Schema.Struct({ greeting: Schema.String }),
       });
 
       expect((yield* registry.listInstances).map((instance) => instance.instanceId)).toEqual([
@@ -883,7 +881,7 @@ describe("ProviderInstanceRegistry added drivers", () => {
         instanceId: defaultInstanceIdForDriver(pluginKind),
         settingsSchema,
       });
-      expect(unavailable?.unavailableReason).toContain("no default config");
+      expect(unavailable?.unavailableReason).toContain("Invalid config");
     }).pipe(Effect.provide(noSecrets), Effect.scoped),
   );
 });

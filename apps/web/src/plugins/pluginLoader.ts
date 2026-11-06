@@ -40,11 +40,7 @@ import { Textarea } from "../components/ui/textarea";
 import { toastManager } from "../components/ui/toast";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { registerCommands, type CommandHandlers } from "../shortcuts/dispatcher";
-import {
-  isDesktopPluginCommand,
-  registerDesktopPluginCommand,
-  releaseDesktopPluginCommands,
-} from "./desktopPluginCommands";
+import { isDesktopPluginCommand, registerDesktopPluginCommand } from "./desktopPluginCommands";
 import { pluginEnvironment } from "../state/plugins";
 import { readPreparedConnection } from "../state/session";
 import {
@@ -60,10 +56,8 @@ import {
   registerPluginSlashCommand,
   registerPluginToolRenderer,
   registerPluginSettingsPanel,
-  pluginContributionKey,
   capPluginMentionText,
   pluginMentionContextId,
-  setPluginComposerCollapseOnScroll,
   setPluginMentionItems,
   setPluginThreadBadge,
   setPluginWebFailure,
@@ -277,7 +271,6 @@ function makeWebPluginApi({
   const badgedThreads = new Set<string>();
   let badgesTracked = false;
   let mentionCleanupTracked = false;
-  let collapseCleanupTracked = false;
   // Shared by everything the plugin draws, so a render failure reaches its row and agents once.
   const owner: PluginOwner = {
     environmentId,
@@ -381,14 +374,10 @@ function makeWebPluginApi({
                 title: command.title,
                 pluginName: plugin.name,
                 menu: command.desktop.menu === true,
-                ...(command.desktop.tray === true ? { tray: true } : {}),
-                ...(command.desktop.globalShortcut === undefined
-                  ? {}
-                  : { globalShortcut: command.desktop.globalShortcut }),
               };
         if (desktopCommand !== undefined && !isDesktopPluginCommand(desktopCommand)) {
           throw new TypeError(
-            `Command "${command.id}" can't go in the desktop menus: it needs a title of up to 200 characters and a shortcut such as CommandOrControl+Shift+Y.`,
+            `Command "${command.id}" can't go in the desktop menu: it needs a title of up to 200 characters.`,
           );
         }
         track(
@@ -468,15 +457,6 @@ function makeWebPluginApi({
       },
       addButton: (button) => {
         track(registerPluginAction("composer", pluginActionEntry(owner, button)));
-      },
-      setCollapseOnScroll: (enabled) => {
-        if (!active()) return;
-        const key = pluginContributionKey(environmentId, pluginId);
-        setPluginComposerCollapseOnScroll(key, enabled === true);
-        if (!collapseCleanupTracked) {
-          collapseCleanupTracked = true;
-          track(() => setPluginComposerCollapseOnScroll(key, false));
-        }
       },
       setMentionItems: (items) => {
         if (!active()) return;
@@ -816,18 +796,15 @@ export function startPluginLoader(
     }
     // Not awaited, so a plugin that hangs until its deadline holds back neither the others nor
     // the next change, such as turning another plugin off.
-    return [...wanted.values()].filter((plugin) => !loaded.has(plugin.id)).map(load);
+    for (const plugin of wanted.values()) {
+      if (!loaded.has(plugin.id)) void load(plugin);
+    }
   };
 
-  let firstRoundStarted = false;
   const stopFollowing = appAtomRegistry.subscribe(
     pluginEnvironment.pluginsLive({ environmentId, input: {} }),
     (result) => {
-      if (stopped || !AsyncResult.isSuccess(result)) return;
-      const loads = reconcile(result.value.plugins);
-      if (firstRoundStarted) return;
-      firstRoundStarted = true;
-      void Promise.allSettled(loads).then(releaseDesktopPluginCommands);
+      if (!stopped && AsyncResult.isSuccess(result)) reconcile(result.value.plugins);
     },
     { immediate: true },
   );

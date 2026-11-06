@@ -13,8 +13,6 @@ const PART_NAMES: { readonly [Part in PluginPartName]: string } = {
   "message.user": "your messages",
   "timeline.item": "work details",
   "diff.view": "diffs",
-  "app.pageFrame": "Settings and Usage",
-  "app.sidebar": "the sidebar",
 };
 
 /**

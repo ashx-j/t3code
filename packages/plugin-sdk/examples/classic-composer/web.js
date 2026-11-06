@@ -1,7 +1,3 @@
-// \0t3-plugin-host:@t3tools/plugin-sdk/ui
-var host$2 = globalThis.__t3PluginHost.ui;
-var read$2 = (name) => host$2[name];
-var Switch = /* @__PURE__ */ read$2("Switch");
 // src/web.ts
 /** Types a web plugin. The ESM bundle's default export is the result. */
 var defineWebPlugin = (definition) => definition;
@@ -93,24 +89,6 @@ var css = `
     overflow: hidden;
     clip-path: inset(50%);
     white-space: nowrap;
-  }
-}
-
-.classic-composer-setting {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  & p {
-    margin: 0;
-    font-size: var(--text-sm, 0.875rem);
-    font-weight: 500;
-  }
-  & p + p {
-    margin-top: 0.125rem;
-    color: var(--muted-foreground);
-    font-size: var(--text-xs, 0.75rem);
-    font-weight: 400;
   }
 }
 
@@ -430,46 +408,9 @@ function ClassicRow({ pieces }) {
           }),
   });
 }
-var COLLAPSE_KEY = "classic-composer:collapse-on-scroll";
-/** Whether the composer folds while the timeline is scrolled up. On until turned off here. */
-var collapseOnScroll = () => localStorage.getItem(COLLAPSE_KEY) !== "off";
-function CollapseSetting(props) {
-  const [on, setOn] = useState(collapseOnScroll);
-  return /* @__PURE__ */ jsxs("div", {
-    className: "classic-composer-setting",
-    children: [
-      /* @__PURE__ */ jsxs("div", {
-        children: [
-          /* @__PURE__ */ jsx("p", { children: "Collapse composer on scroll" }),
-          /* @__PURE__ */ jsx("p", {
-            children:
-              "Rests an existing thread's composer as one line while you scroll up the conversation. Focus it or scroll back to the end to expand it again.",
-          }),
-        ],
-      }),
-      /* @__PURE__ */ jsx(Switch, {
-        "aria-label": "Collapse composer on scroll",
-        checked: on,
-        onCheckedChange: (checked) => {
-          setOn(checked);
-          props.onChange(checked);
-        },
-      }),
-    ],
-  });
-}
 var web_default = defineWebPlugin({
   activate(api) {
     api.injectStyles(css);
-    api.composer.setCollapseOnScroll(collapseOnScroll());
-    api.settings.registerPanel(() =>
-      /* @__PURE__ */ jsx(CollapseSetting, {
-        onChange: (on) => {
-          localStorage.setItem(COLLAPSE_KEY, on ? "on" : "off");
-          api.composer.setCollapseOnScroll(on);
-        },
-      }),
-    );
     api.ui.replace("composer.controls", (pieces) => /* @__PURE__ */ jsx(ClassicRow, { pieces }));
   },
 });

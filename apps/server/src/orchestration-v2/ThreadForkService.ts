@@ -11,7 +11,6 @@ import {
   OrchestrationV2ThreadProjection,
   ThreadId,
 } from "@t3tools/contracts";
-import { isCommandReplyRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -47,10 +46,6 @@ export function forkableSourceRunStatusError(
   run: Pick<OrchestrationV2Run, "id" | "status">,
 ): string {
   return `Fork source run ${run.id} is ${run.status}; in-progress and rolled-back runs cannot be forked.`;
-}
-
-export function commandReplyForkSourceError(run: Pick<OrchestrationV2Run, "id">): string {
-  return `Fork source run ${run.id} is a plugin command's reply, which has no agent turn to fork from.`;
 }
 
 export interface ThreadForkServiceV2Shape {
@@ -102,13 +97,6 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
           sourceThreadId: input.sourceProjection.thread.id,
           targetThreadId: input.targetThreadId,
           cause: forkableSourceRunStatusError(sourceRun),
-        });
-      }
-      if (sourceRun !== null && isCommandReplyRun(sourceRun)) {
-        return yield* new ThreadForkPlanError({
-          sourceThreadId: input.sourceProjection.thread.id,
-          targetThreadId: input.targetThreadId,
-          cause: commandReplyForkSourceError(sourceRun),
         });
       }
       const targetThread: OrchestrationV2AppThread = {

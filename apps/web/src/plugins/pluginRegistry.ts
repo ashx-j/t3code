@@ -289,22 +289,6 @@ export const pluginBannersAtom = Atom.family((environmentId: string) => {
   });
 });
 
-// Plugin contribution keys; the composer folds on scroll while any plugin asks for it.
-const collapseOnScrollRequests = new Set<string>();
-
-/** Turns one plugin's request to fold the composer when the timeline scrolls up on or off. */
-export function setPluginComposerCollapseOnScroll(key: string, enabled: boolean) {
-  if (collapseOnScrollRequests.has(key) === enabled) return;
-  if (enabled) collapseOnScrollRequests.add(key);
-  else collapseOnScrollRequests.delete(key);
-  bump();
-}
-
-export const pluginComposerCollapseOnScrollAtom = Atom.make((get) => {
-  get(versionAtom);
-  return collapseOnScrollRequests.size > 0;
-});
-
 /**
  * The `plg_<pluginId>_<tool>` name inside a reported tool name: Codex reports it bare, Claude as
  * `mcp__<server>__plg_…` and ACP agents as `<server>.plg_…`. Undefined for other tools.
@@ -402,8 +386,6 @@ const replacements: { [Part in PluginPartName]: Array<PluginReplacementEntry<Par
   "message.user": [],
   "timeline.item": [],
   "diff.view": [],
-  "app.pageFrame": [],
-  "app.sidebar": [],
 };
 
 // Its own version: replaceable parts sit on hot paths, so other plugin changes must not
@@ -430,8 +412,6 @@ export const pluginReplacementAtoms: {
   "message.user": replacementAtom("message.user"),
   "timeline.item": replacementAtom("timeline.item"),
   "diff.view": replacementAtom("diff.view"),
-  "app.pageFrame": replacementAtom("app.pageFrame"),
-  "app.sidebar": replacementAtom("app.sidebar"),
 };
 
 /** Draws `part` with a plugin's component; returns the function that removes it. */

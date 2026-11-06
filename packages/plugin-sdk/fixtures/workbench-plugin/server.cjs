@@ -35,7 +35,7 @@ module.exports = {
           : { text: `Deploy to ${args} and report back.` },
     );
     api.slashCommands.register({ name: "status", description: "Show the deploy status" }, () => ({
-      reply: "**staging** is up to date.",
+      text: "Report the deploy status.",
     }));
 
     api.textGeneration.register("threadTitle", ({ message }) =>

@@ -1,24 +1,12 @@
-import { ProviderDriverKind, type ServerProvider, TextGenerationError } from "@t3tools/contracts";
+import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import type { PluginApi } from "@t3tools/plugin-sdk/server";
+import type { PluginAcpAgent, PluginProviderRuntime } from "@t3tools/plugin-sdk/server/providers";
 import type {
-  PluginProviderDriver,
-  PluginProviderDriverEnv,
-  PluginProviderRuntime,
-} from "@t3tools/plugin-sdk/server/providers";
-import {
-  type AnyProviderDriver,
-  defaultProviderContinuationIdentity,
-  type ProviderDriver,
-  type ProviderDriverMetadata,
-  type ProviderInstance,
+  AnyProviderDriver,
+  ProviderDriver,
+  ProviderDriverMetadata,
+  ProviderInstance,
 } from "@t3tools/provider-core/server/driver";
-import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
-import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
-import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
-import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
-import { buildServerProvider } from "@t3tools/provider-core/server/snapshotProbe";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -31,8 +19,6 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
-import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -43,7 +29,7 @@ import * as Stream from "effect/Stream";
 import type { BuiltInDriversEnv } from "../../provider/builtInDrivers.ts";
 import type * as ProviderDriverRegistration from "../../provider/ProviderDriverRegistration.ts";
 import { makeAcpAgentDriver } from "../acpAgentDriver.ts";
-import { errorText, type FacadeContext, refused } from "./facade.ts";
+import { type FacadeContext, refused } from "./facade.ts";
 
 // Modules the server already uses, so handing them over grows nothing.
 const PROVIDER_RUNTIME: PluginProviderRuntime = {
@@ -64,43 +50,20 @@ const PROVIDER_RUNTIME: PluginProviderRuntime = {
   DateTime,
   Fiber,
   FileSystem: FileSystem.FileSystem,
-  Path: Path.Path,
   Crypto: Crypto.Crypto,
-  ChildProcessSpawner: ChildProcessSpawner.ChildProcessSpawner,
-  ProviderHost: ProviderHost.ProviderHost,
-  ProviderAdapterV2: ProviderAdapter.ProviderAdapterV2,
-  ProviderDriverError,
-  TextGenerationError,
-  defaultProviderContinuationIdentity,
-  buildServerProvider,
-  withInstanceIdentity,
-  makeManagedServerProvider,
-  makeManualOnlyProviderMaintenanceCapabilities,
 };
 
 const isDriverKind = Schema.is(ProviderDriverKind);
-// The registry holds its lock while `create` runs, so one that never finishes would stop every
-// provider change. Each instance gets its own deadline, one after another.
-const CREATE_DEADLINE = Duration.seconds(20);
-
-const isJsonObject = Schema.is(Schema.JsonObject);
-
 type ProviderClient = NonNullable<ProviderDriverMetadata["client"]>;
 
 /**
- * The driver's client description as clients accept it, or why it is refused. A snapshot with an
+ * The agent's client description as clients accept it, or why it is refused. A snapshot with an
  * icon outside the contract would be dropped from every client's provider list.
  */
-const checkClient = (client: PluginProviderDriver["client"]): ProviderClient | string => {
-  const settingsSchema = client?.settingsSchema;
-  const iconUrl = client?.iconUrl;
-  if (settingsSchema !== undefined && !isJsonObject(settingsSchema)) {
-    return "client.settingsSchema must be a JSON Schema object.";
-  }
-  // The form saves into the instance's config, which every connected client receives.
-  if (settingsSchema !== undefined && JSON.stringify(settingsSchema).includes('"t3-secret"')) {
-    return "client.settingsSchema cannot have t3-secret fields; put secrets in the instance's environment variables.";
-  }
+const checkClient = (
+  settingsSchema: Schema.JsonObject,
+  iconUrl: PluginAcpAgent["iconUrl"],
+): ProviderClient | string => {
   if (
     iconUrl !== undefined &&
     (typeof iconUrl !== "string" ||
@@ -108,12 +71,9 @@ const checkClient = (client: PluginProviderDriver["client"]): ProviderClient | s
       iconUrl.trim() !== iconUrl ||
       !/^(https:\/\/|data:image\/)/.test(iconUrl))
   ) {
-    return "client.iconUrl must be an https or data:image URL of at most 2,048 characters.";
+    return "iconUrl must be an https or data:image URL of at most 2,048 characters.";
   }
-  return {
-    ...(settingsSchema === undefined ? {} : { settingsSchema }),
-    ...(iconUrl === undefined ? {} : { iconUrl }),
-  };
+  return { settingsSchema, ...(iconUrl === undefined ? {} : { iconUrl }) };
 };
 
 /** Stamps the driver's client description onto every snapshot its instance reports. */
@@ -135,55 +95,6 @@ const withClient = (instance: ProviderInstance, client: ProviderClient): Provide
     },
   };
 };
-
-/**
- * The plugin's driver with every failure of its own code turned into a driver error: the
- * registry reports those as an unavailable instance, while a defect would stop a reconcile.
- */
-export const guardedDriver = <Config>(
-  driver: PluginProviderDriver<Config>,
-  client: ProviderClient,
-): AnyProviderDriver<PluginProviderDriverEnv> => ({
-  driverKind: driver.driverKind,
-  metadata: { ...driver.metadata, client },
-  configSchema: driver.configSchema,
-  defaultConfig: () => driver.defaultConfig(),
-  create: (input) =>
-    Effect.suspend(() => {
-      const created = driver.create(input);
-      return Effect.isEffect(created)
-        ? created.pipe(Effect.map((instance) => withClient(instance, client)))
-        : Effect.fail(
-            new ProviderDriverError({
-              driver: driver.driverKind,
-              instanceId: input.instanceId,
-              detail: "The plugin's create did not return an Effect from runtime.Effect.",
-            }),
-          );
-    }).pipe(
-      Effect.catchDefect((defect) =>
-        Effect.fail(
-          new ProviderDriverError({
-            driver: driver.driverKind,
-            instanceId: input.instanceId,
-            detail: `The plugin's driver failed: ${errorText(defect)}`,
-            cause: defect,
-          }),
-        ),
-      ),
-      Effect.timeoutOrElse({
-        duration: CREATE_DEADLINE,
-        orElse: () =>
-          Effect.fail(
-            new ProviderDriverError({
-              driver: driver.driverKind,
-              instanceId: input.instanceId,
-              detail: `The plugin's create did not finish within ${Duration.toSeconds(CREATE_DEADLINE)} seconds.`,
-            }),
-          ),
-      }),
-    ),
-});
 
 const isStringList = Schema.is(Schema.Array(Schema.String));
 const isStringRecord = Schema.is(Schema.Record(Schema.String, Schema.String));
@@ -252,24 +163,6 @@ export const makeProvidersApi = (
   };
   return {
     runtime: PROVIDER_RUNTIME,
-    registerDriver: (driver) => {
-      if (
-        !isDriverKind(driver.driverKind) ||
-        typeof driver.metadata?.displayName !== "string" ||
-        !Schema.isSchema(driver.configSchema) ||
-        typeof driver.defaultConfig !== "function" ||
-        typeof driver.create !== "function"
-      ) {
-        return refused(
-          new TypeError(
-            "A provider driver needs a driverKind, metadata.displayName, a configSchema from runtime.Schema, defaultConfig and create.",
-          ),
-        );
-      }
-      const client = checkClient(driver.client);
-      if (typeof client === "string") return refused(new TypeError(client));
-      return register(guardedDriver(driver, client));
-    },
     registerAcpAgent: (agent) => {
       const kind = agent.kind;
       if (
@@ -287,10 +180,7 @@ export const makeProvidersApi = (
           ),
         );
       }
-      const client = checkClient({
-        settingsSchema: acpAgentSettingsSchema(agent.command),
-        ...(agent.iconUrl === undefined ? {} : { iconUrl: agent.iconUrl }),
-      });
+      const client = checkClient(acpAgentSettingsSchema(agent.command), agent.iconUrl);
       if (typeof client === "string") return refused(new TypeError(client));
       return register(withClientDriver(makeAcpAgentDriver({ ...agent, kind }), client));
     },

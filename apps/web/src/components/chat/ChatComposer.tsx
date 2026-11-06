@@ -111,7 +111,6 @@ import { ComposerStashMenu } from "./ComposerStashMenu";
 import { useComposerTriggerState } from "./useComposerTriggerState";
 import { useComposerMenuItems } from "./useComposerMenuItems";
 import { useComposerMultilinePrompt } from "./useComposerMultilinePrompt";
-import { useComposerCollapseOnScroll } from "./useComposerCollapseOnScroll";
 import {
   reconcileAttachmentContextReferences,
   useRetainedContextPayloads,
@@ -1026,18 +1025,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [composerMenuAnchor, setComposerMenuAnchor] = useState<HTMLDivElement | null>(null);
   const [hasWrappedPrompt, observeWrappedPrompt] = useComposerMultilinePrompt();
   const hasMultilinePrompt = prompt.includes("\n") || hasWrappedPrompt;
-  const composerFormRef = useRef<HTMLFormElement>(null);
-  const collapseOnScroll = useComposerCollapseOnScroll({
-    wideScreen: !isMobileViewport,
-    threadRef: routeThreadRef,
-    formRef: composerFormRef,
-    canFold: !forceExpandedOnMobile && !hasMultilinePrompt && pendingUserInputs.length === 0,
-    focused: isComposerFocused,
-  });
   // A pending question stays expanded: its card moves into the banner dock,
   // so collapsing would leave the surface empty and squashed beneath it.
   const isComposerCollapsedMobile =
-    (isMobileViewport || collapseOnScroll.awayFromEnd) &&
+    isMobileViewport &&
     !forceExpandedOnMobile &&
     !isComposerFocused &&
     !hasMultilinePrompt &&
@@ -1045,6 +1036,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const composerEditorRef = useRef<ComposerPromptEditorHandle>(null);
   const pasteAsTextShortcutUntilRef = useRef(0);
+  const composerFormRef = useRef<HTMLFormElement>(null);
   const composerSurfaceRef = useRef<HTMLDivElement>(null);
   const providerInputRejectedRef = useRef(false);
   const composerSelectLockRef = useRef(false);
@@ -2220,12 +2212,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     });
   };
   const expandMobileComposerStable = useStableCallback(expandMobileComposer);
-  // A folded composer hides its editor, so on wide screens a focus request unfolds it first.
-  const focusEditorAtEnd = () => {
-    if (isComposerCollapsedMobile && collapseOnScroll.active) expandMobileComposer();
-    else composerEditorRef.current?.focusAtEnd();
-  };
-  const focusEditorAtEndStable = useStableCallback(focusEditorAtEnd);
 
   const onComposerCommandKey = (key: string, event: KeyboardEvent, isTaskItem?: boolean) =>
     composerCommandKeyHandler({
@@ -2762,7 +2748,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     handleImplementPlanInNewThreadPrimaryAction,
   );
   const scheduleComposerCollapseCheck = () => {
-    if (!(isMobileViewport || collapseOnScroll.active) || mobileComposerExpandInFlightRef.current) {
+    if (!isMobileViewport || mobileComposerExpandInFlightRef.current) {
       return;
     }
     if (composerBlurFrameRef.current !== null) {
@@ -2829,7 +2815,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   useImperativeHandle(
     composerRef,
     () => ({
-      focusAtEnd: focusEditorAtEndStable,
+      focusAtEnd: () => {
+        composerEditorRef.current?.focusAtEnd();
+      },
       focusAt: (cursor: number) => {
         composerEditorRef.current?.focusAt(cursor);
       },
@@ -3056,7 +3044,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerThreadContexts,
       composerEnvironmentContexts,
       focusComposer,
-      focusEditorAtEndStable,
       environmentId,
       primaryEnvironmentId,
       isChoiceOnlyPendingQuestion,

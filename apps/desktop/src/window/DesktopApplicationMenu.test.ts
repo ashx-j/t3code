@@ -254,7 +254,6 @@ describe("DesktopApplicationMenu", () => {
           title: "Capture",
           pluginName: "Hello web",
           menu: false,
-          globalShortcut: "CommandOrControl+Shift+Y",
         },
         // Another plugin with the same name gets its own submenu.
         {

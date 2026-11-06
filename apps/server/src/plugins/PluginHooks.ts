@@ -58,11 +58,6 @@ type DispatchOutcome =
   | { readonly block: string; readonly pluginName: string }
   | undefined;
 
-/** A slash command's answer, recorded in the thread instead of sending the message. */
-export interface PluginCommandReply {
-  readonly reply: string;
-}
-
 /** The host makes hooks safe: bounded and fail-open. */
 type BeforeDispatchHook = (message: PluginOutgoingMessage) => Effect.Effect<DispatchOutcome>;
 
@@ -106,7 +101,7 @@ export interface PluginAgentContext {
 /** Runs a plugin's slash command; `args` is the text after `/name`. The host bounds it. */
 type SlashCommandHandler = (
   message: PluginOutgoingMessage & { readonly args: string },
-) => Effect.Effect<DispatchOutcome | PluginCommandReply>;
+) => Effect.Effect<DispatchOutcome>;
 
 // Loose, because providers name commands with ":" and "_" (`/plugin:cmd`, `/mcp__server__prompt`).
 // A name in no list is still text; only plugin registration uses the strict pattern.
@@ -212,9 +207,9 @@ export interface PluginHooksRegistry {
     hook: BeforeDispatchHook,
   ) => Effect.Effect<Effect.Effect<void>>;
   /**
-   * The text to send, or a plugin's reply to record instead. Every hook sees the message in plugin
-   * id order, and a block stops the rest. A slash command, a name in T3's, the provider's or a
-   * plugin's list, skips the hooks; a plugin's command then runs its handler.
+   * The text to send. Every hook sees the message in plugin id order, and a block stops the rest.
+   * A slash command, a name in T3's, the provider's or a plugin's list, skips the hooks; a
+   * plugin's command then runs its handler.
    */
   readonly beforeDispatch: (
     message: PluginOutgoingMessage,
@@ -225,7 +220,7 @@ export interface PluginHooksRegistry {
      * matches: a command the provider has too goes to the provider, as its lists show.
      */
     providerInstanceId?: Effect.Effect<string | undefined>,
-  ) => Effect.Effect<string | PluginCommandReply, PluginMessageBlockedError>;
+  ) => Effect.Effect<string, PluginMessageBlockedError>;
   /**
    * Runs the hooks, not slash commands, on text that reaches an agent without a new message: a
    * queued message's edit or a delegated task's prompt. `message` is read only when a hook would
@@ -315,14 +310,6 @@ const applyOutcome = (text: string, outcome: DispatchOutcome) =>
         )
       : Effect.succeed(outcome.text);
 
-const applyCommandOutcome = (
-  text: string,
-  outcome: DispatchOutcome | PluginCommandReply,
-): Effect.Effect<string | PluginCommandReply, PluginMessageBlockedError> =>
-  outcome !== undefined && "reply" in outcome
-    ? Effect.succeed(outcome)
-    : applyOutcome(text, outcome);
-
 type SlashCommandEntry = {
   readonly command: PluginSlashCommand;
   readonly run: SlashCommandHandler;
@@ -401,16 +388,11 @@ const make = Effect.gen(function* () {
           ),
         );
   // A plugin sees a message once: a replayed command id was handled when it was first accepted.
-  const unlessAccepted = <A>(
+  const unlessAccepted = (
     alreadyAccepted: Effect.Effect<boolean>,
     text: string,
-    run: Effect.Effect<A, PluginMessageBlockedError>,
-  ) =>
-    alreadyAccepted.pipe(
-      Effect.flatMap((accepted): Effect.Effect<string | A, PluginMessageBlockedError> =>
-        accepted ? Effect.succeed(text) : run,
-      ),
-    );
+    run: Effect.Effect<string, PluginMessageBlockedError>,
+  ) => alreadyAccepted.pipe(Effect.flatMap((accepted) => (accepted ? Effect.succeed(text) : run)));
   // A name in T3's, the provider's or a plugin's list. Without the message's provider, any `/name`
   // may be a command.
   const isCommand = (text: string, message: PluginOutgoingMessage): Effect.Effect<boolean> => {
@@ -475,9 +457,7 @@ const make = Effect.gen(function* () {
                       message.text,
                       entry
                         .run({ ...message, args: match?.[2]?.trim() ?? "" })
-                        .pipe(
-                          Effect.flatMap((outcome) => applyCommandOutcome(message.text, outcome)),
-                        ),
+                        .pipe(Effect.flatMap((outcome) => applyOutcome(message.text, outcome))),
                     ),
             ),
           );

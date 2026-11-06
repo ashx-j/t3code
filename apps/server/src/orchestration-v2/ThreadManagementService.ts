@@ -44,7 +44,6 @@ import {
 import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
 import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
 import { AgentScope } from "@t3tools/shared/AgentScope";
-import { isCommandReplyRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -526,11 +525,7 @@ export function isTerminalRunStatus(
 export function latestRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs">,
 ): OrchestrationV2Run | undefined {
-  // A plugin's reply to a slash command sent mid-turn takes the next ordinal; the turn is the work.
-  const busy = projection.runs.some((run) => !isTerminalRunStatus(run.status));
-  return projection.runs
-    .toSorted((left, right) => right.ordinal - left.ordinal)
-    .find((run) => !busy || !isCommandReplyRun(run));
+  return projection.runs.toSorted((left, right) => right.ordinal - left.ordinal)[0];
 }
 
 function latestRestartContinuation(

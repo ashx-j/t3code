@@ -24,7 +24,6 @@ import {
   ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
-import type { PluginProviderDriverEnv } from "@t3tools/plugin-sdk/server/providers";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -41,7 +40,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import type * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -83,7 +81,6 @@ import { withPluginTextGeneration } from "./pluginTextGeneration.ts";
 
 // None of these messages replays an accepted command.
 const notAccepted = Effect.succeed(false);
-const echoAgent = ProviderDriverKind.make("echoAgent");
 const fixturesDir = new URL("../../../../packages/plugin-sdk/fixtures/", import.meta.url).pathname;
 const hello = PluginId.make("hello-plugin");
 const broken = PluginId.make("broken-plugin");
@@ -455,60 +452,6 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
         assert.isFalse(yield* fs.exists(agentFolder));
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
-  );
-
-  it.effect("starts a plugin's provider driver and removes it when the plugin is turned off", () =>
-    Effect.gen(function* () {
-      const providerPlugin = PluginId.make("provider-plugin");
-      yield* writePluginsConfig({
-        enabled: { [providerPlugin]: true },
-        devPaths: [`${fixturesDir}provider-plugin`],
-      });
-      const { registry, addDriver } = yield* makeProviderInstanceRegistry<PluginProviderDriverEnv>({
-        drivers: [],
-        // Saved and on, as the provider's switch in settings leaves it; unsaved defaults start off.
-        configMap: {
-          [defaultInstanceIdForDriver(echoAgent)]: { driver: echoAgent, enabled: true },
-        },
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            TestProviderHost.layer(),
-            Layer.succeed(SecretResolver.SecretResolver, {
-              read: () => Effect.succeed([]),
-              invalidate: () => Effect.void,
-            }),
-          ),
-        ),
-      );
-      const services = Layer.mergeAll(
-        layerUnusedServices,
-        Layer.succeed(ProviderDriverRegistration.ProviderDriverRegistration, {
-          // Plugin drivers need only the plugin driver services this registry provides.
-          add: addDriver as ProviderDriverRegistration.ProviderDriverRegistration["Service"]["add"],
-        }),
-      );
-      yield* Effect.gen(function* () {
-        const host = yield* PluginHost.PluginHost;
-        // Activation waits for the driver the fixture registers.
-        yield* waitForStatuses(host, { [providerPlugin]: "active" });
-        const [instance] = yield* registry.listInstances;
-        assert.strictEqual(instance?.instanceId, defaultInstanceIdForDriver(echoAgent));
-        const snapshot = yield* instance!.snapshot.getSnapshot;
-        assert.include(snapshot, { driver: echoAgent, displayName: "Echo agent", status: "ready" });
-        // Clients have no definition for a plugin's driver, so its snapshot describes its form.
-        assert.deepStrictEqual(snapshot.settingsSchema, {
-          type: "object",
-          properties: { greeting: { type: "string", title: "Greeting" } },
-        });
-        assert.match(snapshot.iconUrl ?? "", /^data:image\/svg\+xml,/);
-
-        const changes = yield* registry.subscribeChanges;
-        yield* host.setEnabled(providerPlugin, false);
-        yield* PubSub.take(changes);
-        assert.deepStrictEqual(yield* registry.listInstances, []);
-      }).pipe(Effect.provide(layerHost(services)));
-    }).pipe(Effect.provide(layerConfig()), Effect.scoped),
   );
 
   it.effect("adds a plugin's source control host to remote recognition and pull requests", () =>
@@ -1290,9 +1233,6 @@ module.exports = { activate(api) {
           (yield* Effect.flip(outgoing("/deploy"))).message,
           "Workbench: Name an environment, for example /deploy staging.",
         );
-        assert.deepStrictEqual(yield* outgoing("/status"), {
-          reply: "**staging** is up to date.",
-        });
         const [provider] = PluginHooks.withPluginSlashCommands(
           [
             {
@@ -1355,16 +1295,14 @@ module.exports = { activate(api) {
         // and the other plugin keeps the rest of its commands.
         const removeEarlier = yield* hooks.addSlashCommand(
           { pluginId: "aaa-plugin", pluginName: "Earlier", name: "deploy" },
-          () => Effect.succeed({ reply: "Deployed by the earlier plugin." }),
+          () => Effect.succeed({ text: "Deployed by the earlier plugin." }),
         );
         const removeLater = yield* hooks.addSlashCommand(
           { pluginId: "zzz-plugin", pluginName: "Later", name: "status" },
-          () => Effect.succeed({ reply: "Status from the later plugin." }),
+          () => Effect.succeed({ text: "Status from the later plugin." }),
         );
-        assert.deepStrictEqual(yield* outgoing("/deploy staging"), {
-          reply: "Deployed by the earlier plugin.",
-        });
-        assert.deepStrictEqual(yield* outgoing("/status"), { reply: "**staging** is up to date." });
+        assert.strictEqual(yield* outgoing("/deploy staging"), "Deployed by the earlier plugin.");
+        assert.strictEqual(yield* outgoing("/status"), "Report the deploy status.");
         assert.deepStrictEqual(
           (yield* hooks.currentSlashCommands).map(
             (command) => `${command.pluginId}/${command.name}`,

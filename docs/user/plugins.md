@@ -81,11 +81,10 @@ stopped by plugins.
 
 Plugins can add slash commands. They appear in the composer's `/` menu with the agent's own
 commands. A command that runs on the server shows in every app, and one that runs in the app shows
-in the web and desktop apps. A command can send the agent a message the plugin prepares, stop with
-a reason, or answer you in the thread without asking the agent. The agent's own command wins over a
-plugin's with the same name. Between plugins, a command that runs
-on the server wins over one that runs in the app, and otherwise the plugin whose id comes first
-alphabetically gets it.
+in the web and desktop apps. A command can send the agent a message the plugin prepares, or stop
+with a reason. The agent's own command wins over a plugin's with the same name. Between plugins, a
+command that runs on the server wins over one that runs in the app, and otherwise the plugin whose
+id comes first alphabetically gets it.
 
 A plugin can give Claude and Codex agents extra instructions and skills, from their next turn or
 session while the plugin is on. Its skills appear in the composer's `$` menu with the plugin's name
@@ -125,13 +124,6 @@ the main environment's threads. Replaced parts of the app, code blocks, pages, s
 command palette commands show wherever you are. The mobile app doesn't show plugin UI, settings
 or themes, and a plugin page's `t3code://plugins/...` link opens only in the desktop and web apps.
 
-In the desktop app a plugin can also add its commands to these places. Every plugin command is also
-in the command palette.
-
-- A **Plugins** menu in the macOS menu bar. Windows and Linux don't show T3 Code's app menu.
-- A tray icon's menu, which shows only while a plugin uses it. Picking an item brings T3 Code to
-  the front.
-- Global shortcuts, which run the command while you work in another app and leave you there. They
-  need Ctrl, Alt, Command or Super, except for keys such as F13 to F24 and media keys. They don't
-  work in Linux Wayland sessions. When a shortcut can't be set, because another app or your
-  SnapShot shortcut uses it, T3 Code tells you once.
+In the desktop app on macOS, a plugin can also list its commands in a **Plugins** menu in the menu
+bar. Windows and Linux don't show T3 Code's app menu. Every plugin command is also in the command
+palette.

@@ -72,7 +72,7 @@ module.exports = {
 - threads and projects: read, start, archive, snooze, settle and delete threads, add and change
   projects, and list a project's git worktrees;
 - send hooks that add to, replace or block a message (slash commands never reach them), and
-  slash commands that run on the server and may answer in the thread without starting a turn;
+  slash commands that run on the server and may replace or block the message;
 - answers to agents' approvals and questions, instructions for agents, and MCP tools for agents;
 - secrets the user enters on a card in a thread with a turn in progress;
 - the text T3 Code generates, such as thread titles and commit messages, and free-form text from
@@ -81,10 +81,7 @@ module.exports = {
 - ACP agents T3 Code runs by their command (`api.providers.registerAcpAgent`), with no Effect
   code; the `acp-agent-plugin` fixture is a small one;
 - source control hosts (`api.sourceControl.registerDriver`), which join remote recognition and
-  pull requests; the `source-control-plugin` fixture is a minimal one;
-- provider drivers, built with `api.providers.runtime` and typed with
-  `@t3tools/plugin-sdk/server/providers`. These follow T3 Code's internal provider packages, which
-  change with every nightly, so build a provider plugin against the T3 Code version it runs on.
+  pull requests; the `source-control-plugin` fixture is a minimal one.
 
 Everything a plugin registers is released when it is disabled, reloaded or uninstalled; add your
 own cleanup with `api.onDeactivate`.
@@ -114,28 +111,15 @@ api.providers.registerAcpAgent({
 T3 Code runs it with its shared ACP adapter and gives each instance a form for the command and
 arguments. The command must be an executable on the server, on its `PATH` or by absolute path. Do
 not use `process.execPath` as the fixture does: in the installed app it is T3 Code itself, not
-Node. Other providers, and source control hosts, are Effect code that runs in the server:
-build them with the modules in `api.providers.runtime` (and the helpers in
-`api.sourceControl.runtime`), never with an `effect` you import, because the server bundles its own
-copy. Types come from one import, `@t3tools/plugin-sdk/server/providers`, which re-exports T3 Code's
-internal provider and source control packages. Those change with every nightly, so build these
-plugins against the T3 Code version they run on and expect to update them often.
+Node. `iconUrl` (https or `data:image`) gives the agent an icon. Users put secrets in the
+instance's environment variables.
 
-What a provider driver may leave out:
-
-- **Models.** The driver lists them in its snapshot. T3 Code has no compatibility policy for a
-  plugin's driver, so it shows no version advisory.
-- **Usage limits.** Report them in the snapshot (`usageLimits`) and through `applyUsageLimits`.
-  The Usage page's history reads only T3 Code's own drivers, so a driver has no `usage` reader.
-- **Text generation.** Fail each method with `TextGenerationError` and set
-  `supportsTextGeneration: false` on the snapshot, so Settings doesn't offer the provider for
-  titles and commit messages and the usage-limit fallback skips it. T3 Code doesn't switch to
-  another provider when a method fails: the thread keeps its title and the commit fails.
-- **Client presentation.** `client.settingsSchema` (the JSON Schema format plugin settings use,
-  without `t3-secret` fields, because the form saves into the instance's config) and
-  `client.iconUrl` (https or `data:image`) give the provider a settings form and an icon; without
-  them the instance shows its name and status only. Users put secrets in the instance's
-  environment variables.
+Source control hosts are Effect code that runs in the server: build them with the modules in
+`api.providers.runtime` (and the helpers in `api.sourceControl.runtime`), never with an `effect`
+you import, because the server bundles its own copy. Types come from one import,
+`@t3tools/plugin-sdk/server/providers`, which re-exports T3 Code's internal source control
+packages. Those change with every nightly, so build these plugins against the T3 Code version they
+run on and expect to update them often.
 
 ## Web half
 
@@ -160,9 +144,9 @@ export default defineWebPlugin({
 ```
 
 `activate` receives the [`WebPluginApi`](./src/web.ts): calls into the server half, right panels,
-a settings panel, palette commands (which the desktop app can also list in its menu or tray, or
-bind to a global shortcut), composer slash commands and banners, timeline renderers for the plugin's agent
-tools, renderers for fenced code languages, styles, assets, navigation and toasts.
+a settings panel, palette commands (which the desktop app can also list in its menu), composer
+slash commands and banners, timeline renderers for the plugin's agent tools, renderers for fenced
+code languages, styles, assets, navigation and toasts.
 
 Plugins can also add buttons and menu items to T3's own toolbars and menus: under each message
 (`messages.addAction`), in the thread header (`threads.addHeaderButton`), beside the composer's
@@ -181,11 +165,8 @@ them in both.
 T3's own controls as ready-made pieces to arrange, plus `original`, T3's own drawing of the part.
 The parts and their pieces are listed in `WebPluginParts`. If your component throws, T3 draws its
 own part. [`examples/classic-composer`](./examples/classic-composer) moves the composer's controls
-back to their layout from before T3's redesign and folds the composer while the timeline is
-scrolled up. [`examples/settings-pages`](./examples/settings-pages) shows Settings in place of the thread
-(`app.pageFrame`'s `page`) and lists its sections in the sidebar, with Back at the bottom
-(`app.sidebar`'s `nav` and `back`). `composer.setCollapseOnScroll(true)` folds the composer to one
-line on wide screens while the timeline is scrolled up, as it does on phones. [`examples/message-extras`](./examples/message-extras) adds a word count under assistant messages,
+back to their layout from before T3's redesign.
+[`examples/message-extras`](./examples/message-extras) adds a word count under assistant messages,
 redraws expanded commands and sums up diffs.
 
 Build it with the Vite preset, which makes the bundle use T3 Code's own React, atom hooks and UI
@@ -220,10 +201,7 @@ durable thing T3 offers for it:
   rule small and in one commented place, prefer one that falls back to T3's own look when the
   markup changes, and list it in the plugin's README with the seam that would replace it.
 - **Leave T3's frame to T3.** The title bar row, the room for the window buttons on Windows and
-  Linux, drag areas, phone safe areas and breakpoints are T3's. A page shown through
-  `app.pageFrame` gets T3's header with all of that, so don't resize or pad it.
-- **Compare ids, not text.** `app.sidebar`'s `page` and `app.pageFrame`'s `kind` are stable ids;
-  labels such as `Settings` can change.
+  Linux, drag areas, phone safe areas and breakpoints are T3's, so don't resize or pad them.
 - **Expect `timeline.item` to change.** Its `item` is the step as T3 sends it to clients
   (`OrchestrationV2TurnItem`), not a plugin type, so its fields can change between releases. Read
   the fields you need defensively and fall back to `original`.

@@ -38,18 +38,6 @@ export interface WebPluginCommand {
      * there the command palette is the way in.
      */
     readonly menu?: boolean;
-    /**
-     * Lists the command in a tray icon's menu, which brings T3 Code to the front when picked. The
-     * icon shows only while some command asks for it.
-     */
-    readonly tray?: boolean;
-    /**
-     * Runs the command from any app, as an Electron accelerator such as `CommandOrControl+Shift+Y`.
-     * T3 Code stays in the background unless it has no window open. It needs Ctrl, Alt, Command or
-     * Super, unless the key types nothing, such as F13 to F24 or a media key. Skipped with a notice
-     * when another app or the user's SnapShot shortcut holds it, and on Linux Wayland sessions.
-     */
-    readonly globalShortcut?: string;
   };
   readonly run: () => void | Promise<void>;
 }
@@ -194,52 +182,6 @@ export interface WebPluginParts {
     /** The selection's unified diff, or null while T3 loads it file by file. */
     readonly patch: string | null;
   };
-  /** The frame Settings and Usage open in. T3 draws a large window over the thread. */
-  readonly "app.pageFrame": {
-    readonly original: WebPluginNode;
-    /**
-     * The page itself, with its section list, header and close button. Its close button closes
-     * the page; Esc is up to the frame the plugin draws.
-     */
-    readonly content: WebPluginNode;
-    /**
-     * The page in place of the thread, beside the sidebar, without its section list: draw `nav`
-     * here, or `app.sidebar`'s `nav` in the sidebar. Esc goes back. Its header is the window's
-     * title bar row, with room for the window controls, and its close button hides while the
-     * sidebar beside it shows `app.sidebar`'s `back`.
-     */
-    readonly page: WebPluginNode;
-    /** The page's section list, such as Settings' sections and search; null when it has none. */
-    readonly nav: WebPluginNode;
-    /** Which page this is. Compare this, not `label`, which is text for people. */
-    readonly kind: "settings" | "usage";
-    /** The page's name as shown, such as `Settings`. */
-    readonly label: string;
-    /** Goes back to where the page was opened. */
-    readonly close: () => void;
-  };
-  /**
-   * The sidebar's content, on wide screens and in the phone's sheet. To give a page shown through
-   * `app.pageFrame`'s `page` its own sidebar, draw `nav` in place of `threads` and `back` in place
-   * of `footer`.
-   */
-  readonly "app.sidebar": {
-    readonly original: WebPluginNode;
-    /** The top row: the T3 Code name, back and forward buttons, and the toggle on phones. */
-    readonly header: WebPluginNode;
-    /** The thread list with its search row, and the sections plugins added under it. */
-    readonly threads: WebPluginNode;
-    /** The bottom row: the Settings, Pull requests and Usage buttons, and T3's update button. */
-    readonly footer: WebPluginNode;
-    /** `footer` with a Back button in place of its Settings, Pull requests and Usage buttons. */
-    readonly back: WebPluginNode;
-    /** T3's update button and update notices alone; `footer` and `back` already have them. */
-    readonly update: WebPluginNode;
-    /** The open page's section list, made for the sidebar, while `page` is `settings`; else null. */
-    readonly nav: WebPluginNode;
-    /** The page shown through `app.pageFrame`'s `page` beside the sidebar, otherwise null. */
-    readonly page: "settings" | "usage" | null;
-  };
 }
 
 /** What a web plugin's `activate` receives. Everything is released when the plugin unloads. */
@@ -300,13 +242,6 @@ export interface WebPluginApi {
     ) => void;
     /** Adds a button beside the composer's attach button. `threadId` is null in a new thread. */
     readonly addButton: (button: WebPluginAction<{ readonly threadId: string | null }>) => void;
-    /**
-     * While on, the composer on wide screens folds to one line, as it does on phones, when the
-     * user scrolls the timeline up away from its end. A position restored on opening a thread, a
-     * jump such as to a find result, or paging with the keyboard from the composer doesn't fold
-     * it. Focusing it unfolds it until the user scrolls again; so does scrolling back to the end.
-     */
-    readonly setCollapseOnScroll: (enabled: boolean) => void;
   };
   readonly threads: {
     /** Adds an item to the thread's actions menu, in its header and on right-click in the sidebar. */

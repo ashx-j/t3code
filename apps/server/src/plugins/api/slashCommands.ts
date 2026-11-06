@@ -14,8 +14,6 @@ import { errorText, type FacadeContext } from "./facade.ts";
 const SLASH_COMMAND_DEADLINE = Duration.seconds(10);
 const NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const MAX_TEXT_CHARS = 500;
-// Every client holds a thread's messages in memory, so one reply stays a message, not a document.
-const MAX_REPLY_CHARS = 20_000;
 
 const outcomeOf = (result: PluginSlashCommandResult, pluginName: string) => {
   if (typeof result !== "object" || result === null) return undefined;
@@ -24,9 +22,6 @@ const outcomeOf = (result: PluginSlashCommandResult, pluginName: string) => {
       block: result.block.trim().slice(0, MAX_TEXT_CHARS) || "Blocked this message.",
       pluginName,
     };
-  }
-  if ("reply" in result && typeof result.reply === "string" && result.reply.trim().length > 0) {
-    return { reply: result.reply.slice(0, MAX_REPLY_CHARS) };
   }
   if ("text" in result && typeof result.text === "string" && result.text.trim().length > 0) {
     return { text: result.text };

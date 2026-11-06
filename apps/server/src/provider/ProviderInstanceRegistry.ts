@@ -165,18 +165,6 @@ const resolveEntryEnabled = (entry: ProviderInstanceConfig, typedConfig: unknown
   return entry.enabled ?? providerInstanceConfigEnabledFlag(typedConfig) ?? true;
 };
 
-// Plugin drivers are outside code: one that throws makes its instance unavailable, never stops
-// the reconcile that rebuilds every other instance.
-const decodeEntryConfig = <R>(driver: AnyProviderDriver<R>, entry: ProviderInstanceConfig) => {
-  const decode = Schema.decodeUnknownEffect(driver.configSchema);
-  return Effect.suspend(() => decode(entry.config ?? driver.defaultConfig())).pipe(
-    Effect.mapError((issue) => issue.message ?? String(issue)),
-    Effect.catchDefect((defect) =>
-      Effect.fail(defect instanceof Error ? defect.message : String(defect)),
-    ),
-  );
-};
-
 // The enabled state `buildEntry` decodes, so a disabled instance never reads its secrets.
 const isEntryEnabled = Effect.fn("ProviderInstanceRegistry.isEntryEnabled")(function* <R>(
   driversById: ReadonlyMap<ProviderDriverKind, AnyProviderDriver<R>>,
@@ -184,7 +172,8 @@ const isEntryEnabled = Effect.fn("ProviderInstanceRegistry.isEntryEnabled")(func
 ) {
   const driver = driversById.get(entry.driver);
   if (!driver) return false;
-  const decoded = yield* decodeEntryConfig(driver, entry).pipe(Effect.option);
+  const decoder = Schema.decodeUnknownEffect(driver.configSchema);
+  const decoded = yield* decoder(entry.config ?? driver.defaultConfig()).pipe(Effect.option);
   return Option.isSome(decoded) && resolveEntryEnabled(entry, decoded.value);
 });
 
@@ -230,9 +219,11 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
       })),
     );
 
-  const decodeResult = yield* decodeEntryConfig(driver, entry).pipe(Effect.result);
+  const decoder = Schema.decodeUnknownEffect(driver.configSchema);
+  const decodeResult = yield* decoder(entry.config ?? driver.defaultConfig()).pipe(Effect.result);
   if (decodeResult._tag === "Failure") {
-    const detail = decodeResult.failure;
+    const issue = decodeResult.failure;
+    const detail = issue.message ?? String(issue);
     yield* Effect.logError("Failed to decode provider instance config", {
       instanceId: rawInstanceId,
       driver: entry.driver,

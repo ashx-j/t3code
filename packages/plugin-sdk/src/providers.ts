@@ -1,14 +1,6 @@
-// Types for plugins that add provider drivers. They come from T3 Code's own provider packages,
-// which change with every nightly: a provider plugin is built against one T3 Code version.
-import type { TextGenerationError } from "@t3tools/contracts";
-import type * as ProviderDriverModule from "@t3tools/provider-core/server/driver";
-import type { ProviderDriverError } from "@t3tools/provider-core/server/errors";
-import type { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
-import type { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
-import type { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
-import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import type * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
-import type { buildServerProvider } from "@t3tools/provider-core/server/snapshotProbe";
+// Types for plugins that add ACP agents and source control hosts. Source control types come from
+// T3 Code's own packages, which change with every nightly: such a plugin is built against one T3
+// Code version.
 import type { providerAuth } from "@t3tools/source-control-core/server/discovery";
 import type * as SourceControlDriverModule from "@t3tools/source-control-core/server/driver";
 import type { UNKNOWN_SOURCE_CONTROL_CLIENT } from "@t3tools/source-control-core/shared/definition";
@@ -24,8 +16,6 @@ import type * as Fiber from "effect/Fiber";
 import type * as FileSystem from "effect/FileSystem";
 import type * as Layer from "effect/Layer";
 import type * as Option from "effect/Option";
-import type * as Path from "effect/Path";
-import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as PubSub from "effect/PubSub";
 import type * as Queue from "effect/Queue";
 import type * as Ref from "effect/Ref";
@@ -33,57 +23,7 @@ import type * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import type * as Stream from "effect/Stream";
 
-import type { JsonObject } from "./shared.ts";
-
-export type {
-  ProviderDriverCreateInput,
-  ProviderDriverMetadata,
-  ProviderInstance,
-} from "@t3tools/provider-core/server/driver";
-export type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
-export type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
-export type {
-  ProviderAdapterV2Event,
-  ProviderAdapterV2OpenSessionInput,
-  ProviderAdapterV2SessionRuntime,
-  ProviderAdapterV2TurnInput,
-} from "@t3tools/provider-core/server/ProviderAdapter";
-export type {
-  OrchestrationV2ProviderCapabilities,
-  ServerProvider,
-  ServerProviderModel,
-  SourceControlProviderInfo,
-} from "@t3tools/contracts";
-
-/** The services a plugin's driver may use; the host provides them as it does for its own. */
-export type PluginProviderDriverEnv =
-  | ProviderHost.ProviderHost
-  | ChildProcessSpawner.ChildProcessSpawner
-  | FileSystem.FileSystem
-  | Path.Path
-  | Crypto.Crypto;
-
-/**
- * A provider driver from a plugin. `usage` is left out: the Usage page reads history only from
- * T3 Code's own drivers. Usage limits a driver reports in its snapshot do show.
- */
-export type PluginProviderDriver<Config = unknown> = Omit<
-  ProviderDriverModule.ProviderDriver<Config, PluginProviderDriverEnv>,
-  "usage"
-> & {
-  /** What clients show for this driver, since they have no built-in definition for it. */
-  readonly client?: {
-    /**
-     * JSON Schema of an instance's `config`, in the subset plugin settings use (an object of
-     * strings, numbers, booleans, enums and string lists); clients draw the settings form from it.
-     * The form saves into the instance's config, which clients receive, so `t3-secret` fields are
-     * refused: users put secrets in the instance's environment variables.
-     */
-    readonly settingsSchema?: JsonObject;
-    /** An https or small data URL of at most 2,048 characters. */
-    readonly iconUrl?: string;
-  };
-};
+export type { SourceControlProviderInfo } from "@t3tools/contracts";
 
 /**
  * A source control host: a definition clients and remote recognition read, and a driver the
@@ -134,7 +74,7 @@ export interface PluginAcpAgent {
 }
 
 /**
- * T3 Code's own Effect and provider modules. The server bundles its own copy of `effect`, so a
+ * T3 Code's own Effect modules. The server bundles its own copy of `effect`, so a source control
  * driver builds its effects, schemas and services with these, never with an `effect` it imports.
  */
 export interface PluginProviderRuntime {
@@ -155,16 +95,5 @@ export interface PluginProviderRuntime {
   readonly DateTime: typeof DateTime;
   readonly Fiber: typeof Fiber;
   readonly FileSystem: typeof FileSystem.FileSystem;
-  readonly Path: typeof Path.Path;
   readonly Crypto: typeof Crypto.Crypto;
-  readonly ChildProcessSpawner: typeof ChildProcessSpawner.ChildProcessSpawner;
-  readonly ProviderHost: typeof ProviderHost.ProviderHost;
-  readonly ProviderAdapterV2: typeof ProviderAdapter.ProviderAdapterV2;
-  readonly ProviderDriverError: typeof ProviderDriverError;
-  readonly TextGenerationError: typeof TextGenerationError;
-  readonly defaultProviderContinuationIdentity: typeof ProviderDriverModule.defaultProviderContinuationIdentity;
-  readonly buildServerProvider: typeof buildServerProvider;
-  readonly withInstanceIdentity: typeof withInstanceIdentity;
-  readonly makeManagedServerProvider: typeof makeManagedServerProvider;
-  readonly makeManualOnlyProviderMaintenanceCapabilities: typeof makeManualOnlyProviderMaintenanceCapabilities;
 }

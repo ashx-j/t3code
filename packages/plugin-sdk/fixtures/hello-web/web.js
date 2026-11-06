@@ -82,7 +82,6 @@ var web_default = defineWebPlugin({
 .hello-web-settings { display: grid; gap: 0.5rem; }
 .hello-web-settings p { font-size: 0.75rem; }
 `);
-    api.composer.setCollapseOnScroll(true);
     api.rightPanel.register({
       name: "hello",
       title: "Hello panel",
@@ -102,10 +101,7 @@ var web_default = defineWebPlugin({
       id: "open-settings",
       title: "Open hello-web settings",
       keywords: ["hello"],
-      desktop: {
-        menu: true,
-        tray: true,
-      },
+      desktop: { menu: true },
       run: () => api.navigate("/settings/plugins"),
     });
     api.settings.registerPanel(() =>

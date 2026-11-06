@@ -39,7 +39,7 @@ anything a plugin registers after it unloads, so one stuck or slow plugin cannot
 
 The server bundle inlines `effect`, so plugins never share the host's Effect runtime or `Schema`
 instances. They get Promises, `AsyncIterable` streams and `AbortSignal` cancellation, never Effect,
-except for provider drivers (below).
+except for source control hosts (below).
 
 ## Server entries are CommonJS
 
@@ -105,29 +105,12 @@ threads, like injected styles, and stack per part: the plugin whose id sorts fir
 slash commands, so parallel loading can't change the winner; within one plugin its newest wins, and
 unloading it brings back the one before. Parts have their own version atom because they sit on hot paths such as the composer
 and every timeline row. A replacement that throws records the failure on its plugin's row, which
-is why each registered replacement carries its plugin and environment. The `app.pageFrame` part's
-`page` piece renders Settings or Usage beside the thread kept mounted under it; `index.css` hides
-that thread, and the page carries `data-app-modal` so shortcut guards treat it as they treat the
-window. F6 still moves between the page and the sidebar beside it.
+is why each registered replacement carries its plugin and environment.
 
 T3 keeps the frame around a part and plugins arrange what is inside it, so updates rarely break
-them. Settings and Usage draw their top row with `AppRouteHeader`, which in the page frame becomes
-the window's title bar row with the window-controls inset and drag area, the same as the thread
-header; plugins that restyled that row by selector broke on Windows. When a part gains a control,
-put it inside an existing piece where it fits, such as `actions`, so a plugin that places that
-piece gets it without an update. A new top-level piece is invisible to every plugin that replaced
-the part before it existed.
-
-The sidebar's header and footer render beside `ThreadSidebar` in `AppSidebarLayout` rather than
-inside it, so the `app.sidebar` part places them without edits to the thread list. `page` leaves
-Settings' section list out; the sidebar's `nav` is a second instance, loaded on demand, because the
-page's own lives in the Settings route's tree and chunk. The shown page publishes its kind in an
-atom, so `nav` and `page` stay null under T3's window, where the sidebar sits under the backdrop.
-
-The composer cannot see the timeline's scroll position, which `ChatView` owns. `useTimelineFollow`
-publishes the scroll-to-end pill's state per thread only while a plugin asks to fold on scroll, and
-only the composer of such a plugin reads it, so threads without one never re-render on scroll. A wide screen
-keeps the composer focused while the wheel scrolls, so leaving the end blurs it.
+them. When a part gains a control, put it inside an existing piece where it fits, such as
+`actions`, so a plugin that places that piece gets it without an update. A new top-level piece is
+invisible to every plugin that replaced the part before it existed.
 
 Published palettes, plugin themes among them, arrive over the server config stream after the
 first paint. The client saves them in localStorage on each themes event and reads that copy until
@@ -149,13 +132,10 @@ draft holds only the chip's reference; the send path looks the item up and attac
 so drafts, their persistence and queued edits need no plugin slot, and a chip whose plugin is off
 is sent as unavailable.
 
-In the desktop app, plugin commands that ask for a menu item, a tray item or a global shortcut cross
-to the main process as one list that replaces the previous one. The main process outlives the
-page, so a new page holds its list back until its first round of plugin loads ends, then sends it
-even when it is empty; a page with no web plugins sends an empty list once. A reload keeps the tray
-icon and shortcuts in between, and an unloaded plugin never leaves stale items. Clicks and
-shortcuts come back through the existing menu-action channel as the `plugin.<pluginId>.<commandId>`
-command.
+In the desktop app, plugin commands that ask for a menu item cross to the main process as one list
+that replaces the previous one. Each window load first sends an empty list, because the main
+process outlives the page, so a reload or an unloaded plugin never leaves stale items. Clicks come
+back through the existing menu-action channel as the `plugin.<pluginId>.<commandId>` command.
 
 ## Reaching into orchestration
 
@@ -185,10 +165,10 @@ skips and its writes refuse, when the plugin first subscribes and after each run
 with the last 256 ended runs: runs that end while a plugin is off arrive when it starts, even
 before it has handled one, and a run updated again after it ended (a checkpoint landing on an
 interrupted run) is not delivered twice, while a retry, which sets the failed run back to
-`preparing`, makes it deliverable again, and a revert delivers a run once more as `rolled_back`. Command replies are recorded with `run.created` alone, so
-one arrives only when a revert rolls it back. A slash command, a name in T3's, the provider's or a plugin's list, skips the hooks,
-because changed text would change what the command does and a block would keep T3, the agent or a
-plugin from doing its job; other text that starts with `/`, such as a path, gets every hook. A
+`preparing`, makes it deliverable again, and a revert delivers a run once more as `rolled_back`.
+A slash command, a name in T3's, the provider's or a plugin's list, skips the hooks, because
+changed text would change what the command does and a block would keep T3, the agent or a plugin
+from doing its job; other text that starts with `/`, such as a path, gets every hook. A
 queued edit reads its run's provider; a delegated task that names no model is checked without one,
 so any `/name` there skips them. Hooks see the message's `creationSource`, because text the
 server writes, such as the usage-limit resume, is sent as the user.
@@ -212,24 +192,7 @@ take `/review` from an agent that has one. That includes the commands of the thr
 (its worktree, else its project root), which the composer lists from the provider's workspace
 snapshot. T3's own names, shared with the composer, are refused at registration. Two plugins may
 register one name: the one whose id sorts first handles it, so start order never picks the
-winner, and the other keeps the rest of its commands. A handler's `reply` turns
-the message into the internal `thread.command-reply.record` command under the message's command id,
-so a retry replays it. The orchestrator records the sent message and an `assistant_message` reply
-as a run that is already completed and marked `commandReply`, with no provider thread, attempt or
-checkpoint: clients drop a
-sent message once a user message with its id exists, and paged clients drop run-less items. A
-reply takes the next ordinal even while a turn runs, so the thread shell leaves reply runs out
-like idle compactions (`isSilentRunForShell` and its SQL twin), and `latestExecutedRun` and its
-SQL twins skip them; otherwise a reply sent mid-turn would become the thread's status and hide
-the turn's failure. For the same reason `ThreadManagementService.latestRun` passes over a reply
-while a turn runs, so waiting on the thread waits for the turn. A reply carries the instance of the
-thread's active provider thread rather than the message's model selection: the queued-run start
-takes the latest finished run as the handoff source, and a reply filed under a provider the user
-just picked would skip the context handoff its first turn needs. Web takes a message's revert target from
-the previous run's checkpoint, so the first message after a reply has no revert button, while the
-command itself still reverts to before it. When a new
-thread's first message gets a reply, `ThreadLaunchService` prepares the workspace as for a launch
-without a message.
+winner, and the other keeps the rest of its commands.
 
 Text generation hooks wrap the `TextGeneration` router, which every caller goes through, so thread
 titles, commit messages, pull request content, branch names and review guides all ask plugins
@@ -262,11 +225,10 @@ the server adds them to the Claude and Codex lists where it adds plugin slash co
 name each invokes: Claude namespaces a `--plugin-dir` folder's skills by its manifest name, and the
 adapter's skill dispatch reads the turn's plugin folders so `$<id>:<skill>` becomes `/<id>:<skill>`.
 
-`threads.notify` and slash command replies are the plugin changes inside `Orchestrator.ts`, each
-one internal command, because every `message.dispatch` starts a run. A note
-(`thread.notification.record`) joins the thread's latest finished run. `TurnItemPositionStore`
-sorts run-less items before every run, and clients drop them from paged threads, while a note inside
-a running turn would split its live output.
+`threads.notify` is the plugin change inside `Orchestrator.ts`, an internal command, because every
+`message.dispatch` starts a run. A note (`thread.notification.record`) joins the thread's latest
+finished run. `TurnItemPositionStore` sorts run-less items before every run, and clients drop them
+from paged threads, while a note inside a running turn would split its live output.
 
 `secrets.request` shows the card the `request_secret` MCP tool uses, through
 `SecretRequests.request`, which both call. The card belongs to a run and the answer is refused once
@@ -290,14 +252,16 @@ The host keeps it in memory for the start whose `revision` the report names, so 
 and a late report about an earlier start is ignored. The call needs the settings write scope:
 agents read the text, so a guest or read-only client must not write it.
 
-## Provider drivers
+## ACP agents
 
-Provider drivers are Effect code that the server runs inside its own runtime, so this is the one
-place plugins use Effect. The server bundles its own copy of `effect`, and a copy a plugin
-imports would only work while both are the same version. A driver is built with the modules in
-`api.providers.runtime` instead, and its types come from `@t3tools/plugin-sdk/server/providers`,
-which re-exports T3's provider packages. Those change with every nightly, so a provider plugin
-tracks one T3 version.
+`registerAcpAgent` builds a whole provider driver from plain data, so agent plugins need no Effect
+code. It uses the shared ACP adapter with the base ACP capabilities, like the `fx` driver, not
+the ACP Registry driver: that driver's instances carry its own kind, so clients would show the
+registry's card, and its status check opens a session, which background checks must not do. An
+ACP agent's snapshot is therefore "ready" with unknown sign-in until a turn runs. It writes no
+text for T3 and says so with `supportsTextGeneration: false`, which keeps it out of the text
+generation pickers and the usage-limit fallback: the router switches providers only on a usage
+limit, so a selected provider that cannot write fails every title and commit message.
 
 The instance registry keeps its drivers in a `Ref` seeded with the built-ins, read only by
 reconcile and secret reloads, never per turn. Adding a driver rebuilds instances saved for its
@@ -307,36 +271,27 @@ but Codex's and Claude's as off; the settings page lists it from the snapshot. R
 leaves its saved instances unavailable. Adding or removing one rebuilds only its kind, so other
 unavailable instances do not wait on a secret read again. Built-in kinds cannot be replaced.
 Registration is a hydration service rather than a mutator method because only there is the
-drivers' service type concrete, so plugin drivers get the services built-ins get. A defect stops
-the reconcile that rebuilds every instance, so the registry catches defects while decoding a
-config, the host turns defects in a plugin's `create` into driver errors, and a registration
-whose rebuild still fails removes its driver so the kind stays free. Adding a driver builds its
+drivers' service type concrete, so plugin drivers get the services built-ins get. A registration
+whose rebuild fails removes its driver so the kind stays free. Adding a driver builds its
 instances without their secrets, as startup does: one that needs a secret shows "Reading secrets…"
-until a read outside the lock finishes, so a vault prompt never holds other registry changes. The
-registry also holds its lock while `create` runs, so the host fails each instance's `create` after
-20 seconds. `registerDriver` builds the kind's saved instances one after another, so an `activate`
-that awaits it outlasts its 30 seconds, and the plugin fails, once 2 of them hang.
+until a read outside the lock finishes, so a vault prompt never holds other registry changes.
 
-Clients pick a provider's card, icon and form from static definitions, so a plugin's driver
-declares `client.settingsSchema` (the JSON Schema subset plugin settings use) and
-`client.iconUrl`. They travel in the driver's metadata, so its unavailable instances keep the
-form and a config that fails to decode can be fixed, and the host stamps them onto live
-snapshots. Web draws the plugin settings form from the schema where it has no definition for the
-driver. The form saves into the instance's config, which every client receives, so the host
-refuses `t3-secret` fields. An Effect `configSchema` is not
-converted, because its JSON Schema uses `anyOf` for optional fields, which that form cannot draw.
-Mobile has no provider settings form for any driver.
-
-`registerAcpAgent` builds a whole driver from plain data, so most agent plugins need no Effect
-code. It uses the shared ACP adapter with the base ACP capabilities, like the `fx` driver, not
-the ACP Registry driver: that driver's instances carry its own kind, so clients would show the
-registry's card, and its status check opens a session, which background checks must not do. An
-ACP agent's snapshot is therefore "ready" with unknown sign-in until a turn runs. It writes no
-text for T3 and says so with `supportsTextGeneration: false`, which keeps it out of the text
-generation pickers and the usage-limit fallback: the router switches providers only on a usage
-limit, so a selected provider that cannot write fails every title and commit message.
+Clients pick a provider's card, icon and form from static definitions, so an agent's driver
+carries `client.settingsSchema` (the JSON Schema subset plugin settings use) for its command and
+arguments, and the agent's `iconUrl`. They travel in the driver's metadata, so its unavailable
+instances keep the form and a config that fails to decode can be fixed, and the host stamps them
+onto live snapshots. Web draws the plugin settings form from the schema where it has no definition
+for the driver. An Effect `configSchema` is not converted, because its JSON Schema uses `anyOf` for
+optional fields, which that form cannot draw. Mobile has no provider settings form for any driver.
 
 ## Source control hosts
+
+Source control drivers are Effect code that the server runs inside its own runtime, so this is the
+one place plugins use Effect. The server bundles its own copy of `effect`, and a copy a plugin
+imports would only work while both are the same version. A driver is built with the modules in
+`api.providers.runtime` instead, and its types come from `@t3tools/plugin-sdk/server/providers`,
+which re-exports T3's source control packages. Those change with every nightly, so such a plugin
+tracks one T3 version.
 
 Source control drivers are built once in a layer, and remote recognition reads a definitions
 registry that clients share. A plugin's host goes into a plugin driver list beside the built-in

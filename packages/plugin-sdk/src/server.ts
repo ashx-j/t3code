@@ -1,6 +1,5 @@
 import type {
   PluginAcpAgent,
-  PluginProviderDriver,
   PluginProviderRuntime,
   PluginSourceControlDriver,
   PluginSourceControlRuntime,
@@ -175,15 +174,12 @@ export interface PluginSlashCommandInvocation {
 
 /**
  * `text` is sent to the agent in place of the command, `block` stops the message with a reason the
- * sender sees, and nothing sends the command as typed. `reply` (Markdown, up to 20,000 characters)
- * answers in the thread: the command and the reply are recorded as a finished turn, and the agent
- * neither runs nor sees them.
+ * sender sees, and nothing sends the command as typed.
  */
 export type PluginSlashCommandResult =
   | void
   | { readonly text: string }
-  | { readonly block: string }
-  | { readonly reply: string };
+  | { readonly block: string };
 
 /** What each kind of generated text receives and returns. */
 export interface PluginTextGenerationTasks {
@@ -441,8 +437,7 @@ export interface PluginApi {
     /**
      * Runs each time a run ends, in order; a failed run the user retries arrives again. Runs that
      * end while the plugin is off arrive when it starts; the first registration starts from now.
-     * Register handlers in the same order on every activation. A slash command reply arrives only
-     * as `rolled_back`, when a revert removes it.
+     * Register handlers in the same order on every activation.
      */
     readonly afterRunCompleted: (
       handler: (run: PluginCompletedRun) => void | Promise<void>,
@@ -527,18 +522,13 @@ export interface PluginApi {
     readonly addInstructions: (text: string) => void;
   };
   readonly providers: {
-    /** T3 Code's own Effect and provider modules, which a driver must build with. */
+    /** T3 Code's own Effect modules, which a source control driver must build with. */
     readonly runtime: PluginProviderRuntime;
     /**
-     * Adds a provider driver until the plugin deactivates. Its saved instances start, and so
-     * does a default one unless `metadata.hasDefaultInstance` is false. Rejects a kind T3 Code
-     * or another plugin already provides. Types are in `@t3tools/plugin-sdk/server/providers`.
-     */
-    readonly registerDriver: <Config>(driver: PluginProviderDriver<Config>) => Promise<void>;
-    /**
-     * Adds an ACP agent T3 Code runs by its command, with no Effect code: the shared ACP adapter
-     * with the base capabilities, a settings form for the command and arguments, and no text
-     * generation. Agents that need vendor hooks write a driver with `registerDriver`.
+     * Adds an ACP agent T3 Code runs by its command, with no Effect code, until the plugin
+     * deactivates: the shared ACP adapter with the base capabilities, a settings form for the
+     * command and arguments, and no text generation. Its saved instances start, and a default
+     * instance is added, off. Rejects a kind T3 Code or another plugin already provides.
      */
     readonly registerAcpAgent: (agent: PluginAcpAgent) => Promise<void>;
   };

@@ -1,4 +1,3 @@
-import { Switch } from "@t3tools/plugin-sdk/ui";
 import { defineWebPlugin, type WebPluginParts } from "@t3tools/plugin-sdk/web";
 import { useLayoutEffect, useRef, useState } from "react";
 
@@ -89,24 +88,6 @@ const css = `
     overflow: hidden;
     clip-path: inset(50%);
     white-space: nowrap;
-  }
-}
-
-.classic-composer-setting {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  & p {
-    margin: 0;
-    font-size: var(--text-sm, 0.875rem);
-    font-weight: 500;
-  }
-  & p + p {
-    margin-top: 0.125rem;
-    color: var(--muted-foreground);
-    font-size: var(--text-xs, 0.75rem);
-    font-weight: 400;
   }
 }
 
@@ -425,46 +406,9 @@ function ClassicRow({ pieces }: { readonly pieces: WebPluginParts["composer.cont
   );
 }
 
-const COLLAPSE_KEY = "classic-composer:collapse-on-scroll";
-
-/** Whether the composer folds while the timeline is scrolled up. On until turned off here. */
-const collapseOnScroll = () => localStorage.getItem(COLLAPSE_KEY) !== "off";
-
-function CollapseSetting(props: { readonly onChange: (on: boolean) => void }) {
-  const [on, setOn] = useState(collapseOnScroll);
-  return (
-    <div className="classic-composer-setting">
-      <div>
-        <p>Collapse composer on scroll</p>
-        <p>
-          Rests an existing thread's composer as one line while you scroll up the conversation.
-          Focus it or scroll back to the end to expand it again.
-        </p>
-      </div>
-      <Switch
-        aria-label="Collapse composer on scroll"
-        checked={on}
-        onCheckedChange={(checked) => {
-          setOn(checked);
-          props.onChange(checked);
-        }}
-      />
-    </div>
-  );
-}
-
 export default defineWebPlugin({
   activate(api) {
     api.injectStyles(css);
-    api.composer.setCollapseOnScroll(collapseOnScroll());
-    api.settings.registerPanel(() => (
-      <CollapseSetting
-        onChange={(on) => {
-          localStorage.setItem(COLLAPSE_KEY, on ? "on" : "off");
-          api.composer.setCollapseOnScroll(on);
-        }}
-      />
-    ));
     api.ui.replace("composer.controls", (pieces) => <ClassicRow pieces={pieces} />);
   },
 });

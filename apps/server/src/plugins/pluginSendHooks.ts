@@ -1,7 +1,7 @@
 import {
   type ChatAttachment,
   type CommandId,
-  MessageId,
+  type MessageId,
   type ModelSelection,
   type OrchestrationV2ServerCommand,
   type RunId,
@@ -179,36 +179,7 @@ export const makePluginSendHooks = Effect.gen(function* () {
               : Effect.succeed(command.modelSelection.instanceId),
           )
           .pipe(
-            Effect.map((result): OrchestrationV2ServerCommand => {
-              if (typeof result === "string") {
-                return result === command.text ? command : { ...command, text: result };
-              }
-              // Same command id, so a retry of the message replays the recorded reply.
-              return {
-                type: "thread.command-reply.record",
-                commandId: command.commandId,
-                threadId: command.threadId,
-                messageId: command.messageId,
-                text: command.text,
-                ...(command.context === undefined ? {} : { context: command.context }),
-                attachments: command.attachments,
-                ...(command.modelSelection === undefined
-                  ? {}
-                  : { modelSelection: command.modelSelection }),
-                createdBy: command.createdBy,
-                creationSource: command.creationSource,
-                ...(command.scheduledTaskId === undefined
-                  ? {}
-                  : { scheduledTaskId: command.scheduledTaskId }),
-                ...(command.senderThreadId === undefined
-                  ? {}
-                  : { senderThreadId: command.senderThreadId }),
-                reply: {
-                  messageId: MessageId.make(`${command.messageId}:reply`),
-                  text: result.reply,
-                },
-              };
-            }),
+            Effect.map((text) => (text === command.text ? command : { ...command, text })),
             Effect.mapError(rejected),
           );
       }

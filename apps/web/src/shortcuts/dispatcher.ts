@@ -123,8 +123,8 @@ type MenuActionHandler = () => void;
 const menuActionHandlers = new Map<string, MenuActionHandler[]>();
 let menuActionInstalled = false;
 
-// A plugin command run from the tray or a global shortcut can reopen the window and arrive before
-// its plugin has loaded. It waits here, briefly, for the plugin to register its handler.
+// A plugin command picked from the desktop menu with no window open reopens the window and can
+// arrive before its plugin has loaded. It waits here, briefly, for the plugin to register it.
 const PLUGIN_ACTION_WAIT_MS = 30_000;
 const waitingPluginActions = new Map<string, number>();
 

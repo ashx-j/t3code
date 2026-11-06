@@ -70,7 +70,7 @@ import {
 } from "../ui/menu";
 import { ScrollArea } from "../ui/scroll-area";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
-import { AppRouteHeader, AppRouteModal } from "../AppRouteModal";
+import { AppRouteModal, AppRouteModalClose } from "../AppRouteModal";
 import { Skeleton } from "../ui/skeleton";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -505,9 +505,12 @@ export function UsagePage() {
   );
 
   return (
-    <AppRouteModal page="usage" label="Usage">
+    <AppRouteModal label="Usage">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <AppRouteHeader className="@container/usage-header gap-1">{topbarContent}</AppRouteHeader>
+        <header className="@container/usage-header flex min-h-12 shrink-0 items-center gap-1 border-b ps-5 pe-2">
+          {topbarContent}
+          <AppRouteModalClose />
+        </header>
 
         <ScrollArea className="min-h-0 flex-1">
           <WorkspacePageContainer width="wide">

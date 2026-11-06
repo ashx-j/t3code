@@ -50,7 +50,6 @@ import { startPluginLoader } from "./pluginLoader";
 import {
   pluginBannersAtom,
   pluginCommandsAtom,
-  pluginComposerCollapseOnScrollAtom,
   pluginContributionKey,
   pluginRightPanelAtom,
   pluginRightPanelKey,
@@ -158,7 +157,6 @@ describe("startPluginLoader", () => {
       pluginToolRendererKey(environmentId, "plg_hello-web_greet"),
     );
     expect(appAtomRegistry.get(greetRenderer)).toBeDefined();
-    expect(appAtomRegistry.get(pluginComposerCollapseOnScrollAtom)).toBe(true);
 
     // Turning a plugin off takes effect while another still hangs. A failed download is tried
     // again on that change; a bundle that downloaded and then failed waits for a restart.
@@ -188,7 +186,6 @@ describe("startPluginLoader", () => {
     expect(appAtomRegistry.get(pluginSlashCommandsAtom(environmentId))).toEqual([]);
     expect(appAtomRegistry.get(pluginBannersAtom(environmentId))).toEqual([]);
     expect(appAtomRegistry.get(greetRenderer)).toBeUndefined();
-    expect(appAtomRegistry.get(pluginComposerCollapseOnScrollAtom)).toBe(false);
   });
 
   it("tries a download again after a bad gateway", async () => {

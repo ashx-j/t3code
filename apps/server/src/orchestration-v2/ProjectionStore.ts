@@ -10,7 +10,6 @@ import type {
   OrchestrationV2ThreadHistoryPage,
 } from "@t3tools/contracts";
 import {
-  isCommandReplyRun,
   latestRootProviderFailure,
   latestUnheldRun,
   threadErrorSummary,
@@ -1436,8 +1435,7 @@ export function threadShellFromProjection(
           DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
       )[0] ?? null;
   // T3 Code's own idle compactions stay out of the shell unless they fail, so thread lists,
-  // notifications and the relay keep presenting the user's last turn. So do plugin command
-  // replies, which take the next ordinal even while a turn runs.
+  // notifications and the relay keep presenting the user's last turn.
   const runs = projection.runs.filter((run) => !isSilentRunForShell(run, projection));
   const latestRun =
     usageLimitRunPresentedAsLatest(
@@ -1614,7 +1612,6 @@ function isSilentRunForShell(
   run: OrchestrationV2ThreadProjection["runs"][number],
   projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems">,
 ): boolean {
-  if (isCommandReplyRun(run)) return true;
   return (
     run.status !== "failed" &&
     projection.messages.some(
@@ -3805,15 +3802,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ),
     );
 
-    // Mirrors isCommandReplyRun.
-    const isCommandReplyRunRow = (alias: string) => {
-      const run = sql.literal(alias);
-      return sql`(
-        ${run}.status = 'completed'
-        AND IFNULL(json_extract(${run}.payload_json, '$.commandReply'), 0) = 1
-      )`;
-    };
-
     const getLimitRecoveryCandidates = Effect.fn("ProjectionStore.getLimitRecoveryCandidates")(
       function* (options: Parameters<ProjectionStoreV2Shape["getLimitRecoveryCandidates"]>[0]) {
         const rows = yield* sql<{
@@ -3845,7 +3833,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 latest.status = 'cancelled'
                 AND json_extract(latest.payload_json, '$.startedAt') IS NULL
               )
-              AND NOT ${isCommandReplyRunRow("latest")}
             -- latestExecutedRun: the run that ended last (runRanAfter).
             ORDER BY latest.completed_at IS NULL DESC, latest.completed_at DESC,
               latest.ordinal DESC, latest.run_id DESC
@@ -5863,19 +5850,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const isSilentShellRun = (alias: string) => {
       const run = sql.literal(alias);
       return sql`(
-        ${isCommandReplyRunRow(alias)}
-        OR (
-          ${run}.status <> 'failed'
-          AND EXISTS (
-            SELECT 1 FROM orchestration_v2_projection_messages prompt
-            WHERE prompt.message_id = json_extract(${run}.payload_json, '$.userMessageId')
-              AND ${isIdleCompactionMessage("prompt")}
-          ) AND NOT EXISTS (
-            SELECT 1 FROM orchestration_v2_projection_turn_items compaction
-            WHERE compaction.thread_id = ${run}.thread_id AND compaction.run_id = ${run}.run_id
-              AND compaction.type = 'compaction'
-              AND compaction.status = 'failed'
-          )
+        ${run}.status <> 'failed'
+        AND EXISTS (
+          SELECT 1 FROM orchestration_v2_projection_messages prompt
+          WHERE prompt.message_id = json_extract(${run}.payload_json, '$.userMessageId')
+            AND ${isIdleCompactionMessage("prompt")}
+        ) AND NOT EXISTS (
+          SELECT 1 FROM orchestration_v2_projection_turn_items compaction
+          WHERE compaction.thread_id = ${run}.thread_id AND compaction.run_id = ${run}.run_id
+            AND compaction.type = 'compaction'
+            AND compaction.status = 'failed'
         )
       )`;
     };
@@ -6065,7 +6049,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   candidate.status = 'cancelled'
                   AND json_extract(candidate.payload_json, '$.startedAt') IS NULL
                 )
-                AND NOT ${isCommandReplyRunRow("candidate")}
               -- latestExecutedRun: the run that ended last (runRanAfter).
               ORDER BY candidate.completed_at IS NULL DESC, candidate.completed_at DESC,
                 candidate.ordinal DESC, candidate.run_id DESC

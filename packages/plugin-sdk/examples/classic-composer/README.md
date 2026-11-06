@@ -8,16 +8,12 @@ their width, so as the composer narrows, permissions and then effort drop their 
 narrowest screens the row hands over to T3's own row, which folds them into a menu. A new thread's
 workspace and branch sit in a drawer tucked under the card, shaded below the card in dark mode. A
 folder without git gives the drawer nothing to show, so there is no drawer, and while T3's own row
-shows, the drawer names the permissions. Scrolling the timeline up rests an existing thread's
-composer as one line; focusing it or scrolling back to the end expands it. The plugin's **Settings**
-button on the Plugins page turns that off on this device.
+shows, the drawer names the permissions.
 
 Install it by dragging this folder onto **Settings → Plugins**, or with **Add plugin → Choose
 folder**. Turning it off brings back T3's current composer.
 
-It uses `api.ui.replace("composer.controls", …)`, so it only arranges T3's own pickers and buttons,
-`api.composer.setCollapseOnScroll`, which turns on T3's own folded composer from phones, and
-`api.settings.registerPanel` for the switch, which it keeps in this browser's local storage.
+It uses `api.ui.replace("composer.controls", …)`, so it only arranges T3's own pickers and buttons.
 Rebuild `web.js` after editing `web.tsx` with
 `vp build --config examples/classic-composer/vite.config.ts` from `packages/plugin-sdk`.
 
@@ -43,6 +39,5 @@ seam, move the rule to it.
 The chevron and open lock are copies of Lucide's `chevron-down` and `lock-open` paths, drawn as CSS
 masks, until T3 shares its icons.
 
-The drawer's corners read Tailwind's `--radius-2xl`, and the settings panel reads `--text-sm` and
-`--text-xs`. Tailwind emits those tokens only while T3's own code uses them, so each falls back to
-T3's value. A theme token list in the SDK would replace them.
+The drawer's corners read Tailwind's `--radius-2xl`. Tailwind emits that token only while T3's own
+code uses it, so it falls back to T3's value. A theme token list in the SDK would replace it.

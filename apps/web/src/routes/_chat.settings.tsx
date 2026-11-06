@@ -5,7 +5,7 @@ import { RotateCcwIcon } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { useSettingsRestore } from "../components/settings/SettingsPanels";
 
-import { AppRouteHeader, AppRouteModal, AppRouteModalNav } from "../components/AppRouteModal";
+import { AppRouteModal, AppRouteModalClose } from "../components/AppRouteModal";
 import { SettingsBreadcrumb } from "../components/settings/SettingsBreadcrumb";
 import { SettingsSidebarNav } from "../components/settings/SettingsSidebarNav";
 import {
@@ -122,26 +122,21 @@ function SettingsContentLayout() {
   const [restoreSignal, setRestoreSignal] = useState(0);
 
   return (
-    <AppRouteModal
-      page="settings"
-      label="Settings"
-      nav={<SettingsSidebarNav pathname={location.pathname} />}
-    >
+    <AppRouteModal label="Settings">
       <div className="relative flex min-h-0 flex-1">
-        <AppRouteModalNav />
+        <SettingsSidebarNav pathname={location.pathname} />
         <div {...contentArea} className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <AppRouteHeader
-            className="h-12"
-            actions={
-              location.pathname === "/settings/general" ? (
+          <header className="flex h-12 shrink-0 items-center gap-3 border-b ps-5 pe-2">
+            <SettingsBreadcrumb pathname={location.pathname} />
+            <div className="ms-auto flex shrink-0 items-center gap-1">
+              {location.pathname === "/settings/general" ? (
                 <RestoreDeviceDefaultsButton
                   onRestored={() => setRestoreSignal((value) => value + 1)}
                 />
-              ) : null
-            }
-          >
-            <SettingsBreadcrumb pathname={location.pathname} />
-          </AppRouteHeader>
+              ) : null}
+              <AppRouteModalClose />
+            </div>
+          </header>
           <div key={`${contentScopeKey}:${restoreSignal}`} className="min-h-0 flex flex-1 flex-col">
             <SettingsScopeBoundary pathname={location.pathname}>
               <Outlet />

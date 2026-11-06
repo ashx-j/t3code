@@ -1008,29 +1008,15 @@ export const DesktopPreviewRecordingSaveInputSchema = Schema.Struct({
   data: Schema.Uint8Array,
 });
 
-/** A web plugin's command that the desktop app lists in its Plugins menu or binds to a global shortcut. */
+/** A web plugin's command that the desktop app lists in its Plugins menu. */
 export const DesktopPluginCommandSchema = Schema.Struct({
-  /** Sent back to the renderer as the menu action when the item or shortcut fires. */
+  /** Sent back to the renderer as the menu action when the item is picked. */
   command: PLUGIN_COMMAND_PATTERN,
   title: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
   pluginName: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
   menu: Schema.Boolean,
-  /** Lists the command in the tray icon's menu. */
-  tray: Schema.optional(Schema.Boolean),
-  /** An Electron accelerator, such as `CommandOrControl+Shift+Y`. */
-  globalShortcut: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
 });
 export type DesktopPluginCommand = typeof DesktopPluginCommandSchema.Type;
-
-export const DesktopPluginShortcutRefusalSchema = Schema.Struct({
-  command: Schema.String,
-  /**
-   * `taken`: another app holds it. `snap-shot`: T3's SnapShot shortcut holds it. `invalid`: not an
-   * accelerator. `no-modifier`: it would take a key apps type with. `unsupported`: Wayland.
-   */
-  reason: Schema.Literals(["taken", "snap-shot", "invalid", "no-modifier", "unsupported"]),
-});
-export type DesktopPluginShortcutRefusal = typeof DesktopPluginShortcutRefusalSchema.Type;
 
 /** The canvas the page paints in one appearance, as `#rrggbb`; null for plain black or white. */
 export const DesktopWindowCanvasSchema = Schema.Struct({
@@ -1142,13 +1128,8 @@ export interface DesktopBridge {
   checkSystemPermission: (pane: SystemSettingsPane) => Promise<boolean>;
   probeRemoteEditors: () => Promise<readonly EditorId[]>;
   pasteAsText: () => Promise<void>;
-  /**
-   * Replaces the plugin commands in the app menu and their global shortcuts. Resolves with the
-   * commands whose shortcut could not be bound, and why.
-   */
-  setPluginCommands: (
-    commands: readonly DesktopPluginCommand[],
-  ) => Promise<ReadonlyArray<DesktopPluginShortcutRefusal>>;
+  /** Replaces the plugin commands in the app menu. */
+  setPluginCommands: (commands: readonly DesktopPluginCommand[]) => Promise<void>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   onSnapShotEvent: (listener: (event: DesktopSnapShotEvent) => void) => () => void;
   onQuitShortcut: (listener: (event: QuitShortcutHintEvent) => void) => () => void;
