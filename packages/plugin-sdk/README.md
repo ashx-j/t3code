@@ -201,9 +201,9 @@ parts of your design to survive that. Build each part on the most stable thing T
   markup changes, and list it in the plugin's README with the seam that would replace it.
 - **Leave T3's frame to T3.** The title bar row, the room for the window buttons on Windows and
   Linux, drag areas, phone safe areas and breakpoints are T3's, so don't resize or pad them.
-- **Expect `timeline.item` to change.** Its `item` is the step as T3 sends it to clients
-  (`OrchestrationV2TurnItem`), not a plugin type, so its fields can change between releases. Read
-  the fields you need defensively and fall back to `original`.
+- **Draw `original` for steps you don't handle.** The `timeline.item` part's `item` describes
+  commands, file changes, searches, tool calls and reasoning. Other kinds of step have the type
+  `other`, and T3 can add kinds in any release.
 - **Ship what the plugin runs.** Adding a folder leaves out `.git` and `node_modules`, and npm
   installs don't install dependencies, so build everything into the files the manifest names.
 - **Ask for a seam.** When T3 doesn't hand over what you need, ask for a piece, part or token on

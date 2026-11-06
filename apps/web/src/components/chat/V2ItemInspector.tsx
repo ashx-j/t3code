@@ -25,6 +25,7 @@ import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
 import { RenderErrorBoundary } from "../RenderErrorBoundary";
 import { PluginToolBody } from "../../plugins/PluginToolBody";
 import { pluginToolNameOf } from "../../plugins/pluginRegistry";
+import { toPluginTimelineItem } from "../../plugins/pluginTimelineItem";
 import { CommandOutputPanel, useCommandOutputStreaming } from "./CommandOutputPanel";
 import { resolveExternalWebLinkHref } from "./externalLinkContextMenu";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
@@ -434,7 +435,12 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
   return (
     <PluginReplaceable
       part="timeline.item"
-      pieces={{ original: inspector, item, output: outputState.output, commandOutput }}
+      pieces={{
+        original: inspector,
+        item: toPluginTimelineItem(item),
+        output: outputState.output,
+        commandOutput,
+      }}
     />
   );
 });

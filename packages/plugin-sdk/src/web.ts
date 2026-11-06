@@ -1,4 +1,3 @@
-import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 
 import type { JsonValue } from "./shared.ts";
@@ -115,6 +114,51 @@ export interface WebPluginMessage {
 }
 
 /**
+ * One step of an agent's work, as the `timeline.item` part hands it over. `type` narrows the other
+ * fields. Kinds of step this type doesn't describe are `other`; draw `original` for them.
+ */
+export type WebPluginTimelineItem = {
+  readonly id: string;
+  readonly threadId: string;
+  /** T3's short label for the step, such as the tool's name, or null. */
+  readonly title: string | null;
+  readonly status:
+    | "idle"
+    | "pending"
+    | "running"
+    | "waiting"
+    | "completed"
+    | "failed"
+    | "cancelled"
+    | "interrupted";
+} & (
+  | {
+      readonly type: "command";
+      readonly command: string;
+      /** Null while it runs, or when the agent doesn't report one. */
+      readonly exitCode: number | null;
+    }
+  | {
+      readonly type: "file_change";
+      readonly path: string;
+      /** Null when the agent doesn't report line counts. */
+      readonly additions: number | null;
+      readonly deletions: number | null;
+    }
+  | { readonly type: "file_search"; readonly pattern: string | null }
+  | { readonly type: "web_search"; readonly queries: ReadonlyArray<string> }
+  | {
+      /** A call to an MCP or other tool that isn't a command, an edit or a search. */
+      readonly type: "tool";
+      readonly toolName: string | null;
+      /** The tool's arguments as the agent sent them. */
+      readonly input: unknown;
+    }
+  | { readonly type: "reasoning"; readonly text: string }
+  | { readonly type: "other" }
+);
+
+/**
  * T3's own parts a plugin can draw its own way with `ui.replace`. Each piece is a React element T3
  * has already wired up: place it, wrap it or leave it out. `original` is T3's own drawing.
  */
@@ -163,11 +207,7 @@ export interface WebPluginParts {
   /** The details shown when a tool call, command or other step of an agent's work is expanded. */
   readonly "timeline.item": {
     readonly original: WebPluginNode;
-    /**
-     * The step as T3 sends it to clients. `type` names the kind, such as `command_execution`,
-     * `file_change`, `web_search` or `dynamic_tool`, and narrows the other fields.
-     */
-    readonly item: OrchestrationV2TurnItem;
+    readonly item: WebPluginTimelineItem;
     /**
      * The step's text output, when T3 has it as text. A command's output streams instead, so for
      * commands this is null where `commandOutput` draws it.
