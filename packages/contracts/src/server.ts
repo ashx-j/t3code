@@ -583,6 +583,8 @@ export type EnvironmentThemeFile = typeof EnvironmentThemeFile.Type;
 export const EnvironmentTheme = Schema.Struct({
   id: EnvironmentThemeId,
   ...environmentThemeFields,
+  /** Published by an active plugin, so it shows only where the client loads that plugin's UI. */
+  fromPlugin: Schema.optionalKey(Schema.Literal(true)),
 });
 export type EnvironmentTheme = typeof EnvironmentTheme.Type;
 

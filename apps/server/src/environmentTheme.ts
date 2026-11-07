@@ -182,7 +182,7 @@ const make = Effect.gen(function* () {
         for (const theme of found) {
           if (ids.has(theme.id)) continue;
           ids.add(theme.id);
-          themes.push(theme);
+          themes.push(directory === environmentThemesDir ? theme : { ...theme, fromPlugin: true });
         }
       }
       // Compare the whole value so new fields cannot silently miss republishes.

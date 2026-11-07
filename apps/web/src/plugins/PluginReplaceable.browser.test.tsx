@@ -6,9 +6,8 @@ import { render } from "../../test/render";
 import { AppAtomRegistryProvider, appAtomRegistry } from "../rpc/atomRegistry";
 import { PluginReplaceable } from "./PluginReplaceable";
 import {
-  pluginContributionKey,
   pluginReplacementAtoms,
-  pluginWebFailureAtom,
+  pluginWebFailuresAtom,
   registerPluginReplacement,
 } from "./pluginRegistry";
 
@@ -23,6 +22,7 @@ const controls = () => (
   <AppAtomRegistryProvider>
     <PluginReplaceable
       part="composer.controls"
+      environmentId={owner.environmentId}
       pieces={{
         original,
         attach: <span>Attach</span>,
@@ -69,9 +69,10 @@ describe("PluginReplaceable", () => {
         pluginId: "zz-later",
       }),
     };
-    expect(appAtomRegistry.get(pluginReplacementAtoms["composer.controls"])?.owner.pluginId).toBe(
-      "restyle",
-    );
+    expect(
+      appAtomRegistry.get(pluginReplacementAtoms["composer.controls"](owner.environmentId))?.owner
+        .pluginId,
+    ).toBe("restyle");
   });
 
   it("draws T3's own part when the replacement throws, and says so on the plugin's row", async () => {
@@ -88,9 +89,7 @@ describe("PluginReplaceable", () => {
 
     await expect.element(page.getByText("T3 controls")).toBeVisible();
     expect(
-      appAtomRegistry.get(
-        pluginWebFailureAtom(pluginContributionKey(owner.environmentId, owner.pluginId)),
-      ),
+      appAtomRegistry.get(pluginWebFailuresAtom(owner.pluginId)).get(owner.environmentId),
     ).toContain("(composer.controls) stopped with an error: boom");
   });
 });

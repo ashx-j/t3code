@@ -1214,6 +1214,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
   return (
     <ctx.pluginUi.PluginReplaceable
       part="message.user"
+      environmentId={ctx.threadRef?.environmentId ?? null}
       pieces={{
         original: markdown,
         text: props.text,

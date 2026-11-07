@@ -203,6 +203,8 @@ const pluginActionEntry = <Place extends PluginActionPlace>(
 
 interface WebPluginApiContext {
   readonly environmentId: EnvironmentId;
+  /** Whether this environment supplies pages, commands and sidebar sections; see `startPluginLoader`. */
+  readonly appWide: boolean;
   readonly plugin: PluginState;
   /**
    * Keeps a cleanup for unload, or runs it at once when the plugin is already unloaded. Returns the
@@ -218,6 +220,7 @@ interface WebPluginApiContext {
 
 function makeWebPluginApi({
   environmentId,
+  appWide,
   plugin,
   track,
   shortcutHandlers,
@@ -322,6 +325,7 @@ function makeWebPluginApi({
             `"${command.id}" needs an id of lowercase letters, digits and hyphens, up to 32, starting with a letter or digit, a text title, and keywords that are text.`,
           );
         }
+        if (!appWide) return;
         const keybindingCommand = `plugin.${pluginId}.${command.id}` as const;
         const run = () => runReportingFailure(command.title, command.run);
         track(
@@ -470,6 +474,7 @@ function makeWebPluginApi({
         if (!COMMAND_ID.test(page.name) || typeof page.title !== "string") {
           throw new TypeError(`"${page.name}" needs a valid name and a text title.`);
         }
+        if (!appWide) return;
         track(
           registerPluginPage(pluginPageKey(pluginId, page.name), {
             title: page.title,
@@ -484,6 +489,7 @@ function makeWebPluginApi({
         if (!COMMAND_ID.test(section.id) || typeof section.title !== "string") {
           throw new TypeError(`"${section.id}" needs a valid id and a text title.`);
         }
+        if (!appWide) return;
         track(
           registerPluginSidebarSection({
             key: `${environmentId}\u0000${pluginId}\u0000${section.id}`,
@@ -627,11 +633,14 @@ const runCleanups = (cleanups: Iterable<() => void>) => {
 
 /**
  * Loads the environment's active web plugins and follows plugin state until stopped. Each plugin
- * fails alone: a failed fetch, import or activate is recorded for the Plugins page.
+ * fails alone: a failed fetch, import or activate is recorded for the Plugins page. Several
+ * environments load at once, and only the `appWide` one registers pages, commands and sidebar
+ * sections, which have no thread to tie them to an environment.
  */
 export function startPluginLoader(
   environmentId: EnvironmentId,
   navigate: (path: string) => void,
+  appWide: boolean,
 ): () => void {
   installHostModules();
   // Stays once set: the registries empty out as plugins unload, so their readers draw nothing.
@@ -691,6 +700,7 @@ export function startPluginLoader(
           definition.activate(
             makeWebPluginApi({
               environmentId,
+              appWide,
               plugin,
               track,
               shortcutHandlers: claimShortcutHandlers,

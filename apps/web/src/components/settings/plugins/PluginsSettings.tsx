@@ -168,8 +168,8 @@ function PluginsPage({
             installer={installer}
             dragActive={dragActive}
             scopeNote={
-              main.environmentId !== uiSource.environmentId
-                ? `Installs on ${targets.length > 1 ? "every environment here that runs plugins" : main.label}. ${main.label} isn't ${uiSource.name}, and the app shows plugin changes only from that one, so a plugin with no server code or agent skills does nothing here.`
+              !uiSource.environmentIds.includes(main.environmentId)
+                ? `Installs on ${targets.length > 1 ? "every environment here that runs plugins" : main.label}. This app doesn't load plugin UI from ${main.label}, so a plugin with no server code or agent skills does nothing there.`
                 : targets.length > 1
                   ? `Installs on every environment that runs plugins. A plugin with no server code or agent skills only changes the app, so it goes to ${main.label} only.`
                   : `Installs on ${main.label}.`

@@ -49,17 +49,22 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { startPluginLoader } from "./pluginLoader";
 import { startPluginStyles } from "./pluginStyles";
 import {
+  pluginActionAtoms,
   pluginBannersAtom,
   pluginCommandsAtom,
   pluginContributionKey,
+  pluginPageAtom,
+  pluginPageKey,
+  pluginReplacementAtoms,
   pluginRightPanelAtom,
   pluginRightPanelKey,
   pluginSettingsPanelAtom,
+  pluginSidebarSectionsAtom,
   pluginSlashCommandsAtom,
   pluginToolRendererAtom,
   pluginToolRendererKey,
   pluginThreadBadgesAtom,
-  pluginWebFailureAtom,
+  pluginWebFailuresAtom,
 } from "./pluginRegistry";
 
 const webPlugin = (id: string): PluginState => ({
@@ -97,7 +102,7 @@ describe("startPluginLoader", () => {
     const helloPanel = pluginRightPanelAtom(
       pluginRightPanelKey(environmentId, "hello-web", "hello"),
     );
-    const stop = startPluginLoader(environmentId, navigate);
+    const stop = startPluginLoader(environmentId, navigate, true);
     using _loader = { [Symbol.dispose]: stop };
 
     appAtomRegistry.set(
@@ -114,11 +119,9 @@ describe("startPluginLoader", () => {
 
     await vi.waitFor(() => {
       expect(appAtomRegistry.get(helloPanel)?.title).toBe("Hello panel");
-      expect(
-        appAtomRegistry.get(
-          pluginWebFailureAtom(pluginContributionKey(environmentId, "broken-web")),
-        ),
-      ).toBe("The request for /web.js failed with 500.");
+      expect(appAtomRegistry.get(pluginWebFailuresAtom("broken-web")).get(environmentId)).toBe(
+        "The request for /web.js failed with 500.",
+      );
     });
     // Agents' plugin tools hear about the plugin's own failures through the server, tied to the
     // start that failed. A failed download is this client's network, so it stays here.
@@ -203,14 +206,14 @@ describe("startPluginLoader", () => {
     using _timers = fakeTimers();
     const environmentId = EnvironmentId.make("environment:plugin-loader-retry");
     appAtomRegistry.set(live, AsyncResult.success({ plugins: [webPlugin("hello-web")] }));
-    using _loader = { [Symbol.dispose]: startPluginLoader(environmentId, vi.fn()) };
+    using _loader = { [Symbol.dispose]: startPluginLoader(environmentId, vi.fn(), true) };
 
     await vi.advanceTimersByTimeAsync(1_000);
     await vi.waitFor(() =>
       expect(appAtomRegistry.get(pluginCommandsAtom(environmentId))).toHaveLength(1),
     );
     expect(
-      appAtomRegistry.get(pluginWebFailureAtom(pluginContributionKey(environmentId, "hello-web"))),
+      appAtomRegistry.get(pluginWebFailuresAtom("hello-web")).get(environmentId),
     ).toBeUndefined();
   });
 
@@ -234,7 +237,7 @@ describe("startPluginLoader", () => {
     const bundleRequests = (pluginId: string) =>
       fetchSpy.mock.calls.filter(([input]) => String(input).includes(`/${pluginId}/`)).length;
     const environmentId = EnvironmentId.make("environment:plugin-loader-reload");
-    const stop = startPluginLoader(environmentId, vi.fn());
+    const stop = startPluginLoader(environmentId, vi.fn(), true);
     using _loader = { [Symbol.dispose]: stop };
 
     appAtomRegistry.set(live, AsyncResult.success({ plugins: [webPlugin("hello-web")] }));
@@ -284,7 +287,7 @@ describe("startPluginLoader", () => {
           new Response(source(String(input).includes("/first-web/") ? "first" : "second")),
       );
     const environmentId = EnvironmentId.make("environment:plugin-loader-clash");
-    const stop = startPluginLoader(environmentId, vi.fn());
+    const stop = startPluginLoader(environmentId, vi.fn(), true);
     using _loader = { [Symbol.dispose]: stop };
 
     appAtomRegistry.set(
@@ -316,6 +319,52 @@ describe("startPluginLoader", () => {
     expect(appAtomRegistry.get(pluginThreadBadgesAtom(threadKey))).toEqual([]);
   });
 
+  it("keeps each environment's thread contributions to its own threads and takes app-wide ones from the first", async () => {
+    // Thread parts only from environment B, app-wide parts from both.
+    const source = `export default { activate(api) {
+      api.commands.register({ id: "open", title: "Open", run() {} });
+      api.pages.register({ name: "all", title: "All notes", component: () => null });
+      api.sidebar.addSection({ id: "recent", title: "Recent", component: () => null });
+      api.markdown.registerCodeBlock({ language: "notes", component: () => null });
+      if (!api.environmentId.endsWith(":b")) return;
+      api.composer.registerSlashCommand({ name: "notes", description: "Notes", run() {} });
+      api.threads.addHeaderButton({ id: "flag", title: "Flag", run() {} });
+      api.ui.replace("message.user", () => null);
+    } };`;
+    using _fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response(source));
+    const environmentA = EnvironmentId.make("environment:plugin-loader-scope:a");
+    const environmentB = EnvironmentId.make("environment:plugin-loader-scope:b");
+    appAtomRegistry.set(live, AsyncResult.success({ plugins: [webPlugin("notes-web")] }));
+    using _a = { [Symbol.dispose]: startPluginLoader(environmentA, vi.fn(), true) };
+    using _b = { [Symbol.dispose]: startPluginLoader(environmentB, vi.fn(), false) };
+
+    await vi.waitFor(() => {
+      expect(appAtomRegistry.get(pluginCommandsAtom(environmentA))).toHaveLength(1);
+      expect(
+        appAtomRegistry.get(pluginReplacementAtoms["message.user"](environmentB)),
+      ).toBeDefined();
+    });
+    expect(appAtomRegistry.get(pluginSlashCommandsAtom(environmentA))).toEqual([]);
+    expect(appAtomRegistry.get(pluginSlashCommandsAtom(environmentB))).toHaveLength(1);
+    expect(appAtomRegistry.get(pluginActionAtoms.threadHeader(environmentA))).toEqual([]);
+    expect(appAtomRegistry.get(pluginActionAtoms.threadHeader(environmentB))).toHaveLength(1);
+    expect(
+      appAtomRegistry.get(pluginReplacementAtoms["message.user"](environmentA)),
+    ).toBeUndefined();
+    // A page, command or section has no thread to say which environment it belongs to.
+    expect(appAtomRegistry.get(pluginCommandsAtom(environmentB))).toEqual([]);
+    expect(
+      appAtomRegistry.get(pluginPageAtom(pluginPageKey("notes-web", "all")))?.owner.environmentId,
+    ).toBe(environmentA);
+    expect(
+      appAtomRegistry.get(pluginSidebarSectionsAtom).map((section) => section.owner.environmentId),
+    ).toEqual([environmentA]);
+    // The same plugin claims its code block language from each environment without failing.
+    expect(appAtomRegistry.get(pluginWebFailuresAtom("notes-web")).size).toBe(0);
+  });
+
   it("starts a channel the plugin subscribes to and hands it the values", async () => {
     const channelSource = `export default { activate(api) {
       api.rpc.subscribe("notes", (value) => api.composer.showBanner({ title: String(value) }));
@@ -324,7 +373,7 @@ describe("startPluginLoader", () => {
       .spyOn(globalThis, "fetch")
       .mockImplementation(async () => new Response(channelSource));
     const environmentId = EnvironmentId.make("environment:plugin-loader-channel");
-    const stop = startPluginLoader(environmentId, vi.fn());
+    const stop = startPluginLoader(environmentId, vi.fn(), true);
     using _loader = { [Symbol.dispose]: stop };
 
     appAtomRegistry.set(live, AsyncResult.success({ plugins: [webPlugin("channel-web")] }));
@@ -341,7 +390,7 @@ describe("startPluginLoader", () => {
     const environmentId = EnvironmentId.make("environment:plugin-loader:relay");
     // Set first, so the loader's first request isn't for a plugin an earlier case left listed.
     appAtomRegistry.set(live, AsyncResult.success({ plugins: [webPlugin("relay-web")] }));
-    const stop = startPluginLoader(environmentId, vi.fn());
+    const stop = startPluginLoader(environmentId, vi.fn(), true);
     using _loader = { [Symbol.dispose]: stop };
 
     await vi.waitFor(() =>

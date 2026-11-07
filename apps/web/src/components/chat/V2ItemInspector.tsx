@@ -437,6 +437,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
   return (
     <props.pluginUi.PluginReplaceable
       part="timeline.item"
+      environmentId={props.environmentId}
       pieces={{
         original: inspector,
         item: props.pluginUi.toPluginTimelineItem(item),

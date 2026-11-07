@@ -1,60 +1,85 @@
-import { useAtom } from "@effect/atom-react";
+import { useAtom, useAtomValue } from "@effect/atom-react";
+import type { EnvironmentId } from "@t3tools/contracts";
+import { ChevronDownIcon } from "lucide-react";
 
-import { chosenPluginUiEnvironmentAtom } from "../../../plugins/pluginFollow";
-import { useEnvironments, usePrimaryEnvironmentId } from "../../../state/environments";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../../ui/select";
+import {
+  loadsPluginUi,
+  pluginUiChoicesAtom,
+  pluginUiEnvironmentsAtom,
+  withPluginUiChoice,
+} from "../../../plugins/pluginFollow";
+import {
+  type EnvironmentPresentation,
+  useEnvironments,
+  usePrimaryEnvironmentId,
+} from "../../../state/environments";
+import { Button } from "../../ui/button";
+import { Menu, MenuCheckboxItem, MenuPopup, MenuTrigger } from "../../ui/menu";
 import { settingsScopeEnvironmentLabel } from "../settingsScopeAxis";
 import { SettingsRow } from "../settingsLayout";
 import { runsPlugins } from "./pluginTargets";
 
-const NONE = "none";
-
 /**
- * Picks the one environment this browser loads plugin UI from. Offered only without a main
- * environment, which always supplies it; nothing is picked until the user picks.
+ * Turns plugin UI on or off for each environment in this browser. The main environment starts on
+ * and the others off; hidden while the main environment is the only one that could supply it.
  */
 export function PluginUiEnvironmentRow() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
-  const [chosenEnvironmentId, choose] = useAtom(chosenPluginUiEnvironmentAtom);
-  if (primaryEnvironmentId !== null) return null;
-  // The current pick stays listed while it is offline, so the menu can show it.
+  const [choices, setChoices] = useAtom(pluginUiChoicesAtom);
+  const [appWideEnvironmentId, ...others] = useAtomValue(pluginUiEnvironmentsAtom);
+  const isOn = (environmentId: EnvironmentId) =>
+    loadsPluginUi(choices, environmentId, primaryEnvironmentId);
+  // A chosen environment stays listed while it is offline, so it can be turned off.
   const options = environments.filter(
-    (environment) => runsPlugins(environment) || environment.environmentId === chosenEnvironmentId,
+    (environment) => runsPlugins(environment) || isOn(environment.environmentId),
   );
-  const labelOf = (environmentId: string) => {
-    const environment = environments.find((option) => option.environmentId === environmentId);
-    return environment === undefined
-      ? "A removed environment"
-      : settingsScopeEnvironmentLabel(environment, environments);
-  };
+  if (
+    primaryEnvironmentId !== null &&
+    options.every((option) => option.environmentId === primaryEnvironmentId)
+  ) {
+    return null;
+  }
+  const labelOf = (environment: EnvironmentPresentation) =>
+    settingsScopeEnvironmentLabel(environment, environments);
+  const chosenLabels = options.filter((option) => isOn(option.environmentId)).map(labelOf);
+  const appWide = options.find((option) => option.environmentId === appWideEnvironmentId);
   return (
     <SettingsRow
       title="Load plugin UI from"
-      description="The chosen server's plugins run code in this window."
+      description={
+        appWide === undefined || others.length === 0
+          ? "The chosen servers' plugins run code in this window."
+          : `The chosen servers' plugins run code in this window. Pages, commands and sidebar sections come from ${labelOf(appWide)}.`
+      }
       control={
-        <Select
-          value={chosenEnvironmentId ?? NONE}
-          onValueChange={(value) =>
-            choose(options.find((option) => option.environmentId === value)?.environmentId ?? null)
-          }
-        >
-          <SelectTrigger size="sm" className="w-full sm:w-48" aria-label="Load plugin UI from">
-            <SelectValue>
-              {chosenEnvironmentId === null ? "None" : labelOf(chosenEnvironmentId)}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectPopup align="end" alignItemWithTrigger={false}>
-            <SelectItem hideIndicator value={NONE}>
-              None
-            </SelectItem>
+        <Menu>
+          <MenuTrigger
+            render={<Button size="sm" variant="outline" className="w-full sm:w-48" />}
+            aria-label="Load plugin UI from"
+          >
+            <span className="min-w-0 flex-1 truncate text-left">
+              {chosenLabels.length === 0 ? "None" : chosenLabels.join(", ")}
+            </span>
+            <ChevronDownIcon />
+          </MenuTrigger>
+          <MenuPopup align="end">
             {options.map((option) => (
-              <SelectItem hideIndicator key={option.environmentId} value={option.environmentId}>
-                {labelOf(option.environmentId)}
-              </SelectItem>
+              <MenuCheckboxItem
+                key={option.environmentId}
+                variant="switch"
+                checked={isOn(option.environmentId)}
+                onCheckedChange={(on) =>
+                  setChoices(
+                    withPluginUiChoice(choices, option.environmentId, on, primaryEnvironmentId),
+                  )
+                }
+              >
+                {labelOf(option)}
+              </MenuCheckboxItem>
             ))}
-          </SelectPopup>
-        </Select>
+          </MenuPopup>
+        </Menu>
       }
     />
   );

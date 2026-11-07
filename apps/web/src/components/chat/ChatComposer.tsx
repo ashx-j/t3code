@@ -3553,6 +3553,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 ) : (
                   <pluginUi.PluginReplaceable
                     part="composer.controls"
+                    environmentId={environmentId}
                     pieces={{
                       original: defaultComposerFooter,
                       attach: composerAttachButton,

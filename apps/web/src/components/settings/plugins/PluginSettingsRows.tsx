@@ -31,7 +31,7 @@ export function PluginSettingsRows({
   return (
     <>
       <PluginCustomSettings entry={customSettings} />
-      {/* The plugin's own panel talks to the main environment's copy alone. */}
+      {/* The plugin's own panel talks to the first copy's environment alone. */}
       {copies.length > 1 ? (
         <SettingsRow
           title={`This panel changes ${first.label} only`}

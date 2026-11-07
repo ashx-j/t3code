@@ -71,7 +71,9 @@ export function PluginList({
   );
   const several = targets.length > 1;
   const uiSource = usePluginUiSource();
-  const remoteInView = targets.some((target) => target.environmentId !== uiSource.environmentId);
+  const remoteInView = targets.some(
+    (target) => !uiSource.environmentIds.includes(target.environmentId),
+  );
   const loaded = targets.map((target, index) => {
     const result = lists[index] ?? AsyncResult.initial(true);
     return {
@@ -126,7 +128,7 @@ export function PluginList({
               copies={row.copies}
               shadowed={row.shadowed}
               labelled={several}
-              uiSourceName={remoteInView ? uiSource.name : null}
+              explainReach={remoteInView}
             />
           ))
         )}

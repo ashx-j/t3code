@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import type { EnvironmentId } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 
 import { pluginUiAtom } from "./pluginUi";
@@ -8,11 +9,18 @@ import { pluginUiAtom } from "./pluginUi";
  * A wrapper of its own so `DiffPanel` keeps upstream's layout.
  */
 export function DiffViewPart(props: {
+  readonly environmentId: EnvironmentId | null;
   readonly patch: string | null;
   readonly children: ReactNode;
 }) {
   const pluginUi = useAtomValue(pluginUiAtom);
   const original = <div className="flex min-h-0 flex-1 overflow-hidden">{props.children}</div>;
   if (pluginUi === null) return original;
-  return <pluginUi.PluginReplaceable part="diff.view" pieces={{ original, patch: props.patch }} />;
+  return (
+    <pluginUi.PluginReplaceable
+      part="diff.view"
+      environmentId={props.environmentId}
+      pieces={{ original, patch: props.patch }}
+    />
+  );
 }

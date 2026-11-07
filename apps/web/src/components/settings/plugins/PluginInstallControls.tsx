@@ -50,13 +50,13 @@ export function InstallProblems({ problems }: { readonly problems: ReadonlyArray
 }
 
 /**
- * Installs plugins on `targets`, the first one first. The app draws plugin UI only from
- * `uiSource`, so a plugin without server code or agent skills changes nothing on the others and
- * is installed on the first one only.
+ * Installs plugins on `targets`, the first one first. A plugin without server code or agent skills
+ * only changes the app, so it is installed on the first one only, and does nothing unless the app
+ * loads plugin UI from there.
  */
 export function usePluginInstaller(
   targets: ReadonlyArray<PluginTarget>,
-  uiSource: { readonly environmentId: EnvironmentId | null; readonly name: string },
+  uiSource: { readonly environmentIds: ReadonlyArray<EnvironmentId> },
 ) {
   const [installing, setInstalling] = useState<string | null>(null);
   const [problems, setProblems] = useState<ReadonlyArray<string>>([]);
@@ -78,9 +78,9 @@ export function usePluginInstaller(
     if (plugin === null) return;
     if (!plugin.hasServer && plugin.hasSkills !== true) {
       // Such as when that environment is offline and another one came first.
-      if (main.environmentId !== uiSource.environmentId) {
+      if (!uiSource.environmentIds.includes(main.environmentId)) {
         report(
-          `${plugin.name} only changes the app, and this app shows plugin changes only from ${uiSource.name}, so it does nothing on ${main.label}.`,
+          `${plugin.name} only changes the app, and this app doesn't load plugin UI from ${main.label}, so it does nothing there.`,
         );
       }
       return;

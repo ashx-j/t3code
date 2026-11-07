@@ -1332,7 +1332,10 @@ export default function DiffPanel({
                 </div>
               )
             ) : lazySource || renderablePatch?.kind === "files" ? (
-              <DiffViewPart patch={typeof selectedPatch === "string" ? selectedPatch : null}>
+              <DiffViewPart
+                environmentId={activeThread?.environmentId ?? null}
+                patch={typeof selectedPatch === "string" ? selectedPatch : null}
+              >
                 <div
                   className="min-h-0 min-w-0 flex-1"
                   onClickCapture={(event) => {

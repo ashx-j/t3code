@@ -31,8 +31,13 @@ import {
   type ContextChipAccentKind,
 } from "./lib/contextChipAccents";
 
+import { pluginUiEnvironmentsAtom } from "./plugins/pluginFollow";
 import { appAtomRegistry, subscribeAtomChanges } from "./rpc/atomRegistry";
-import { primaryServerConfigEventAtom, primaryServerEnvironmentThemesAtom } from "./state/server";
+import {
+  primaryServerConfigEventAtom,
+  primaryServerEnvironmentThemesAtom,
+  serverEnvironment,
+} from "./state/server";
 
 export { EMBER_THEME, GROVE_THEME, IRIS_THEME, OCEAN_THEME, T3_CHAT_THEME, THEME_COLOR_ROLES };
 export type { ThemeAppearance, ThemeColorRole, ThemeColors, ThemeDefinition, ThemeVariants };
@@ -357,10 +362,20 @@ export function publishedThemeDefinitions(
     .map(environmentThemeDefinition);
 }
 
-// Every reconnect snapshot delivers a fresh but usually identical array; keeping the
-// previous one skips regenerating palettes and repainting the document for it.
+// The main environment's own palettes, then the plugin palettes of each environment plugin UI
+// loads from, as plugin styles do. Every reconnect snapshot delivers a fresh but usually identical
+// array; keeping the previous one skips regenerating palettes and repainting the document for it.
 const publishedThemesAtom = Atom.make((get): ReadonlyArray<EnvironmentTheme> => {
-  const next = get(primaryServerEnvironmentThemesAtom);
+  const next = get(primaryServerEnvironmentThemesAtom).filter((theme) => theme.fromPlugin !== true);
+  const ids = new Set(next.map((theme) => theme.id));
+  for (const environmentId of get(pluginUiEnvironmentsAtom)) {
+    const themes = get(serverEnvironment.configValueAtom(environmentId))?.environmentThemes ?? [];
+    for (const theme of themes) {
+      if (theme.fromPlugin !== true || ids.has(theme.id)) continue;
+      ids.add(theme.id);
+      next.push(theme);
+    }
+  }
   const previous = Option.getOrNull(get.self<ReadonlyArray<EnvironmentTheme>>());
   return previous !== null && Equal.equals(previous, next) ? previous : next;
 }).pipe(Atom.withLabel("web-published-environment-themes"));

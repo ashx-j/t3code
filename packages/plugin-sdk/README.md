@@ -72,8 +72,9 @@ the `.tgz` file it writes.
   `colors` or `variants` set its status colors.
 - A `styles/` folder of `.css` files is added to the page while the plugin is active, in name
   order, after T3's own styles and the theme. A manifest and `styles/` are a whole plugin, with
-  no `server` or `web`, as in the `styles-plugin` fixture. Like a web half, styles load only from
-  the main environment or the one picked in **Load plugin UI from** in Settings → Plugins.
+  no `server` or `web`, as in the `styles-plugin` fixture. Like a web half, styles and themes load
+  only from the environments turned on under **Load plugin UI from** in Settings → Plugins, which
+  starts with just the main environment.
   **Reload** picks up edits. The page gets each file's text, so a `url()` can't reach the
   plugin's folder; use a `data:` URL for an image.
 - A `skills/` folder of `<name>/SKILL.md` skills reaches Claude and Codex agents while the plugin
@@ -196,6 +197,12 @@ place of the thread; a `t3code://plugins/<pluginId>/<name>` link opens the deskt
 `sidebar.addSection` adds a titled section under the thread list.
 [`examples/quick-notes`](./examples/quick-notes) keeps notes in its server half's storage and shows
 them in both.
+
+The app can load web halves from several environments at once. Buttons, menu items, badges,
+banners, slash commands, `@` items, tool renderers and replaced parts show only in the threads of
+the environment the plugin runs on, which `api.environmentId` names. Pages, palette commands and
+sidebar sections come only from the first of those environments, the main one unless it's turned
+off.
 
 `api.ui.replace(part, component)` draws one of T3's own parts your way. The component receives
 T3's own controls as ready-made pieces to arrange, plus `original`, T3's own drawing of the part.

@@ -108,11 +108,12 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
         );
 
         yield* environmentTheme.setPluginThemeDirectories([pluginThemes]);
+        // Marked, so clients show a plugin's themes only where they load its UI.
         assert.deepEqual(
-          (yield* currentThemes).map((theme) => [theme.id, theme.name]),
+          (yield* currentThemes).map((theme) => [theme.id, theme.name, theme.fromPlugin]),
           [
-            ["nightfall", "Nightfall"],
-            ["shared-light", "Shared Light"],
+            ["nightfall", "Nightfall", undefined],
+            ["shared-light", "Shared Light", true],
           ],
         );
 

@@ -65,6 +65,7 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
             ) : (
               <ctx.pluginUi.PluginReplaceable
                 part="message.assistant"
+                environmentId={ctx.threadRef?.environmentId ?? null}
                 pieces={{
                   original: markdown,
                   text: messageText,

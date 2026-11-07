@@ -13,7 +13,7 @@ import { useState } from "react";
 import {
   pluginContributionKey,
   pluginSettingsPanelAtom,
-  pluginWebFailureAtom,
+  pluginWebFailuresAtom,
 } from "../../../plugins/pluginRegistry";
 import { pluginEnvironment } from "../../../state/plugins";
 import { useAtomCommand } from "../../../state/use-atom-command";
@@ -36,13 +36,13 @@ const FAILURE_STAGES = {
 
 /**
  * Where a plugin that changes the app runs, as the installer decides: with no server code or agent
- * skills it goes only to the environment plugin UI loads from, named by `source`.
+ * skills it goes only to the first environment plugin UI loads from.
  */
-const webReach = (plugin: PluginState, source: string) =>
+const webReach = (plugin: PluginState) =>
   !plugin.hasServer && plugin.hasSkills !== true
-    ? `Changes only this app. It runs from ${source} and isn't installed on other servers.`
+    ? "Changes only this app, so it isn't installed on other servers."
     : plugin.hasWeb
-      ? `Its web part runs in this app from ${source} only. Other servers get just its server side.`
+      ? "Its web part runs in this app only from the servers chosen in Load plugin UI from."
       : null;
 
 export function PluginRow({
@@ -51,7 +51,7 @@ export function PluginRow({
   copies,
   shadowed,
   labelled,
-  uiSourceName,
+  explainReach,
 }: {
   /** The main environment in view. Its permissions decide which actions are offered. */
   readonly environmentId: EnvironmentId;
@@ -61,11 +61,8 @@ export function PluginRow({
   readonly shadowed: boolean;
   /** Problems name their environment, because several are in view. */
   readonly labelled: boolean;
-  /**
-   * How the page names the environment plugin UI loads from, set while another server is in view
-   * so the row says where app changes run.
-   */
-  readonly uiSourceName: string | null;
+  /** Says where app changes run, because a server plugin UI doesn't load from is in view. */
+  readonly explainReach: boolean;
 }) {
   const { plugin } = first;
   const canManage = useAtomValue(pluginEnvironment.setPluginEnabled.permissionAtom(environmentId));
@@ -74,11 +71,11 @@ export function PluginRow({
   const uninstall = useAtomCommand(pluginEnvironment.uninstallPlugin, "plugin removal");
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  // Plugin UI loads from one environment, which comes first, so its settings panel and web failure
-  // do too.
-  const contributionKey = pluginContributionKey(environmentId, plugin.id);
-  const customSettings = useAtomValue(pluginSettingsPanelAtom(contributionKey));
-  const webFailure = useAtomValue(pluginWebFailureAtom(contributionKey));
+  // The first copy's panel, which `PluginSettingsRows` says changes that copy alone.
+  const customSettings = useAtomValue(
+    pluginSettingsPanelAtom(pluginContributionKey(first.environmentId, plugin.id)),
+  );
+  const webFailures = useAtomValue(pluginWebFailuresAtom(plugin.id));
   const hasGeneratedForm = pluginSettingsForm(plugin.settingsSchema).kind !== "none";
   const hasSettings = customSettings !== undefined || hasGeneratedForm;
   const runOn = async (
@@ -106,9 +103,14 @@ export function PluginRow({
         ? []
         : [`${labelled ? `${label}: ` : ""}Failed while running: ${serverFailure}`],
     ),
-    ...(webFailure === undefined ? [] : [`Web part failed: ${webFailure}`]),
+    ...copies.flatMap(({ label, environmentId: copyEnvironmentId }) => {
+      const webFailure = webFailures.get(copyEnvironmentId);
+      return webFailure === undefined
+        ? []
+        : [`${labelled ? `${label}: ` : ""}Web part failed: ${webFailure}`];
+    }),
   ];
-  const reach = uiSourceName === null ? null : webReach(plugin, uiSourceName);
+  const reach = explainReach ? webReach(plugin) : null;
   const row = (
     <SettingsRow
       title={

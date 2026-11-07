@@ -174,10 +174,16 @@ export function setPluginWebFailure(
   bump();
 }
 
-export const pluginWebFailureAtom = Atom.family((key: string) =>
-  Atom.make((get) => {
+/** Why the plugin's web part failed, by environment, for its row in Settings. */
+export const pluginWebFailuresAtom = Atom.family((pluginId: string) =>
+  Atom.make((get): ReadonlyMap<string, string> => {
     get(versionAtom);
-    return webFailures.get(key);
+    const suffix = `\u0000${pluginId}`;
+    return new Map(
+      [...webFailures].flatMap(([key, message]) =>
+        key.endsWith(suffix) ? [[key.slice(0, -suffix.length), message] as const] : [],
+      ),
+    );
   }),
 );
 
@@ -340,11 +346,12 @@ const publishCodeBlocks = () =>
 
 /** Draws fenced code of `language` in chat messages; returns the function that removes it. */
 export function registerPluginCodeBlock(language: string, entry: PluginCodeBlockEntry): () => void {
+  // The same plugin from another environment is a second claim, not a duplicate.
   const remove = addClaim(
     codeBlockClaims,
     language,
     entry,
-    (claim) => claim.owner.pluginId,
+    (claim) => pluginContributionKey(claim.owner.environmentId, claim.owner.pluginId),
     `code blocks in ${language}`,
   );
   publishCodeBlocks();
@@ -386,20 +393,29 @@ const replacements: { [Part in PluginPartName]: Array<PluginReplacementEntry<Par
 // re-render them.
 const replacementsVersionAtom = Atom.make(0).pipe(Atom.keepAlive);
 
-// The plugin whose id sorts first wins, as for slash commands, so parallel loading can't change
-// which one draws a part; within one plugin its newest replacement wins.
+// Parts sit inside a thread, so only the thread environment's plugins replace them. The plugin
+// whose id sorts first wins, as for slash commands, so parallel loading can't change which one
+// draws a part; within one plugin its newest replacement wins.
 const replacementAtom = <Part extends PluginPartName>(part: Part) =>
-  Atom.make((get) => {
-    get(replacementsVersionAtom);
-    return replacements[part].reduce<PluginReplacementEntry<Part> | undefined>(
-      (winner, entry) =>
-        winner === undefined || entry.owner.pluginId <= winner.owner.pluginId ? entry : winner,
-      undefined,
-    );
-  });
+  Atom.family((environmentId: string) =>
+    Atom.make((get) => {
+      get(replacementsVersionAtom);
+      return replacements[part].reduce<PluginReplacementEntry<Part> | undefined>(
+        (winner, entry) =>
+          entry.owner.environmentId !== environmentId
+            ? winner
+            : winner === undefined || entry.owner.pluginId <= winner.owner.pluginId
+              ? entry
+              : winner,
+        undefined,
+      );
+    }),
+  );
 
 export const pluginReplacementAtoms: {
-  readonly [Part in PluginPartName]: Atom.Atom<PluginReplacementEntry<Part> | undefined>;
+  readonly [Part in PluginPartName]: (
+    environmentId: string,
+  ) => Atom.Atom<PluginReplacementEntry<Part> | undefined>;
 } = {
   "composer.controls": replacementAtom("composer.controls"),
   "message.assistant": replacementAtom("message.assistant"),
