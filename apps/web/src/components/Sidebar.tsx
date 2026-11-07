@@ -10,7 +10,7 @@ import {
 import { discardComposerDraft } from "../lib/discardComposerDraft";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
 import { useAtomValue } from "@effect/atom-react";
-import { pluginUiAtom } from "../plugins/pluginUi";
+import { pluginUiAtom, runPluginThreadMenuItem, showThreadMenu } from "../plugins/pluginUi";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 import * as Schema from "effect/Schema";
@@ -2585,7 +2585,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             ),
           ) ?? null;
         const clicked = await settlePromise(() =>
-          api.contextMenu.show(
+          showThreadMenu(
+            api,
             buildThreadActionMenuItems({
               canOperate: readEnvironmentScope(
                 threadRef.environmentId,
@@ -2621,9 +2622,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               snoozePresets,
             }),
             position,
+            threadRef.environmentId,
           ),
         );
         if (clicked._tag === "Failure" || clicked.value === null) return;
+        if (runPluginThreadMenuItem(clicked.value, threadRef.environmentId, threadRef.threadId)) {
+          return;
+        }
         if (threadActionRequiresOperate(clicked.value) && !checkThreadOperations([thread])) return;
         if (clicked.value?.startsWith("snooze:")) {
           const preset =

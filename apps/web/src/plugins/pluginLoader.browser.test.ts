@@ -1,4 +1,5 @@
-import { EnvironmentId, PluginId, type PluginState } from "@t3tools/contracts";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { EnvironmentId, PluginId, ThreadId, type PluginState } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -40,11 +41,14 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { startPluginLoader } from "./pluginLoader";
 import { startPluginStyles } from "./pluginStyles";
 import {
+  pluginBannersAtom,
   pluginCommandsAtom,
   pluginContributionKey,
   pluginRightPanelAtom,
   pluginRightPanelKey,
   pluginSettingsPanelAtom,
+  pluginSlashCommandsAtom,
+  pluginThreadBadgesAtom,
   pluginWebFailureAtom,
 } from "./pluginRegistry";
 
@@ -122,6 +126,15 @@ describe("startPluginLoader", () => {
     expect(command?.command).toBe("plugin.hello-web.open-settings");
     command?.run();
     await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith("/settings/plugins"));
+    const [slashCommand] = appAtomRegistry.get(pluginSlashCommandsAtom(environmentId));
+    expect(slashCommand?.name).toBe("hello");
+    slashCommand?.run({ threadId: "thread-1" });
+    await vi.waitFor(() =>
+      expect(appAtomRegistry.get(pluginBannersAtom(environmentId))[0]?.description).toBe(
+        "Thread thread-1",
+      ),
+    );
+
     expect(document.querySelectorAll('style[data-plugin="hello-web"]')).toHaveLength(1);
 
     // Turning a plugin off takes effect while another still hangs. A failed download is tried
@@ -149,6 +162,8 @@ describe("startPluginLoader", () => {
     expect(document.querySelectorAll('style[data-plugin="hello-web"]')).toHaveLength(0);
     expect(appAtomRegistry.get(helloPanel)).toBeUndefined();
     expect(appAtomRegistry.get(pluginCommandsAtom(environmentId))).toEqual([]);
+    expect(appAtomRegistry.get(pluginSlashCommandsAtom(environmentId))).toEqual([]);
+    expect(appAtomRegistry.get(pluginBannersAtom(environmentId))).toEqual([]);
   });
 
   it("tries a download again after a bad gateway", async () => {
@@ -231,11 +246,54 @@ describe("startPluginLoader", () => {
     expect(appAtomRegistry.get(settingsPanel)).toBeUndefined();
   });
 
+  it("gives a shared slash command to the plugin whose id sorts first, and ignores a plugin's calls after it unloads", async () => {
+    const source = (id: string) => `export default { activate(api) {
+      globalThis.__api_${id} = api;
+      api.composer.registerSlashCommand({ name: "notes", description: "${id}", run() {} });
+      api.commands.register({ id: "open", title: "Open ${id}", run() {} });
+    } };`;
+    using _fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(
+        async (input) =>
+          new Response(source(String(input).includes("/first-web/") ? "first" : "second")),
+      );
+    const environmentId = EnvironmentId.make("environment:plugin-loader-clash");
+    const stop = startPluginLoader(environmentId, vi.fn());
+    using _loader = { [Symbol.dispose]: stop };
+
+    appAtomRegistry.set(
+      live,
+      AsyncResult.success({ plugins: [webPlugin("first-web"), webPlugin("second-web")] }),
+    );
+    // Both start, whatever order they finish in, and `/notes` belongs to first-web.
+    await vi.waitFor(() =>
+      expect(appAtomRegistry.get(pluginCommandsAtom(environmentId))).toHaveLength(2),
+    );
+    expect(
+      appAtomRegistry.get(pluginSlashCommandsAtom(environmentId)).map((entry) => entry.pluginId),
+    ).toEqual(["first-web"]);
+
+    // A timer the plugin left running changes nothing once it is off.
+    const api = Reflect.get(globalThis, "__api_first") as {
+      readonly threads: { readonly setBadge: (threadId: string, badge: object) => void };
+    };
+    appAtomRegistry.set(live, AsyncResult.success({ plugins: [webPlugin("second-web")] }));
+    await vi.waitFor(() =>
+      expect(appAtomRegistry.get(pluginCommandsAtom(environmentId))).toHaveLength(1),
+    );
+    // Without first-web, second-web's `/notes` takes over.
+    expect(
+      appAtomRegistry.get(pluginSlashCommandsAtom(environmentId)).map((entry) => entry.pluginId),
+    ).toEqual(["second-web"]);
+    api.threads.setBadge("thread-1", { label: "Late" });
+    const threadKey = scopedThreadKey(scopeThreadRef(environmentId, ThreadId.make("thread-1")));
+    expect(appAtomRegistry.get(pluginThreadBadgesAtom(threadKey))).toEqual([]);
+  });
+
   it("starts a channel the plugin subscribes to and hands it the values", async () => {
     const channelSource = `export default { activate(api) {
-      api.rpc.subscribe("notes", (value) =>
-        api.commands.register({ id: "notes", title: String(value), run() {} }),
-      );
+      api.rpc.subscribe("notes", (value) => api.composer.showBanner({ title: String(value) }));
     } };`;
     using _fetch = vi
       .spyOn(globalThis, "fetch")
@@ -247,7 +305,7 @@ describe("startPluginLoader", () => {
     appAtomRegistry.set(live, AsyncResult.success({ plugins: [webPlugin("channel-web")] }));
 
     await vi.waitFor(() =>
-      expect(appAtomRegistry.get(pluginCommandsAtom(environmentId))[0]?.title).toBe("first value"),
+      expect(appAtomRegistry.get(pluginBannersAtom(environmentId))[0]?.title).toBe("first value"),
     );
   });
 

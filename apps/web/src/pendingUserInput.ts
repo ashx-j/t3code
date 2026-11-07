@@ -10,14 +10,18 @@ import {
 } from "@t3tools/client-runtime/state/pending-user-input";
 
 import { collectInlineContextIds } from "./lib/composerContextReferences";
+import { PLUGIN_CONTEXT_KIND, pluginMentionAnswerText } from "./plugins/pluginUi";
 
 export function projectPendingUserInputAnswer(
   answer: unknown,
   threadContexts: ReadonlyArray<ThreadContextRecord>,
 ) {
-  if (typeof answer !== "string" || threadContexts.length === 0) return answer;
+  if (typeof answer !== "string") return answer;
   const recordsById = new Map(threadContexts.map((record) => [record.contextId, record]));
   return replaceComposerContextReferences(answer, (reference) => {
+    if (reference.kind === PLUGIN_CONTEXT_KIND) {
+      return pluginMentionAnswerText(reference.contextId, reference.label) ?? reference.source;
+    }
     const record = reference.kind === "thread" ? recordsById.get(reference.contextId) : undefined;
     return record ? formatThreadLink(record, reference.label) : reference.source;
   });

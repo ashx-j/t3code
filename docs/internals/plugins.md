@@ -75,7 +75,8 @@ At startup the app loads only a small stub, [`pluginUi.ts`](../../apps/web/src/p
 Once the app is idle,
 [`PluginLoaderStarter`](../../apps/web/src/plugins/PluginLoaderStarter.tsx) follows the state
 stream. It downloads the web loader only when an active plugin has a web part, and a separate small
-styles chunk only when one has a `styles/` folder. The server starts plugins after it is listening.
+styles chunk only when one has a `styles/` folder. Until then, rows read nothing from plugins. The
+server starts plugins after it is listening.
 
 A bare `import(url)` cannot send credentials, so the loader fetches each bundle with the
 connection's credentials and imports it from a `blob:` URL, which the desktop CSP allows. Mobile
@@ -84,6 +85,9 @@ release builds cannot load code, so the mobile app shows no plugin UI, settings 
 Plugin themes arrive over the server config stream after the first paint, so the client saves them
 in localStorage for the boot script in `index.html`. The desktop main process cannot read
 localStorage, so the page sends it the canvas it paints under a light and a dark native theme.
+
+Thread menus are built and dispatched in two places, the header hook and the sidebar. Both hand
+`plugin:` ids to `runPluginThreadMenuItem` before their own `switch`, and a new menu must too.
 
 ## Reaching into orchestration
 

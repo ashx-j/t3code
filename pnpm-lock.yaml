@@ -1598,6 +1598,9 @@ importers:
 
   packages/plugin-sdk:
     devDependencies:
+      '@effect/atom-react':
+        specifier: 4.0.5
+        version: 4.0.5(effect@4.0.5)(react@19.3.0)(scheduler@0.28.0)
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4

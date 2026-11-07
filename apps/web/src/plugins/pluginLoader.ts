@@ -6,13 +6,16 @@ import {
   useAtomSubscribe,
   useAtomValue,
 } from "@effect/atom-react";
+import { T3_SLASH_COMMAND_NAMES } from "@t3tools/shared/slashCommands";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, PluginState } from "@t3tools/contracts";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { ThreadId, type EnvironmentId, type PluginState } from "@t3tools/contracts";
 import type * as SdkAtom from "@t3tools/plugin-sdk/atom";
 import {
   type HOST_ATOM_EXPORTS,
   type HOST_ATOM_REACT_EXPORTS,
   type HOST_UI_EXPORTS,
+  type WebPluginAction,
   type WebPluginApi,
   type WebPluginDefinition,
 } from "@t3tools/plugin-sdk/web";
@@ -40,13 +43,24 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { registerCommands, type CommandHandlers } from "../shortcuts/dispatcher";
 import { pluginEnvironment } from "../state/plugins";
 import {
+  registerPluginBanner,
+  registerPluginCodeBlock,
   registerPluginCommand,
+  registerPluginAction,
   pluginPageKey,
   registerPluginPage,
   registerPluginRightPanel,
   registerPluginSidebarSection,
+  registerPluginSlashCommand,
   registerPluginSettingsPanel,
+  capPluginMentionText,
+  pluginMentionContextId,
+  setPluginMentionItems,
+  setPluginThreadBadge,
   setPluginWebFailure,
+  type PluginActionContexts,
+  type PluginActionEntry,
+  type PluginActionPlace,
   type PluginOwner,
 } from "./pluginRegistry";
 import { fetchPluginFile, withDownloadRetries } from "./pluginFiles";
@@ -56,7 +70,11 @@ import { isLoadableWebPlugin } from "./pluginWatch";
 
 const PANEL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
 const COMMAND_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
+const BADGE_TONES = new Set(["info", "success", "warning", "error"]);
 const TOAST_TYPES = new Set(["info", "success", "warning", "error"]);
+const CODE_LANGUAGE = /^[a-z0-9][a-z0-9+#.-]{0,31}$/;
+// Languages the app already draws itself.
+const BUILT_IN_LANGUAGES = new Set(["mermaid", "math"]);
 
 /**
  * Bundles import React and the UI kit from here instead of shipping their own copies; the SDK's
@@ -146,6 +164,27 @@ const runReportingFailure = (label: string, run: () => void | Promise<void>) => 
     });
 };
 
+// Builds a toolbar or menu entry from a plugin's action; `run` reports failures as toasts.
+const pluginActionEntry = <Place extends PluginActionPlace>(
+  owner: PluginOwner,
+  action: WebPluginAction<PluginActionContexts[Place]>,
+): PluginActionEntry<Place> => {
+  if (!COMMAND_ID.test(action.id)) {
+    throw new TypeError(
+      `"${action.id}" is not a valid action id: use lowercase letters, digits and hyphens, up to 32.`,
+    );
+  }
+  if (typeof action.title !== "string") throw new TypeError(`"${action.id}" needs a text title.`);
+  return {
+    key: `plugin:${owner.pluginId}:${action.id}`,
+    environmentId: owner.environmentId,
+    title: action.title,
+    icon: action.icon,
+    owner,
+    run: (context) => runReportingFailure(action.title, () => action.run(context)),
+  };
+};
+
 interface WebPluginApiContext {
   readonly environmentId: EnvironmentId;
   readonly plugin: PluginState;
@@ -171,6 +210,11 @@ function makeWebPluginApi({
 }: WebPluginApiContext): WebPluginApi {
   const pluginId = plugin.id;
   const assetUrls = new Map<string, Promise<string>>();
+  let bannerCount = 0;
+  // One cleanup each for a plugin's badges and `@` items, however often it updates them.
+  const badgedThreads = new Set<string>();
+  let badgesTracked = false;
+  let mentionCleanupTracked = false;
   // Shared by everything the plugin draws, so a render failure reaches its row once.
   const owner: PluginOwner = { environmentId, pluginId, pluginName: plugin.name };
   return {
@@ -280,6 +324,126 @@ function makeWebPluginApi({
         });
       },
     },
+    composer: {
+      showBanner: (banner) => {
+        if (
+          typeof banner.title !== "string" ||
+          (banner.description !== undefined && typeof banner.description !== "string")
+        ) {
+          throw new TypeError("A banner needs a text title, and its description must be text.");
+        }
+        // Banner keys restart with each start, so a replaced start's banner would take the
+        // current one's place.
+        if (!active()) return () => {};
+        bannerCount += 1;
+        // Hiding also drops the cleanup, so many short-lived banners don't pile up until unload.
+        let untrack = () => {};
+        const hide = () => {
+          untrack();
+          removeBanner();
+        };
+        const removeBanner: () => void = registerPluginBanner({
+          key: `${pluginId}:${bannerCount}`,
+          environmentId,
+          pluginId,
+          variant: banner.variant ?? "info",
+          title: banner.title,
+          ...(banner.description === undefined ? {} : { description: banner.description }),
+          dismiss: hide,
+        });
+        untrack = track(removeBanner);
+        return hide;
+      },
+      registerSlashCommand: (command) => {
+        if (!COMMAND_ID.test(command.name)) {
+          throw new TypeError(`"${command.name}" is not a valid slash command name.`);
+        }
+        if (T3_SLASH_COMMAND_NAMES.has(command.name)) {
+          throw new TypeError(`/${command.name} is one of T3's own commands.`);
+        }
+        if (typeof command.description !== "string") {
+          throw new TypeError(`/${command.name} needs a text description for the / menu.`);
+        }
+        track(
+          registerPluginSlashCommand({
+            environmentId,
+            pluginId,
+            pluginName: plugin.name,
+            name: command.name,
+            description: command.description,
+            run: (context) => runReportingFailure(`/${command.name}`, () => command.run(context)),
+          }),
+        );
+      },
+      addButton: (button) => {
+        track(registerPluginAction("composer", pluginActionEntry(owner, button)));
+      },
+      setMentionItems: (items) => {
+        if (!active()) return;
+        // One entry per id, the first one, so chips and the menu stay unambiguous.
+        const seen = new Set<string>();
+        const unique = items.filter((item) => {
+          if (typeof item.id === "string" && seen.has(item.id)) return false;
+          seen.add(item.id);
+          return true;
+        });
+        const entries = unique.slice(0, 500).map((item) => {
+          const description = item.description ?? "";
+          if (
+            typeof item.id !== "string" ||
+            typeof item.label !== "string" ||
+            typeof item.text !== "string" ||
+            typeof description !== "string"
+          ) {
+            throw new TypeError("`@` items need a text id, label and text.");
+          }
+          return {
+            key: `plugin-mention:${pluginId}:${item.id}`,
+            contextId: pluginMentionContextId(environmentId, pluginId, item.id),
+            pluginName: plugin.name,
+            label: item.label,
+            description,
+            // Longer text would fail the whole send.
+            text: capPluginMentionText(item.text),
+          };
+        });
+        setPluginMentionItems(environmentId, pluginId, entries);
+        if (!mentionCleanupTracked) {
+          mentionCleanupTracked = true;
+          track(() => setPluginMentionItems(environmentId, pluginId, []));
+        }
+      },
+    },
+    threads: {
+      addMenuItem: (item) => {
+        track(registerPluginAction("threadMenu", pluginActionEntry(owner, item)));
+      },
+      addHeaderButton: (button) => {
+        track(registerPluginAction("threadHeader", pluginActionEntry(owner, button)));
+      },
+      setBadge: (threadId, badge) => {
+        if (!active()) return;
+        const threadKey = scopedThreadKey(scopeThreadRef(environmentId, ThreadId.make(threadId)));
+        if (badge === null) {
+          badgedThreads.delete(threadKey);
+          setPluginThreadBadge(threadKey, pluginId, null);
+          return;
+        }
+        const tone = badge.tone ?? "info";
+        if (typeof badge.label !== "string" || !BADGE_TONES.has(tone)) {
+          throw new TypeError("A badge needs a text label and a known tone.");
+        }
+        setPluginThreadBadge(threadKey, pluginId, { label: badge.label, tone });
+        if (!badgesTracked) {
+          badgesTracked = true;
+          track(() => {
+            for (const key of badgedThreads) setPluginThreadBadge(key, pluginId, null);
+            badgedThreads.clear();
+          });
+        }
+        badgedThreads.add(threadKey);
+      },
+    },
     pages: {
       register: (page) => {
         if (!COMMAND_ID.test(page.name) || typeof page.title !== "string") {
@@ -309,6 +473,11 @@ function makeWebPluginApi({
         );
       },
     },
+    messages: {
+      addAction: (action) => {
+        track(registerPluginAction("message", pluginActionEntry(owner, action)));
+      },
+    },
     assetUrl: (name) => {
       const cached = assetUrls.get(name);
       if (cached !== undefined) return cached;
@@ -329,6 +498,14 @@ function makeWebPluginApi({
         if (assetUrls.get(name) === url) assetUrls.delete(name);
       });
       return url;
+    },
+    markdown: {
+      registerCodeBlock: (renderer) => {
+        if (!CODE_LANGUAGE.test(renderer.language) || BUILT_IN_LANGUAGES.has(renderer.language)) {
+          throw new TypeError(`"${renderer.language}" is not a language plugins can draw.`);
+        }
+        track(registerPluginCodeBlock(renderer.language, { component: renderer.component, owner }));
+      },
     },
     injectStyles: (css) => {
       const style = document.createElement("style");

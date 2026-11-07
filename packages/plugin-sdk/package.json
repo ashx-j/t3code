@@ -37,9 +37,11 @@
     }
   },
   "scripts": {
+    "build:examples": "node scripts/build-examples.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@effect/atom-react": "catalog:",
     "@types/node": "catalog:",
     "@types/react": "catalog:",
     "effect": "catalog:",

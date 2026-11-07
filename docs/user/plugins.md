@@ -60,6 +60,12 @@ show up as themes while the plugin is on. CSS files in its `styles` folder apply
 while the plugin is on, on top of T3 Code's own styles and your theme. A plugin can be just a
 `styles` folder and its manifest.
 
+## Plugins in your threads
+
+Plugins can add slash commands. They appear in the composer's `/` menu with the agent's own
+commands, in the web and desktop apps. The agent's own command wins over a plugin's with the same
+name, and between plugins, the one whose id comes first alphabetically gets it.
+
 ## Where plugins live
 
 Installed plugins are in the `plugins` folder of the environment's T3 Code data directory, one
@@ -74,7 +80,7 @@ browser only. The chosen environment's plugins run code in this window, so choos
 you trust.
 
 Plugins on other environments you connect show in **Settings → Plugins**, but their UI doesn't
-load. Right panels show only in the threads of the environment plugin UI loads from. Pages, sidebar
-sections and command palette commands show wherever you are. The mobile app doesn't show plugin UI,
-settings or themes, and a plugin page's `t3code://plugins/...` link opens only in the desktop and
-web apps.
+load. Buttons, menu items, badges, slash commands, `@` items, banners and right panels show only
+in the threads of the environment plugin UI loads from. Code blocks, pages, sidebar sections and
+command palette commands show wherever you are. The mobile app doesn't show plugin UI, settings or
+themes, and a plugin page's `t3code://plugins/...` link opens only in the desktop and web apps.

@@ -4,9 +4,11 @@ Types and build helpers for T3 Code plugins. A plugin is a folder with a `t3-plu
 an optional server half that runs inside the T3 Code server, and an optional web half that runs in
 the web and desktop apps. Plugins are trusted code: they run with the same access as T3 Code.
 
-[`examples/`](./examples) has plugins to copy from. The plugins in [`fixtures/`](./fixtures) back
-the tests and are small and working too. They are written by hand and need no build. `hello-web`
-uses most of the web API.
+[`examples/`](./examples) has plugins to copy from. Their web halves are built, not committed: run
+`vp run build:examples` in `packages/plugin-sdk` before adding an example to T3 Code. Each one
+builds to its own `dist/web.js` with the Vite preset below. The plugins in
+[`fixtures/`](./fixtures) back the tests and are small and working too. They are written by hand
+and need no build. `hello-web` uses most of the web API.
 
 ## Manifest
 
@@ -112,16 +114,28 @@ export default defineWebPlugin({
 ```
 
 `activate` receives the [`WebPluginApi`](./src/web.ts): calls into the server half, right panels,
-a settings panel, palette commands, styles, assets, navigation and toasts.
+a settings panel, palette commands, composer slash commands and banners, renderers for fenced code
+languages, styles, assets, navigation and toasts.
 
 `api.rpc.invoke` and `api.rpc.subscribe` reach the methods and channels the server half adds with
 `rpc.register` and `rpc.publish`. Describe them once as a `PluginRpcMap` type from
 `@t3tools/plugin-sdk/shared`, and pass it to both `definePlugin` and `defineWebPlugin`. Then a
 wrong method name, input or value fails to typecheck in either half.
+[`examples/quick-notes`](./examples/quick-notes) keeps its map in `rpc.ts`.
+
+Plugins can also add buttons and menu items to T3's own toolbars and menus: under each message
+(`messages.addAction`), in the thread header (`threads.addHeaderButton`), beside the composer's
+attach button (`composer.addButton`) and in the thread actions menu (`threads.addMenuItem`).
+`threads.setBadge` shows a short badge on a thread's sidebar row and header.
+[`examples/review-flags`](./examples/review-flags) uses all of them. `composer.setMentionItems`
+offers items in the composer's `@` menu; a picked item shows as a chip, and the agent gets its text
+with the message. [`examples/quick-notes`](./examples/quick-notes) offers its notes that way.
 
 `pages.register` adds a full page at `/plugins/<pluginId>/<name>`, shown beside the sidebar in
 place of the thread; a `t3code://plugins/<pluginId>/<name>` link opens the desktop app on it.
 `sidebar.addSection` adds a titled section under the thread list.
+[`examples/quick-notes`](./examples/quick-notes) keeps notes in its server half's storage and shows
+them in both.
 
 Build it with the Vite preset, which makes the bundle use T3 Code's own React, atoms, atom hooks and
 UI components instead of shipping copies:
@@ -141,6 +155,7 @@ shared.
 Make atoms with `import * as Atom from "@t3tools/plugin-sdk/atom"`, not with `Atom` from `effect`,
 which would bundle a second copy of effect. Build them from values and functions. An atom that runs
 an Effect or a Stream would use your copy of effect inside T3's.
+[`examples/quick-notes`](./examples/quick-notes) keeps its notes in an atom.
 
 ## Keeping a plugin working across T3 updates
 

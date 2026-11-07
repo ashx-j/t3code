@@ -188,6 +188,18 @@ function AssistantMessageMeta({
       {projectedItem?.item.type === "assistant_message" ? (
         <AssistantForkButton projectedItem={projectedItem} />
       ) : null}
+      {ctx.pluginUi && ctx.threadRef && !message.streaming ? (
+        <ctx.pluginUi.PluginActionButtons
+          place="message"
+          environmentId={ctx.threadRef.environmentId}
+          context={{
+            threadId: ctx.threadRef.threadId,
+            messageId: message.id,
+            role: "assistant",
+            text: message.text,
+          }}
+        />
+      ) : null}
       {!message.streaming && (
         <Tooltip>
           <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>

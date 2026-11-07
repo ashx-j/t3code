@@ -3,6 +3,10 @@ import { describe, expect, it } from "vite-plus/test";
 import { formatInlineContextReference } from "./lib/composerContextReferences";
 import { threadContextReference } from "./lib/composerContextRecords";
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
+import { pluginMentionContextId, setPluginMentionItems } from "./plugins/pluginRegistry";
+import { pluginUiAtom } from "./plugins/pluginUi";
+import { pluginUi } from "./plugins/pluginUiParts";
+import { appAtomRegistry } from "./rpc/atomRegistry";
 
 import {
   carryDisplacedCustomAnswerIntoPrompt,
@@ -20,11 +24,33 @@ describe("projectPendingUserInputAnswer", () => {
     "Reference work",
   );
 
-  it("sends thread chips as readable links with the actual thread ID", () => {
+  it("sends thread chips as readable links and plugin chips as their item's text", () => {
     const answer = `Compare ${formatInlineContextReference(threadContextReference(record))}`;
     expect(projectPendingUserInputAnswer(answer, [record])).toBe(
       "Compare [Reference work](t3-thread://v2/env-answer/reference-thread)",
     );
+
+    // Plugin items exist only once plugin UI has loaded.
+    appAtomRegistry.set(pluginUiAtom, pluginUi);
+    using _ui = { [Symbol.dispose]: () => appAtomRegistry.set(pluginUiAtom, null) };
+    const environmentId = EnvironmentId.make("env-answer");
+    const contextId = pluginMentionContextId(environmentId, "notes", "checklist");
+    setPluginMentionItems(environmentId, "notes", [
+      {
+        key: "checklist",
+        contextId,
+        pluginName: "Notes",
+        label: "Checklist",
+        description: "",
+        text: "1. Test",
+      },
+    ]);
+    const chip = formatInlineContextReference({ kind: "plugin", contextId, label: "Checklist" });
+    expect(projectPendingUserInputAnswer(`Use ${chip}`, [])).toBe(
+      "Use Checklist (from Notes):\n\n1. Test\n\n",
+    );
+    setPluginMentionItems(environmentId, "notes", []);
+    expect(projectPendingUserInputAnswer(`Use ${chip}`, [])).toBe(`Use ${chip}`);
   });
 
   // regression: #18789 answers to pending questions lost exact text and option values

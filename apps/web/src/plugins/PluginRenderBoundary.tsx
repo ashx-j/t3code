@@ -4,7 +4,7 @@ import { RenderErrorBoundary } from "../components/RenderErrorBoundary";
 import { toastManager } from "../components/ui/toast";
 import { type PluginOwner, setPluginWebFailure } from "./pluginRegistry";
 
-// Once per plugin start: a part drawn in several places would otherwise report once each.
+// Once per plugin start: a broken part in every timeline row would otherwise report once each.
 const reported = new WeakSet<PluginOwner>();
 
 // On the plugin's row in Settings and in a toast, since the fallback quietly takes the plugin's

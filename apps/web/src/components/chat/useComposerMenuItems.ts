@@ -19,6 +19,7 @@ import {
   withLinkedComposerPullRequestsFirst,
 } from "@t3tools/shared/composerPullRequestMatches";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
+import { scoreQueryMatch } from "@t3tools/shared/searchRanking";
 
 import type { ComposerTrigger } from "../../composer-logic";
 import type { DraftId } from "../../composerDraftStore";
@@ -31,6 +32,8 @@ import { searchProviderSkills } from "../../providerSkillSearch";
 import { useThreadShells } from "~/state/entities";
 import { useEnvironmentIdentities, useEnvironmentMachines } from "~/state/environments";
 import { offersLinkedEnvironmentsAtom } from "~/state/peerLinks";
+import type { PluginMentionItem } from "~/plugins/pluginRegistry";
+import { pluginMentionItemsAtom, pluginSlashCommandsAtom } from "~/plugins/pluginUi";
 import {
   pullRequestEnvironment,
   usePullRequestList,
@@ -114,6 +117,8 @@ export function useComposerMenuItems({
   const environmentIdentities = useEnvironmentIdentities();
   const environmentMachines = useEnvironmentMachines();
   const offersMachines = useAtomValue(offersLinkedEnvironmentsAtom(environmentId));
+  const pluginSlashCommands = useAtomValue(pluginSlashCommandsAtom(environmentId));
+  const pluginMentionItems = useAtomValue(pluginMentionItemsAtom(environmentId));
   const mentionableEnvironments = environmentIdentities.map((identity) => ({
     ...identity,
     machine: environmentMachines.get(identity.environmentId) ?? ("server" as const),
@@ -185,6 +190,7 @@ export function useComposerMenuItems({
   const items = ((): ComposerCommandItem[] => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
+      const pluginMentions = matchPluginMentionItems(pluginMentionItems, composerTrigger.query);
       return [
         ...matchComposerThreadItems({
           shells: environmentThreadShells,
@@ -202,6 +208,8 @@ export function useComposerMenuItems({
               query: composerTrigger.query,
             })
           : []),
+        // A plugin item whose name starts with the query beats a fuzzy file match.
+        ...pluginMentions.named,
         ...workspaceEntries.entries.map((entry) => ({
           id: `path:${entry.kind}:${entry.path}`,
           type: "path" as const,
@@ -211,6 +219,8 @@ export function useComposerMenuItems({
           label: basenameOfPath(entry.path),
           description: entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))),
         })),
+        // The rest after files, which are what `@` is mostly for.
+        ...pluginMentions.rest,
       ];
     }
     if (composerTrigger.kind === "slash-command") {
@@ -289,8 +299,27 @@ export function useComposerMenuItems({
       const visibleProviderSlashCommandItems = providerSlashCommandItems.filter(
         (item) => item.command.name !== "compact" || compactSlashCommandAvailable,
       );
+      // A provider's command of the same name wins.
+      const providerCommandNames = new Set(
+        visibleProviderSlashCommandItems.map((item) => item.command.name),
+      );
+      const pluginSlashCommandItems = pluginSlashCommands
+        .filter((command) => !providerCommandNames.has(command.name))
+        .map((command) => ({
+          id: `plugin-slash-command:${command.pluginId}:${command.name}`,
+          type: "plugin-slash-command" as const,
+          command: { name: command.name },
+          run: command.run,
+          label: `/${command.name}`,
+          description: `${command.description} · ${command.pluginName}`,
+        }));
       const slashCommandItems = slashCommandItemsForPromptPosition(
-        [...builtInSlashCommandItems, ...visibleProviderSlashCommandItems, ...skillItems],
+        [
+          ...builtInSlashCommandItems,
+          ...visibleProviderSlashCommandItems,
+          ...pluginSlashCommandItems,
+          ...skillItems,
+        ],
         composerTrigger.rangeStart === 0,
       );
       return searchSlashCommandItems(slashCommandItems, query);
@@ -404,4 +433,63 @@ export function useComposerMenuItems({
   })();
 
   return { items, isLoading, emptyState };
+}
+
+const PLUGIN_MENTION_LIMIT = 8;
+
+/**
+ * Plugin items for a typed query, best match first, as thread items need a query too. `named`
+ * holds those whose name is the query or starts with it.
+ */
+function matchPluginMentionItems(
+  items: ReadonlyArray<PluginMentionItem>,
+  query: string,
+): { readonly named: ComposerCommandItem[]; readonly rest: ComposerCommandItem[] } {
+  const needle = query.trim().toLowerCase();
+  if (needle === "") return { named: [], rest: [] };
+  const scoreOf = (item: PluginMentionItem) => {
+    const scores = [
+      scoreQueryMatch({
+        value: item.label.toLowerCase(),
+        query: needle,
+        exactBase: 0,
+        prefixBase: 2,
+        boundaryBase: 4,
+        includesBase: 6,
+      }),
+      scoreQueryMatch({
+        value: item.description.toLowerCase(),
+        query: needle,
+        exactBase: 20,
+        prefixBase: 22,
+        boundaryBase: 24,
+        includesBase: 26,
+      }),
+    ].filter((score) => score !== null);
+    return scores.length === 0 ? null : Math.min(...scores);
+  };
+  const matches = items
+    .flatMap((item, index) => {
+      const score = scoreOf(item);
+      return score === null ? [] : [{ item, score, index }];
+    })
+    // Equal matches show the newest first, as a plugin adds new items at the end.
+    .toSorted((left, right) => left.score - right.score || right.index - left.index)
+    .slice(0, PLUGIN_MENTION_LIMIT)
+    .map(({ item }) => ({
+      named: item.label.toLowerCase().startsWith(needle),
+      entry: {
+        id: item.key,
+        type: "plugin-mention" as const,
+        contextId: item.contextId,
+        label: item.label,
+        description: item.description
+          ? `${item.description} · ${item.pluginName}`
+          : item.pluginName,
+      },
+    }));
+  return {
+    named: matches.filter((match) => match.named).map((match) => match.entry),
+    rest: matches.filter((match) => !match.named).map((match) => match.entry),
+  };
 }

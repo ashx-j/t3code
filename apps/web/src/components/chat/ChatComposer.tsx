@@ -278,6 +278,8 @@ import {
   usePreparingComposerImages,
 } from "./preparingComposerImages";
 import { ComposerControlsBar } from "./ComposerControlsBar";
+import { useAtomValue } from "@effect/atom-react";
+import { PLUGIN_CONTEXT_KIND, pluginUiAtom } from "../../plugins/pluginUi";
 import { composerCommandKeyHandler } from "./composerCommandKey";
 
 function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
@@ -599,6 +601,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onRemoveEditingQueuedAttachment,
   } = props;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const pluginUi = useAtomValue(pluginUiAtom);
   const composerDraftTargetKey = composerTargetKey(composerDraftTarget);
   const {
     heldRequestIds,
@@ -1883,6 +1886,35 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       return;
     }
+    if (item.type === "plugin-mention") {
+      if (trigger.kind !== "path") return;
+      const replacement = `${formatInlineContextReference({
+        kind: PLUGIN_CONTEXT_KIND,
+        contextId: item.contextId,
+        label: item.label,
+      })} `;
+      const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+        snapshot.value,
+        trigger.rangeEnd,
+        replacement,
+      );
+      const applied = applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, replacement, {
+        expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+      });
+      if (applied) setComposerHighlightedItemId(null);
+      return;
+    }
+    if (item.type === "plugin-slash-command") {
+      const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+        expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+        focusEditorAfterReplace: false,
+      });
+      if (applied) {
+        setComposerHighlightedItemId(null);
+        item.run({ threadId: routeKind === "server" ? routeThreadRef.threadId : null });
+      }
+      return;
+    }
     if (item.type === "provider-slash-command") {
       if (item.command.name === USAGE_LIMITS_COMMAND.name && onUsageLimitsCommand) {
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
@@ -3089,6 +3121,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       focusComposer={focusComposer}
     />
   ) : null;
+  const composerPluginButtons =
+    pluginUi === null ? null : (
+      <pluginUi.PluginActionButtons
+        place="composer"
+        environmentId={environmentId}
+        context={{ threadId: routeKind === "server" ? routeThreadRef.threadId : null }}
+        size="icon-sm"
+      />
+    );
   return (
     <form
       ref={composerFormRef}
@@ -3435,6 +3476,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 )}
               >
                 {composerAttachButton ? <div className="me-2">{composerAttachButton}</div> : null}
+                <div className="me-2 empty:hidden">{composerPluginButtons}</div>
                 <div
                   data-chat-composer-actions="right"
                   data-chat-composer-transition-actions="true"
