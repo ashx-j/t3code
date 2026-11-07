@@ -87,6 +87,7 @@ import {
 } from "react";
 import type { LegendListRef } from "@legendapp/list/react";
 import { useAtomValue } from "@effect/atom-react";
+import { followedPluginEnvironmentAtom } from "../plugins/pluginFollow";
 import { pluginCommandsAtom } from "../plugins/pluginUi";
 
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
@@ -443,7 +444,8 @@ function OpenCommandPaletteDialog(props: {
   const { environments } = useEnvironments();
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const pluginCommands = useAtomValue(pluginCommandsAtom(primaryEnvironmentId ?? ""));
+  const pluginEnvironmentId = useAtomValue(followedPluginEnvironmentAtom);
+  const pluginCommands = useAtomValue(pluginCommandsAtom(pluginEnvironmentId ?? ""));
   const availableSettingsSearchItems = useAvailableSettingsSearchItems();
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();

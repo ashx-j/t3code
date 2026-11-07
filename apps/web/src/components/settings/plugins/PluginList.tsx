@@ -4,7 +4,6 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { type ReactNode, useContext, useEffect, useState } from "react";
 
-import { usePrimaryEnvironmentId } from "../../../state/environments";
 import { pluginEnvironment } from "../../../state/plugins";
 import { formatEnvironmentQueryError } from "../../../state/query";
 import { useAtomCommand } from "../../../state/use-atom-command";
@@ -13,7 +12,7 @@ import { Switch } from "../../ui/switch";
 import { SettingsRow, SettingsSection } from "../settingsLayout";
 import { LeftoverPluginData } from "./LeftoverPluginData";
 import { PluginRow } from "./PluginRow";
-import type { PluginCopy, PluginTarget } from "./pluginTargets";
+import { type PluginCopy, type PluginTarget, usePluginUiSource } from "./pluginTargets";
 
 // Keyed by the JSON list of environment ids, so one value holds every environment's plugins.
 const pluginListsAtom = Atom.family((environmentIdsKey: string) => {
@@ -76,8 +75,8 @@ export function PluginList({
     pluginListsAtom(JSON.stringify(targets.map((target) => target.environmentId))),
   );
   const several = targets.length > 1;
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const remoteInView = targets.some((target) => target.environmentId !== primaryEnvironmentId);
+  const uiSource = usePluginUiSource();
+  const remoteInView = targets.some((target) => target.environmentId !== uiSource.environmentId);
   const loaded = targets.map((target, index) => {
     const result = lists[index] ?? AsyncResult.initial(true);
     return {
@@ -136,7 +135,7 @@ export function PluginList({
               copies={row.copies}
               shadowed={row.shadowed}
               labelled={several}
-              remoteInView={remoteInView}
+              uiSourceName={remoteInView ? uiSource.name : null}
             />
           ))
         )}

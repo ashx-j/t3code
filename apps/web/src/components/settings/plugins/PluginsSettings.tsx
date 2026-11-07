@@ -5,7 +5,7 @@ import { type DragEvent, useState } from "react";
 
 import { cn } from "../../../lib/utils";
 import { droppedFolders } from "../../../plugins/pluginFolders";
-import { type EnvironmentPresentation, usePrimaryEnvironmentId } from "../../../state/environments";
+import type { EnvironmentPresentation } from "../../../state/environments";
 import { pluginEnvironment } from "../../../state/plugins";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../../ui/empty";
 import { useSettingsScope } from "../SettingsScopeContext";
@@ -18,11 +18,12 @@ import {
   usePluginInstaller,
 } from "./PluginInstallControls";
 import { PluginList } from "./PluginList";
-import type { PluginTarget } from "./pluginTargets";
+import { type PluginTarget, runsPlugins, usePluginUiSource } from "./pluginTargets";
+import { PluginUiEnvironmentRow } from "./PluginUiEnvironmentRow";
 
 export function PluginsSettings() {
   const { scope, environment, environments } = useSettingsScope();
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const uiSource = usePluginUiSource();
   if (scope.kind === "unavailable") {
     return (
       <SettingsPageContainer>
@@ -32,13 +33,14 @@ export function PluginsSettings() {
       </SettingsPageContainer>
     );
   }
-  // The main environment comes first: installs start there, see `usePluginInstaller`.
+  // The environment plugin UI loads from comes first: installs start there, see
+  // `usePluginInstaller`.
   const shown =
     scope.kind === "all"
       ? environments.toSorted(
           (a, b) =>
-            Number(b.environmentId === primaryEnvironmentId) -
-            Number(a.environmentId === primaryEnvironmentId),
+            Number(b.environmentId === uiSource.environmentId) -
+            Number(a.environmentId === uiSource.environmentId),
         )
       : environment === null
         ? []
@@ -63,10 +65,6 @@ export function PluginsSettings() {
   return <PluginsPage environments={shown} />;
 }
 
-const runsPlugins = (environment: EnvironmentPresentation) =>
-  environment.connection.phase === "connected" &&
-  environment.serverConfig?.environment.capabilities.plugins === true;
-
 const NO_INSTALL_PERMISSION = Atom.make(false);
 
 /** Lists the plugins in view. Plugin folders dropped anywhere on it are installed. */
@@ -82,8 +80,8 @@ function PluginsPage({
     environmentId: environment.environmentId,
     label: labelOf(environment),
   }));
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const installer = usePluginInstaller(targets, primaryEnvironmentId);
+  const uiSource = usePluginUiSource();
+  const installer = usePluginInstaller(targets, uiSource);
   const [adding, setAdding] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [main] = targets;
@@ -160,6 +158,7 @@ function PluginsPage({
             >
               <InstallProblems problems={installer.problems} />
             </SettingsRow>
+            <PluginUiEnvironmentRow />
           </PluginList>
         )}
         {main === undefined ? null : (
@@ -169,8 +168,8 @@ function PluginsPage({
             installer={installer}
             dragActive={dragActive}
             scopeNote={
-              main.environmentId !== primaryEnvironmentId
-                ? `Installs on ${targets.length > 1 ? "every environment here that runs plugins" : main.label}. ${main.label} isn't your main environment, and the app shows plugin changes only from that one, so a plugin with no server code or agent skills does nothing here.`
+              main.environmentId !== uiSource.environmentId
+                ? `Installs on ${targets.length > 1 ? "every environment here that runs plugins" : main.label}. ${main.label} isn't ${uiSource.name}, and the app shows plugin changes only from that one, so a plugin with no server code or agent skills does nothing here.`
                 : targets.length > 1
                   ? `Installs on every environment that runs plugins. A plugin with no server code or agent skills only changes the app, so it goes to ${main.label} only.`
                   : `Installs on ${main.label}.`

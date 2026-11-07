@@ -41,13 +41,13 @@ const FAILURE_STAGES = {
 
 /**
  * Where a plugin that changes the app runs, as the installer decides: with no server code or agent
- * skills it goes to the main environment only, and the app loads plugin UI from there alone.
+ * skills it goes only to the environment plugin UI loads from, named by `source`.
  */
-const webReach = (plugin: PluginState) =>
+const webReach = (plugin: PluginState, source: string) =>
   !plugin.hasServer && plugin.hasSkills !== true
-    ? "Changes only this app. It runs from your main environment and isn't installed on remote servers."
+    ? `Changes only this app. It runs from ${source} and isn't installed on other servers.`
     : plugin.hasWeb
-      ? "Its web part runs in this app from your main environment only. Remote servers get just its server side."
+      ? `Its web part runs in this app from ${source} only. Other servers get just its server side.`
       : null;
 
 export function PluginRow({
@@ -56,7 +56,7 @@ export function PluginRow({
   copies,
   shadowed,
   labelled,
-  remoteInView,
+  uiSourceName,
 }: {
   /** The main environment in view. Its permissions decide which actions are offered. */
   readonly environmentId: EnvironmentId;
@@ -66,8 +66,11 @@ export function PluginRow({
   readonly shadowed: boolean;
   /** Problems name their environment, because several are in view. */
   readonly labelled: boolean;
-  /** A server other than the main environment is in view, so the row says where app changes run. */
-  readonly remoteInView: boolean;
+  /**
+   * How the page names the environment plugin UI loads from, set while another server is in view
+   * so the row says where app changes run.
+   */
+  readonly uiSourceName: string | null;
 }) {
   const { plugin } = first;
   const canManage = useAtomValue(pluginEnvironment.setPluginEnabled.permissionAtom(environmentId));
@@ -78,7 +81,8 @@ export function PluginRow({
   const rollback = useAtomCommand(pluginEnvironment.rollbackPlugin, "plugin rollback");
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  // Plugin UI loads from the main environment only, so its settings panel and web failure do too.
+  // Plugin UI loads from one environment, which comes first, so its settings panel and web failure
+  // do too.
   const contributionKey = pluginContributionKey(environmentId, plugin.id);
   const customSettings = useAtomValue(pluginSettingsPanelAtom(contributionKey));
   const webFailure = useAtomValue(pluginWebFailureAtom(contributionKey));
@@ -118,7 +122,7 @@ export function PluginRow({
     ),
     ...(webFailure === undefined ? [] : [`Web part failed: ${webFailure}`]),
   ];
-  const reach = remoteInView ? webReach(plugin) : null;
+  const reach = uiSourceName === null ? null : webReach(plugin, uiSourceName);
   const row = (
     <SettingsRow
       title={

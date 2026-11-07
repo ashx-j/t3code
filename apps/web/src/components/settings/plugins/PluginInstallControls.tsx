@@ -55,13 +55,13 @@ export function InstallProblems({ problems }: { readonly problems: ReadonlyArray
 }
 
 /**
- * Installs plugins on `targets`, the main environment first. The app draws plugin UI only from
- * the main environment, so a plugin without server code or agent skills changes nothing on the
- * others and is installed on the main one only.
+ * Installs plugins on `targets`, the first one first. The app draws plugin UI only from
+ * `uiSource`, so a plugin without server code or agent skills changes nothing on the others and
+ * is installed on the first one only.
  */
 export function usePluginInstaller(
   targets: ReadonlyArray<PluginTarget>,
-  primaryEnvironmentId: EnvironmentId | null,
+  uiSource: { readonly environmentId: EnvironmentId | null; readonly name: string },
 ) {
   const installSource = useAtomCommand(pluginEnvironment.installPlugin, {
     label: "plugin install",
@@ -92,10 +92,10 @@ export function usePluginInstaller(
     if (first._tag === "Failure") return reportFailure(main, first);
     const { plugin } = first.value;
     if (!plugin.hasServer && plugin.hasSkills !== true) {
-      // Such as when the main environment is offline and another one came first.
-      if (main.environmentId !== primaryEnvironmentId) {
+      // Such as when that environment is offline and another one came first.
+      if (main.environmentId !== uiSource.environmentId) {
         report(
-          `${plugin.name} only changes the app, and this app shows plugin changes only from your main environment, so it does nothing on ${main.label}.`,
+          `${plugin.name} only changes the app, and this app shows plugin changes only from ${uiSource.name}, so it does nothing on ${main.label}.`,
         );
       }
       return;

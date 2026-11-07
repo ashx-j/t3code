@@ -217,7 +217,8 @@ function RootRouteBranch() {
         {primaryEnvironmentAuthenticated ? (
           <EventRouter skipInitialBootstrapNavigation={returningFromWelcome} />
         ) : null}
-        {primaryEnvironmentAuthenticated ? <PluginLoaderStarter /> : null}
+        {/* Also without a primary environment, where it loads plugin UI only from one the user picked. */}
+        <PluginLoaderStarter />
         {appShell}
         {/* Keep the theme editor above the router so drafts survive navigation. */}
         <ThemeEditorHost />
