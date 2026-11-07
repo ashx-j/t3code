@@ -38,6 +38,7 @@ import * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
 import * as PluginInstaller from "./PluginInstaller.ts";
 import { makePluginRpcHandlers } from "./pluginRpcHandlers.ts";
 import * as PluginStorage from "./PluginStorage.ts";
+import * as PluginUploads from "./pluginUploads.ts";
 
 const hello = PluginId.make("hello-plugin");
 const broken = PluginId.make("broken-plugin");
@@ -672,7 +673,12 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         const installer = yield* PluginInstaller.PluginInstaller;
         yield* waitForStatuses(host, { linked: "disabled" });
         const listed = (scopes: ReadonlyArray<AuthEnvironmentScope>) => {
-          const handlers = makePluginRpcHandlers(host, installer, scopes);
+          // Listing never signs an upload URL.
+          const uploads = PluginUploads.PluginUploads.of({
+            issueUrl: Effect.die("unused"),
+            claim: () => Effect.die("unused"),
+          });
+          const handlers = makePluginRpcHandlers(host, installer, uploads, scopes);
           return Effect.all([
             handlers[WS_METHODS.pluginsList]({}),
             handlers[WS_METHODS.pluginsSubscribeStates]({}).pipe(

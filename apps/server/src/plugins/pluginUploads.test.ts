@@ -39,6 +39,8 @@ const uploader = Effect.fn(function* () {
   };
 });
 
+const issueUrl = PluginUploads.PluginUploads.use((uploads) => uploads.issueUrl);
+
 const helloFiles = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   return {
@@ -50,7 +52,10 @@ const helloFiles = Effect.gen(function* () {
 const withHost = <A, E, R>(body: Effect.Effect<A, E, R>) =>
   body.pipe(
     Effect.provide(
-      Layer.merge(layerHost(), ServerSecretStore.layer).pipe(Layer.provideMerge(layerConfig())),
+      Layer.merge(layerHost(), PluginUploads.layer).pipe(
+        Layer.provide(ServerSecretStore.layer),
+        Layer.provideMerge(layerConfig()),
+      ),
     ),
   );
 
@@ -59,7 +64,7 @@ it.layer(NodeServices.layer)("PluginUploads", (it) => {
     withHost(
       Effect.gen(function* () {
         const upload = yield* uploader();
-        const { relativeUrl } = yield* PluginUploads.issuePluginUploadUrl();
+        const { relativeUrl } = yield* issueUrl;
         const response = yield* upload(relativeUrl, {
           ...(yield* helloFiles),
           "notes/read me.md": "Hello.",
@@ -76,18 +81,23 @@ it.layer(NodeServices.layer)("PluginUploads", (it) => {
     ),
   );
 
-  it.effect("installs nothing from a forged or expired URL", () =>
+  it.effect("installs nothing from a forged, expired or used URL", () =>
     withHost(
       Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
         const upload = yield* uploader();
         const files = yield* helloFiles;
-        const { relativeUrl } = yield* PluginUploads.issuePluginUploadUrl();
-        const forged = `${relativeUrl.slice(0, relativeUrl.lastIndexOf(".") + 1)}AAAA`;
+        const { relativeUrl: expiring } = yield* issueUrl;
+        const forged = `${expiring.slice(0, expiring.lastIndexOf(".") + 1)}AAAA`;
         assert.strictEqual((yield* upload(forged, files)).status, 404);
         yield* TestClock.adjust("6 minutes");
-        assert.strictEqual((yield* upload(relativeUrl, files)).status, 404);
+        assert.strictEqual((yield* upload(expiring, files)).status, 404);
         assert.deepStrictEqual(yield* host.list, []);
+
+        // It installs code, so a URL that leaked after its upload installs nothing more.
+        const { relativeUrl } = yield* issueUrl;
+        assert.strictEqual((yield* upload(relativeUrl, files)).status, 200);
+        assert.strictEqual((yield* upload(relativeUrl, files)).status, 404);
       }),
     ),
   );
@@ -97,7 +107,7 @@ it.layer(NodeServices.layer)("PluginUploads", (it) => {
       Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
         const upload = yield* uploader();
-        const { relativeUrl } = yield* PluginUploads.issuePluginUploadUrl();
+        const { relativeUrl } = yield* issueUrl;
         const response = yield* upload(relativeUrl, {
           ...(yield* helloFiles),
           "big.bin": new Uint8Array(PLUGIN_UPLOAD_MAX_BYTES + 1),

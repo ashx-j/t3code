@@ -6,7 +6,10 @@ import {
   PluginUploadFiles,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
+import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -25,7 +28,7 @@ import * as PluginInstaller from "./PluginInstaller.ts";
  * A client installs a dropped plugin folder by uploading it here, to a URL `plugins.createUploadUrl`
  * signed. Up to 25 MB as one WebSocket message would hold up every other stream on the socket.
  * The signature is the upload's credential, as for attachments, so the client sends the request
- * the same way on a local, remote or T3 Connect connection.
+ * the same way on a local, remote or T3 Connect connection. Each URL installs once.
  */
 export const PLUGIN_UPLOAD_ROUTE_PREFIX = "/api/plugin-uploads";
 
@@ -37,6 +40,8 @@ const UploadClaims = Schema.Struct({
   version: Schema.Literal(1),
   kind: Schema.Literal("plugin-upload"),
   expiresAt: Schema.Number,
+  // Tells apart URLs signed in the same millisecond, so each one is used up on its own.
+  nonce: Schema.String,
 });
 const uploadClaimsJson = Schema.fromJsonString(UploadClaims);
 const encodeUploadClaims = Schema.encodeSync(uploadClaimsJson);
@@ -60,44 +65,73 @@ export class PluginUploadUrlError extends Schema.TaggedError<PluginUploadUrlErro
   }
 }
 
-const loadSigningSecret = Effect.gen(function* () {
-  const secretStore = yield* ServerSecretStore.ServerSecretStore;
-  return yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32);
-});
-
-export const issuePluginUploadUrl = Effect.fn("PluginUploads.issueUrl")(function* () {
-  const secret = yield* loadSigningSecret.pipe(
-    Effect.mapError((cause) => new PluginUploadUrlError({ cause })),
-  );
-  const expiresAt = (yield* Clock.currentTimeMillis) + UPLOAD_URL_TTL_MS;
-  const payload = base64UrlEncode(
-    encodeUploadClaims({ version: 1, kind: "plugin-upload", expiresAt }),
-  );
-  const result: PluginCreateUploadUrlResult = {
-    relativeUrl: `${PLUGIN_UPLOAD_ROUTE_PREFIX}/${payload}.${signPayload(payload, secret)}`,
-    expiresAt,
-  };
-  return result;
-});
-
-const isValidToken = Effect.fn("PluginUploads.validateToken")(function* (token: string) {
-  const [payload, signature, unexpected] = token.split(".");
-  if (!payload || !signature || unexpected !== undefined) return false;
-  const secret = yield* loadSigningSecret.pipe(
-    Effect.tapError((cause) =>
-      Effect.logError("Failed to load the plugin upload signing key.", { cause }),
-    ),
-    Effect.option,
-  );
-  if (
-    Option.isNone(secret) ||
-    !timingSafeEqualBase64Url(signature, signPayload(payload, secret.value))
-  ) {
-    return false;
+export class PluginUploads extends Context.Service<
+  PluginUploads,
+  {
+    /** Signs a URL that installs one uploaded folder within 5 minutes. */
+    readonly issueUrl: Effect.Effect<PluginCreateUploadUrlResult, PluginUploadUrlError>;
+    /**
+     * Whether `token` is a URL this server signed that is unexpired and unused. A valid one is used
+     * up, because it installs code.
+     */
+    readonly claim: (token: string) => Effect.Effect<boolean>;
   }
-  const claims = claimsOf(payload);
-  return Option.isSome(claims) && claims.value.expiresAt > (yield* Clock.currentTimeMillis);
+>()("t3/plugins/pluginUploads") {}
+
+const make = Effect.gen(function* () {
+  const secretStore = yield* ServerSecretStore.ServerSecretStore;
+  const crypto = yield* Crypto.Crypto;
+  const loadSigningSecret = secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32);
+  // Unused URLs by nonce, with when each expires. A restart forgets them, which only refuses more.
+  const unused = new Map<string, number>();
+
+  const issueUrl = Effect.fn("PluginUploads.issueUrl")(function* () {
+    const secret = yield* loadSigningSecret.pipe(
+      Effect.mapError((cause) => new PluginUploadUrlError({ cause })),
+    );
+    const now = yield* Clock.currentTimeMillis;
+    for (const [nonce, expiresAt] of unused) if (expiresAt <= now) unused.delete(nonce);
+    const expiresAt = now + UPLOAD_URL_TTL_MS;
+    const nonce = yield* crypto
+      .randomUUIDv4()
+      .pipe(Effect.mapError((cause) => new PluginUploadUrlError({ cause })));
+    const payload = base64UrlEncode(
+      encodeUploadClaims({ version: 1, kind: "plugin-upload", expiresAt, nonce }),
+    );
+    unused.set(nonce, expiresAt);
+    const result: PluginCreateUploadUrlResult = {
+      relativeUrl: `${PLUGIN_UPLOAD_ROUTE_PREFIX}/${payload}.${signPayload(payload, secret)}`,
+      expiresAt,
+    };
+    return result;
+  });
+
+  const claim = Effect.fn("PluginUploads.claim")(function* (token: string) {
+    const [payload, signature, unexpected] = token.split(".");
+    if (!payload || !signature || unexpected !== undefined) return false;
+    const secret = yield* loadSigningSecret.pipe(
+      Effect.tapError((cause) =>
+        Effect.logError("Failed to load the plugin upload signing key.", { cause }),
+      ),
+      Effect.option,
+    );
+    if (
+      Option.isNone(secret) ||
+      !timingSafeEqualBase64Url(signature, signPayload(payload, secret.value))
+    ) {
+      return false;
+    }
+    const claims = claimsOf(payload);
+    if (Option.isNone(claims) || claims.value.expiresAt <= (yield* Clock.currentTimeMillis)) {
+      return false;
+    }
+    return unused.delete(claims.value.nonce);
+  });
+
+  return PluginUploads.of({ issueUrl: issueUrl(), claim });
 });
+
+export const layer = Layer.effect(PluginUploads, make);
 
 // The total leaves room for each part's headers, whose file name is a path escaped with
 // encodeURIComponent; the schema then checks the exact limits.
@@ -129,8 +163,11 @@ export const layerRoute = HttpRouter.add(
     const request = yield* HttpServerRequest.HttpServerRequest;
     const url = HttpServerRequest.toURL(request);
     if (Option.isNone(url)) return text("Bad Request", 400);
-    // An expired or forged URL looks like no route at all.
-    if (!(yield* isValidToken(url.value.pathname.slice(`${PLUGIN_UPLOAD_ROUTE_PREFIX}/`.length)))) {
+    const uploads = yield* PluginUploads;
+    // An expired, forged or used URL looks like no route at all.
+    if (
+      !(yield* uploads.claim(url.value.pathname.slice(`${PLUGIN_UPLOAD_ROUTE_PREFIX}/`.length)))
+    ) {
       return text("Not Found", 404);
     }
     // In memory, as `installFiles` takes them.

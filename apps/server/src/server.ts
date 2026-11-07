@@ -687,8 +687,10 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(Layer.mergeAll(NativeAppIconResolver.layer, layerProjectFaviconResolver)),
   Layer.provideMerge(layerRepositoryIdentityResolver),
   Layer.provideMerge(CodexManagedTokenBroker.layer),
-  // One registry each for MCP and HTTP below and the plugin host above.
-  Layer.provideMerge(Layer.mergeAll(PluginMcpTools.layer, PluginHttpRoutes.layer)),
+  // One registry each for MCP and HTTP below and the plugin host above, and the upload URLs.
+  Layer.provideMerge(
+    Layer.mergeAll(PluginMcpTools.layer, PluginHttpRoutes.layer, PluginUploads.layer),
+  ),
   Layer.provideMerge(layerServerEnvironment),
   Layer.provideMerge(layerAuth),
   Layer.provideMerge(ServerSecretStore.layer),

@@ -123,6 +123,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as PluginHost from "./plugins/PluginHost.ts";
 import * as PluginInstaller from "./plugins/PluginInstaller.ts";
+import * as PluginUploads from "./plugins/pluginUploads.ts";
 import { makePluginRpcHandlers } from "./plugins/pluginRpcHandlers.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
@@ -1278,6 +1279,7 @@ export const layerWsRpc = (
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const pluginHost = yield* PluginHost.PluginHost;
       const pluginInstaller = yield* PluginInstaller.PluginInstaller;
+      const pluginUploads = yield* PluginUploads.PluginUploads;
       const secretRequests = yield* SecretRequests.SecretRequests;
       const guestShares = yield* GuestShareService.GuestShareService;
       const pullRequests = yield* PullRequestService.PullRequestService;
@@ -1872,7 +1874,7 @@ export const layerWsRpc = (
       });
 
       const handlers = ServerWsRpcGroup.of({
-        ...makePluginRpcHandlers(pluginHost, pluginInstaller, currentSession.scopes),
+        ...makePluginRpcHandlers(pluginHost, pluginInstaller, pluginUploads, currentSession.scopes),
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,

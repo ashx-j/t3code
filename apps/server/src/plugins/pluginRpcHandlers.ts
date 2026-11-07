@@ -21,7 +21,7 @@ import * as Stream from "effect/Stream";
 import { rpcAuthorizationError } from "../auth/RpcAuthorization.ts";
 import * as PluginHost from "./PluginHost.ts";
 import type * as PluginInstaller from "./PluginInstaller.ts";
-import { issuePluginUploadUrl } from "./pluginUploads.ts";
+import type * as PluginUploads from "./pluginUploads.ts";
 
 const toRpcError = (pluginId: PluginId) => (error: { readonly message: string }) =>
   PluginHost.isPluginAccessDeniedError(error)
@@ -32,6 +32,7 @@ const toRpcError = (pluginId: PluginId) => (error: { readonly message: string })
 export const makePluginRpcHandlers = (
   pluginHost: PluginHost.PluginHost["Service"],
   installer: PluginInstaller.PluginInstaller["Service"],
+  uploads: PluginUploads.PluginUploads["Service"],
   scopes: ReadonlyArray<AuthEnvironmentScope>,
 ) => ({
   [WS_METHODS.pluginsList]: (_input: PluginListInput) => pluginHost.listForClient(scopes),
@@ -48,9 +49,7 @@ export const makePluginRpcHandlers = (
       Effect.mapError(toRpcError(input.pluginId)),
     ),
   [WS_METHODS.pluginsCreateUploadUrl]: (_input: PluginCreateUploadUrlInput) =>
-    issuePluginUploadUrl().pipe(
-      Effect.mapError((error) => new PluginError({ message: error.message })),
-    ),
+    uploads.issueUrl.pipe(Effect.mapError((error) => new PluginError({ message: error.message }))),
   [WS_METHODS.pluginsRescan]: (_input: PluginRescanInput) =>
     pluginHost.rescan.pipe(Effect.mapError((error) => new PluginError({ message: error.message }))),
   [WS_METHODS.pluginsReportWebFailure]: (input: PluginReportWebFailureInput) =>
