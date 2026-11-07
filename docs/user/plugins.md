@@ -1,8 +1,9 @@
 # Plugins
 
-Plugins change how T3 Code looks, with themes and styles. A plugin belongs to one environment and
-is installed on that environment's T3 Code server. A plugin's row lists the permissions it says it
-uses, but T3 Code doesn't enforce them. Install only plugins you trust.
+Plugins add features to T3 Code: themes, styles, and server code that works with your threads and
+projects. A plugin belongs to one environment and runs inside that environment's T3 Code server,
+with the same access to your files, threads and credentials as T3 Code itself. A plugin's row lists
+the permissions it says it uses, but T3 Code doesn't enforce them. Install only plugins you trust.
 
 ## Add a plugin
 
@@ -19,9 +20,11 @@ Plugin folders you copy into the `plugins` folder yourself show up, turned off, 
 open **Settings → Plugins**. That folder is `~/.t3/userdata/plugins` on the environment's machine
 by default.
 
-A plugin only changes the app, so with **All environments** selected it is installed only on the
-app's main environment (see [Where plugins live](#where-plugins-live)). The list shows each plugin
-once, and turning it on or off or removing it applies to every environment that has it.
+With **All environments** selected, a plugin is installed on every connected environment that can
+run plugins. A plugin with no server code only changes the app, so it goes only to the app's main
+environment (see [Where plugins live](#where-plugins-live)). The list then shows each plugin once,
+and turning it on or off, changing its settings or removing it applies to every environment that
+has it.
 
 ## Turn a plugin on or off
 
@@ -29,9 +32,22 @@ Use the switch on the plugin's row. A plugin that fails to start shows the reaso
 example when it needs a newer version of T3 Code. **Reload** restarts a plugin with its current
 files.
 
+## Plugin settings
+
+If a plugin has settings, open them with the settings button on its row. Each setting saves as soon as you change
+it or leave its field, and an empty field shows the default the plugin uses. Secret fields are
+stored in the environment's secret store and are never shown again after you save them; the clear
+button next to one removes it.
+
 ## Remove a plugin
 
-Choose **Remove** on the plugin's row and confirm in the popup.
+Choose **Remove** on the plugin's row and confirm in the popup. Its settings and stored data are
+kept unless you tick **Also delete its settings and stored data**, so reinstalling it later picks
+up where it left off.
+
+**Data from removed plugins** in **Settings → Plugins** lists the settings, secrets and stored data
+that removed plugins left behind. Delete a plugin's data there if you won't reinstall it. This
+can't be undone.
 
 A plugin loaded from its own folder shows **Unlink** instead. Unlinking stops loading it and leaves
 the folder where it is.
@@ -46,7 +62,8 @@ while the plugin is on, on top of T3 Code's own styles and your theme. A plugin 
 ## Where plugins live
 
 Installed plugins are in the `plugins` folder of the environment's T3 Code data directory, one
-folder per plugin, and `plugins.json` records which ones are enabled.
+folder per plugin. Their settings are in `plugin-data`, and `plugins.json` records which ones are
+enabled.
 
 Plugin styles load in the web and desktop apps, from the app's main environment: the desktop app's
 own server, or the server the web app was opened from. app.t3.codes and a desktop app with its

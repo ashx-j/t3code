@@ -1,0 +1,8 @@
+{
+  "id": "worktrees-plugin",
+  "name": "Worktrees",
+  "version": "0.1.0",
+  "description": "Test fixture that lists a project's git worktrees.",
+  "engines": { "t3": ">=0.1.0" },
+  "server": "./server.cjs"
+}

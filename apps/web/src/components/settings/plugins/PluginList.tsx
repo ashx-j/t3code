@@ -7,6 +7,7 @@ import { type ReactNode, useContext, useEffect } from "react";
 import { pluginEnvironment } from "../../../state/plugins";
 import { formatEnvironmentQueryError } from "../../../state/query";
 import { SettingsRow, SettingsSection } from "../settingsLayout";
+import { LeftoverPluginData } from "./LeftoverPluginData";
 import { PluginRow } from "./PluginRow";
 import { type PluginCopy, type PluginTarget, usePluginUiSource } from "./pluginTargets";
 
@@ -116,6 +117,7 @@ export function PluginList({
           ))
         )}
       </SettingsSection>
+      <LeftoverPluginData targets={targets} installed={copies} labelled={several} />
     </>
   );
 }

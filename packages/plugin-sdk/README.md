@@ -1,7 +1,8 @@
 # @t3tools/plugin-sdk
 
-Docs and test fixtures for T3 Code plugins. A plugin is a folder with a `t3-plugin.json` manifest,
-plus theme files and stylesheets that change how T3 Code looks. It runs no code.
+Types and test fixtures for T3 Code plugins. A plugin is a folder with a `t3-plugin.json`
+manifest and an optional server half that runs inside the T3 Code server. Plugins are trusted
+code: they run with the same access as T3 Code.
 
 The plugins in [`fixtures/`](./fixtures) back the tests and are small and working too. They are
 written by hand and need no build.
@@ -14,16 +15,29 @@ written by hand and need no build.
   "name": "Hello web",
   "version": "0.1.0",
   "description": "Shown on the Plugins page.",
-  "engines": { "t3": ">=0.1.6" }
+  "engines": { "t3": ">=0.1.6" },
+  "server": "./server.cjs",
+  "settingsSchema": {
+    "type": "object",
+    "properties": { "token": { "type": "string", "format": "t3-secret" } }
+  }
 }
 ```
 
 - `id` uses lowercase letters, digits and hyphens, starts with a letter and has up to 32
-  characters. It names the plugin's folder.
+  characters. It names the plugin's folder and its HTTP routes (`/api/plugins/<id>/…`).
 - `engines.t3` is a version range made of `^`, `>=`, `>`, `<=`, `<`, `=` and `||`, such as
   `>=0.1.6`. A server outside it refuses to install the plugin or start it, and says why.
 - `permissions` is an optional list of what the plugin says it uses. Settings → Plugins shows it on
   the plugin's row, and T3 Code doesn't enforce it.
+- `server` must be CommonJS ending in `.cjs`.
+- `settingsSchema` is JSON Schema. T3 Code draws a form from it on the Plugins page, and top-level
+  string fields with `"format": "t3-secret"` are stored in the server's secret store and never shown
+  again. `t3-secret` anywhere else is saved as plain text.
+  The form covers top-level strings, numbers, integers, booleans, `enum`s of strings or numbers,
+  and arrays of strings. One property of any other shape, such as an object or a nullable type,
+  turns the whole form into a JSON box. Every save is checked against the schema with the top-level `default`s
+  filled in, so a default its own field rejects refuses every save.
 - A `themes/` folder of theme JSON files is published while the plugin is active. T3 Code
   remembers the published themes, so the boot screen and the desktop window start in the active
   theme's colors. A theme that sets `"sidebarArtwork": true` keeps the nightly and dev artwork in
@@ -31,10 +45,44 @@ written by hand and need no build.
   as `"0.625rem"`, sets T3's corner radius, and `success`, `successForeground`, `info` and
   `infoForeground` in a theme's `colors` or `variants` set its status colors.
 - A `styles/` folder of `.css` files is added to the page while the plugin is active, in name
-  order, after T3's own styles and the theme. A manifest and `styles/` are a whole plugin, as in
-  the `styles-plugin` fixture. Styles load only from the main environment. **Reload** picks up
-  edits. The page gets each file's text, so a `url()` can't reach the plugin's folder; use a
-  `data:` URL for an image.
+  order, after T3's own styles and the theme. A manifest and `styles/` are a whole plugin, with
+  no `server`, as in the `styles-plugin` fixture. Styles load only from the main environment.
+  **Reload** picks up edits. The page gets each file's text, so a `url()` can't reach the
+  plugin's folder; use a `data:` URL for an image.
+
+## Server half
+
+```js
+/** @type {import("@t3tools/plugin-sdk/server").PluginDefinition} */
+module.exports = {
+  activate(api) {
+    api.rpc.register("greeting", () => "Hello", { access: "read" });
+  },
+};
+```
+
+`activate` receives the [`PluginApi`](./src/server.ts):
+
+- settings, storage, and RPC methods and channels for clients;
+- stored orchestration events and notes in threads;
+- threads and projects: read, start, archive, snooze, settle and delete threads, add and change
+  projects, and list a project's git worktrees;
+- provider instances and their models, with the options each model takes, such as reasoning
+  effort (`api.providers.list`), so a new thread can set them in `threads.create`;
+- secrets the user enters on a card in a thread with a turn in progress;
+- HTTP routes, schedules and server info.
+
+Everything a plugin registers is released when it is disabled, reloaded or uninstalled; add your
+own cleanup with `api.onDeactivate`.
+
+A failure in plugin code that nothing awaits, such as a throw in a timer or a schedule, doesn't
+stop T3 Code. It shows on the plugin's row in Settings → Plugins, and the plugin keeps running.
+Give every child process, socket and stream you create an `'error'` listener anyway: Node reports
+an unhandled `'error'` event as a crash, and when T3 Code can't tell it came from your plugin, the
+server stops.
+
+HTTP route handlers get the request body as UTF-8 text, so a binary upload arrives corrupted, and a
+query key that appears twice keeps its last value.
 
 ## Keeping a plugin working across T3 updates
 
@@ -58,8 +106,8 @@ parts of your design to survive that. Build each part on the most stable thing T
   changes, and list it in the plugin's README with the seam that would replace it.
 - **Leave T3's frame to T3.** The title bar row, the room for the window buttons on Windows and
   Linux, drag areas, phone safe areas and breakpoints are T3's, so don't resize or pad them.
-- **Ship what the plugin uses.** Adding a folder leaves out `.git` and `node_modules`, so keep
-  everything the plugin needs outside them.
+- **Ship what the plugin runs.** Adding a folder leaves out `.git` and `node_modules`, so build
+  everything into the files the manifest names.
 - **Ask for a seam.** When T3 doesn't hand over what you need, ask for a region or token on the
   T3 Code repository instead of reaching into its markup.
 

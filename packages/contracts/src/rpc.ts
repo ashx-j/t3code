@@ -378,14 +378,24 @@ import {
 import {
   PluginError,
   PluginInstallFilesInput,
+  PluginInvokeInput,
+  PluginInvokeResult,
   PluginUninstallInput,
   PluginUninstallResult,
+  PluginListLeftoverDataInput,
+  PluginDeleteLeftoverDataInput,
+  PluginLeftoverDataResult,
   PluginListInput,
   PluginListResult,
   PluginRescanInput,
   PluginMutationResult,
   PluginReloadInput,
   PluginSetEnabledInput,
+  PluginSettingsGetInput,
+  PluginSettingsResult,
+  PluginSettingsUpdateInput,
+  PluginSubscribeInput,
+  PluginSubscriptionEvent,
   PluginStatesEvent,
 } from "./plugins.ts";
 import { SecretRequestAnswerInput, SecretRequestError } from "./secretRequest.ts";
@@ -568,6 +578,12 @@ export const WS_METHODS = {
   pluginsInstallFiles: "plugins.installFiles",
   pluginsRescan: "plugins.rescan",
   pluginsUninstall: "plugins.uninstall",
+  pluginsListLeftoverData: "plugins.listLeftoverData",
+  pluginsDeleteLeftoverData: "plugins.deleteLeftoverData",
+  pluginsSettingsGet: "plugins.settings.get",
+  pluginsSettingsUpdate: "plugins.settings.update",
+  pluginsInvoke: "plugins.invoke",
+  pluginsSubscribe: "plugins.subscribe",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -2019,6 +2035,44 @@ const WsPluginsUninstallRpc = Rpc.make(WS_METHODS.pluginsUninstall, {
   error: PluginRpcError,
 });
 
+/** Plugins removed without their data, and what each left. */
+const WsPluginsListLeftoverDataRpc = Rpc.make(WS_METHODS.pluginsListLeftoverData, {
+  payload: PluginListLeftoverDataInput,
+  success: PluginLeftoverDataResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsDeleteLeftoverDataRpc = Rpc.make(WS_METHODS.pluginsDeleteLeftoverData, {
+  payload: PluginDeleteLeftoverDataInput,
+  success: PluginLeftoverDataResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsSettingsGetRpc = Rpc.make(WS_METHODS.pluginsSettingsGet, {
+  payload: PluginSettingsGetInput,
+  success: PluginSettingsResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsSettingsUpdateRpc = Rpc.make(WS_METHODS.pluginsSettingsUpdate, {
+  payload: PluginSettingsUpdateInput,
+  success: PluginSettingsResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsInvokeRpc = Rpc.make(WS_METHODS.pluginsInvoke, {
+  payload: PluginInvokeInput,
+  success: PluginInvokeResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsSubscribeRpc = Rpc.make(WS_METHODS.pluginsSubscribe, {
+  payload: PluginSubscribeInput,
+  success: PluginSubscriptionEvent,
+  error: PluginRpcError,
+  stream: true,
+});
+
 const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess, {
   payload: Schema.Struct({}),
   success: AuthAccessStreamEvent,
@@ -2111,6 +2165,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsPluginsInstallFilesRpc,
   WsPluginsRescanRpc,
   WsPluginsUninstallRpc,
+  WsPluginsListLeftoverDataRpc,
+  WsPluginsDeleteLeftoverDataRpc,
+  WsPluginsSettingsGetRpc,
+  WsPluginsSettingsUpdateRpc,
+  WsPluginsInvokeRpc,
+  WsPluginsSubscribeRpc,
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,

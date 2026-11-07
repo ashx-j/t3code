@@ -3,20 +3,30 @@ import {
   PluginError,
   type PluginId,
   type PluginInstallFilesInput,
+  type PluginInvokeInput,
   type PluginListInput,
   type PluginReloadInput,
   type PluginRescanInput,
   type PluginSetEnabledInput,
+  type PluginSettingsGetInput,
+  type PluginSettingsUpdateInput,
+  type PluginSubscribeInput,
   type PluginUninstallInput,
+  type PluginListLeftoverDataInput,
+  type PluginDeleteLeftoverDataInput,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 
-import type * as PluginHost from "./PluginHost.ts";
+import { rpcAuthorizationError } from "../auth/RpcAuthorization.ts";
+import * as PluginHost from "./PluginHost.ts";
 import type * as PluginInstaller from "./PluginInstaller.ts";
 
 const toRpcError = (pluginId: PluginId) => (error: { readonly message: string }) =>
-  new PluginError({ message: error.message, pluginId });
+  PluginHost.isPluginAccessDeniedError(error)
+    ? rpcAuthorizationError(error.requiredScope)
+    : new PluginError({ message: error.message, pluginId });
 
 /** The `plugins.*` WebSocket handlers. `scopes` are the connected session's. */
 export const makePluginRpcHandlers = (
@@ -46,6 +56,38 @@ export const makePluginRpcHandlers = (
     pluginHost.rescan.pipe(Effect.mapError((error) => new PluginError({ message: error.message }))),
   [WS_METHODS.pluginsUninstall]: (input: PluginUninstallInput) =>
     installer
-      .uninstall(input.pluginId, input.linkedFolder)
+      .uninstall(input.pluginId, input.removeData === true, input.linkedFolder)
       .pipe(Effect.as({ pluginId: input.pluginId }), Effect.mapError(toRpcError(input.pluginId))),
+  [WS_METHODS.pluginsListLeftoverData]: (_input: PluginListLeftoverDataInput) =>
+    installer.leftoverData.pipe(
+      Effect.map((leftovers) => ({ leftovers })),
+      Effect.mapError((error) => new PluginError({ message: error.message })),
+    ),
+  [WS_METHODS.pluginsDeleteLeftoverData]: (input: PluginDeleteLeftoverDataInput) =>
+    installer.deleteLeftoverData(input.pluginId).pipe(
+      Effect.map((leftovers) => ({ leftovers })),
+      Effect.mapError(toRpcError(input.pluginId)),
+    ),
+  [WS_METHODS.pluginsSettingsGet]: (input: PluginSettingsGetInput) =>
+    pluginHost.getSettings(input.pluginId).pipe(
+      Effect.map((settings) => ({ pluginId: input.pluginId, settings })),
+      Effect.mapError(toRpcError(input.pluginId)),
+    ),
+  [WS_METHODS.pluginsSettingsUpdate]: (input: PluginSettingsUpdateInput) =>
+    pluginHost.updateSettings(input.pluginId, input.patch).pipe(
+      Effect.map((settings) => ({ pluginId: input.pluginId, settings })),
+      Effect.mapError(toRpcError(input.pluginId)),
+    ),
+  [WS_METHODS.pluginsInvoke]: (input: PluginInvokeInput) =>
+    pluginHost
+      .invoke({ pluginId: input.pluginId, method: input.method, input: input.input, scopes })
+      .pipe(
+        Effect.map((output) => ({ output })),
+        Effect.mapError(toRpcError(input.pluginId)),
+      ),
+  [WS_METHODS.pluginsSubscribe]: (input: PluginSubscribeInput) =>
+    pluginHost.subscribe(input).pipe(
+      Stream.map((value) => ({ value })),
+      Stream.mapError(toRpcError(input.pluginId)),
+    ),
 });

@@ -2,12 +2,36 @@
   "name": "@t3tools/plugin-sdk",
   "version": "0.1.0",
   "private": true,
-  "description": "Docs and test fixtures for T3 Code plugins.",
+  "description": "Types and test fixtures for T3 Code plugins.",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/pingdotgg/t3code",
     "directory": "packages/plugin-sdk"
   },
-  "type": "module"
+  "type": "module",
+  "exports": {
+    "./server": {
+      "types": "./src/server.ts",
+      "import": "./src/server.ts"
+    },
+    "./shared": {
+      "types": "./src/shared.ts",
+      "import": "./src/shared.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:"
+  },
+  "peerDependencies": {
+    "@types/node": "*"
+  },
+  "peerDependenciesMeta": {
+    "@types/node": {
+      "optional": true
+    }
+  }
 }

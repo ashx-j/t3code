@@ -3541,6 +3541,14 @@ const OrchestrationV2InternalCommand = Schema.Union([
       }),
     ),
   }),
+  /** A server plugin's note in a thread. It starts no run and never reaches the agent. */
+  Schema.Struct({
+    type: Schema.Literal("thread.notification.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    turnItemId: TurnItemId,
+    notification: OrchestrationV2Notification,
+  }),
 ]);
 export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalCommand.Type;
 

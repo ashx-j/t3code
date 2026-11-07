@@ -423,6 +423,8 @@ export interface ThreadManagementServiceShape {
   readonly listProjectThreads: (input: {
     readonly projectId?: ProjectId | undefined;
     readonly includeSubagents: boolean;
+    /** Archived threads instead of active ones. */
+    readonly archived?: boolean;
   }) => Effect.Effect<ReadonlyArray<OrchestrationV2ThreadShell>, ThreadManagementError>;
   readonly sendToThread: (
     input: ThreadManagementSendInput,
@@ -781,7 +783,7 @@ const make = Effect.gen(function* () {
   const listProjectThreads: ThreadManagementServiceShape["listProjectThreads"] = (input) =>
     orchestrator
       .getShellSnapshot({
-        location: "active",
+        location: input.archived === true ? "archive" : "active",
         ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
       })
       .pipe(

@@ -1,5 +1,6 @@
 import {
   type PluginId,
+  type PluginLeftoverData,
   PluginManifest,
   type PluginState,
   type PluginUploadFile,
@@ -18,6 +19,8 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import type { DiscoveredPlugin } from "./pluginDiscovery.ts";
 import type { PluginConfigError, PluginNotFoundError, PluginsConfigFile } from "./PluginHost.ts";
+import * as PluginSettingsStore from "./PluginSettingsStore.ts";
+import * as PluginStorage from "./PluginStorage.ts";
 
 // `reason` is shown to the user as is, so it says what to fix.
 export class PluginInstallError extends Schema.TaggedError<PluginInstallError>()(
@@ -45,14 +48,25 @@ export class PluginInstaller extends Context.Service<
       files: ReadonlyArray<PluginUploadFile>,
     ) => Effect.Effect<PluginState, PluginInstallError | PluginNotFoundError | PluginConfigError>;
     /**
-     * Stops a plugin and deletes its folder, or for a linked folder only forgets it.
-     * `linkedFolder` names one linked copy, which is only forgotten when another copy with its id
-     * is in use.
+     * Stops a plugin and deletes its folder, or for a linked folder only forgets it;
+     * `removeData` also deletes its settings. `linkedFolder` names one linked copy, which is only
+     * forgotten when another copy with its id is in use; that copy keeps the data, so
+     * `removeData` is refused for it.
      */
     readonly uninstall: (
       pluginId: PluginId,
+      removeData: boolean,
       linkedFolder?: string,
     ) => Effect.Effect<void, PluginInstallError | PluginNotFoundError | PluginConfigError>;
+    /** Settings and storage of plugins that are no longer installed, by plugin id. */
+    readonly leftoverData: Effect.Effect<ReadonlyArray<PluginLeftoverData>, PluginInstallError>;
+    /**
+     * Deletes the settings, secrets and storage a removed plugin left, and lists what is left.
+     * An installed plugin's data is refused: removing it with its data deletes that.
+     */
+    readonly deleteLeftoverData: (
+      pluginId: PluginId,
+    ) => Effect.Effect<ReadonlyArray<PluginLeftoverData>, PluginInstallError>;
   }
 >()("t3/plugins/PluginInstaller") {}
 
@@ -96,6 +110,8 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
+  const settingsStore = yield* PluginSettingsStore.PluginSettingsStore;
+  const storage = yield* PluginStorage.PluginStorage;
   const scope = yield* Effect.scope;
 
   const pluginsDir = path.join(config.stateDir, "plugins");
@@ -284,7 +300,7 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
     }));
 
   const uninstall: PluginInstaller["Service"]["uninstall"] = Effect.fn("PluginInstaller.uninstall")(
-    function* (pluginId, linkedFolder) {
+    function* (pluginId, removeData, linkedFolder) {
       const plugin = yield* host.copyOf(pluginId);
       if (linkedFolder !== undefined) {
         const folder = path.resolve(linkedFolder);
@@ -295,7 +311,13 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
             reason: `No copy of ${pluginId} is linked from ${linkedFolder}.`,
           });
         }
-        // The first copy is the one in use, which keeps running.
+        // The first copy is the one in use, and the others share its settings and storage.
+        if (link > 0 && removeData) {
+          return yield* new PluginInstallError({
+            reason: `${linkedFolder} is not the copy of ${pluginId} in use, and the copy in use keeps the data. Unlink it without removing data.`,
+          });
+        }
+        // The copy in use keeps running.
         if (link > 0) {
           return yield* host.lifecycle(
             forgetDevPath(folder).pipe(Effect.andThen(host.forget(pluginId, folder))),
@@ -303,6 +325,7 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
         }
       }
       const { folder, source } = plugin;
+      const settingsSchema = "manifest" in plugin ? plugin.manifest.settingsSchema : undefined;
       yield* host.lifecycle(
         Effect.gen(function* () {
           yield* host.stop(pluginId);
@@ -318,13 +341,68 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
           }
           yield* removeFromConfig(pluginId);
           yield* host.forget(pluginId, folder);
+          // Under the lock, or an install that starts meanwhile could lose its new settings.
+          if (removeData) {
+            yield* settingsStore
+              .clear(pluginId, settingsSchema)
+              .pipe(
+                Effect.mapError(installFailed("The plugin is removed, but its settings are not.")),
+              );
+            yield* storage
+              .clear(pluginId)
+              .pipe(
+                Effect.mapError(installFailed("The plugin is removed, but its storage is not.")),
+              );
+          }
         }),
       );
     },
   );
 
+  // Read and deleted under the lifecycle lock, so an install cannot start between them.
+  const listLeftovers = Effect.gen(function* () {
+    const installed = new Set((yield* host.copies).map((copy) => copy.id));
+    const withSettings = yield* settingsStore.pluginIds;
+    const storageKeys = yield* storage.keyCounts.pipe(
+      Effect.mapError(installFailed("Could not read plugin storage.")),
+    );
+    return [...new Set([...withSettings, ...storageKeys.keys()])]
+      .filter((pluginId) => !installed.has(pluginId))
+      .toSorted()
+      .map((pluginId): PluginLeftoverData => ({
+        pluginId,
+        settings: withSettings.includes(pluginId),
+        storageKeys: storageKeys.get(pluginId) ?? 0,
+      }));
+  });
+
+  const leftoverData = host
+    .lifecycle(listLeftovers)
+    .pipe(Effect.withSpan("PluginInstaller.leftoverData"));
+
+  const deleteLeftoverData: PluginInstaller["Service"]["deleteLeftoverData"] = Effect.fn(
+    "PluginInstaller.deleteLeftoverData",
+  )((pluginId) =>
+    host.lifecycle(
+      Effect.gen(function* () {
+        if ((yield* host.copies).some((copy) => copy.id === pluginId)) {
+          return yield* new PluginInstallError({
+            reason: `${pluginId} is installed. Remove it with its data to delete its data.`,
+          });
+        }
+        yield* settingsStore
+          .clear(pluginId, undefined)
+          .pipe(Effect.mapError(installFailed(`Could not delete the settings of ${pluginId}.`)));
+        yield* storage
+          .clear(pluginId)
+          .pipe(Effect.mapError(installFailed(`Could not delete the storage of ${pluginId}.`)));
+        return yield* listLeftovers;
+      }),
+    ),
+  );
+
   return {
-    installer: PluginInstaller.of({ installFiles, uninstall }),
+    installer: PluginInstaller.of({ installFiles, uninstall, leftoverData, deleteLeftoverData }),
     recoverStaging,
   };
 });

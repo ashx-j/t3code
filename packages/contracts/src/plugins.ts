@@ -38,6 +38,16 @@ const isInsidePluginDirectory = Schema.makeFilter(
     path.split("/").every((segment) => segment !== ".."),
   { expected: "a relative path inside the plugin directory" },
 );
+const PluginEntryPath = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(256),
+  isInsidePluginDirectory,
+);
+
+// The packaged server is a Node single executable that can only `require` plugin code, and a
+// `.js` file under a `"type": "module"` package.json would load as ESM.
+const PluginServerEntryPath = PluginEntryPath.check(
+  Schema.isPattern(/\.cjs$/, { expected: "a CommonJS file ending in .cjs" }),
+);
 
 /** `t3-plugin.json` at the root of a plugin directory. */
 export const PluginManifest = Schema.Struct({
@@ -46,7 +56,13 @@ export const PluginManifest = Schema.Struct({
   version: PluginVersion,
   description: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(500))),
   engines: Schema.Struct({ t3: PluginEngineRange }),
-  /** Shown to the user before enabling. Not enforced. */
+  server: Schema.optionalKey(PluginServerEntryPath),
+  /**
+   * JSON Schema for the plugin's settings. Top-level string fields with `format: "t3-secret"` are
+   * write-only and kept in the secret store; `t3-secret` anywhere else is saved as plain text.
+   */
+  settingsSchema: Schema.optionalKey(Schema.JsonObject),
+  /** Shown to the user before enabling. Not enforced: plugins are trusted code. */
   permissions: Schema.optionalKey(
     Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(200))).check(
       Schema.isMaxLength(32),
@@ -62,7 +78,13 @@ export type PluginSource = typeof PluginSource.Type;
 export const PluginStatus = Schema.Literals(["active", "disabled", "failed", "loading"]);
 export type PluginStatus = typeof PluginStatus.Type;
 
-export const PluginFailureStage = Schema.Literals(["discovery", "manifest", "compatibility"]);
+export const PluginFailureStage = Schema.Literals([
+  "discovery",
+  "manifest",
+  "compatibility",
+  "load",
+  "activate",
+]);
 export type PluginFailureStage = typeof PluginFailureStage.Type;
 
 export const PluginFailure = Schema.Struct({
@@ -83,6 +105,8 @@ export const PluginState = Schema.Struct({
   enabled: Schema.Boolean,
   status: PluginStatus,
   failure: Schema.optionalKey(PluginFailure),
+  /** Changes each time the plugin starts. */
+  revision: Schema.optionalKey(Schema.Number),
   /**
    * The `.css` files in its `styles` folder while it runs, in the order clients apply them. Each
    * `revision` names the file's contents and is sent as its URL's `v`, which the server then lets
@@ -93,8 +117,19 @@ export const PluginState = Schema.Struct({
   ),
   /** The folder a `dev` plugin loads from, as plugins.json lists it. */
   linkedFolder: Schema.optionalKey(Schema.String),
+  hasServer: Schema.Boolean,
+  /** Why its server code failed outside a call since it last started, such as in a timer. */
+  serverFailure: Schema.optionalKey(Schema.String),
+  settingsSchema: Schema.optionalKey(Schema.JsonObject),
 });
 export type PluginState = typeof PluginState.Type;
+
+/** Name of a method or channel a plugin registered for `plugins.invoke` and `plugins.subscribe`. */
+export const PluginRpcName = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(64),
+  Schema.isPattern(/^[a-zA-Z][a-zA-Z0-9._-]*$/),
+);
+export type PluginRpcName = typeof PluginRpcName.Type;
 
 export const PluginListInput = Schema.Struct({});
 export type PluginListInput = typeof PluginListInput.Type;
@@ -106,7 +141,7 @@ export type PluginListResult = typeof PluginListResult.Type;
 
 /**
  * `plugins.subscribeStates`: the whole list first, then only the rows that differ from the event
- * before, by position, so a change to one plugin does not resend the others.
+ * before, by position, so a change to one plugin does not resend every settings schema.
  */
 export const PluginStatesEvent = Schema.Union([
   Schema.TaggedStruct("snapshot", {
@@ -173,9 +208,11 @@ export type PluginRescanInput = typeof PluginRescanInput.Type;
 
 export const PluginUninstallInput = Schema.Struct({
   pluginId: PluginId,
+  /** Also delete the plugin's settings, secrets and storage. */
+  removeData: Schema.optionalKey(Schema.Boolean),
   /**
    * A `dev` row's `linkedFolder`: unlinks exactly that folder, even when another copy with the
-   * same id is in use.
+   * same id is in use. Unlinking a copy that is not in use keeps the id's data.
    */
   linkedFolder: Schema.optionalKey(Schema.String),
 });
@@ -184,11 +221,75 @@ export type PluginUninstallInput = typeof PluginUninstallInput.Type;
 export const PluginUninstallResult = Schema.Struct({ pluginId: PluginId });
 export type PluginUninstallResult = typeof PluginUninstallResult.Type;
 
+/** Data a plugin that is no longer installed left behind, because it was removed without it. */
+export const PluginLeftoverData = Schema.Struct({
+  pluginId: PluginId,
+  /** Has saved settings, which come with its secrets. */
+  settings: Schema.Boolean,
+  /** How many keys it has in plugin storage. */
+  storageKeys: Schema.Number,
+});
+export type PluginLeftoverData = typeof PluginLeftoverData.Type;
+
+export const PluginListLeftoverDataInput = Schema.Struct({});
+export type PluginListLeftoverDataInput = typeof PluginListLeftoverDataInput.Type;
+
+/** Deletes the settings, secrets and storage of a plugin that is no longer installed. */
+export const PluginDeleteLeftoverDataInput = Schema.Struct({ pluginId: PluginId });
+export type PluginDeleteLeftoverDataInput = typeof PluginDeleteLeftoverDataInput.Type;
+
+/** Result of `plugins.listLeftoverData` and of `plugins.deleteLeftoverData`, which lists the rest. */
+export const PluginLeftoverDataResult = Schema.Struct({
+  leftovers: Schema.Array(PluginLeftoverData),
+});
+export type PluginLeftoverDataResult = typeof PluginLeftoverDataResult.Type;
+
 /** Result of `plugins.setEnabled`, `plugins.reload` and `plugins.installFiles`. */
 export const PluginMutationResult = Schema.Struct({
   plugin: PluginState,
 });
 export type PluginMutationResult = typeof PluginMutationResult.Type;
+
+export const PluginSettingsGetInput = Schema.Struct({
+  pluginId: PluginId,
+});
+export type PluginSettingsGetInput = typeof PluginSettingsGetInput.Type;
+
+export const PluginSettingsUpdateInput = Schema.Struct({
+  pluginId: PluginId,
+  patch: Schema.JsonObject,
+});
+export type PluginSettingsUpdateInput = typeof PluginSettingsUpdateInput.Type;
+
+/** Secret fields read back as the server's redaction marker, never their value. */
+export const PluginSettingsResult = Schema.Struct({
+  pluginId: PluginId,
+  settings: Schema.JsonObject,
+});
+export type PluginSettingsResult = typeof PluginSettingsResult.Type;
+
+export const PluginInvokeInput = Schema.Struct({
+  pluginId: PluginId,
+  method: PluginRpcName,
+  input: Schema.optionalKey(Schema.Json),
+});
+export type PluginInvokeInput = typeof PluginInvokeInput.Type;
+
+export const PluginInvokeResult = Schema.Struct({
+  output: Schema.Json,
+});
+export type PluginInvokeResult = typeof PluginInvokeResult.Type;
+
+export const PluginSubscribeInput = Schema.Struct({
+  pluginId: PluginId,
+  channel: PluginRpcName,
+});
+export type PluginSubscribeInput = typeof PluginSubscribeInput.Type;
+
+export const PluginSubscriptionEvent = Schema.Struct({
+  value: Schema.Json,
+});
+export type PluginSubscriptionEvent = typeof PluginSubscriptionEvent.Type;
 
 export class PluginError extends Schema.TaggedError<PluginError>()("PluginError", {
   message: Schema.String,

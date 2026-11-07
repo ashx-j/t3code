@@ -1,30 +1,45 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId } from "@t3tools/contracts";
-import { InfoIcon, RotateCwIcon, Trash2Icon } from "lucide-react";
-import { useState } from "react";
+import { pluginSettingsForm } from "@t3tools/client-runtime/plugins/settings-form";
+import type { EnvironmentId, PluginState } from "@t3tools/contracts";
+import {
+  ChevronUpIcon,
+  InfoIcon,
+  RotateCwIcon,
+  SlidersHorizontalIcon,
+  Trash2Icon,
+} from "lucide-react";
+import { useId, useState } from "react";
 
 import { pluginContributionKey, pluginWebFailureAtom } from "../../../plugins/pluginRegistry";
 import { pluginEnvironment } from "../../../state/plugins";
 import { useAtomCommand } from "../../../state/use-atom-command";
 import { Button } from "../../ui/button";
+import { Checkbox } from "../../ui/checkbox";
+import { Collapsible, CollapsiblePanel } from "../../ui/collapsible";
+import { Label } from "../../ui/label";
 import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "../../ui/popover";
 import { Switch } from "../../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
 import { SettingsRow } from "../settingsLayout";
+import { PluginSettingsEditor } from "./PluginSettingsRows";
 import type { PluginCopy } from "./pluginTargets";
 
 const FAILURE_STAGES = {
   discovery: "Not found",
   manifest: "Invalid manifest",
   compatibility: "Incompatible",
+  load: "Failed to load",
+  activate: "Failed to start",
 } as const;
 
 /**
- * Where a plugin that changes the app runs, as the installer decides: it goes only to the
- * environment plugin styles load from, named by `source`.
+ * Where a plugin that changes the app runs, as the installer decides: with no server code it goes
+ * only to the environment plugin styles load from, named by `source`.
  */
-const webReach = (source: string) =>
-  `Changes only this app. It runs from ${source} and isn't installed on other servers.`;
+const webReach = (plugin: PluginState, source: string) =>
+  !plugin.hasServer
+    ? `Changes only this app. It runs from ${source} and isn't installed on other servers.`
+    : null;
 
 export function PluginRow({
   environmentId,
@@ -54,10 +69,12 @@ export function PluginRow({
   const reload = useAtomCommand(pluginEnvironment.reloadPlugin, "plugin reload");
   const uninstall = useAtomCommand(pluginEnvironment.uninstallPlugin, "plugin removal");
   const [busy, setBusy] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   // Plugin styles load from one environment, which comes first, so their failure does too.
   const webFailure = useAtomValue(
     pluginWebFailureAtom(pluginContributionKey(environmentId, plugin.id)),
   );
+  const hasSettings = pluginSettingsForm(plugin.settingsSchema).kind !== "none";
   const runOn = async (
     on: ReadonlyArray<PluginCopy>,
     action: (copy: PluginCopy) => Promise<unknown>,
@@ -78,10 +95,15 @@ export function PluginRow({
             `${labelled ? `${label}: ` : ""}${shadowed ? "Not used" : FAILURE_STAGES[failure.stage]}: ${failure.message}`,
           ],
     ),
+    ...copies.flatMap(({ label, plugin: { serverFailure } }) =>
+      serverFailure === undefined
+        ? []
+        : [`${labelled ? `${label}: ` : ""}Failed while running: ${serverFailure}`],
+    ),
     ...(webFailure === undefined ? [] : [`Styles failed: ${webFailure}`]),
   ];
-  const reach = uiSourceName === null ? null : webReach(uiSourceName);
-  return (
+  const reach = uiSourceName === null ? null : webReach(plugin, uiSourceName);
+  const row = (
     <SettingsRow
       title={
         reach === null ? (
@@ -135,6 +157,7 @@ export function PluginRow({
               name={plugin.name}
               unlink
               linkedFolder={shadowedLink}
+              offerDataRemoval={false}
               disabled={busy || !canManage}
               onRemove={() =>
                 runOn([first], (copy) =>
@@ -148,6 +171,21 @@ export function PluginRow({
           ) : undefined
         ) : (
           <>
+            {hasSettings ? (
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label={`Settings for ${plugin.name}`}
+                aria-expanded={settingsOpen}
+                onClick={() => setSettingsOpen((open) => !open)}
+              >
+                {settingsOpen ? (
+                  <ChevronUpIcon className="size-4" />
+                ) : (
+                  <SlidersHorizontalIcon className="size-4" />
+                )}
+              </Button>
+            ) : null}
             <Button
               size="icon-sm"
               variant="ghost"
@@ -165,12 +203,13 @@ export function PluginRow({
               name={plugin.name}
               unlink={removeLabel === "Unlink"}
               linkedFolder={plugin.linkedFolder}
+              offerDataRemoval
               disabled={busy || !canManage}
-              onRemove={() =>
+              onRemove={(removeData) =>
                 runOn(copies, (copy) =>
                   uninstall({
                     environmentId: copy.environmentId,
-                    input: { pluginId: plugin.id },
+                    input: { pluginId: plugin.id, removeData },
                   }),
                 )
               }
@@ -193,6 +232,20 @@ export function PluginRow({
       }
     />
   );
+  if (shadowed || !hasSettings) return row;
+  return (
+    <>
+      {row}
+      {/* `contents`, so the card's line between rows falls inside the panel and slides in with it. */}
+      <Collapsible open={settingsOpen} onOpenChange={setSettingsOpen} className="contents">
+        <CollapsiblePanel>
+          <div className="border-t border-border/50 [&>*+*]:border-t [&>*+*]:border-border/50">
+            <PluginSettingsEditor first={first} copies={copies} labelled={labelled} />
+          </div>
+        </CollapsiblePanel>
+      </Collapsible>
+    </>
+  );
 }
 
 /** The remove button and the popup that confirms it, or Unlink for a plugin loaded from a folder. */
@@ -200,18 +253,23 @@ function RemovePluginPopover({
   name,
   unlink,
   linkedFolder,
+  offerDataRemoval,
   disabled,
   onRemove,
 }: {
   readonly name: string;
   readonly unlink: boolean;
   readonly linkedFolder: string | undefined;
+  readonly offerDataRemoval: boolean;
   readonly disabled: boolean;
-  readonly onRemove: () => Promise<unknown>;
+  readonly onRemove: (removeData: boolean) => Promise<unknown>;
 }) {
+  const [removeData, setRemoveData] = useState(false);
+  const checkboxId = useId();
   const label = unlink ? "Unlink" : "Remove";
   return (
-    <Popover>
+    // Each opening starts unticked, so a cancelled choice to delete data can't carry over.
+    <Popover onOpenChange={(open) => open && setRemoveData(false)}>
       <PopoverTrigger
         render={
           <Button
@@ -232,6 +290,16 @@ function RemovePluginPopover({
               stays.
             </p>
           ) : null}
+          {offerDataRemoval ? (
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id={checkboxId}
+                checked={removeData}
+                onCheckedChange={(checked) => setRemoveData(checked === true)}
+              />
+              <Label htmlFor={checkboxId}>Also delete its settings and stored data</Label>
+            </div>
+          ) : null}
           <div className="flex justify-end gap-2">
             <PopoverClose render={<Button size="sm" variant="ghost" disabled={disabled} />}>
               Cancel
@@ -240,7 +308,7 @@ function RemovePluginPopover({
               size="sm"
               variant="destructive"
               disabled={disabled}
-              onClick={() => void onRemove()}
+              onClick={() => void onRemove(removeData)}
             >
               {label} {name}
             </Button>

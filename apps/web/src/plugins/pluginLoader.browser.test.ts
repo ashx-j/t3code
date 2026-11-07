@@ -41,6 +41,7 @@ const stylesPlugin = (overrides: Partial<PluginState> = {}): PluginState => ({
   source: "dev",
   enabled: true,
   status: "active",
+  hasServer: false,
   ...overrides,
 });
 

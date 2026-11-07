@@ -52,8 +52,9 @@ export function InstallProblems({ problems }: { readonly problems: ReadonlyArray
 }
 
 /**
- * Installs plugins on the first of `targets`. A plugin only changes the app, and the app draws
- * plugin changes only from `uiSource`, so installing it on the others would change nothing.
+ * Installs plugins on `targets`, the first one first. The app draws plugin styles only from
+ * `uiSource`, so a plugin without server code changes nothing on the others and is installed on
+ * the first one only.
  */
 export function usePluginInstaller(
   targets: ReadonlyArray<PluginTarget>,
@@ -70,7 +71,7 @@ export function usePluginInstaller(
     install: (environmentId: EnvironmentId) => ReturnType<typeof installFiles>,
     report: (problem: string) => void,
   ) => {
-    const [main] = targets;
+    const [main, ...others] = targets;
     if (main === undefined) return report("No environment here can run plugins.");
     const reportFailure = (
       target: PluginTarget,
@@ -83,12 +84,19 @@ export function usePluginInstaller(
     const first = await install(main.environmentId);
     if (first._tag === "Failure") return reportFailure(main, first);
     const { plugin } = first.value;
-    // Such as when that environment is offline and another one came first.
-    if (main.environmentId !== uiSource.environmentId) {
-      report(
-        `${plugin.name} only changes the app, and this app shows plugin changes only from ${uiSource.name}, so it does nothing on ${main.label}.`,
-      );
+    if (!plugin.hasServer) {
+      // Such as when that environment is offline and another one came first.
+      if (main.environmentId !== uiSource.environmentId) {
+        report(
+          `${plugin.name} only changes the app, and this app shows plugin changes only from ${uiSource.name}, so it does nothing on ${main.label}.`,
+        );
+      }
+      return;
     }
+    const results = await Promise.all(others.map((target) => install(target.environmentId)));
+    results.forEach((result, index) => {
+      if (result._tag === "Failure") reportFailure(others[index]!, result);
+    });
   };
 
   // Resolves true when everything installed everywhere it should.
@@ -150,7 +158,9 @@ export function AddPluginDialog({
       <DialogPopup className="max-w-md">
         <DialogHeader>
           <DialogTitle>Add a plugin</DialogTitle>
-          <DialogDescription>{scopeNote} Install only plugins you trust.</DialogDescription>
+          <DialogDescription>
+            {scopeNote} Plugins run with the same access as T3 Code, so install only code you trust.
+          </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <div
