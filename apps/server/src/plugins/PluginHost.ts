@@ -29,6 +29,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -43,7 +44,6 @@ import {
   makePluginApi,
   type PluginActivation,
   type PluginApiServices,
-  type PluginPublication,
 } from "./PluginApi.ts";
 import { errorText, PluginCodeError, pluginCodeScope } from "./api/facade.ts";
 import { makePluginFailureGuard } from "./pluginFailureGuard.ts";
@@ -70,7 +70,8 @@ const CLEANUP_DEADLINE = Duration.seconds(5);
 // A plugin's failures outside a call reach clients at most this often, the latest one last, so a
 // timer failing every few milliseconds with new text does not resend the list each time.
 const FAILURE_PUBLISH_INTERVAL = Duration.seconds(5);
-const PUBLICATION_BUFFER = 64;
+// Values of one channel a subscriber has not taken yet; past this the oldest go.
+const CHANNEL_BUFFER = 64;
 
 export class PluginNotFoundError extends Schema.TaggedError<PluginNotFoundError>()(
   "PluginNotFoundError",
@@ -488,8 +489,11 @@ const make = Effect.gen(function* () {
       { discard: true },
     ).pipe(Effect.interruptible, Effect.timeoutOption(CLEANUP_DEADLINE), Effect.map(Option.isNone));
     if (timedOut) yield* Effect.logWarning("plugin cleanup timed out", { pluginId });
+    // In one step with the abort, so a subscriber that joins meanwhile sees one or the other.
     activation.ended.abort();
-    yield* PubSub.shutdown(activation.publications);
+    for (const queues of activation.channels.values()) {
+      for (const queue of queues) Queue.endUnsafe(queue);
+    }
   });
 
   const loadDefinition = (plugin: DiscoveredPlugin, entry: string) =>
@@ -548,9 +552,7 @@ const make = Effect.gen(function* () {
         failure: { stage: "load", message: errorText(Cause.squash(definition.cause)) },
       });
     }
-    const activation = makePluginActivation(
-      yield* PubSub.sliding<PluginPublication>(PUBLICATION_BUFFER),
-    );
+    const activation = makePluginActivation();
     const api = makePluginApi({
       id: plugin.id,
       rootDir: plugin.rootDir,
@@ -963,14 +965,24 @@ const make = Effect.gen(function* () {
     }),
     subscribe: (request) =>
       Stream.unwrap(
-        activeRecord(request.pluginId).pipe(
-          Effect.map((activation) =>
-            Stream.fromPubSub(activation.publications).pipe(
-              Stream.filter((publication) => publication.channel === request.channel),
-              Stream.map((publication) => publication.value),
-            ),
-          ),
-        ),
+        Effect.gen(function* () {
+          const activation = yield* activeRecord(request.pluginId);
+          const queue = yield* Queue.sliding<Schema.Json, Cause.Done>(CHANNEL_BUFFER);
+          yield* Effect.acquireRelease(
+            Effect.sync(() => {
+              if (activation.ended.signal.aborted) return Queue.endUnsafe(queue);
+              const queues = activation.channels.get(request.channel) ?? new Set();
+              activation.channels.set(request.channel, queues.add(queue));
+            }),
+            () =>
+              Effect.sync(() => {
+                const queues = activation.channels.get(request.channel);
+                queues?.delete(queue);
+                if (queues?.size === 0) activation.channels.delete(request.channel);
+              }),
+          );
+          return Stream.fromQueue(queue);
+        }),
       ),
   });
   return Context.make(PluginHost, service).pipe(

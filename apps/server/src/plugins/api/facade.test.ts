@@ -1,10 +1,9 @@
 import { assert, it } from "@effect/vitest";
 import { PluginId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 
-import { makePluginActivation, type PluginPublication } from "../PluginApi.ts";
+import { makePluginActivation } from "../PluginApi.ts";
 import { makeFacadeContext } from "./facade.ts";
 
 class CallFailedError extends Schema.TaggedError<CallFailedError>()("CallFailedError", {}) {}
@@ -19,7 +18,7 @@ const afterNodeReportsRejections = Effect.promise(async () => {
 
 it.effect("keeps a failed call the plugin never awaits from stopping the server", () =>
   Effect.gen(function* () {
-    const activation = makePluginActivation(yield* PubSub.sliding<PluginPublication>(1));
+    const activation = makePluginActivation();
     const facade = makeFacadeContext({
       pluginId: PluginId.make("unawaited"),
       activation,

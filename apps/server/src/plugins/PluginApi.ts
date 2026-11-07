@@ -2,8 +2,9 @@ import { PluginRpcName, type PluginId } from "@t3tools/contracts";
 import type { PluginApi, PluginRpcAccess, PluginRpcHandler } from "@t3tools/plugin-sdk/server";
 import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import type * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
-import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 
 import { makeFacadeContext, refused } from "./api/facade.ts";
@@ -16,11 +17,6 @@ const isJson = Schema.is(Schema.Json);
 const isPluginRpcName = Schema.is(PluginRpcName);
 const isPluginRpcAccess = Schema.is(Schema.Literals(["read", "write"]));
 
-export interface PluginPublication {
-  readonly channel: string;
-  readonly value: Schema.Json;
-}
-
 /** Everything one activation registered. The host routes calls through it and tears it down. */
 export interface PluginActivation {
   readonly methods: Map<
@@ -32,17 +28,19 @@ export interface PluginActivation {
   readonly controller: AbortController;
   /** Aborted once the cleanups have run; API calls are refused from then on. */
   readonly ended: AbortController;
-  readonly publications: PubSub.PubSub<PluginPublication>;
+  /**
+   * Each subscriber's buffer, by channel, so a busy channel or a slow subscriber drops only its
+   * own values. The host ends them when `ended` aborts.
+   */
+  readonly channels: Map<string, Set<Queue.Queue<Schema.Json, Cause.Done>>>;
 }
 
-export const makePluginActivation = (
-  publications: PubSub.PubSub<PluginPublication>,
-): PluginActivation => ({
+export const makePluginActivation = (): PluginActivation => ({
   methods: new Map(),
   cleanups: [],
   controller: new AbortController(),
   ended: new AbortController(),
-  publications,
+  channels: new Map(),
 });
 
 const assertActive = (activation: PluginActivation) => {
@@ -123,7 +121,7 @@ export const makePluginApi = (input: {
           throw new TypeError(`"${channel}" is not a valid channel name.`);
         }
         if (!isJson(value)) throw new TypeError("Published values must be JSON.");
-        PubSub.publishUnsafe(activation.publications, { channel, value });
+        for (const queue of activation.channels.get(channel) ?? []) Queue.offerUnsafe(queue, value);
       },
     },
     // Something created after deactivation has nothing left to wait for, so it cleans up now.

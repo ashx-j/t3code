@@ -5,7 +5,6 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as PubSub from "effect/PubSub";
 import { McpSchema, McpServer } from "effect/ai";
 
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
@@ -13,7 +12,7 @@ import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { liveThreadsLayer } from "../mcp/McpToolAccess.testkit.ts";
 import { makeFacadeContext } from "./api/facade.ts";
 import { makeMcpApi } from "./api/mcp.ts";
-import { makePluginActivation, type PluginPublication } from "./PluginApi.ts";
+import { makePluginActivation } from "./PluginApi.ts";
 import * as PluginMcpTools from "./PluginMcpTools.ts";
 
 const fixturesDir = new URL("../../../../packages/plugin-sdk/fixtures/", import.meta.url).pathname;
@@ -127,7 +126,7 @@ const activateFixture = Effect.fn(function* () {
       ? loaded.default
       : undefined;
   assert(isDefinition(definition));
-  const activation = makePluginActivation(yield* PubSub.sliding<PluginPublication>(1));
+  const activation = makePluginActivation();
   const facade = makeFacadeContext({
     pluginId: mcpPlugin,
     activation,

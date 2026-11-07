@@ -536,6 +536,48 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
     }).pipe(Effect.provide(layerConfig())),
   );
 
+  it.effect("keeps a quiet channel's value while a busy channel overflows its buffer", () =>
+    Effect.gen(function* () {
+      yield* writeInstalledPlugin(
+        "channels",
+        `module.exports = { activate(api) {
+  api.rpc.register("wake", () => api.rpc.publish("quiet", "wake"), { access: "read" });
+  api.rpc.register("burst", () => {
+    for (let index = 0; index < 100; index++) api.rpc.publish("busy", index);
+    api.rpc.publish("quiet", "after");
+  }, { access: "read" });
+} };`,
+      );
+      yield* writePluginsConfig({ enabled: { channels: true } });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const id = PluginId.make("channels");
+        const call = (method: string) =>
+          host.invoke({ pluginId: id, method, input: undefined, scopes: operate });
+        yield* waitForStatuses(host, { channels: "active" });
+        // A subscriber still busy with its first value, as one whose socket is slow to send.
+        const reached = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const quiet = yield* host.subscribe({ pluginId: id, channel: "quiet" }).pipe(
+          Stream.mapEffect((value) =>
+            Deferred.succeed(reached, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+              Effect.as(value),
+            ),
+          ),
+          Stream.take(2),
+          Stream.runCollect,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* call("wake");
+        yield* Deferred.await(reached);
+        yield* call("burst");
+        yield* Deferred.succeed(release, undefined);
+        assert.deepStrictEqual(yield* Fiber.join(quiet), ["wake", "after"]);
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
   it.effect("gives up on a method that does not answer within 30 seconds, and aborts it", () =>
     Effect.gen(function* () {
       const started = Promise.withResolvers<void>();
