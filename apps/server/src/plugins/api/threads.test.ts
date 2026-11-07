@@ -6,6 +6,7 @@ import {
   type Project,
   ProjectId,
   ProviderInstanceId,
+  type ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
@@ -38,7 +39,7 @@ const project: Project = {
 };
 
 /** The threads and projects APIs of a plugin named Workbench, over services that record calls. */
-const workbench = Effect.fn(function* () {
+const workbench = Effect.fn(function* (providers: ReadonlyArray<ServerProvider> = []) {
   const dispatched: Array<OrchestrationV2ServerCommand> = [];
   const launched: Array<ThreadLaunchService.ThreadLaunchInput> = [];
   const projectUpdates: Array<unknown> = [];
@@ -88,7 +89,7 @@ const workbench = Effect.fn(function* () {
       > as ThreadLaunchService.ThreadLaunchService["Service"],
       projectService,
       providers: {
-        getProviders: Effect.succeed([]),
+        getProviders: Effect.succeed(providers),
       } as Partial<
         ProviderRegistry.ProviderRegistry["Service"]
       > as ProviderRegistry.ProviderRegistry["Service"],
@@ -228,6 +229,50 @@ it.layer(NodeServices.layer)("plugin threads", (it) => {
       const pinned = yield* Effect.promise(() => projects.update(projectId, { pinned: true }));
       assert.deepInclude(projectUpdates[0], { projectId, pinned: true });
       assert.strictEqual(pinned.title, "Workbench project");
+    }),
+  );
+
+  it.effect("starts a thread with the model options its provider lists, and refuses others", () =>
+    Effect.gen(function* () {
+      const effort = {
+        id: "reasoningEffort",
+        label: "Reasoning",
+        type: "select",
+        options: [
+          { id: "low", label: "Low" },
+          { id: "high", label: "High" },
+        ],
+      } as const;
+      const { threads, launched } = yield* workbench([
+        {
+          instanceId: defaultModel.instanceId,
+          models: [{ slug: defaultModel.model, capabilities: { optionDescriptors: [effort] } }],
+        } as never,
+      ]);
+      const create = (options: ReadonlyArray<{ id: string; value: string | boolean }>) =>
+        threads.create({ projectId, title: "Review", model: { ...defaultModel, options } });
+
+      yield* Effect.promise(() => create([{ id: "reasoningEffort", value: "high" }]));
+      assert.deepStrictEqual(launched[0]?.modelSelection, {
+        ...defaultModel,
+        options: [{ id: "reasoningEffort", value: "high" }],
+      });
+      const refused = yield* Effect.promise(() =>
+        create([{ id: "effort", value: "max" }]).then(
+          () => undefined,
+          (error: Error & { readonly code: string }) => error,
+        ),
+      );
+      assert.strictEqual(refused?.code, "PluginThreadModelOptionsError");
+      assert.strictEqual(
+        refused?.message,
+        "Model gpt-5.5 on codex rejected options: Unknown option effort; supported options: reasoningEffort.",
+      );
+      assert.strictEqual(
+        yield* codeOf(create([{ id: "reasoningEffort", value: "max" }])),
+        "PluginThreadModelOptionsError",
+      );
+      assert.lengthOf(launched, 1);
     }),
   );
 });

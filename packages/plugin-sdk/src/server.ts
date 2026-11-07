@@ -259,6 +259,33 @@ export interface PluginTextGenerationTasks {
   };
 }
 
+/** One option a model takes, such as reasoning effort, by the id a thread's model sets it with. */
+export interface PluginModelOption {
+  readonly id: string;
+  /** Every value the option accepts. */
+  readonly values: ReadonlyArray<string | boolean>;
+  /** What the model uses when a thread sets nothing. */
+  readonly default?: string | boolean | undefined;
+}
+
+/** A provider instance from Settings → Providers, with the models it offers. */
+export interface PluginProviderInstance {
+  /** What `threads.create` takes as `model.instanceId`. */
+  readonly instanceId: string;
+  /** The kind of provider, such as `codex` or `claudeAgent`. */
+  readonly driver: string;
+  readonly displayName: string | null;
+  readonly enabled: boolean;
+  /** `ready`, `warning`, `error` or `disabled`. */
+  readonly status: string;
+  readonly models: ReadonlyArray<{
+    /** What `threads.create` takes as `model.model`. */
+    readonly id: string;
+    readonly name: string;
+    readonly options: ReadonlyArray<PluginModelOption>;
+  }>;
+}
+
 export interface PluginLogger {
   readonly debug: (message: string, fields?: JsonObject) => void;
   readonly info: (message: string, fields?: JsonObject) => void;
@@ -364,7 +391,16 @@ export interface PluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
       readonly projectId: string;
       readonly title: string;
       readonly message?: string;
-      readonly model?: { readonly instanceId: string; readonly model: string };
+      readonly model?: {
+        readonly instanceId: string;
+        readonly model: string;
+        /**
+         * Such as `[{ id: "reasoningEffort", value: "high" }]`, from `providers.list`. An option
+         * the model doesn't take, or a value it doesn't accept, rejects with code
+         * `PluginThreadModelOptionsError` and a message listing what it takes.
+         */
+        readonly options?: ReadonlyArray<{ readonly id: string; readonly value: string | boolean }>;
+      };
       readonly runtimeMode?: "approval-required" | "auto-accept-edits" | "auto" | "full-access";
       readonly interactionMode?: "default" | "plan";
       readonly workspace?:
@@ -535,6 +571,11 @@ export interface PluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
     readonly addInstructions: (text: string) => void;
   };
   readonly providers: {
+    /**
+     * The provider instances clients list, with each model and the options it takes. Read it
+     * for the ids and values `threads.create` accepts, since they differ per provider.
+     */
+    readonly list: () => Promise<ReadonlyArray<PluginProviderInstance>>;
     /** T3 Code's own Effect modules, which a source control driver must build with. */
     readonly runtime: PluginProviderRuntime;
     /**

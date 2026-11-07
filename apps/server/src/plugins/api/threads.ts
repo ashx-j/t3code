@@ -28,6 +28,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { resolveRuntimeMode } from "../../mcp/delegatedTaskModes.ts";
+import { invalidOptionSelections } from "../../mcp/OrchestratorMcpService.ts";
 import type * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import type * as ThreadLaunchService from "../../orchestration-v2/ThreadLaunchService.ts";
 import type * as ThreadManagementService from "../../orchestration-v2/ThreadManagementService.ts";
@@ -97,6 +98,19 @@ export class PluginThreadModelMissingError extends Schema.TaggedError<PluginThre
 ) {
   override get message(): string {
     return `Project ${this.projectId} has no default model; pass one.`;
+  }
+}
+
+export class PluginThreadModelOptionsError extends Schema.TaggedError<PluginThreadModelOptionsError>()(
+  "PluginThreadModelOptionsError",
+  {
+    instanceId: Schema.String,
+    model: Schema.String,
+    problems: Schema.Array(Schema.String),
+  },
+) {
+  override get message(): string {
+    return `Model ${this.model} on ${this.instanceId} rejected options: ${this.problems.join(" ")}`;
   }
 }
 
@@ -233,6 +247,20 @@ export const makeThreadsApi = (
             project.value,
           ).settings;
           const providers = yield* services.providers.getProviders;
+          if (launch.model?.options !== undefined) {
+            const { instanceId, model, options } = launch.model;
+            // Unchecked where the provider has not listed the model, as for agents' tasks.
+            const problems = invalidOptionSelections(
+              options,
+              providers
+                .find((provider) => provider.instanceId === instanceId)
+                ?.models.find((candidate) => candidate.slug === model)?.capabilities
+                ?.optionDescriptors,
+            );
+            if (problems.length > 0) {
+              return yield* new PluginThreadModelOptionsError({ instanceId, model, problems });
+            }
+          }
           const modelSelection =
             launch.model ??
             resolveNewThreadModelSelection({

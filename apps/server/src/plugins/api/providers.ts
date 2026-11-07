@@ -26,8 +26,10 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
+import { capabilityModelOption } from "../../mcp/OrchestratorMcpService.ts";
 import type { BuiltInDriversEnv } from "../../provider/builtInDrivers.ts";
 import type * as ProviderDriverRegistration from "../../provider/ProviderDriverRegistration.ts";
+import type * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import { makeAcpAgentDriver } from "../acpAgentDriver.ts";
 import { type FacadeContext, refused } from "./facade.ts";
 
@@ -134,6 +136,7 @@ const withClientDriver = <Config, R>(
 export const makeProvidersApi = (
   facade: FacadeContext,
   services: {
+    readonly providers: ProviderRegistry.ProviderRegistry["Service"];
     readonly providerDrivers: ProviderDriverRegistration.ProviderDriverRegistration["Service"];
   },
 ): PluginApi["providers"] => {
@@ -163,6 +166,25 @@ export const makeProvidersApi = (
   };
   return {
     runtime: PROVIDER_RUNTIME,
+    list: () =>
+      facade.call(
+        services.providers.getProviders.pipe(
+          Effect.map((providers) =>
+            providers.map((provider) => ({
+              instanceId: provider.instanceId,
+              driver: provider.driver,
+              displayName: provider.displayName ?? null,
+              enabled: provider.enabled,
+              status: provider.status,
+              models: provider.models.map((model) => ({
+                id: model.slug,
+                name: model.name,
+                options: (model.capabilities?.optionDescriptors ?? []).map(capabilityModelOption),
+              })),
+            })),
+          ),
+        ),
+      ),
     registerAcpAgent: (agent) => {
       const kind = agent.kind;
       if (

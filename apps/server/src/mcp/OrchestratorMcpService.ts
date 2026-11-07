@@ -335,7 +335,9 @@ function listCapabilityModels(input: {
 }
 
 /** Option ids and allowed values are all a delegating agent needs; labels are UI copy. */
-function capabilityModelOption(descriptor: ProviderOptionDescriptor): OrchestratorMcpModelOption {
+export function capabilityModelOption(
+  descriptor: ProviderOptionDescriptor,
+): OrchestratorMcpModelOption {
   const defaultValue = getProviderOptionCurrentValue(descriptor);
   return {
     id: descriptor.id,
@@ -373,7 +375,7 @@ function providerConstraints(
 }
 
 /** Skip checks without descriptors; reject duplicate IDs because consumers disagree on precedence. */
-function invalidOptionSelections(
+export function invalidOptionSelections(
   selections: ReadonlyArray<ProviderOptionSelection>,
   descriptors: ReadonlyArray<ProviderOptionDescriptor> | undefined,
 ): ReadonlyArray<string> {
