@@ -1,7 +1,5 @@
 import { defineWebPlugin } from "@t3tools/plugin-sdk/web";
 
-// Built to web.js by `vp build --config examples/review-flags/vite.config.ts` from
-// packages/plugin-sdk.
 function FlagIcon() {
   return (
     <svg

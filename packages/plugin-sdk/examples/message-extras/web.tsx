@@ -1,7 +1,5 @@
 import { defineWebPlugin } from "@t3tools/plugin-sdk/web";
 
-// Built to web.js by `vp build --config examples/message-extras/vite.config.ts` from
-// packages/plugin-sdk.
 const css = `
 .message-extras-count { margin-top: 0.25rem; font-size: 0.6875rem; color: var(--muted-foreground); }
 .message-extras-terminal {

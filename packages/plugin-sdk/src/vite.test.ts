@@ -8,12 +8,12 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { t3PluginWeb } from "./vite.ts";
 
-const fixtureRoot = NodePath.join(import.meta.dirname, "../fixtures/hello-web");
+const exampleRoot = NodePath.join(import.meta.dirname, "../examples/quick-notes");
 
 describe("t3PluginWeb", () => {
   it("bundles a web plugin without React and reads shared modules from the host", async () => {
     const output = await build({
-      root: fixtureRoot,
+      root: exampleRoot,
       configFile: false,
       logLevel: "silent",
       plugins: [t3PluginWeb()],

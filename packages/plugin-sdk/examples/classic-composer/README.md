@@ -10,12 +10,12 @@ workspace and branch sit in a drawer tucked under the card, shaded below the car
 folder without git gives the drawer nothing to show, so there is no drawer, and while T3's own row
 shows, the drawer names the permissions.
 
-Install it by dragging this folder onto **Settings → Plugins**, or with **Add plugin → Choose
-folder**. Turning it off brings back T3's current composer.
+First build its web half with `vp run build:examples` in `packages/plugin-sdk`. Then install it
+by dragging this folder onto **Settings → Plugins**, or with **Add plugin → Choose folder**.
+Turning it off brings back T3's current composer.
 
 It uses `api.ui.replace("composer.controls", …)`, so it only arranges T3's own pickers and buttons.
-Rebuild `web.js` after editing `web.tsx` with
-`vp build --config examples/classic-composer/vite.config.ts` from `packages/plugin-sdk`.
+Build again after editing `web.tsx`.
 
 ## What it hardcodes
 

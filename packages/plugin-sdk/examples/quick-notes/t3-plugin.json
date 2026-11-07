@@ -5,5 +5,5 @@
   "description": "Short notes kept on the server: the latest ones in the sidebar, all of them on their own page.",
   "engines": { "t3": ">=0.1.5" },
   "server": "./server.cjs",
-  "web": "./web.js"
+  "web": "./dist/web.js"
 }

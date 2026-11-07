@@ -7,7 +7,5 @@
     "allowJs": true,
     "checkJs": true
   },
-  "include": ["src", "fixtures", "examples/*/web.tsx", "examples/*/server.cjs"],
-  // Built from web.tsx by the Vite preset.
-  "exclude": ["fixtures/hello-web/web.js"]
+  "include": ["src", "fixtures", "examples/*/web.tsx", "examples/*/server.cjs"]
 }

@@ -4,9 +4,11 @@ Types and build helpers for T3 Code plugins. A plugin is a folder with a `t3-plu
 an optional server half that runs inside the T3 Code server, and an optional web half that runs in
 the web and desktop apps. Plugins are trusted code: they run with the same access as T3 Code.
 
-[`examples/`](./examples) has plugins to copy from. The plugins in [`fixtures/`](./fixtures) back
-the tests and are small and working too; `hello-web` uses most of the web API and is built with the
-Vite preset below.
+[`examples/`](./examples) has plugins to copy from. Their web halves are built, not committed: run
+`vp run build:examples` in `packages/plugin-sdk` before adding an example to T3 Code. Each one
+builds to its own `dist/web.js` with the Vite preset below. The plugins in
+[`fixtures/`](./fixtures) back the tests and are small and working too. They are written by hand
+and need no build. `hello-web` uses most of the web API.
 
 ## Manifest
 

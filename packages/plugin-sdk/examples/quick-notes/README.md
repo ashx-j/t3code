@@ -5,7 +5,8 @@ the same list. The latest 3 show in a sidebar section under the thread list. "Al
 plugin's page beside the sidebar, where you add and remove notes. Typing `@` in the composer offers
 the notes too; picking one adds it to the message as a chip.
 
-Install it by dragging this folder onto **Settings → Plugins**, or with **Add plugin → Choose folder**.
+First build its web half with `vp run build:examples` in `packages/plugin-sdk`. Then install it
+by dragging this folder onto **Settings → Plugins**, or with **Add plugin → Choose folder**.
 
 It uses `sidebar.addSection`, `pages.register`, `composer.setMentionItems`, `rpc.invoke` and
 `rpc.subscribe` on the web side,

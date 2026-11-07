@@ -4,8 +4,6 @@ import { useEffect, useState } from "react";
 
 import type { Note, QuickNotesRpc } from "./rpc.ts";
 
-// Built to web.js by `vp build --config examples/quick-notes/vite.config.ts` from
-// packages/plugin-sdk.
 const css = `
 .quick-notes-list { display: flex; flex-direction: column; gap: 0.25rem; }
 .quick-notes-item { display: flex; align-items: center; gap: 0.5rem; font-size: 0.8125rem; }

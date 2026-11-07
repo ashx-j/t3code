@@ -29,6 +29,7 @@
     }
   },
   "scripts": {
+    "build:examples": "node scripts/build-examples.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
