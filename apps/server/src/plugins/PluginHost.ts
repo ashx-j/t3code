@@ -10,6 +10,7 @@ import {
   type PluginFailure,
   PluginId,
   type PluginManifest,
+  PluginInstallSource,
   type PluginListResult,
   type PluginState,
   type PluginStatesEvent,
@@ -241,6 +242,24 @@ const PluginsConfigFile = Schema.StructWithRest(
   Schema.Struct({
     enabled: Schema.optionalKey(Schema.Record(Schema.String, Schema.Boolean)),
     devPaths: Schema.optionalKey(Schema.Array(Schema.String)),
+    /** Where each plugin installed through `install` came from, so `update` can fetch it again. */
+    sources: Schema.optionalKey(Schema.Record(Schema.String, PluginInstallSource)),
+    /** The npm version or git commit each install fetched, which update checks compare against. */
+    installed: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+    /** The last update check and the newer versions it found, by plugin id. */
+    updates: Schema.optionalKey(
+      Schema.Struct({
+        checkedAt: Schema.Number,
+        available: Schema.Record(Schema.String, Schema.String),
+      }),
+    ),
+    /** The version each plugin's last update replaced, kept in `plugin-rollback/<id>`. */
+    rollback: Schema.optionalKey(
+      Schema.Record(
+        Schema.String,
+        Schema.Struct({ version: Schema.String, installed: Schema.optionalKey(Schema.String) }),
+      ),
+    ),
   }),
   [Schema.Record(Schema.String, Schema.Json)],
 );
@@ -264,8 +283,10 @@ const manifestOf = (plugin: DiscoveredPlugin): PluginManifest | undefined =>
 
 // Folders on the server are for clients that manage plugins; read access can be a guest's.
 const withoutServerPaths = (state: PluginState): PluginState => {
-  const { linkedFolder: _folder, ...shown } = state;
-  return shown;
+  const { linkedFolder: _folder, installSource, ...shown } = state;
+  return installSource === undefined || installSource.type === "path"
+    ? shown
+    : { ...shown, installSource };
 };
 const managesPlugins = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
   scopes.includes(AuthSettingsWriteScope);
@@ -288,6 +309,16 @@ const statesEvent = (
     : { _tag: "changed", length: next.plugins.length, rows };
 };
 
+// Git URLs can carry credentials, and plugin state reaches read-only clients.
+const shownSource = (source: PluginInstallSource): PluginInstallSource => {
+  if (source.type !== "git" || !URL.canParse(source.url)) return source;
+  const url = new URL(source.url);
+  if (url.username === "" && url.password === "") return source;
+  url.username = "***";
+  url.password = "";
+  return { ...source, url: url.toString() };
+};
+
 const toState = (
   record: PluginRecord,
   config: PluginsConfigFile,
@@ -295,6 +326,10 @@ const toState = (
 ): PluginState => {
   const manifest = manifestOf(record.plugin);
   const { id } = record.plugin;
+  const installSource = config.sources?.[id];
+  const availableUpdate = config.updates?.available[id];
+  const rollbackVersion =
+    record.plugin.source === "installed" ? config.rollback?.[id]?.version : undefined;
   return {
     id: record.plugin.id,
     name: manifest?.name ?? record.plugin.id,
@@ -316,6 +351,15 @@ const toState = (
     ...(record.revision === undefined ? {} : { revision: record.revision }),
     ...(record.webRevision === undefined ? {} : { webRevision: record.webRevision }),
     ...(record.styles === undefined || record.styles.length === 0 ? {} : { styles: record.styles }),
+    ...(installSource === undefined || record.plugin.source !== "installed"
+      ? {}
+      : {
+          installSource: shownSource(installSource),
+          ...(availableUpdate === undefined
+            ? {}
+            : { availableUpdate: { version: availableUpdate } }),
+        }),
+    ...(rollbackVersion === undefined ? {} : { rollbackVersion }),
     hasServer: manifest?.server !== undefined,
     hasWeb: manifest?.web !== undefined,
     ...(serverFailure === undefined ? {} : { serverFailure }),
@@ -385,6 +429,9 @@ const make = Effect.gen(function* () {
   const changes = yield* PubSub.sliding<ReadonlyArray<PluginState>>(1);
   const lifecycle = yield* Semaphore.make(1);
   const publishLock = yield* Semaphore.make(1);
+  // Update checks write plugins.json outside the lifecycle lock, so every read that is written
+  // back, or kept as the current config, holds this one.
+  const configLock = yield* Semaphore.make(1);
   const activations = yield* FiberMap.make<PluginId>();
   const hostScope = yield* Effect.scope;
 
@@ -519,7 +566,7 @@ const make = Effect.gen(function* () {
       Effect.mapError((cause) => new PluginConfigError({ path: configPath, cause })),
     );
     yield* Ref.set(pluginsConfig, next);
-  });
+  }, configLock.withPermits(1));
 
   const writeEnabled = (pluginId: PluginId, enabled: boolean) =>
     writeConfig((current) => ({
@@ -814,7 +861,10 @@ const make = Effect.gen(function* () {
             }),
           )
         : readConfig
-    ).pipe(Effect.tap((config) => Ref.set(pluginsConfig, config)));
+    ).pipe(
+      Effect.tap((config) => Ref.set(pluginsConfig, config)),
+      configLock.withPermits(1),
+    );
     const plugins = yield* discoverPlugins({ pluginsDir, devPaths: current.devPaths ?? [] }).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
@@ -956,7 +1006,7 @@ const make = Effect.gen(function* () {
     return record.activation;
   });
 
-  const { installer, recoverStaging } = yield* PluginInstaller.make({
+  const { installer, recoverStaging, updateChecks } = yield* PluginInstaller.make({
     lifecycle: runLifecycle,
     copies: Ref.get(records).pipe(Effect.map((all) => all.map((record) => record.plugin))),
     copyOf: (pluginId) =>
@@ -982,8 +1032,11 @@ const make = Effect.gen(function* () {
       }
     }),
     reload,
+    state: stateOf,
+    states: currentStates,
     config: Ref.get(pluginsConfig),
     writeConfig,
+    publish: publishStates,
   });
 
   const startup = lifecycle
@@ -1004,7 +1057,7 @@ const make = Effect.gen(function* () {
     )
     .pipe(Effect.withSpan("PluginHost.startup"));
 
-  yield* forkParked(startup);
+  yield* forkParked(startup.pipe(Effect.andThen(updateChecks)));
   yield* Effect.addFinalizer(() =>
     Ref.get(records).pipe(
       Effect.flatMap((all) =>

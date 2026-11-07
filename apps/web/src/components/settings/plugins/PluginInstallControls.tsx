@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, PluginInstallSource } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
 import { FolderDownIcon } from "lucide-react";
 import { useRef, useState } from "react";
@@ -18,7 +18,10 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../../ui/dialog";
-import type { PluginTarget } from "./pluginTargets";
+import { Input } from "../../ui/input";
+import { Label } from "../../ui/label";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../../ui/select";
+import { installSourceLabel, type PluginTarget } from "./pluginTargets";
 
 export function AddPluginButton(props: {
   readonly environmentId: EnvironmentId;
@@ -60,6 +63,10 @@ export function usePluginInstaller(
   targets: ReadonlyArray<PluginTarget>,
   uiSource: { readonly environmentId: EnvironmentId | null; readonly name: string },
 ) {
+  const installSource = useAtomCommand(pluginEnvironment.installPlugin, {
+    label: "plugin install",
+    reportFailure: false,
+  });
   const installFiles = useAtomCommand(pluginEnvironment.installPluginFiles, {
     label: "plugin install",
     reportFailure: false,
@@ -135,8 +142,21 @@ export function usePluginInstaller(
         }
       });
     },
+    installSource: (source: PluginInstallSource) =>
+      run(async (report) => {
+        setInstalling(installSourceLabel(source));
+        await installOnTargets(
+          (environmentId) => installSource({ environmentId, input: { source } }),
+          report,
+        );
+      }),
   };
 }
+
+const INSTALL_SOURCES = {
+  git: { label: "Git repository", placeholder: "https://github.com/me/my-plugin.git" },
+  npm: { label: "npm package", placeholder: "t3-plugin-example" },
+} as const;
 
 export function AddPluginDialog({
   open,
@@ -151,8 +171,26 @@ export function AddPluginDialog({
   readonly dragActive: boolean;
   readonly scopeNote: string;
 }) {
+  const [kind, setKind] = useState<keyof typeof INSTALL_SOURCES>("git");
+  const [location, setLocation] = useState("");
+  const [ref, setRef] = useState("");
   const folderInput = useRef<HTMLInputElement>(null);
   const busy = installer.installing !== null;
+  const submit = async () => {
+    const extra = ref.trim();
+    const source =
+      kind === "git"
+        ? { type: "git" as const, url: location.trim(), ...(extra === "" ? {} : { ref: extra }) }
+        : {
+            type: "npm" as const,
+            name: location.trim(),
+            ...(extra === "" ? {} : { version: extra }),
+          };
+    if (!(await installer.installSource(source))) return;
+    onOpenChange(false);
+    setLocation("");
+    setRef("");
+  };
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPopup className="max-w-md">
@@ -204,6 +242,55 @@ export function AddPluginDialog({
               }}
             />
           </div>
+          <form
+            className="space-y-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submit();
+            }}
+          >
+            <div className="space-y-1.5">
+              <Label htmlFor="plugin-install-source">Or install from</Label>
+              <Select
+                value={kind}
+                onValueChange={(value) => setKind(value === "npm" ? "npm" : "git")}
+              >
+                <SelectTrigger id="plugin-install-source">
+                  <SelectValue>{INSTALL_SOURCES[kind].label}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup>
+                  <SelectItem value="git">{INSTALL_SOURCES.git.label}</SelectItem>
+                  <SelectItem value="npm">{INSTALL_SOURCES.npm.label}</SelectItem>
+                </SelectPopup>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="plugin-install-location">
+                {kind === "git" ? "Repository URL" : "Package name"}
+              </Label>
+              <Input
+                id="plugin-install-location"
+                value={location}
+                placeholder={INSTALL_SOURCES[kind].placeholder}
+                onChange={(event) => setLocation(event.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="plugin-install-ref">
+                {kind === "git"
+                  ? "Branch or tag (optional)"
+                  : "Exact version, such as 1.2.3 (optional, latest by default)"}
+              </Label>
+              <Input
+                id="plugin-install-ref"
+                value={ref}
+                onChange={(event) => setRef(event.target.value)}
+              />
+            </div>
+            <Button type="submit" size="sm" disabled={busy || location.trim() === ""}>
+              {busy ? "Installing…" : "Install"}
+            </Button>
+          </form>
           <InstallProblems problems={installer.problems} />
         </DialogPanel>
       </DialogPopup>

@@ -9,6 +9,7 @@ import { environmentIdsKey } from "~/state/environmentAtomList";
 import { environmentUpdateStatesAtom } from "~/state/server";
 import { environmentSessionStatesAtom } from "~/state/session";
 import { getProviderUpdateRunOutcome } from "../ProviderUpdateLaunchNotification.logic";
+import { usePluginUpdates } from "~/plugins/usePluginUpdates";
 import { useProviderUpdates } from "../ProviderUpdatesAction";
 import { canUpdateServer, type ServerUpdateOutcome, useServerUpdate } from "../ServerUpdateAction";
 import {
@@ -73,8 +74,14 @@ export function useUpdateEverything(
   const moving = servers.filter((server) => server.trackOnly !== true);
   const restarts = collectRestartingMachines(machines, moving, localUpdateVersion !== null);
   const providerUpdates = useProviderUpdates();
-  // A track switch moves app and servers only; provider updates stay a separate choice.
+  const pluginUpdates = usePluginUpdates(
+    (environmentId) =>
+      environments.find((environment) => environment.environmentId === environmentId)?.label ??
+      environmentId,
+  );
+  // A track switch moves app and servers only; provider and plugin updates stay a separate choice.
   const providers = channelSwitch ? { machines: [], updateAll: async () => [] } : providerUpdates;
+  const plugins = channelSwitch ? { machines: [], updateAll: async () => [] } : pluginUpdates;
   const updateServer = useServerUpdate();
 
   const view = describeUpdateEverything({
@@ -89,10 +96,15 @@ export function useUpdateEverything(
         (candidate) => PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver,
       ),
     })),
+    pluginMachines: plugins.machines.map((machine) => ({
+      environmentId: machine.environmentId,
+      label: machine.label,
+      plugins: machine.plugins.map((plugin) => plugin.name),
+    })),
   });
 
   return {
-    hasUpdates: servers.length > 0 || providers.machines.length > 0,
+    hasUpdates: servers.length > 0 || providers.machines.length > 0 || plugins.machines.length > 0,
     ...view,
     restarts,
     run: async ({
@@ -108,7 +120,7 @@ export function useUpdateEverything(
       };
       const startedAt = Date.now();
       const machinesById = new Map<UpdateRunMachine["environmentId"], UpdateRunMachine>();
-      for (const machine of providers.machines) {
+      for (const machine of [...providers.machines, ...plugins.machines]) {
         machinesById.set(machine.environmentId, {
           environmentId: machine.environmentId,
           label: machine.label,
@@ -145,11 +157,22 @@ export function useUpdateEverything(
       }));
       const providerFailures = new Map<UpdateRunMachine["environmentId"], string>();
       const finishedServers: Array<{ label: string; outcome: ServerUpdateOutcome }> = [];
+      let pluginOutcomes: Awaited<ReturnType<typeof plugins.updateAll>> = [];
       try {
         const outcome = await runUpdateEverything({
           ...(downloadLocal ? { downloadLocal: () => downloadLocal(reportLocalError) } : {}),
+          // Plugins update with providers, before any server restarts.
           updateProviders: async () => {
-            const runs = await providers.updateAll({ quiet: true });
+            const [runs, pluginRuns] = await Promise.all([
+              providers.updateAll({ quiet: true }),
+              plugins.updateAll(),
+            ]);
+            pluginOutcomes = pluginRuns;
+            for (const run of pluginRuns) {
+              if (run.status === "failed" && !providerFailures.has(run.environmentId)) {
+                providerFailures.set(run.environmentId, run.line);
+              }
+            }
             const outcomes = runs.map((run) => {
               const runOutcome = getProviderUpdateRunOutcome(run);
               if (runOutcome.status !== "updated") {
@@ -212,6 +235,7 @@ export function useUpdateEverything(
             localFailures,
             servers: finished,
             providers: outcome.providers,
+            plugins: pluginOutcomes,
           });
         if (outcome.localReady && installLocal) {
           if (await waitForUpdateRestart(UPDATE_RESTART_DELAY_MS)) {

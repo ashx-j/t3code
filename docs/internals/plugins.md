@@ -41,26 +41,33 @@ The server bundle inlines `effect`, so plugins never share the host's Effect run
 instances. They get Promises, `AsyncIterable` streams and `AbortSignal`.
 
 Manifests ignore keys they don't know, so a newer manifest key is lost silently on an older T3.
-`engines.t3` is how a plugin asks for a newer T3: the server refuses to install or start a version
-outside it.
+`engines.t3` is how a plugin asks for a newer T3: the server refuses to install, update to or start
+a version outside it.
 
 ## State lives beside T3's
 
-`<stateDir>/plugins.json` holds enabled flags and dev paths. Settings go in `plugin-data/<id>/` and
-storage in `plugins.sqlite`. They stay out of `settings.json`, whose writer drops keys it doesn't
-know, and out of `statev2.sqlite`, whose numbered migrations refuse to start when a fork's id
-collides with an upstream one. Settings stay out of `plugins/<id>/`, so replacing a plugin's files
-keeps them.
+`<stateDir>/plugins.json` holds enabled flags, dev paths, install sources, update check results and
+the version each plugin can roll back to. Settings go in `plugin-data/<id>/`, storage in
+`plugins.sqlite` and the version an update replaced in `plugin-rollback/<id>`. They stay out of
+`settings.json`, whose writer drops keys it doesn't know, and out of `statev2.sqlite`, whose
+numbered migrations refuse to start when a fork's id collides with an upstream one. Settings stay
+out of `plugins/<id>/`, so replacing a plugin's files keeps them.
 
 ## Installing
 
-Installs write into `plugin-staging/`, outside `plugins/`, so discovery never sees a half-written
-plugin. Only the swap takes the lifecycle lock. The old version moves into staging for the swap and
-is deleted with it, and startup puts back a version that a crash left there.
+Installs fetch into `plugin-staging/`, outside `plugins/`, so discovery never sees a half-written
+plugin. Only the swap takes the lifecycle lock, so a slow clone does not block other plugins. The
+old version waits in staging until the new one starts, goes back if it fails, and otherwise moves
+to `plugin-rollback/<id>`. Git may use only https, ssh and file: plain http and git let the network
+change the code, and others such as `ext::` run commands. Update checks download a newer version to
+read its `engines.t3`, so they offer only versions this server runs.
 
-Clients send the files of a dropped folder, never its path, which would mean nothing on a remote
-environment. Discovery takes the id from the manifest, because people copy plugin folders in by
-hand. Nothing watches `plugins/`: the server reads it at startup, on reload and when Settings asks.
+Installing a folder with `link` adds it to `devPaths`. Symlinks into `plugins/` would do the same
+but need extra rights on Windows. Clients send the files of a dropped folder, never its path, which
+would mean nothing on a remote environment. Sent files record no source, so dropping a folder
+cannot take over a git or npm plugin. Discovery takes the id from the manifest, because people copy
+plugin folders in by hand. Nothing watches `plugins/`: the server reads it at startup, on reload
+and when Settings asks.
 
 ## Clients
 
@@ -76,7 +83,8 @@ Once the app is idle,
 [`PluginLoaderStarter`](../../apps/web/src/plugins/PluginLoaderStarter.tsx) follows the state
 stream. It downloads the web loader only when an active plugin has a web part, and a separate small
 styles chunk only when one has a `styles/` folder. Until then, rows read nothing from plugins. The
-server starts plugins after it is listening.
+server starts plugins after it is listening, and one with no plugin from git or npm never checks
+for updates.
 
 A bare `import(url)` cannot send credentials, so the loader fetches each bundle with the
 connection's credentials and imports it from a `blob:` URL, which the desktop CSP allows. Mobile

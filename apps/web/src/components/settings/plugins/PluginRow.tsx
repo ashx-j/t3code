@@ -3,10 +3,12 @@ import { pluginSettingsForm } from "@t3tools/client-runtime/plugins/settings-for
 import type { EnvironmentId, PluginState } from "@t3tools/contracts";
 import {
   ChevronUpIcon,
+  DownloadIcon,
   InfoIcon,
   RotateCwIcon,
   SlidersHorizontalIcon,
   Trash2Icon,
+  Undo2Icon,
 } from "lucide-react";
 import { useId, useState } from "react";
 
@@ -17,6 +19,7 @@ import {
 } from "../../../plugins/pluginRegistry";
 import { pluginEnvironment } from "../../../state/plugins";
 import { useAtomCommand } from "../../../state/use-atom-command";
+import { Badge } from "../../ui/badge";
 import { Button } from "../../ui/button";
 import { Checkbox } from "../../ui/checkbox";
 import { Collapsible, CollapsiblePanel } from "../../ui/collapsible";
@@ -26,7 +29,7 @@ import { Switch } from "../../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
 import { SettingsRow } from "../settingsLayout";
 import { PluginSettingsRows } from "./PluginSettingsRows";
-import type { PluginCopy } from "./pluginTargets";
+import { installSourceLabel, type PluginCopy, updateLabel } from "./pluginTargets";
 
 const FAILURE_STAGES = {
   discovery: "Not found",
@@ -74,6 +77,8 @@ export function PluginRow({
   const setEnabled = useAtomCommand(pluginEnvironment.setPluginEnabled, "plugin enabled");
   const reload = useAtomCommand(pluginEnvironment.reloadPlugin, "plugin reload");
   const uninstall = useAtomCommand(pluginEnvironment.uninstallPlugin, "plugin removal");
+  const update = useAtomCommand(pluginEnvironment.updatePlugin, "plugin update");
+  const rollback = useAtomCommand(pluginEnvironment.rollbackPlugin, "plugin rollback");
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Plugin UI loads from one environment, which comes first, so its settings panel and web failure
@@ -91,10 +96,17 @@ export function PluginRow({
     await Promise.all(on.map(action));
     setBusy(false);
   };
+  const updatable = copies.filter((copy) => copy.plugin.installSource !== undefined);
   // A plugin loaded from its own folder is unlinked instead; the folder stays.
   const removeLabel = copies.every((copy) => copy.plugin.source === "dev") ? "Unlink" : "Remove";
   // Only a shadowed link can be dropped on its own, by its folder; see `pluginRows`.
   const shadowedLink = shadowed && plugin.source === "dev" ? plugin.linkedFolder : undefined;
+  const source = updatable[0]?.plugin.installSource;
+  // Copies on different environments may have replaced different versions; the first one is named.
+  const rollbackable = copies.filter((copy) => copy.plugin.rollbackVersion !== undefined);
+  const rollbackVersion = rollbackable[0]?.plugin.rollbackVersion;
+  const availableUpdate = copies.find((copy) => copy.plugin.availableUpdate !== undefined)?.plugin
+    .availableUpdate;
   const problems = [
     ...copies.flatMap(({ label, plugin: { failure } }) =>
       failure === undefined
@@ -148,8 +160,11 @@ export function PluginRow({
         </>
       }
       status={
-        problems.length === 0 ? undefined : (
+        availableUpdate === undefined && problems.length === 0 ? undefined : (
           <div className="flex flex-wrap items-center gap-2">
+            {availableUpdate === undefined ? null : (
+              <Badge variant="info">Update available: {updateLabel(availableUpdate.version)}</Badge>
+            )}
             {problems.map((problem) => (
               <span key={problem} className="text-destructive">
                 {problem}
@@ -207,6 +222,42 @@ export function PluginRow({
             >
               <RotateCwIcon className="size-4" />
             </Button>
+            {source === undefined ? null : (
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                disabled={busy || !canManage}
+                aria-label={`Update ${plugin.name}`}
+                title={
+                  availableUpdate === undefined
+                    ? `Update from ${installSourceLabel(source)}`
+                    : `Update to ${updateLabel(availableUpdate.version)} from ${installSourceLabel(source)}`
+                }
+                onClick={() =>
+                  void runOn(updatable, (copy) =>
+                    update({ environmentId: copy.environmentId, input: { pluginId: plugin.id } }),
+                  )
+                }
+              >
+                <DownloadIcon className="size-4" />
+              </Button>
+            )}
+            {rollbackVersion === undefined ? null : (
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                disabled={busy || !canManage}
+                aria-label={`Roll back ${plugin.name} to ${updateLabel(rollbackVersion)}`}
+                title={`Roll back to ${updateLabel(rollbackVersion)}, the version its last update replaced`}
+                onClick={() =>
+                  void runOn(rollbackable, (copy) =>
+                    rollback({ environmentId: copy.environmentId, input: { pluginId: plugin.id } }),
+                  )
+                }
+              >
+                <Undo2Icon className="size-4" />
+              </Button>
+            )}
             <RemovePluginPopover
               name={plugin.name}
               unlink={removeLabel === "Unlink"}

@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -37,6 +38,8 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as EnvironmentTheme from "../environmentTheme.ts";
+import { HttpClient, HttpClientResponse } from "effect/http";
+import * as ProcessRunner from "../processRunner.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -51,6 +54,7 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import packageJson from "../../package.json" with { type: "json" };
+import { gzipTarball, tarEntry } from "./testTarball.ts";
 import * as PluginHooks from "./PluginHooks.ts";
 import * as PluginHost from "./PluginHost.ts";
 import * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
@@ -100,6 +104,64 @@ const layerThemes = Layer.mock(EnvironmentTheme.EnvironmentThemeService)({
     }),
 });
 
+// A registry with one good package and one whose integrity hash does not match its tarball.
+const npmTarball = gzipTarball(
+  tarEntry(
+    "package/t3-plugin.json",
+    JSON.stringify({
+      id: "npm-hello",
+      name: "npm hello",
+      version: "1.0.0",
+      engines: { t3: ">=0.1.0" },
+      server: "./server.cjs",
+    }),
+  ),
+  tarEntry("package/server.cjs", "module.exports = { activate() {} };"),
+);
+const npmIntegrity = `sha512-${NodeCrypto.createHash("sha512").update(npmTarball).digest("base64")}`;
+// A package whose releases all need a T3 Code that does not exist yet.
+const npmFutureTarball = gzipTarball(
+  tarEntry(
+    "package/t3-plugin.json",
+    JSON.stringify({
+      id: "npm-future",
+      name: "npm future",
+      version: "1.1.0",
+      engines: { t3: ">=999.0.0" },
+    }),
+  ),
+);
+const npmFutureIntegrity = `sha512-${NodeCrypto.createHash("sha512").update(npmFutureTarball).digest("base64")}`;
+// The registry's `latest` tag, which update checks compare with what was installed.
+let npmLatest = "1.0.0";
+let npmMetadataRequests = 0;
+const npmDocument = (name: string, integrity: string) => {
+  const release = { dist: { tarball: `https://registry.test/${name}.tgz`, integrity } };
+  return {
+    "dist-tags": { latest: npmLatest },
+    versions: { "1.0.0": release, "1.1.0": release },
+  };
+};
+const layerNpmRegistry = Layer.succeed(
+  HttpClient.HttpClient,
+  HttpClient.make((request) => {
+    const url = request.url;
+    if (!url.endsWith(".tgz")) npmMetadataRequests += 1;
+    const body = url.endsWith("/npm-future.tgz")
+      ? new Response(npmFutureTarball)
+      : url.endsWith(".tgz")
+        ? new Response(npmTarball)
+        : url.endsWith("/npm-hello")
+          ? Response.json(npmDocument("npm-hello", npmIntegrity))
+          : url.endsWith("/npm-tampered")
+            ? Response.json(npmDocument("npm-tampered", "sha512-AAAA"))
+            : url.endsWith("/npm-future")
+              ? Response.json(npmDocument("npm-future", npmFutureIntegrity))
+              : new Response("not found", { status: 404 });
+    return Effect.succeed(HttpClientResponse.fromWeb(request, body));
+  }),
+);
+
 const layerHost = (services: typeof layerUnusedServices = layerUnusedServices) =>
   Layer.fresh(
     PluginHost.layer.pipe(
@@ -107,6 +169,8 @@ const layerHost = (services: typeof layerUnusedServices = layerUnusedServices) =
       Layer.provide(ServerSecretStore.layer),
       Layer.provide(services),
       Layer.provide(layerThemes),
+      Layer.provide(ProcessRunner.layer),
+      Layer.provide(layerNpmRegistry),
       Layer.provideMerge(Layer.mergeAll(PluginHooks.layer, PluginHttpRoutes.layer)),
     ),
   );
@@ -153,13 +217,36 @@ const writeInstalledPlugin = Effect.fn(function* (id: string, serverSource: stri
   return rootDir;
 });
 
-const manifestJson = (id: string, options: { readonly version?: string } = {}) =>
-  JSON.stringify({
-    id,
-    name: id,
-    version: options.version ?? "0.1.0",
-    engines: { t3: ">=0.1.0" },
-  });
+const manifestJson = (id: string) =>
+  JSON.stringify({ id, name: id, version: "0.1.0", engines: { t3: ">=0.1.0" } });
+
+const upgrade = PluginId.make("upgrade");
+/** Version `version` of the `upgrade` plugin in `folder`, whose `activate` runs `activate`. */
+const writeUpgradeVersion = Effect.fn(function* (
+  folder: string,
+  version: string,
+  options: {
+    readonly activate?: string;
+    readonly engines?: string;
+    readonly settingsSchema?: Schema.JsonObject;
+  } = {},
+) {
+  yield* writeFile(
+    `${folder}/t3-plugin.json`,
+    JSON.stringify({
+      id: upgrade,
+      name: "Upgrade",
+      version,
+      engines: { t3: options.engines ?? ">=0.1.0" },
+      server: "./server.cjs",
+      ...(options.settingsSchema === undefined ? {} : { settingsSchema: options.settingsSchema }),
+    }),
+  );
+  yield* writeFile(
+    `${folder}/server.cjs`,
+    `module.exports = { activate() { ${options.activate ?? ""} } };`,
+  );
+});
 
 const stateOf = (states: ReadonlyArray<PluginState>, id: string) =>
   states.find((state) => state.id === id);
@@ -584,55 +671,135 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
     }).pipe(Effect.provide(layerConfig())),
   );
 
-  it.effect("unlinks a plugin loaded from devPaths and leaves its folder", () =>
+  it.effect("links a folder in place, reloads its edits and keeps the folder when removed", () =>
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
       const { stateDir } = yield* ServerConfig.ServerConfig;
-      const inUse = `${stateDir}/checkout/linked`;
-      const shadow = `${stateDir}/checkout/linked-copy`;
-      yield* writeFile(`${inUse}/t3-plugin.json`, manifestJson("linked"));
-      yield* writeFile(`${shadow}/t3-plugin.json`, manifestJson("linked", { version: "0.2.0" }));
-      yield* writePluginsConfig({ enabled: { linked: true }, devPaths: [inUse, shadow] });
-      const readConfig = fs
-        .readFileString(`${stateDir}/plugins.json`)
-        .pipe(Effect.map((raw): Record<string, unknown> => JSON.parse(raw)));
+      const fs = yield* FileSystem.FileSystem;
+      const folder = `${stateDir}/checkout/in-place`;
+      const plugin = (version: string) =>
+        `module.exports = { activate(api) { api.rpc.register("which", () => "${version}", { access: "read" }); } };`;
+      yield* writeFile(
+        `${folder}/t3-plugin.json`,
+        JSON.stringify({
+          id: "in-place",
+          name: "In place",
+          version: "0.1.0",
+          engines: { t3: ">=0.1.0" },
+          server: "./server.cjs",
+        }),
+      );
+      yield* writeFile(`${folder}/server.cjs`, plugin("v1"));
+      const installedDir = yield* writeInstalledPlugin("installed-one", plugin("v1"));
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
         const installer = yield* PluginInstaller.PluginInstaller;
-        const linked = PluginId.make("linked");
-        yield* waitForStatuses(host, { linked: "active" });
-        const copies = () =>
-          host.list.pipe(
-            Effect.map((states) =>
-              states
-                .filter((state) => state.id === linked)
-                .map(({ linkedFolder, status }) => ({ linkedFolder, status })),
-            ),
-          );
-        assert.deepStrictEqual(yield* copies(), [
-          { linkedFolder: inUse, status: "active" },
-          { linkedFolder: shadow, status: "failed" },
-        ]);
-        // A dropped folder cannot replace a linked one, which is the author's own.
-        const refused = yield* installer
-          .installFiles([
-            { path: "t3-plugin.json", contents: new TextEncoder().encode(manifestJson("linked")) },
-          ])
+        const id = PluginId.make("in-place");
+        const which = host.invoke({
+          pluginId: id,
+          method: "which",
+          input: undefined,
+          scopes: operate,
+        });
+        assert.include(yield* installer.install({ type: "path", path: folder, link: true }), {
+          status: "active",
+          enabled: true,
+          source: "dev",
+          linkedFolder: folder,
+        });
+        assert.isFalse(yield* fs.exists(`${stateDir}/plugins/in-place`));
+        assert.strictEqual(yield* which, "v1");
+
+        yield* writeFile(`${folder}/server.cjs`, plugin("v2"));
+        yield* host.reload(id);
+        assert.strictEqual(yield* which, "v2");
+        const copy = yield* installer.install({ type: "path", path: folder }).pipe(Effect.flip);
+        assert.match(copy.message, /is linked from .+\. Unlink it first\./);
+        // A second copy of an installed plugin would share its id, so removing that copy would
+        // delete the installed one.
+        yield* waitForStatuses(host, { "installed-one": "disabled" });
+        const twice = yield* installer
+          .install({ type: "path", path: installedDir, link: true })
           .pipe(Effect.flip);
-        assert.include(refused.message, "Unlink it first.");
+        assert.strictEqual(twice.message, "installed-one is already installed. Remove it first.");
+        // Discovery would list it as installed too, so removing it would delete it.
+        const unlisted = yield* writeInstalledPlugin("unlisted", plugin("v1"));
+        const inside = yield* installer
+          .install({ type: "path", path: unlisted, link: true })
+          .pipe(Effect.flip);
+        assert.include(inside.message, "is already in the plugins folder");
+        yield* fs.remove(unlisted, { recursive: true });
 
-        // Unlinking the shadowed copy keeps the one in use running, and its data with it.
-        const keepsData = yield* installer.uninstall(linked, true, shadow).pipe(Effect.flip);
+        yield* installer.uninstall(id, false);
+        assert.isTrue(yield* fs.exists(`${folder}/server.cjs`));
+        // Forgotten, not only stopped: a rescan does not find it again.
+        assert.isUndefined(stateOf((yield* host.rescan).plugins, "in-place"));
+
+        // A copy put in the plugins folder by hand shadows the link. Unlinking leaves that copy
+        // running with its data, which shares the id.
+        const storage = yield* PluginStorage.PluginStorage;
+        yield* installer.install({ type: "path", path: folder, link: true });
+        yield* writeInstalledPlugin("in-place", plugin("installed"));
+        yield* host.reload(id);
+        yield* storage.set(id, "kept", true);
+        const keepsData = yield* installer.uninstall(id, true, folder).pipe(Effect.flip);
         assert.include(keepsData.message, "Unlink it without removing data.");
-        yield* installer.uninstall(linked, false, shadow);
-        assert.deepStrictEqual(yield* copies(), [{ linkedFolder: inUse, status: "active" }]);
-        assert.deepStrictEqual((yield* readConfig).devPaths, [inUse]);
+        yield* installer.uninstall(id, false, folder);
+        const copies = (yield* host.rescan).plugins.filter((state) => state.id === "in-place");
+        assert.deepStrictEqual(
+          copies.map((state) => state.source),
+          ["installed"],
+        );
+        assert.strictEqual(yield* which, "installed");
+        assert.deepStrictEqual(yield* storage.get(id, "kept"), Option.some(true));
+        assert.isTrue(yield* fs.exists(`${folder}/server.cjs`));
 
-        yield* installer.uninstall(linked, false);
-        assert.deepStrictEqual(yield* copies(), []);
-        assert.deepStrictEqual(yield* readConfig, { enabled: {}, devPaths: [] });
-        assert.isTrue(yield* fs.exists(`${inUse}/t3-plugin.json`));
-        assert.isTrue(yield* fs.exists(`${shadow}/t3-plugin.json`));
+        // The other way round: removing the installed copy lists the link afresh, turned off like
+        // any newly found copy, not stuck as the shadowed copy it was.
+        yield* installer.uninstall(id, false);
+        yield* installer.install({ type: "path", path: folder, link: true });
+        yield* writeInstalledPlugin("in-place", plugin("installed"));
+        yield* host.reload(id);
+        yield* installer.uninstall(id, false);
+        const left = (yield* host.list).filter((state) => state.id === "in-place");
+        assert.deepStrictEqual(
+          left.map((state) => [state.source, state.status, state.failure]),
+          [["dev", "disabled", undefined]],
+        );
+        yield* host.setEnabled(id, true);
+        assert.strictEqual(yield* which, "v2");
+
+        const notLinked = yield* installer
+          .uninstall(id, false, `${stateDir}/elsewhere`)
+          .pipe(Effect.flip);
+        assert.strictEqual(
+          notLinked.message,
+          `No copy of in-place is linked from ${stateDir}/elsewhere.`,
+        );
+
+        // Three copies in the plugins folder, which share a source: removing the one in use lists
+        // the next afresh, and the last one names that copy as the one used instead.
+        const threeCopies = PluginId.make("three-copies");
+        for (const name of ["three-copies", "three-copies-a", "three-copies-b"]) {
+          yield* writeFile(
+            `${stateDir}/plugins/${name}/t3-plugin.json`,
+            JSON.stringify({ id: threeCopies, name, version: "0.1.0", engines: { t3: ">=0.1.0" } }),
+          );
+        }
+        yield* host.rescan;
+        yield* installer.uninstall(threeCopies, false);
+        assert.deepStrictEqual(
+          (yield* host.list)
+            .filter((state) => state.id === threeCopies)
+            .map((state) => [state.name, state.status, state.failure?.message]),
+          [
+            ["three-copies-a", "disabled", undefined],
+            [
+              "three-copies-b",
+              "failed",
+              'Another copy of this plugin, in the "three-copies-a" folder, is used instead.',
+            ],
+          ],
+        );
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
@@ -1026,6 +1193,141 @@ module.exports = { activate(api) {
     }).pipe(Effect.provide(layerConfig())),
   );
 
+  it.effect(
+    "installs from a folder, keeps the old version when a reinstall fails, and uninstalls",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const broken = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-plugin-broken-" });
+        yield* writeFile(`${broken}/t3-plugin.json`, JSON.stringify({ id: "hello-plugin" }));
+        const notPlugin = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-plugin-none-" });
+        yield* writeFile(`${notPlugin}/notes.txt`, "Not a plugin.");
+        const copiedFrom: Array<string> = [];
+        const layerCopies = layerFileSystemWith((real) => ({
+          copy: (from, to, options) =>
+            Effect.sync(() => copiedFrom.push(from)).pipe(
+              Effect.andThen(real.copy(from, to, options)),
+            ),
+        }));
+        yield* Effect.gen(function* () {
+          const host = yield* PluginHost.PluginHost;
+          const installer = yield* PluginInstaller.PluginInstaller;
+          yield* waitForStatuses(host, {});
+
+          // A folder that is not a plugin, such as a home folder, is refused before it is copied.
+          const notInstalled = yield* installer
+            .install({ type: "path", path: notPlugin })
+            .pipe(Effect.flip);
+          assert.strictEqual(notInstalled.message, "The source has no t3-plugin.json.");
+          assert.notInclude(copiedFrom, notPlugin);
+
+          const source = { type: "path" as const, path: `${fixturesDir}hello-plugin` };
+          const installed = yield* installer.install(source);
+          assert.deepStrictEqual(installed.installSource, source);
+          const updated = yield* installer.update(hello);
+          assert.include(updated, { status: "active" });
+          assert.notStrictEqual(updated.revision, installed.revision);
+          // The same folder written another way is the same source.
+          assert.include(yield* installer.install({ ...source, path: `${source.path}/` }), {
+            status: "active",
+          });
+          assert.include(installed, {
+            id: hello,
+            status: "active",
+            enabled: true,
+            source: "installed",
+          });
+          assert.isTrue(yield* fs.exists(`${stateDir}/plugins/hello-plugin/server.cjs`));
+
+          const failed = yield* installer.install({ type: "path", path: broken }).pipe(Effect.flip);
+          assert.strictEqual(failed._tag, "PluginInstallError");
+          assert.include(stateOf(yield* host.list, hello), { status: "active" });
+          assert.isTrue(yield* fs.exists(`${stateDir}/plugins/hello-plugin/server.cjs`));
+
+          yield* installer.uninstall(hello, true);
+          assert.isUndefined(stateOf(yield* host.list, hello));
+          assert.isFalse(yield* fs.exists(`${stateDir}/plugins/hello-plugin`));
+
+          // A plugin linked into the plugins folder: removing it removes the link, not its source.
+          yield* fs.symlink(`${fixturesDir}hello-plugin`, `${stateDir}/plugins/hello-plugin`);
+          yield* host.reload(hello).pipe(Effect.ignore);
+          yield* installer.uninstall(hello, false);
+          assert.isFalse(yield* fs.exists(`${stateDir}/plugins/hello-plugin`));
+          assert.isTrue(yield* fs.exists(`${fixturesDir}hello-plugin/server.cjs`));
+
+          // A plugin copied by hand into the folder an install would use is not replaced.
+          yield* writeFile(
+            `${stateDir}/plugins/hello-plugin/t3-plugin.json`,
+            JSON.stringify({
+              id: "hand-copied",
+              name: "Hand copied",
+              version: "0.1.0",
+              engines: { t3: ">=0.1.0" },
+            }),
+          );
+          yield* host.rescan;
+          const occupied = yield* installer.install(source).pipe(Effect.flip);
+          assert.strictEqual(
+            occupied.message,
+            "The plugins folder already has a hello-plugin folder holding hand-copied. Move it, then install again.",
+          );
+          assert.include(stateOf(yield* host.list, "hand-copied"), { status: "disabled" });
+          yield* installer.uninstall(PluginId.make("hand-copied"), false);
+
+          npmLatest = "1.0.0";
+          const fromNpm = yield* installer.install({ type: "npm", name: "npm-hello" });
+          assert.include(fromNpm, { id: PluginId.make("npm-hello"), status: "active" });
+          assert.isUndefined(stateOf(yield* installer.checkUpdates, "npm-hello")?.availableUpdate);
+          const ranged = yield* installer
+            .install({ type: "npm", name: "npm-hello", version: "^1.0.0" })
+            .pipe(Effect.flip);
+          assert.match(ranged.message, /not an exact version\. Use one such as 1\.2\.3/);
+          npmLatest = "1.1.0";
+          assert.deepStrictEqual(
+            stateOf(yield* installer.checkUpdates, "npm-hello")?.availableUpdate,
+            {
+              version: "1.1.0",
+            },
+          );
+          // Another source claiming an installed id is refused before anything moves.
+          const impostor = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-plugin-impostor-" });
+          const impostorManifest = JSON.stringify({
+            id: "npm-hello",
+            name: "Impostor",
+            version: "9.0.0",
+            engines: { t3: ">=0.1.0" },
+          });
+          yield* writeFile(`${impostor}/t3-plugin.json`, impostorManifest);
+          const takeover = yield* installer
+            .install({ type: "path", path: impostor })
+            .pipe(Effect.flip);
+          assert.match(takeover.message, /already installed from somewhere else/);
+          const dropped = yield* installer
+            .installFiles([
+              { path: "t3-plugin.json", contents: new TextEncoder().encode(impostorManifest) },
+            ])
+            .pipe(Effect.flip);
+          assert.match(dropped.message, /already installed from somewhere else/);
+          // Updating a disabled plugin keeps it disabled.
+          yield* host.setEnabled(PluginId.make("npm-hello"), false);
+          const npmUpdated = yield* installer.update(PluginId.make("npm-hello"));
+          assert.include(npmUpdated, { enabled: false });
+          assert.isUndefined(npmUpdated.availableUpdate);
+          // So is the same package with a version pinned.
+          const pinned = { type: "npm" as const, name: "npm-hello", version: "1.0.0" };
+          assert.deepStrictEqual((yield* installer.install(pinned)).installSource, pinned);
+          const tampered = yield* installer
+            .install({ type: "npm", name: "npm-tampered" })
+            .pipe(Effect.flip);
+          assert.match(tampered.message, /integrity/);
+          assert.deepStrictEqual((yield* fs.readDirectory(`${stateDir}/plugins`)).toSorted(), [
+            "npm-hello",
+          ]);
+        }).pipe(Effect.provide(layerHost().pipe(Layer.provide(layerCopies))));
+      }).pipe(Effect.provide(layerConfig())),
+  );
+
   it.effect("installs a dropped folder and lists folders put in the plugins folder, off", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -1047,27 +1349,10 @@ module.exports = { activate(api) {
 
         const installed = yield* installer.installFiles(helloFiles);
         assert.include(installed, { id: hello, status: "active", enabled: true });
+        assert.isUndefined(installed.installSource);
         // The same folder dropped again replaces it.
         const replaced = yield* installer.installFiles(helloFiles);
         assert.notStrictEqual(replaced.revision, installed.revision);
-        // One that needs a newer T3 is refused, and the version in use keeps running.
-        const refused = yield* installer
-          .installFiles([
-            {
-              path: "t3-plugin.json",
-              contents: new TextEncoder().encode(
-                JSON.stringify({
-                  id: hello,
-                  name: "Hello",
-                  version: "9.0.0",
-                  engines: { t3: ">=999.0.0" },
-                }),
-              ),
-            },
-          ])
-          .pipe(Effect.flip);
-        assert.include(refused.message, "needs T3 Code >=999.0.0");
-        assert.include(stateOf(yield* host.list, hello), { status: "active" });
 
         // Copied in by hand under any name, a plugin is listed on the next rescan, turned off.
         yield* writeFile(`${stateDir}/plugins/My Notes/t3-plugin.json`, notesManifest("1.0.0"));
@@ -1092,6 +1377,70 @@ module.exports = { activate(api) {
     }).pipe(Effect.provide(layerConfig())),
   );
 
+  it.effect("puts the working version back when its update fails to start", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const folder = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-plugin-upgrade-" });
+      yield* writeUpgradeVersion(folder, "1.0.0");
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const installer = yield* PluginInstaller.PluginInstaller;
+        yield* waitForStatuses(host, {});
+        yield* installer.install({ type: "path", path: folder });
+        yield* writeUpgradeVersion(folder, "2.0.0", {
+          activate: `throw new Error("2.0.0 refuses to start");`,
+        });
+        const failed = yield* installer.update(upgrade).pipe(Effect.flip);
+        assert.strictEqual(
+          failed.message,
+          "Upgrade 2.0.0 failed to start, so 1.0.0 is back. It failed with: 2.0.0 refuses to start",
+        );
+        assert.include(stateOf(yield* host.list, upgrade), { version: "1.0.0", status: "active" });
+        assert.notInclude(
+          yield* fs.readFileString(`${stateDir}/plugins/upgrade/server.cjs`),
+          "refuses to start",
+        );
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("keeps the version an update replaced, so the user can roll back to it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const folder = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-plugin-upgrade-" });
+      const kept = `${stateDir}/plugin-rollback/upgrade`;
+      yield* writeUpgradeVersion(folder, "1.0.0");
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const installer = yield* PluginInstaller.PluginInstaller;
+        yield* waitForStatuses(host, {});
+        assert.isUndefined(
+          (yield* installer.install({ type: "path", path: folder })).rollbackVersion,
+        );
+        yield* writeUpgradeVersion(folder, "2.0.0");
+        assert.include(yield* installer.update(upgrade), {
+          version: "2.0.0",
+          rollbackVersion: "1.0.0",
+        });
+
+        const rolledBack = yield* installer.rollback(upgrade);
+        assert.include(rolledBack, { version: "1.0.0", status: "active" });
+        assert.isUndefined(rolledBack.rollbackVersion);
+        assert.isFalse(yield* fs.exists(kept));
+        const again = yield* installer.rollback(upgrade).pipe(Effect.flip);
+        assert.strictEqual(again.message, "upgrade has no earlier version to roll back to.");
+
+        // Removing the plugin removes the version it kept.
+        yield* installer.update(upgrade);
+        assert.isTrue(yield* fs.exists(kept));
+        yield* installer.uninstall(upgrade, false);
+        assert.isFalse(yield* fs.exists(kept));
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
   it.effect("keeps server folder paths from clients that cannot manage plugins", () =>
     Effect.gen(function* () {
       const linkedFolder = `${fixturesDir}broken-plugin`;
@@ -1100,6 +1449,8 @@ module.exports = { activate(api) {
         const host = yield* PluginHost.PluginHost;
         const installer = yield* PluginInstaller.PluginInstaller;
         yield* waitForStatuses(host, { [broken]: "disabled" });
+        const source = { type: "path" as const, path: `${fixturesDir}hello-plugin` };
+        yield* installer.install(source);
         const listed = (scopes: ReadonlyArray<AuthEnvironmentScope>) => {
           const handlers = makePluginRpcHandlers(host, installer, scopes);
           return Effect.all([
@@ -1115,9 +1466,11 @@ module.exports = { activate(api) {
 
         for (const plugin of yield* listed([AuthOrchestrationReadScope])) {
           assert.notProperty(plugin, "linkedFolder");
+          assert.notProperty(plugin, "installSource");
         }
         const managed = yield* listed([AuthOrchestrationReadScope, AuthSettingsWriteScope]);
         assert.include(stateOf(managed, broken), { linkedFolder });
+        assert.deepStrictEqual(stateOf(managed, hello)?.installSource, source);
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
@@ -1158,18 +1511,12 @@ module.exports = { activate(api) {
 
   it.effect("lists and deletes the data of plugins removed without it", () =>
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
       const host = yield* PluginHost.PluginHost;
       const installer = yield* PluginInstaller.PluginInstaller;
       const storage = yield* PluginStorage.PluginStorage;
       const settings = yield* PluginSettingsStore.PluginSettingsStore;
       yield* waitForStatuses(host, {});
-      const helloFiles = yield* Effect.forEach(["t3-plugin.json", "server.cjs"], (name) =>
-        fs
-          .readFile(`${fixturesDir}hello-plugin/${name}`)
-          .pipe(Effect.map((contents) => ({ path: name, contents }))),
-      );
-      yield* installer.installFiles(helloFiles);
+      yield* installer.install({ type: "path", path: `${fixturesDir}hello-plugin` });
       yield* host.updateSettings(hello, { greeting: "hey" });
       yield* storage.set(hello, "visits", 2);
       assert.deepStrictEqual(yield* installer.leftoverData, []);
@@ -1187,6 +1534,114 @@ module.exports = { activate(api) {
       assert.deepStrictEqual(yield* storage.list(hello), []);
       assert.deepStrictEqual(yield* settings.getForClient(hello, undefined), {});
     }).pipe(Effect.provide(layerHost().pipe(Layer.provide(layerConfig())))),
+  );
+
+  it.effect("deletes the secrets of settings fields a newer version no longer has", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const folder = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-plugin-upgrade-" });
+      const secret = { type: "string", format: "t3-secret" };
+      const withToken = {
+        type: "object",
+        properties: { token: secret, key: secret },
+      } satisfies Schema.JsonObject;
+      yield* writeUpgradeVersion(folder, "1.0.0", { settingsSchema: withToken });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const installer = yield* PluginInstaller.PluginInstaller;
+        const settings = yield* PluginSettingsStore.PluginSettingsStore;
+        yield* waitForStatuses(host, {});
+        yield* installer.install({ type: "path", path: folder });
+        yield* host.updateSettings(upgrade, { token: "old-token", key: "kept-key" });
+        yield* writeUpgradeVersion(folder, "2.0.0", {
+          settingsSchema: { type: "object", properties: { key: secret } },
+        });
+        yield* installer.update(upgrade);
+        // Read with the old schema, which still names both fields.
+        assert.deepStrictEqual(yield* settings.get(upgrade, withToken), { key: "kept-key" });
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("refuses an update that needs a newer T3 Code before stopping the version in use", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const folder = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-plugin-upgrade-" });
+      yield* writeUpgradeVersion(folder, "1.0.0");
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const installer = yield* PluginInstaller.PluginInstaller;
+        yield* waitForStatuses(host, {});
+        const installed = yield* installer.install({ type: "path", path: folder });
+        yield* writeUpgradeVersion(folder, "2.0.0", { engines: ">=999.0.0" });
+        const refused = yield* installer.update(upgrade).pipe(Effect.flip);
+        assert.strictEqual(
+          refused.message,
+          `Upgrade 2.0.0 needs T3 Code >=999.0.0, and this server is ${packageJson.version}.`,
+        );
+        const kept = stateOf(yield* host.list, upgrade);
+        assert.include(kept, { version: "1.0.0", status: "active" });
+        // Never stopped: the same start keeps running.
+        assert.strictEqual(kept?.revision, installed.revision);
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("does not offer an update that needs a newer T3 Code", () =>
+    Effect.gen(function* () {
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      yield* writeInstalledPlugin("npm-future", "module.exports = { activate() {} };");
+      yield* writeFile(
+        `${stateDir}/plugins.json`,
+        JSON.stringify({
+          sources: { "npm-future": { type: "npm", name: "npm-future" } },
+          installed: { "npm-future": "1.0.0" },
+        }),
+      );
+      npmLatest = "1.1.0";
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const installer = yield* PluginInstaller.PluginInstaller;
+        yield* waitForStatuses(host, { "npm-future": "disabled" });
+        assert.isUndefined(stateOf(yield* installer.checkUpdates, "npm-future")?.availableUpdate);
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("checks installed plugins for updates once a day, not at startup", () =>
+    Effect.gen(function* () {
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      yield* writeInstalledPlugin("npm-hello", "module.exports = { activate() {} };");
+      yield* writeFile(
+        `${stateDir}/plugins.json`,
+        JSON.stringify({
+          enabled: { "npm-hello": true },
+          sources: { "npm-hello": { type: "npm", name: "npm-hello" } },
+          installed: { "npm-hello": "1.0.0" },
+          updates: { checkedAt: 0, available: {} },
+        }),
+      );
+      npmLatest = "1.1.0";
+      npmMetadataRequests = 0;
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        yield* waitForStatuses(host, { "npm-hello": "active" });
+        assert.strictEqual(npmMetadataRequests, 0);
+
+        const found = yield* host.streamStates.pipe(
+          Stream.filter((states) => stateOf(states, "npm-hello")?.availableUpdate !== undefined),
+          Stream.runHead,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* TestClock.adjust("24 hours");
+        assert.deepStrictEqual(
+          stateOf(Option.getOrThrow(yield* Fiber.join(found)), "npm-hello")?.availableUpdate,
+          { version: "1.1.0" },
+        );
+        // Once for the latest version, once more to download it and read its engines.
+        assert.strictEqual(npmMetadataRequests, 2);
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
   );
 
   it.effect("restores a version an interrupted install left in staging", () =>
@@ -1503,4 +1958,40 @@ it.live("lists a project's git worktrees for a plugin", () =>
       );
     }).pipe(Effect.provide(layerHost(services)));
   }).pipe(Effect.provide(layerConfig()), Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("refuses git URLs that fetch code unencrypted", () =>
+  Effect.gen(function* () {
+    const installer = yield* PluginInstaller.PluginInstaller;
+    for (const [url, scheme] of [
+      ["http://127.0.0.1:1/plugin.git", "http"],
+      ["GIT://127.0.0.1:1/plugin.git", "git"],
+    ] as const) {
+      const failed = yield* installer.install({ type: "git", url }).pipe(Effect.flip);
+      assert.strictEqual(
+        failed.message,
+        `${scheme}:// URLs are not encrypted, so anyone on the network could change the plugin's code. Use an https or ssh URL.`,
+      );
+    }
+  }).pipe(
+    Effect.provide(
+      layerHost().pipe(Layer.provideMerge(layerConfig()), Layer.provideMerge(NodeServices.layer)),
+    ),
+  ),
+);
+
+it.live("keeps a git URL's credentials out of a failed install's reason", () =>
+  Effect.gen(function* () {
+    const installer = yield* PluginInstaller.PluginInstaller;
+    // Older git versions print `user:token@host` for a URL they cannot reach.
+    const failed = yield* installer
+      .install({ type: "git", url: "https://ash:secret-token@127.0.0.1:1/plugin.git" })
+      .pipe(Effect.flip);
+    assert.match(failed.message, /^git clone failed: /);
+    assert.notInclude(failed.message, "secret-token");
+  }).pipe(
+    Effect.provide(
+      layerHost().pipe(Layer.provideMerge(layerConfig()), Layer.provideMerge(NodeServices.layer)),
+    ),
+  ),
 );

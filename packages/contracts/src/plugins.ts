@@ -72,7 +72,7 @@ export const PluginManifest = Schema.Struct({
 });
 export type PluginManifest = typeof PluginManifest.Type;
 
-/** `dev` is a folder loaded where it is, one listed in `devPaths`. */
+/** `dev` is a folder loaded where it is: one in `devPaths` or installed with `link`. */
 export const PluginSource = Schema.Literals(["installed", "dev"]);
 export type PluginSource = typeof PluginSource.Type;
 
@@ -93,6 +93,27 @@ export const PluginFailure = Schema.Struct({
   message: Schema.String,
 });
 export type PluginFailure = typeof PluginFailure.Type;
+
+/** Where `plugins.install` gets a plugin: a folder on the server, a git repository or npm. */
+export const PluginInstallSource = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("path"),
+    path: TrimmedNonEmptyString,
+    /** Loads the folder where it is instead of copying it; removing the plugin only unlinks it. */
+    link: Schema.optionalKey(Schema.Boolean),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("git"),
+    url: TrimmedNonEmptyString,
+    ref: Schema.optionalKey(TrimmedNonEmptyString),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("npm"),
+    name: TrimmedNonEmptyString.check(Schema.isMaxLength(214)),
+    version: Schema.optionalKey(TrimmedNonEmptyString),
+  }),
+]);
+export type PluginInstallSource = typeof PluginInstallSource.Type;
 
 /** What the server knows about one discovered plugin, including ones whose manifest failed. */
 export const PluginState = Schema.Struct({
@@ -122,6 +143,12 @@ export const PluginState = Schema.Struct({
   ),
   /** The folder a `dev` plugin loads from, as plugins.json lists it. */
   linkedFolder: Schema.optionalKey(Schema.String),
+  /** Where it was installed from, when installed through `plugins.install`; updates reuse it. */
+  installSource: Schema.optionalKey(PluginInstallSource),
+  /** A newer npm version or git commit at its install source, found by the last update check. */
+  availableUpdate: Schema.optionalKey(Schema.Struct({ version: Schema.String })),
+  /** The version its last update replaced, which `plugins.rollback` puts back. */
+  rollbackVersion: Schema.optionalKey(Schema.String),
   hasServer: Schema.Boolean,
   hasWeb: Schema.Boolean,
   /** Why its server code failed outside a call since it last started, such as in a timer. */
@@ -183,6 +210,9 @@ export const PluginReloadInput = Schema.Struct({
 });
 export type PluginReloadInput = typeof PluginReloadInput.Type;
 
+export const PluginInstallInput = Schema.Struct({ source: PluginInstallSource });
+export type PluginInstallInput = typeof PluginInstallInput.Type;
+
 /** Limits on a folder sent with `plugins.installFiles`, which travels as one message. */
 export const PLUGIN_UPLOAD_MAX_FILES = 1_000;
 export const PLUGIN_UPLOAD_MAX_BYTES = 25 * 1024 * 1024;
@@ -211,6 +241,15 @@ export type PluginInstallFilesInput = typeof PluginInstallFilesInput.Type;
 
 export const PluginRescanInput = Schema.Struct({});
 export type PluginRescanInput = typeof PluginRescanInput.Type;
+
+export const PluginUpdateInput = Schema.Struct({ pluginId: PluginId });
+export type PluginUpdateInput = typeof PluginUpdateInput.Type;
+
+export const PluginRollbackInput = Schema.Struct({ pluginId: PluginId });
+export type PluginRollbackInput = typeof PluginRollbackInput.Type;
+
+export const PluginCheckUpdatesInput = Schema.Struct({});
+export type PluginCheckUpdatesInput = typeof PluginCheckUpdatesInput.Type;
 
 export const PluginUninstallInput = Schema.Struct({
   pluginId: PluginId,
@@ -250,7 +289,10 @@ export const PluginLeftoverDataResult = Schema.Struct({
 });
 export type PluginLeftoverDataResult = typeof PluginLeftoverDataResult.Type;
 
-/** Result of `plugins.setEnabled`, `plugins.reload` and `plugins.installFiles`. */
+/**
+ * Result of `plugins.setEnabled`, `plugins.reload`, `plugins.install`, `plugins.update` and
+ * `plugins.rollback`.
+ */
 export const PluginMutationResult = Schema.Struct({
   plugin: PluginState,
 });

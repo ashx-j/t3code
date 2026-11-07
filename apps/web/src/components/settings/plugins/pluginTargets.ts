@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId, PluginState } from "@t3tools/contracts";
+import type { EnvironmentId, PluginInstallSource, PluginState } from "@t3tools/contracts";
 
 import { chosenPluginUiEnvironmentAtom } from "../../../plugins/pluginFollow";
 import { type EnvironmentPresentation, usePrimaryEnvironmentId } from "../../../state/environments";
@@ -13,6 +13,13 @@ export interface PluginTarget {
 export interface PluginCopy extends PluginTarget {
   readonly plugin: PluginState;
 }
+
+/** A git commit is shown short, an npm version as it is. */
+export const updateLabel = (version: string) =>
+  /^[0-9a-f]{40,64}$/.test(version) ? version.slice(0, 7) : version;
+
+export const installSourceLabel = (source: PluginInstallSource) =>
+  source.type === "path" ? source.path : source.type === "git" ? source.url : `npm ${source.name}`;
 
 export const runsPlugins = (environment: EnvironmentPresentation) =>
   environment.connection.phase === "connected" &&

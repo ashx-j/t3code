@@ -378,6 +378,7 @@ import {
 import {
   PluginError,
   PluginInstallFilesInput,
+  PluginInstallInput,
   PluginInvokeInput,
   PluginInvokeResult,
   PluginUninstallInput,
@@ -385,7 +386,10 @@ import {
   PluginListLeftoverDataInput,
   PluginDeleteLeftoverDataInput,
   PluginLeftoverDataResult,
+  PluginUpdateInput,
+  PluginRollbackInput,
   PluginListInput,
+  PluginCheckUpdatesInput,
   PluginListResult,
   PluginRescanInput,
   PluginMutationResult,
@@ -575,11 +579,15 @@ export const WS_METHODS = {
   pluginsSubscribeStates: "plugins.subscribeStates",
   pluginsSetEnabled: "plugins.setEnabled",
   pluginsReload: "plugins.reload",
+  pluginsInstall: "plugins.install",
   pluginsInstallFiles: "plugins.installFiles",
   pluginsRescan: "plugins.rescan",
   pluginsUninstall: "plugins.uninstall",
   pluginsListLeftoverData: "plugins.listLeftoverData",
   pluginsDeleteLeftoverData: "plugins.deleteLeftoverData",
+  pluginsUpdate: "plugins.update",
+  pluginsRollback: "plugins.rollback",
+  pluginsCheckUpdates: "plugins.checkUpdates",
   pluginsSettingsGet: "plugins.settings.get",
   pluginsSettingsUpdate: "plugins.settings.update",
   pluginsInvoke: "plugins.invoke",
@@ -2015,6 +2023,12 @@ const WsPluginsReloadRpc = Rpc.make(WS_METHODS.pluginsReload, {
   error: PluginRpcError,
 });
 
+const WsPluginsInstallRpc = Rpc.make(WS_METHODS.pluginsInstall, {
+  payload: PluginInstallInput,
+  success: PluginMutationResult,
+  error: PluginRpcError,
+});
+
 /** Installs a plugin folder dropped into a client, sent as its files. */
 const WsPluginsInstallFilesRpc = Rpc.make(WS_METHODS.pluginsInstallFiles, {
   payload: PluginInstallFilesInput,
@@ -2025,6 +2039,26 @@ const WsPluginsInstallFilesRpc = Rpc.make(WS_METHODS.pluginsInstallFiles, {
 /** Looks at the plugins folder again, so plugin folders put there since are listed. */
 const WsPluginsRescanRpc = Rpc.make(WS_METHODS.pluginsRescan, {
   payload: PluginRescanInput,
+  success: PluginListResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsUpdateRpc = Rpc.make(WS_METHODS.pluginsUpdate, {
+  payload: PluginUpdateInput,
+  success: PluginMutationResult,
+  error: PluginRpcError,
+});
+
+/** Puts back the version a plugin's last update replaced. */
+const WsPluginsRollbackRpc = Rpc.make(WS_METHODS.pluginsRollback, {
+  payload: PluginRollbackInput,
+  success: PluginMutationResult,
+  error: PluginRpcError,
+});
+
+/** Checks every plugin installed from git or npm for a newer version now. */
+const WsPluginsCheckUpdatesRpc = Rpc.make(WS_METHODS.pluginsCheckUpdates, {
+  payload: PluginCheckUpdatesInput,
   success: PluginListResult,
   error: PluginRpcError,
 });
@@ -2162,11 +2196,15 @@ export const WsRpcGroup = RpcGroup.make(
   WsPluginsSubscribeStatesRpc,
   WsPluginsSetEnabledRpc,
   WsPluginsReloadRpc,
+  WsPluginsInstallRpc,
   WsPluginsInstallFilesRpc,
   WsPluginsRescanRpc,
   WsPluginsUninstallRpc,
   WsPluginsListLeftoverDataRpc,
   WsPluginsDeleteLeftoverDataRpc,
+  WsPluginsUpdateRpc,
+  WsPluginsRollbackRpc,
+  WsPluginsCheckUpdatesRpc,
   WsPluginsSettingsGetRpc,
   WsPluginsSettingsUpdateRpc,
   WsPluginsInvokeRpc,

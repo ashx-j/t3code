@@ -1,10 +1,12 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { PluginId } from "@t3tools/contracts";
+import { PluginId, type PluginState } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { HttpClient } from "effect/http";
 
 import * as ServerConfig from "../config.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import type { DiscoveredPlugin } from "./pluginDiscovery.ts";
 import { PluginNotFoundError } from "./PluginHost.ts";
 import * as PluginInstaller from "./PluginInstaller.ts";
@@ -47,8 +49,11 @@ const harness = Effect.fn(function* () {
     stop: () => Effect.void,
     forget: () => Effect.void,
     reload: (pluginId) => Effect.fail(new PluginNotFoundError({ pluginId })),
+    state: (pluginId) => Effect.fail(new PluginNotFoundError({ pluginId })),
+    states: Effect.succeed<ReadonlyArray<PluginState>>([]),
     config: Effect.succeed({}),
     writeConfig: () => Effect.void,
+    publish: Effect.void,
   };
   const { installer } = yield* PluginInstaller.make(host).pipe(
     Effect.provide(
@@ -59,6 +64,11 @@ const harness = Effect.fn(function* () {
         Layer.mock(PluginStorage.PluginStorage)({
           clear: () => Effect.sync(() => cleared.push({ what: "storage", locked })),
         }),
+        Layer.mock(ProcessRunner.ProcessRunner)({}),
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("This test reaches no network.")),
+        ),
         ServerConfig.layerTest(process.cwd(), { prefix: "t3code-plugin-installer-test-" }),
       ),
     ),

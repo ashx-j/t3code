@@ -479,9 +479,14 @@ export interface UpdateEverythingResult {
   readonly localVersion: string | null;
   readonly updatedServers: number;
   readonly updatedProviders: number;
+  readonly updatedPlugins: number;
   readonly failures: ReadonlyArray<string>;
   readonly restarting: ReadonlyArray<string>;
 }
+
+type UpdateStepOutcome =
+  | { readonly status: "interrupted" | "updated" }
+  | { readonly status: "failed"; readonly line: string };
 
 export function collectUpdateEverythingResult(input: {
   readonly localVersion: string | null;
@@ -490,22 +495,24 @@ export function collectUpdateEverythingResult(input: {
     readonly label: string;
     readonly outcome: ServerUpdateOutcome;
   }>;
-  readonly providers: ReadonlyArray<
-    | { readonly status: "interrupted" | "updated" }
-    | { readonly status: "failed"; readonly line: string }
-  >;
+  readonly providers: ReadonlyArray<UpdateStepOutcome>;
+  readonly plugins: ReadonlyArray<UpdateStepOutcome>;
 }): UpdateEverythingResult {
+  const failed = (outcomes: ReadonlyArray<UpdateStepOutcome>) =>
+    outcomes.flatMap((outcome) => (outcome.status === "failed" ? [outcome.line] : []));
   return {
     localVersion: input.localVersion,
     updatedServers: input.servers.filter(({ outcome }) => outcome.status === "updated").length,
     updatedProviders: input.providers.filter((outcome) => outcome.status === "updated").length,
+    updatedPlugins: input.plugins.filter((outcome) => outcome.status === "updated").length,
     restarting: [],
     failures: [
       ...input.localFailures.map((failure) => `This app: ${failure}`),
       ...input.servers.flatMap(({ label, outcome }) =>
         outcome.status === "failed" ? [`${label}: ${outcome.message}`] : [],
       ),
-      ...input.providers.flatMap((outcome) => (outcome.status === "failed" ? [outcome.line] : [])),
+      ...failed(input.providers),
+      ...failed(input.plugins),
     ],
   };
 }
@@ -522,6 +529,7 @@ export function getUpdateEverythingToastView(
     result.localVersion !== null && result.localVersion === appVersion ? "this app" : null,
     countLabel(result.updatedServers, "server"),
     countLabel(result.updatedProviders, "provider"),
+    countLabel(result.updatedPlugins, "plugin"),
   ].filter((part) => part !== null);
   const restarting =
     result.restarting.length === 0
@@ -559,6 +567,11 @@ export interface UpdateEverythingPlan {
     readonly label: string;
     readonly providers: ReadonlyArray<string>;
   }>;
+  readonly pluginMachines: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly label: string;
+    readonly plugins: ReadonlyArray<string>;
+  }>;
   readonly skipped: ReadonlyArray<SkippedMachine>;
 }
 
@@ -568,6 +581,7 @@ export interface UpdateEverythingRow {
   readonly app: "this-app" | "server" | "desktop-app" | null;
   readonly skipped: string | null;
   readonly providers: ReadonlyArray<string>;
+  readonly plugins: ReadonlyArray<string>;
 }
 
 function countLabel(count: number, noun: string): string | null {
@@ -579,15 +593,23 @@ function joinList(parts: ReadonlyArray<string>): string {
   return `${parts.slice(0, -1).join(", ")}, and ${parts.at(-1)}`;
 }
 
-/** One row per machine: this app's machines first, then servers, provider-only, and skipped. */
+/**
+ * One row per machine: this app's machines first, then servers, provider or plugin only, and
+ * skipped.
+ */
 export function describeUpdateEverything(plan: UpdateEverythingPlan): {
   readonly summary: string;
   readonly version: string | null;
   readonly providerCount: number;
+  readonly pluginCount: number;
   readonly rows: ReadonlyArray<UpdateEverythingRow>;
 } {
   const providerCount = plan.providerMachines.reduce(
     (count, machine) => count + machine.providers.length,
+    0,
+  );
+  const pluginCount = plan.pluginMachines.reduce(
+    (count, machine) => count + machine.plugins.length,
     0,
   );
   const summary = `Update ${joinList(
@@ -595,6 +617,7 @@ export function describeUpdateEverything(plan: UpdateEverythingPlan): {
       plan.localVersion ? "this app" : null,
       countLabel(plan.servers.length, "server"),
       countLabel(providerCount, "provider"),
+      countLabel(pluginCount, "plugin"),
     ].filter((part) => part !== null),
   )}`;
 
@@ -610,6 +633,7 @@ export function describeUpdateEverything(plan: UpdateEverythingPlan): {
       app: null,
       skipped: null,
       providers: [],
+      plugins: [],
     };
     rows.set(environmentId, { ...row, ...change });
   };
@@ -627,6 +651,9 @@ export function describeUpdateEverything(plan: UpdateEverythingPlan): {
   for (const machine of plan.providerMachines) {
     update(machine.environmentId, machine.label, { providers: machine.providers });
   }
+  for (const machine of plan.pluginMachines) {
+    update(machine.environmentId, machine.label, { plugins: machine.plugins });
+  }
   for (const machine of plan.skipped) {
     update(machine.environmentId, machine.label, { skipped: machine.reason });
   }
@@ -638,6 +665,7 @@ export function describeUpdateEverything(plan: UpdateEverythingPlan): {
       plan.servers.find((server) => server.selfUpdate !== "desktop-managed")?.targetVersion ??
       null,
     providerCount,
+    pluginCount,
     rows: Array.from(rows.values()),
   };
 }

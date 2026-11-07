@@ -32,7 +32,8 @@ and need no build. `hello-web` uses most of the web API.
   characters. It names the plugin's folder, its HTTP routes (`/api/plugins/<id>/…`) and its
   keybinding commands (`plugin.<id>.<command>`).
 - `engines.t3` is a version range made of `^`, `>=`, `>`, `<=`, `<`, `=` and `||`, such as
-  `>=0.1.6`. A server outside it refuses to install the plugin or start it, and says why.
+  `>=0.1.6`. A server outside it refuses to install the plugin, update to it or start it, and says
+  why.
 - `permissions` is an optional list of what the plugin says it uses. Settings → Plugins shows it on
   the plugin's row, and T3 Code doesn't enforce it.
 - `server` must be CommonJS ending in `.cjs`. `web` is a single-file ES module.
@@ -124,7 +125,8 @@ each step to resume:
   `afterRunCompleted` with the status `interrupted`.
 - Set `engines.t3` to the first T3 version that has every call you use, instead of checking
   `api.server.version`. An older T3 refuses to install or start the plugin and says why, where it
-  would otherwise ignore a field it doesn't know, such as `idempotencyKey`.
+  would otherwise ignore a field it doesn't know, such as `idempotencyKey`. It also doesn't offer or
+  install an update that needs a newer T3.
 
 ## Web half
 
@@ -214,8 +216,8 @@ parts of your design to survive that. Build each part on the most stable thing T
   changes, and list it in the plugin's README with the seam that would replace it.
 - **Leave T3's frame to T3.** The title bar row, the room for the window buttons on Windows and
   Linux, drag areas, phone safe areas and breakpoints are T3's, so don't resize or pad them.
-- **Ship what the plugin runs.** Adding a folder leaves out `.git` and `node_modules`, so build
-  everything into the files the manifest names.
+- **Ship what the plugin runs.** Adding a folder leaves out `.git` and `node_modules`, and npm
+  installs don't install dependencies, so build everything into the files the manifest names.
 - **Ask for a seam.** When T3 doesn't hand over what you need, ask for a region or token on the
   T3 Code repository instead of reaching into its markup.
 
@@ -225,5 +227,5 @@ Add the plugin's folder to `devPaths` in `plugins.json` in the T3 Code data dire
 plugin on in Settings → Plugins, and use **Reload** after each change. It loads from that folder,
 so nothing is copied.
 
-To install a finished plugin, drag its folder onto Settings → Plugins, or use **Add plugin** to
-choose it.
+To install a finished plugin, drag its folder onto Settings → Plugins, or use **Add plugin** with a
+folder, a git repository or an npm package.

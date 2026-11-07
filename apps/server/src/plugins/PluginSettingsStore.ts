@@ -107,6 +107,11 @@ export class PluginSettingsStore extends Context.Service<
       pluginId: PluginId,
       settingsSchema: Schema.JsonObject | undefined,
     ) => Effect.Effect<void, PluginSettingsPersistenceError>;
+    /** Deletes the plugin's secrets for fields `settingsSchema` no longer marks as secrets. */
+    readonly dropRemovedSecrets: (
+      pluginId: PluginId,
+      settingsSchema: Schema.JsonObject | undefined,
+    ) => Effect.Effect<void, PluginSettingsPersistenceError>;
     /** The plugins that have saved settings, installed or not. */
     readonly pluginIds: Effect.Effect<ReadonlyArray<PluginId>>;
   }
@@ -396,7 +401,7 @@ const make = Effect.gen(function* () {
 
   // Every secret stored for the plugin, also those of fields it has since renamed. A longer id can
   // share the prefix (`foo-bar` for `foo`), and every id with secrets has a settings folder, so
-  // those are left out. Inside `clear`, which has its span.
+  // those are left out. Inside `clear` and `dropRemovedSecrets`, which have their spans.
   const storedSecretNames = Effect.fnUntraced(function* (pluginId: PluginId) {
     if (secretStore.directory === undefined) return new Set<string>();
     const prefix = `plugin-${pluginId}-`;
@@ -453,12 +458,29 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const dropRemovedSecrets: PluginSettingsStore["Service"]["dropRemovedSecrets"] = Effect.fn(
+    "PluginSettingsStore.dropRemovedSecrets",
+  )(function* (pluginId, settingsSchema) {
+    const kept = secretNamesOf(pluginId, settingsSchema);
+    yield* writeSemaphore.withPermits(1)(
+      storedSecretNames(pluginId).pipe(
+        Effect.flatMap((stored) =>
+          removeSecrets(
+            pluginId,
+            [...stored].filter((name) => !kept.has(name)),
+          ),
+        ),
+      ),
+    );
+  });
+
   return PluginSettingsStore.of({
     get,
     getForClient,
     update,
     changes,
     clear,
+    dropRemovedSecrets,
     pluginIds,
   });
 });
