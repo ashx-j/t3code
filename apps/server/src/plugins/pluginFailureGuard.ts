@@ -48,6 +48,7 @@ export const makePluginFailureGuard = (
 
   const onException: NodeJS.UncaughtExceptionListener = (error, origin) => {
     const pluginId = pluginOf(error);
+    // Node calls resuming after an uncaught exception unsafe; accepted for trusted plugin code.
     if (pluginId !== undefined) return onPluginFailure(pluginId, error);
     if (held !== undefined && held.exceptions.length > 0) {
       for (const listener of held.exceptions) listener(error, origin);
