@@ -1,6 +1,8 @@
+import { useAtomValue } from "@effect/atom-react";
+import * as Atom from "@t3tools/plugin-sdk/atom";
 import { Button, Input } from "@t3tools/plugin-sdk/ui";
 import { defineWebPlugin } from "@t3tools/plugin-sdk/web";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import type { Note, QuickNotesRpc } from "./rpc.ts";
 
@@ -24,14 +26,13 @@ export default defineWebPlugin<QuickNotesRpc>({
         description: error instanceof Error ? error.message : String(error),
       });
 
-    function useNotes() {
-      const [notes, setNotes] = useState<ReadonlyArray<Note>>([]);
-      useEffect(() => {
-        void api.rpc.invoke("list").then(setNotes);
-        return api.rpc.subscribe("notes", setNotes);
-      }, []);
-      return notes;
-    }
+    // One list for the sidebar and the page, following the server's channel while either shows.
+    const notesAtom = Atom.make((get): ReadonlyArray<Note> => {
+      void api.rpc.invoke("list").then((notes) => get.setSelf(notes));
+      get.addFinalizer(api.rpc.subscribe("notes", (notes) => get.setSelf(notes)));
+      return [];
+    });
+    const useNotes = () => useAtomValue(notesAtom);
 
     // Every note is also an `@` item that puts the note into the message.
     const offerNotes = (notes: ReadonlyArray<Note>) =>

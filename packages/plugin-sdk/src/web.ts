@@ -380,6 +380,19 @@ export const HOST_ATOM_REACT_EXPORTS = [
   "useAtomValue",
 ] as const;
 
+/** `Atom` functions T3 shares with web plugins through `@t3tools/plugin-sdk/atom`. */
+export const HOST_ATOM_EXPORTS = [
+  "family",
+  "keepAlive",
+  "make",
+  "map",
+  "readable",
+  "setIdleTTL",
+  "transform",
+  "withLabel",
+  "writable",
+] as const;
+
 /** Components T3 shares with web plugins through `@t3tools/plugin-sdk/ui`. */
 export const HOST_UI_EXPORTS = [
   "Badge",

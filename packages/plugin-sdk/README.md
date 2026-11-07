@@ -177,8 +177,8 @@ back to their layout from before T3's redesign.
 [`examples/message-extras`](./examples/message-extras) adds a word count under assistant messages,
 redraws expanded commands and sums up diffs.
 
-Build it with the Vite preset, which makes the bundle use T3 Code's own React, atom hooks and UI
-components instead of shipping copies:
+Build it with the Vite preset, which makes the bundle use T3 Code's own React, atoms, atom hooks and
+UI components instead of shipping copies:
 
 ```ts
 // vite.config.ts
@@ -188,8 +188,14 @@ import { defineConfig } from "vite";
 export default defineConfig({ plugins: [t3PluginWeb({ entry: "web.tsx", outDir: "dist" })] });
 ```
 
-Point the manifest's `web` at `dist/web.js`. Only the hooks listed in `HOST_ATOM_REACT_EXPORTS` and
-the components in `@t3tools/plugin-sdk/ui` are shared.
+Point the manifest's `web` at `dist/web.js`. Only the hooks listed in `HOST_ATOM_REACT_EXPORTS`, the
+`Atom` functions in `@t3tools/plugin-sdk/atom` and the components in `@t3tools/plugin-sdk/ui` are
+shared.
+
+Make atoms with `import * as Atom from "@t3tools/plugin-sdk/atom"`, not with `Atom` from `effect`,
+which would bundle a second copy of effect. Build them from values and functions. An atom that runs
+an Effect or a Stream would use your copy of effect inside T3's.
+[`examples/quick-notes`](./examples/quick-notes) keeps its notes in an atom.
 
 ## Keeping a plugin working across T3 updates
 

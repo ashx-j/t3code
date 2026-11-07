@@ -11,14 +11,16 @@ import type { PreparedHttpAuthorization } from "@t3tools/client-runtime/connecti
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { ThreadId, type EnvironmentId, type PluginState } from "@t3tools/contracts";
+import type * as SdkAtom from "@t3tools/plugin-sdk/atom";
 import {
+  type HOST_ATOM_EXPORTS,
   type HOST_ATOM_REACT_EXPORTS,
   type HOST_UI_EXPORTS,
   type WebPluginAction,
   type WebPluginApi,
   type WebPluginDefinition,
 } from "@t3tools/plugin-sdk/web";
-import { AsyncResult } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import * as React from "react";
 import * as ReactDOM from "react-dom";
 import * as jsxRuntime from "react/jsx-runtime";
@@ -80,8 +82,8 @@ const BUILT_IN_LANGUAGES = new Set(["mermaid", "math"]);
 
 /**
  * Bundles import React and the UI kit from here instead of shipping their own copies; the SDK's
- * Vite preset rewrites those imports to this object. `atomReact` lists only hooks the app already
- * bundles, because a namespace import would keep every export in the startup chunk.
+ * Vite preset rewrites those imports to this object. `atomReact` and `atom` list only what the app
+ * already bundles, because a namespace import would keep every export in the startup chunk.
  */
 const installHostModules = () =>
   Reflect.set(globalThis, "__t3PluginHost", {
@@ -96,6 +98,18 @@ const installHostModules = () =>
       useAtomSubscribe,
       useAtomValue,
     } satisfies Record<(typeof HOST_ATOM_REACT_EXPORTS)[number], unknown>,
+    // The SDK declares these with T3's own types, so a plugin's atoms type as T3's.
+    atom: {
+      family: Atom.family,
+      keepAlive: Atom.keepAlive,
+      make: Atom.make,
+      map: Atom.map,
+      readable: Atom.readable,
+      setIdleTTL: Atom.setIdleTTL,
+      transform: Atom.transform,
+      withLabel: Atom.withLabel,
+      writable: Atom.writable,
+    } satisfies { readonly [Name in (typeof HOST_ATOM_EXPORTS)[number]]: (typeof SdkAtom)[Name] },
     ui: {
       Badge,
       Button,

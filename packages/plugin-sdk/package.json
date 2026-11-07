@@ -15,6 +15,10 @@
       "types": "./src/web.ts",
       "import": "./src/web.ts"
     },
+    "./atom": {
+      "types": "./src/atom.ts",
+      "import": "./src/atom.ts"
+    },
     "./shared": {
       "types": "./src/shared.ts",
       "import": "./src/shared.ts"
@@ -33,6 +37,7 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@effect/atom-react": "catalog:",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/source-control-core": "workspace:*",
     "@types/node": "catalog:",

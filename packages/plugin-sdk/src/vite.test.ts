@@ -27,7 +27,8 @@ describe("t3PluginWeb", () => {
     const [chunk] = chunks;
     expect(chunk?.moduleIds.filter((id) => id.includes("node_modules"))).toEqual([]);
     expect(chunk?.code).not.toMatch(/^import /m);
-    for (const key of ["react", "jsxRuntime", "ui"]) {
+    // The example's atoms and hooks come from T3, not a bundled copy of effect.
+    for (const key of ["react", "jsxRuntime", "ui", "atom", "atomReact"]) {
       expect(chunk?.code).toContain(`globalThis.__t3PluginHost.${key}`);
     }
   });

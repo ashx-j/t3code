@@ -1,6 +1,6 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, PluginId, ThreadId, type PluginState } from "@t3tools/contracts";
-import { AsyncResult } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import helloWebSource from "../../../../packages/plugin-sdk/fixtures/hello-web/web.js?raw";
@@ -138,6 +138,8 @@ describe("startPluginLoader", () => {
       "http://plugins.test/api/plugins/hello-web/web.js?v=0.1.0",
     );
     expect(fetchSpy.mock.calls[1]?.[1]).toEqual({ headers: { authorization: "Bearer token" } });
+    // A plugin's atoms come from the app's own copy of effect, so the app's registry runs them.
+    expect(Reflect.get(globalThis, "__t3PluginHost")).toMatchObject({ atom: { make: Atom.make } });
 
     const [command] = appAtomRegistry.get(pluginCommandsAtom(environmentId));
     expect(command?.command).toBe("plugin.hello-web.open-settings");
