@@ -82,6 +82,10 @@ export const newCommandId = (pluginId: string, crypto: Crypto.Crypto) =>
     Effect.map((id) => CommandId.make(`${PLUGIN_COMMAND_PREFIX}${pluginId}:${id}`)),
   );
 
+/** The id every call of `operation` with `key` gets, so the command receipt dedupes a repeat. */
+export const keyedCommandId = (pluginId: string, operation: string, key: string) =>
+  CommandId.make(`${PLUGIN_COMMAND_PREFIX}${pluginId}:${operation}:${encodeURIComponent(key)}`);
+
 export const isPluginCommand = (commandId: CommandId) =>
   commandId.startsWith(PLUGIN_COMMAND_PREFIX);
 

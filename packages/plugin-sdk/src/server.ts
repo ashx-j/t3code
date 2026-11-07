@@ -368,6 +368,11 @@ export interface PluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
       readonly threadId: string;
       readonly text: string;
       readonly mode?: "auto" | "queue" | "steer";
+      /**
+       * Once a send with this key is accepted, sending with it again, also after a restart, sends
+       * nothing and resolves, even if `text` changed. Up to 256 characters, apart from `create`'s.
+       */
+      readonly idempotencyKey?: string;
     }) => Promise<void>;
     /**
      * Shows a note in the thread, after its latest finished run, starting with the plugin's name.
@@ -407,6 +412,12 @@ export interface PluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
         | { readonly type: "root"; readonly branch?: string }
         | { readonly type: "worktree"; readonly baseRef: string; readonly branch?: string }
         | { readonly type: "existing_worktree"; readonly worktreePath: string };
+      /**
+       * Once a create with this key is accepted, creating with it again, also after a restart,
+       * starts no new thread or turn and resolves with the same `threadId`, even if other fields
+       * changed. Up to 256 characters.
+       */
+      readonly idempotencyKey?: string;
     }) => Promise<{ readonly threadId: string }>;
     readonly archive: (threadId: string) => Promise<void>;
     readonly unarchive: (threadId: string) => Promise<void>;

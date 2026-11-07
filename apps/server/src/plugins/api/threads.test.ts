@@ -38,10 +38,21 @@ const project: Project = {
   deletedAt: null,
 };
 
-/** The threads and projects APIs of a plugin named Workbench, over services that record calls. */
-const workbench = Effect.fn(function* (providers: ReadonlyArray<ServerProvider> = []) {
+/**
+ * The threads and projects APIs of a plugin named Workbench, over services that record calls.
+ * `receipts` stands in for the command receipt store, which outlives a restart: a launch or send
+ * whose command id it holds starts nothing, as the orchestrator replays it.
+ */
+const workbench = Effect.fn(function* (
+  options: {
+    readonly providers?: ReadonlyArray<ServerProvider>;
+    readonly receipts?: Set<string>;
+  } = {},
+) {
+  const receipts = options.receipts ?? new Set<string>();
   const dispatched: Array<OrchestrationV2ServerCommand> = [];
   const launched: Array<ThreadLaunchService.ThreadLaunchInput> = [];
+  const sent: Array<ThreadManagementService.ThreadManagementSendInput> = [];
   const projectUpdates: Array<unknown> = [];
   const facade = makeFacadeContext({
     pluginId: PluginId.make("workbench"),
@@ -75,13 +86,20 @@ const workbench = Effect.fn(function* (providers: ReadonlyArray<ServerProvider> 
             dispatched.push(command);
             return { sequence: 1, storedEvents: [] } as never;
           }),
+        sendToThread: (input) =>
+          Effect.sync(() => {
+            if (!receipts.has(input.commandId)) sent.push(input);
+            receipts.add(input.commandId);
+            return {} as never;
+          }),
       } as Partial<
         ThreadManagementService.ThreadManagementService["Service"]
       > as ThreadManagementService.ThreadManagementService["Service"],
       launches: {
         launch: (input) =>
           Effect.sync(() => {
-            launched.push(input);
+            if (!receipts.has(input.commandId)) launched.push(input);
+            receipts.add(input.commandId);
             return { threadId: input.threadId } as never;
           }),
       } as Partial<
@@ -89,7 +107,7 @@ const workbench = Effect.fn(function* (providers: ReadonlyArray<ServerProvider> 
       > as ThreadLaunchService.ThreadLaunchService["Service"],
       projectService,
       providers: {
-        getProviders: Effect.succeed(providers),
+        getProviders: Effect.succeed(options.providers ?? []),
       } as Partial<
         ProviderRegistry.ProviderRegistry["Service"]
       > as ProviderRegistry.ProviderRegistry["Service"],
@@ -106,7 +124,7 @@ const workbench = Effect.fn(function* (providers: ReadonlyArray<ServerProvider> 
     projectService,
     crypto,
   });
-  return { threads, projects, dispatched, launched, projectUpdates };
+  return { threads, projects, dispatched, launched, sent, projectUpdates };
 });
 
 const codeOf = (promise: Promise<unknown>) =>
@@ -243,12 +261,14 @@ it.layer(NodeServices.layer)("plugin threads", (it) => {
           { id: "high", label: "High" },
         ],
       } as const;
-      const { threads, launched } = yield* workbench([
-        {
-          instanceId: defaultModel.instanceId,
-          models: [{ slug: defaultModel.model, capabilities: { optionDescriptors: [effort] } }],
-        } as never,
-      ]);
+      const { threads, launched } = yield* workbench({
+        providers: [
+          {
+            instanceId: defaultModel.instanceId,
+            models: [{ slug: defaultModel.model, capabilities: { optionDescriptors: [effort] } }],
+          } as never,
+        ],
+      });
       const create = (options: ReadonlyArray<{ id: string; value: string | boolean }>) =>
         threads.create({ projectId, title: "Review", model: { ...defaultModel, options } });
 
@@ -273,6 +293,43 @@ it.layer(NodeServices.layer)("plugin threads", (it) => {
         "PluginThreadModelOptionsError",
       );
       assert.lengthOf(launched, 1);
+    }),
+  );
+
+  it.effect("starts one thread and one turn for a key used twice, also after a restart", () =>
+    Effect.gen(function* () {
+      const receipts = new Set<string>();
+      const first = yield* workbench({ receipts });
+      // A restarted server builds the plugin's API again, and only stored receipts remain.
+      const restarted = yield* workbench({ receipts });
+      const review = {
+        projectId,
+        title: "Review",
+        message: "Review the diff.",
+        idempotencyKey: "review:1",
+      };
+      const created = yield* Effect.promise(() => first.threads.create(review));
+      const createdAgain = yield* Effect.promise(() => restarted.threads.create(review));
+      assert.strictEqual(createdAgain.threadId, created.threadId);
+      assert.lengthOf([...first.launched, ...restarted.launched], 1);
+
+      const step = {
+        threadId,
+        text: "Now check the tests.",
+        mode: "queue",
+        idempotencyKey: "review:1:step-2",
+      } as const;
+      yield* Effect.promise(() => first.threads.sendMessage(step));
+      yield* Effect.promise(() => restarted.threads.sendMessage(step));
+      assert.lengthOf([...first.sent, ...restarted.sent], 1);
+
+      // Another key is other work, and create and send each have their own keys.
+      yield* Effect.promise(() => first.threads.create({ ...review, idempotencyKey: "review:2" }));
+      yield* Effect.promise(() =>
+        first.threads.sendMessage({ ...step, idempotencyKey: "review:1" }),
+      );
+      assert.lengthOf(first.launched, 2);
+      assert.lengthOf(first.sent, 2);
     }),
   );
 });

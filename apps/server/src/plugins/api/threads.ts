@@ -8,6 +8,7 @@ import {
   type OrchestrationV2ServerCommand,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
   OrchestrationV2ThreadShell,
+  OrchestratorMcpClientRequestId,
   Project,
   ProjectCreatePayload,
   ProjectId,
@@ -35,7 +36,7 @@ import type * as ThreadManagementService from "../../orchestration-v2/ThreadMana
 import type * as ProjectService from "../../project/ProjectService.ts";
 import type * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import type * as ServerSettings from "../../serverSettings.ts";
-import { type FacadeContext, newCommandId } from "./facade.ts";
+import { type FacadeContext, keyedCommandId, newCommandId } from "./facade.ts";
 
 const encodeThreadShell = Schema.encodeUnknownEffect(
   Schema.toCodecJson(OrchestrationV2ThreadShell),
@@ -55,6 +56,7 @@ const decodeLaunch = Schema.decodeUnknownEffect(
     runtimeMode: Schema.optional(RuntimeMode),
     interactionMode: Schema.optional(ProviderInteractionMode),
     workspace: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+    idempotencyKey: Schema.optional(OrchestratorMcpClientRequestId),
   }),
 );
 const decodeSnoozedUntil = Schema.decodeUnknownEffect(IsoDateTime);
@@ -63,6 +65,7 @@ const decodeSend = Schema.decodeUnknownEffect(
   Schema.Struct({
     text: TrimmedNonEmptyString,
     mode: Schema.optional(Schema.Literals(["auto", "queue", "steer"])),
+    idempotencyKey: Schema.optional(OrchestratorMcpClientRequestId),
   }),
 );
 const MAX_NOTE_SUMMARY_CHARS = 200;
@@ -129,6 +132,9 @@ export const makeThreadsApi = (
   const { threads, crypto } = services;
   const newId = crypto.randomUUIDv4().pipe(Effect.orDie);
   const commandId = newCommandId(facade.pluginId, crypto);
+  // A keyed call reuses its first call's ids, so a repeat replays that call's commands.
+  const keyedOr = (operation: "create" | "send", key: string | undefined) =>
+    key === undefined ? commandId : Effect.succeed(keyedCommandId(facade.pluginId, operation, key));
   /** Dispatches the command clients send for the same change, after checking the thread exists. */
   const organize = (
     threadId: string,
@@ -181,12 +187,14 @@ export const makeThreadsApi = (
       facade.call(
         Effect.gen(function* () {
           const shell = yield* shellOf(input.threadId);
-          const { text, mode } = yield* decodeSend(input);
+          const { text, mode, idempotencyKey } = yield* decodeSend(input);
+          const sendCommandId = yield* keyedOr("send", idempotencyKey);
           yield* threads.sendToThread({
             projectId: shell.projectId,
-            commandId: yield* commandId,
+            commandId: sendCommandId,
             threadId: shell.id,
-            messageId: MessageId.make(yield* newId),
+            // Found again by its id after a replay, so the send resolves as it first did.
+            messageId: MessageId.make(sendCommandId),
             text,
             attachments: [],
             mode: mode ?? "auto",
@@ -285,7 +293,7 @@ export const makeThreadsApi = (
               )?.supportedRuntimeModes,
             },
           );
-          const launchCommandId = yield* commandId;
+          const launchCommandId = yield* keyedOr("create", launch.idempotencyKey);
           const result = yield* services.launches.launch({
             commandId: launchCommandId,
             threadId: ThreadId.make(launchCommandId),
@@ -299,7 +307,7 @@ export const makeThreadsApi = (
               ? {}
               : {
                   initialMessage: {
-                    messageId: MessageId.make(yield* newId),
+                    messageId: MessageId.make(launchCommandId),
                     text: launch.message,
                     attachments: [],
                   },
