@@ -1,3 +1,9 @@
+import type {
+  PluginAcpAgent,
+  PluginProviderRuntime,
+  PluginSourceControlDriver,
+  PluginSourceControlRuntime,
+} from "./providers.ts";
 import type { JsonObject, JsonValue, PluginRpcMap } from "./shared.ts";
 
 /** `read` methods need the caller's `orchestration:read` scope, `write` methods `orchestration:operate`. */
@@ -581,6 +587,24 @@ export interface PluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
      * for the ids and values `threads.create` accepts, since they differ per provider.
      */
     readonly list: () => Promise<ReadonlyArray<PluginProviderInstance>>;
+    /** T3 Code's own Effect modules, which a source control driver must build with. */
+    readonly runtime: PluginProviderRuntime;
+    /**
+     * Adds an ACP agent T3 Code runs by its command, with no Effect code, until the plugin
+     * deactivates: the shared ACP adapter with the base capabilities, a settings form for the
+     * command and arguments, and no text generation. Its saved instances start, and a default
+     * instance is added, off. Rejects a kind T3 Code or another plugin already provides.
+     */
+    readonly registerAcpAgent: (agent: PluginAcpAgent) => Promise<void>;
+  };
+  readonly sourceControl: {
+    readonly runtime: PluginSourceControlRuntime;
+    /**
+     * Adds a source control host until the plugin deactivates: its definition joins remote
+     * recognition after the built-in hosts, and its driver is built once. Clients show it with the
+     * generic host presentation. Rejects a kind T3 Code or another plugin already provides.
+     */
+    readonly registerDriver: (driver: PluginSourceControlDriver) => Promise<void>;
   };
   readonly mcp: {
     /**

@@ -93,7 +93,11 @@ module.exports = {
 - the text T3 Code generates, such as thread titles and commit messages, and free-form text from
   the text generation model chosen in the settings. Each plugin gets 3 seconds to answer and all of
   them get 5, then T3 Code writes the text itself;
-- HTTP routes, schedules and server info.
+- HTTP routes, schedules and server info;
+- ACP agents T3 Code runs by their command (`api.providers.registerAcpAgent`), with no Effect
+  code; the `acp-agent-plugin` fixture is a small one;
+- source control hosts (`api.sourceControl.registerDriver`), which join remote recognition and
+  pull requests; the `source-control-plugin` fixture is a minimal one.
 
 Everything a plugin registers is released when it is disabled, reloaded or uninstalled; add your
 own cleanup with `api.onDeactivate`.
@@ -134,6 +138,32 @@ each step to resume:
   `api.server.version`. An older T3 refuses to install or start the plugin and says why, where it
   would otherwise ignore a field it doesn't know, such as `idempotencyKey`. It also doesn't offer or
   install an update that needs a newer T3.
+
+## Agent providers and source control hosts
+
+An ACP agent needs no Effect code:
+
+```js
+api.providers.registerAcpAgent({
+  kind: "my-agent",
+  label: "My agent",
+  command: "my-agent",
+  args: ["acp"],
+});
+```
+
+T3 Code runs it with its shared ACP adapter and gives each instance a form for the command and
+arguments. The command must be an executable on the server, on its `PATH` or by absolute path. Do
+not use `process.execPath` as the fixture does: in the installed app it is T3 Code itself, not
+Node. `iconUrl` (https or `data:image`) gives the agent an icon. Users put secrets in the
+instance's environment variables.
+
+Source control hosts are Effect code that runs in the server: build them with the modules in
+`api.providers.runtime` (and the helpers in `api.sourceControl.runtime`), never with an `effect`
+you import, because the server bundles its own copy. Types come from one import,
+`@t3tools/plugin-sdk/server/providers`, which re-exports T3 Code's internal source control types.
+They change with every nightly, so build the plugin against the T3 Code version it runs on, and
+expect to update it often.
 
 ## Web half
 

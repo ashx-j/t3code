@@ -95,9 +95,9 @@ const without = <Value,>(record: Readonly<Record<string, Value>>, key: string) =
   Object.fromEntries(Object.entries(record).filter(([entry]) => entry !== key));
 
 /**
- * Settings rows drawn from a plugin's JSON Schema. Each field saves on its own, as T3's own
- * settings rows do. `onSave` gets that field as a patch, `null` when cleared, and resolves with
- * the settings as saved or the reason they were not.
+ * Settings rows drawn from a JSON Schema, for plugins and for provider drivers that come from
+ * plugins. Each field saves on its own, as T3's own settings rows do. `onSave` gets that field as a
+ * patch, `null` when cleared, and resolves with the settings as saved or the reason they were not.
  */
 export function JsonSchemaSettingsForm({
   idPrefix,

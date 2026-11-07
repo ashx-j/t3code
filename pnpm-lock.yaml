@@ -1601,6 +1601,12 @@ importers:
       '@effect/atom-react':
         specifier: 4.0.5
         version: 4.0.5(effect@4.0.5)(react@19.3.0)(scheduler@0.28.0)
+      '@t3tools/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@t3tools/source-control-core':
+        specifier: workspace:*
+        version: link:../source-control-core
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4

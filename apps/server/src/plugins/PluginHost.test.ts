@@ -8,11 +8,15 @@ import {
   applyPluginStatesEvent,
   type AuthEnvironmentScope,
   AuthOrchestrationOperateScope,
+  defaultInstanceIdForDriver,
   AuthOrchestrationReadScope,
   AuthSettingsWriteScope,
   EnvironmentId,
   PluginId,
   ProjectId,
+  ProviderDriverKind,
+  ProviderSessionId,
+  SourceControlProviderKind,
   ThreadId,
   type TurnItemId,
   type PluginState,
@@ -22,7 +26,14 @@ import {
   type ServerProvider,
   WS_METHODS,
 } from "@t3tools/contracts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -47,14 +58,21 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ProviderDriverRegistration from "../provider/ProviderDriverRegistration.ts";
+import { makeTurnInput } from "../orchestration-v2/Adapters/AcpAdapterV2.testkit.ts";
+import { makeProviderInstanceRegistry } from "../provider/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as PullRequestProviderRegistry from "../pullRequest/PullRequestProviderRegistry.ts";
+import * as SourceControlDrivers from "../sourceControl/builtInDrivers.ts";
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import packageJson from "../../package.json" with { type: "json" };
 import { gzipTarball, tarEntry } from "./testTarball.ts";
+import type { AcpAgentDriverEnv } from "./acpAgentDriver.ts";
 import * as PluginHooks from "./PluginHooks.ts";
 import * as PluginHost from "./PluginHost.ts";
 import * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
@@ -80,6 +98,8 @@ const layerUnusedLaunchServices = Layer.mergeAll(
   Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
   Layer.mock(ProjectService.ProjectService)({}),
   Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+  Layer.mock(ProviderDriverRegistration.ProviderDriverRegistration)({}),
+  Layer.mock(SourceControlDrivers.SourceControlPluginDrivers)({ current: () => [] }),
   Layer.mock(GitVcsDriver.GitVcsDriver)({}),
   Layer.mock(SecretRequests.SecretRequests)({}),
   Layer.mock(TextGeneration.TextGeneration)({}),
@@ -315,6 +335,8 @@ const withWorkbench = Effect.fn(function* <A, E>(
     Layer.mock(ProviderRegistry.ProviderRegistry)({
       getProviders: Effect.sync(() => providers),
     }),
+    Layer.mock(ProviderDriverRegistration.ProviderDriverRegistration)({}),
+    Layer.mock(SourceControlDrivers.SourceControlPluginDrivers)({ current: () => [] }),
     Layer.mock(GitVcsDriver.GitVcsDriver)({}),
     Layer.mock(SecretRequests.SecretRequests)({}),
     Layer.mock(TextGeneration.TextGeneration)({
@@ -606,6 +628,69 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
         assert.isFalse(yield* fs.exists(agentFolder));
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("adds a plugin's source control host to remote recognition and pull requests", () =>
+    Effect.gen(function* () {
+      const sourceControlPlugin = PluginId.make("source-control-plugin");
+      yield* writePluginsConfig({
+        enabled: { [sourceControlPlugin]: true },
+        devPaths: [`${fixturesDir}source-control-plugin`],
+      });
+      const pluginDrivers = yield* SourceControlDrivers.makePluginDrivers.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            TestSourceControlHost.layer(),
+            SourceControlRateLimit.layer,
+            layerNpmRegistry,
+          ),
+        ),
+      );
+      // A driver that fails to start, as plugin code can whatever its type says, closes what it
+      // opened.
+      let closed = false;
+      const failing = yield* pluginDrivers
+        .add({
+          kind: "failinggit",
+          make: Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              closed = true;
+            }),
+          ).pipe(Effect.andThen(Effect.fail("no credentials"))),
+        } as unknown as Parameters<typeof pluginDrivers.add>[0])
+        .pipe(Effect.match({ onFailure: (error) => error.message, onSuccess: () => "added" }));
+      assert.strictEqual(
+        failing,
+        "Cannot add the source control host 'failinggit': its driver failed to start: no credentials",
+      );
+      assert.isTrue(closed);
+      const services = Layer.mergeAll(
+        layerUnusedServices,
+        Layer.succeed(SourceControlDrivers.SourceControlPluginDrivers, pluginDrivers),
+      );
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        yield* waitForStatuses(host, { [sourceControlPlugin]: "active" });
+        // The pull request lookup recognizes the remote, then asks that host's provider.
+        const remote = "git@git.example.test:team/app.git";
+        const kind = sourceControlDefinitions.recognizeRemote(remote)?.kind;
+        assert.strictEqual(kind, "examplegit");
+        const pullRequests = yield* PullRequestProviderRegistry.make.pipe(
+          Effect.provideService(SourceControlDrivers.SourceControlDrivers, []),
+          Effect.provideService(SourceControlDrivers.SourceControlPluginDrivers, pluginDrivers),
+        );
+        assert.deepStrictEqual(pullRequests.kinds, [SourceControlProviderKind.make("examplegit")]);
+        const provider = pullRequests.get(SourceControlProviderKind.make("examplegit"));
+        assert.strictEqual(
+          yield* provider!.getViewer({ cwd: process.cwd(), host: "git.example.test" }),
+          "example-bot",
+        );
+
+        yield* host.setEnabled(sourceControlPlugin, false);
+        assert.strictEqual(sourceControlDefinitions.recognizeRemote(remote)?.kind, "unknown");
+        assert.isNull(pullRequests.get(SourceControlProviderKind.make("examplegit")));
+      }).pipe(Effect.provide(layerHost(services)));
+    }).pipe(Effect.provide(layerConfig()), Effect.scoped),
   );
 
   it.effect("reload picks up a changed manifest and changed code", () =>
@@ -2236,4 +2321,93 @@ it.live("keeps a git URL's credentials out of a failed install's reason", () =>
       layerHost().pipe(Layer.provideMerge(layerConfig()), Layer.provideMerge(NodeServices.layer)),
     ),
   ),
+);
+
+it.live("runs a turn with the ACP agent a plugin registers by its command", () =>
+  Effect.gen(function* () {
+    const acpPlugin = PluginId.make("acp-agent-plugin");
+    yield* writePluginsConfig({
+      enabled: { [acpPlugin]: true },
+      devPaths: [`${fixturesDir}acp-agent-plugin`],
+    });
+    const echoAcp = ProviderDriverKind.make("echoAcp");
+    const { registry, addDriver } = yield* makeProviderInstanceRegistry<AcpAgentDriverEnv>({
+      drivers: [],
+      configMap: { [defaultInstanceIdForDriver(echoAcp)]: { driver: echoAcp, enabled: true } },
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          TestProviderHost.layer(),
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          Layer.succeed(SecretResolver.SecretResolver, {
+            read: () => Effect.succeed([]),
+            invalidate: () => Effect.void,
+          }),
+        ),
+      ),
+    );
+    const services = Layer.mergeAll(
+      layerUnusedServices,
+      Layer.succeed(ProviderDriverRegistration.ProviderDriverRegistration, {
+        // This registry provides what the ACP agent driver uses.
+        add: addDriver as ProviderDriverRegistration.ProviderDriverRegistration["Service"]["add"],
+      }),
+    );
+    yield* Effect.gen(function* () {
+      const host = yield* PluginHost.PluginHost;
+      yield* waitForStatuses(host, { [acpPlugin]: "active" });
+      const instanceId = defaultInstanceIdForDriver(echoAcp);
+      const instance = yield* registry.getInstance(instanceId);
+      assert.include(yield* instance!.snapshot.getSnapshot, {
+        displayName: "Echo ACP",
+        status: "ready",
+        supportsTextGeneration: false,
+      });
+
+      const threadId = ThreadId.make("thread:echo-acp");
+      const modelSelection = { instanceId, model: "default" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const session = yield* instance!.orchestrationAdapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session:echo-acp"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* session.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const replies = yield* session.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* session.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+          messageText: "Hello there",
+        }),
+      );
+      const events = Array.from(yield* Fiber.join(replies));
+      assert.include(events.at(-1), { type: "turn.terminal", status: "completed" });
+      assert.isTrue(
+        events.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "assistant_message" &&
+            event.turnItem.text.includes("Echo: Hello there"),
+        ),
+      );
+    }).pipe(Effect.provide(layerHost(services)));
+  }).pipe(Effect.provide(layerConfig()), Effect.scoped, Effect.provide(NodeServices.layer)),
 );

@@ -1,0 +1,8 @@
+{
+  "id": "acp-agent-plugin",
+  "name": "Echo ACP agent",
+  "version": "0.1.0",
+  "description": "Test fixture that adds an ACP agent provider with registerAcpAgent.",
+  "engines": { "t3": ">=0.1.0" },
+  "server": "./server.cjs"
+}

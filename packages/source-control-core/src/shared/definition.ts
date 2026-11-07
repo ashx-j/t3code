@@ -630,6 +630,11 @@ export interface SourceControlDefinitionRegistry {
   ) => string | Kind;
   /** The first host, in registry order, that keeps `url` behind a credential. */
   readonly mediaUrl: (url: string) => SourceControlMedia | null;
+  /**
+   * Adds a host after the built-in ones, for server plugins, and returns the function that
+   * removes it. Throws when the kind is taken.
+   */
+  readonly register: (definition: SourceControlDefinition) => () => void;
 }
 
 function httpUrl(value: string): URL | null {
@@ -657,21 +662,29 @@ function inOrder(
  * Remote recognition needs a separate order because one hostname can carry several hosts' labels.
  */
 export function makeSourceControlDefinitionRegistry(
-  definitions: ReadonlyArray<SourceControlDefinition>,
+  builtIns: ReadonlyArray<SourceControlDefinition>,
   options?: {
     readonly claimChangeRequestUrlsFirst?: ReadonlyArray<SourceControlProviderKind>;
     readonly recognizeRemotesIn?: ReadonlyArray<SourceControlProviderKind>;
   },
 ): SourceControlDefinitionRegistry {
   const byKind = new Map<string, SourceControlDefinition>();
-  for (const definition of definitions) {
+  const add = (definition: SourceControlDefinition) => {
     if (byKind.has(definition.kind)) {
       throw new Error(`Source control host '${definition.kind}' is defined more than once.`);
     }
     byKind.set(definition.kind, definition);
-  }
-  const claimOrder = inOrder(definitions, options?.claimChangeRequestUrlsFirst);
-  const recognitionOrder = inOrder(definitions, options?.recognizeRemotesIn);
+  };
+  for (const definition of builtIns) add(definition);
+  // Built-ins first, then hosts registered later, so a later host cannot take a built-in's remotes.
+  let definitions = builtIns;
+  let claimOrder = inOrder(definitions, options?.claimChangeRequestUrlsFirst);
+  let recognitionOrder = inOrder(definitions, options?.recognizeRemotesIn);
+  const setDefinitions = (next: ReadonlyArray<SourceControlDefinition>) => {
+    definitions = next;
+    claimOrder = inOrder(definitions, options?.claimChangeRequestUrlsFirst);
+    recognitionOrder = inOrder(definitions, options?.recognizeRemotesIn);
+  };
   const repositoryKeyOwner = (key: string) => {
     for (const definition of definitions) {
       const canonical = definition.canonicalRepositoryKey?.(key);
@@ -689,7 +702,18 @@ export function makeSourceControlDefinitionRegistry(
     return null;
   };
   return {
-    definitions,
+    get definitions() {
+      return definitions;
+    },
+    register: (definition) => {
+      add(definition);
+      setDefinitions([...definitions, definition]);
+      return () => {
+        if (byKind.get(definition.kind) !== definition) return;
+        byKind.delete(definition.kind);
+        setDefinitions(definitions.filter((other) => other !== definition));
+      };
+    },
     get: (kind) =>
       (kind == null ? definitions[0] : byKind.get(kind)) ?? UNKNOWN_SOURCE_CONTROL_CLIENT,
     find: (kind) => byKind.get(kind),

@@ -63,6 +63,9 @@ import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
+import * as Schema from "effect/Schema";
+
+import { JsonSchemaSettingsForm } from "./JsonSchemaSettingsForm";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
 import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
@@ -74,6 +77,8 @@ import {
   getProviderSummary,
   getProviderVersionLabel,
 } from "./providerStatus";
+
+const isJsonObject = Schema.is(Schema.JsonObject);
 
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
@@ -744,7 +749,10 @@ export function ProviderInstanceCard({
       : onRunUpdate;
   const urlAuthAction = liveProvider?.auth.action;
   const displayName =
-    instance.displayName?.trim() || driverOption?.label || String(instance.driver);
+    instance.displayName?.trim() ||
+    driverOption?.label ||
+    liveProvider?.displayName ||
+    String(instance.driver);
   const accentColor = normalizeProviderAccentColor(instance.accentColor);
   const { copyToClipboard } = useCopyToClipboard<{ providerName: string }>({
     onCopy: ({ providerName }) => {
@@ -874,9 +882,11 @@ export function ProviderInstanceCard({
           : (readConfigString(instance.config, "agentId") ?? undefined)
       }
       acpRegistryIconUrl={
-        readConfigString(instance.config, "source") === "local"
-          ? undefined
-          : (readConfigString(instance.config, "registryIconUrl") ?? undefined)
+        driverOption === undefined
+          ? liveProvider?.iconUrl
+          : readConfigString(instance.config, "source") === "local"
+            ? undefined
+            : (readConfigString(instance.config, "registryIconUrl") ?? undefined)
       }
       showBadge={Boolean(accentColor)}
       className="size-5"
@@ -1197,6 +1207,25 @@ export function ProviderInstanceCard({
       variant="settings"
       onChange={updateConfig}
       environmentId={environmentId}
+    />
+  ) : liveProvider?.settingsSchema !== undefined ? (
+    // Drivers from plugins have no client definition; their snapshot describes the form.
+    <JsonSchemaSettingsForm
+      idPrefix={`provider-instance-${instanceId}`}
+      label={displayName}
+      schema={liveProvider.settingsSchema}
+      settings={isJsonObject(instance.config) ? instance.config : {}}
+      canSave={!readOnly}
+      onSave={async (patch) => {
+        const current = isJsonObject(instance.config) ? instance.config : {};
+        const next: Record<string, Schema.Json> = { ...current };
+        for (const [key, value] of Object.entries(patch)) {
+          if (value === null) delete next[key];
+          else next[key] = value;
+        }
+        updateConfig(next);
+        return { settings: next };
+      }}
     />
   ) : (
     <SettingsRow

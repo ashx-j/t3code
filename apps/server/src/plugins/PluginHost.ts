@@ -52,9 +52,11 @@ import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { parseSkillFrontmatter } from "../provider/Drivers/ClaudeSkills.ts";
+import * as ProviderDriverRegistration from "../provider/ProviderDriverRegistration.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as SourceControlDrivers from "../sourceControl/builtInDrivers.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -444,6 +446,8 @@ const make = Effect.gen(function* () {
     secretRequests: yield* SecretRequests.SecretRequests,
     textGeneration: yield* TextGeneration.TextGeneration,
     providers: yield* ProviderRegistry.ProviderRegistry,
+    providerDrivers: yield* ProviderDriverRegistration.ProviderDriverRegistration,
+    sourceControlDrivers: yield* SourceControlDrivers.SourceControlPluginDrivers,
     hooks: yield* PluginHooks.PluginHooks,
     runtimeRequests: makeRuntimeRequestHooks({ context, orchestrator, threads, crypto }),
     mcpTools: yield* PluginMcpTools.PluginMcpTools,

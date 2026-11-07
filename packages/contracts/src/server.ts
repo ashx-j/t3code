@@ -212,6 +212,11 @@ export const ServerProvider = Schema.Struct({
   // Validate driver-supplied remote icons against the driver's trusted origin.
   iconUrl: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(2_048))),
   badgeLabel: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * JSON Schema of the instance's `config`, sent by drivers that come from plugins so clients
+   * without a definition for the driver can still draw its settings form.
+   */
+  settingsSchema: Schema.optional(Schema.JsonObject),
   continuation: Schema.optional(ServerProviderContinuation),
   showInteractionModeToggle: Schema.optional(Schema.Boolean),
   reportsContextWindow: Schema.optional(Schema.Boolean),

@@ -240,7 +240,11 @@ function bindProviderContext(
 
 /** @public */
 export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWithProviders")(
-  function* (registrations: ReadonlyArray<SourceControlProviderRegistration>) {
+  function* (
+    registrations: ReadonlyArray<SourceControlProviderRegistration>,
+    /** Hosts plugins added since, read on each lookup after the built-ins. */
+    pluginRegistrations: () => ReadonlyArray<SourceControlProviderRegistration> = () => [],
+  ) {
     const config = yield* ServerConfig.ServerConfig;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
     const { process } = yield* SourceControlHost.SourceControlHost;
@@ -249,10 +253,19 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
       SourceControlProviderKind,
       SourceControlProvider.SourceControlProvider["Service"]
     >(registrations.map((registration) => [registration.kind, registration.provider]));
-    const discoverySpecs = registrations.map((registration) => registration.discovery);
+    const builtInDiscoverySpecs = registrations.map((registration) => registration.discovery);
+    const discoverySpecs = () => {
+      const plugins = pluginRegistrations();
+      return plugins.length === 0
+        ? builtInDiscoverySpecs
+        : [...builtInDiscoverySpecs, ...plugins.map((registration) => registration.discovery)];
+    };
+    const providerFor = (kind: SourceControlProviderKind) =>
+      providers.get(kind) ??
+      pluginRegistrations().find((registration) => registration.kind === kind)?.provider;
 
     const get: SourceControlProviderRegistry["Service"]["get"] = (kind) =>
-      Effect.succeed(providers.get(kind) ?? unsupportedProvider(kind));
+      Effect.succeed(providerFor(kind) ?? unsupportedProvider(kind));
 
     const unknownRemoteCache = yield* Cache.makeWith(
       (request: UnknownRemoteLookup) => request.lookup,
@@ -267,19 +280,35 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
       Effect.forkScoped,
     );
 
+    // A host a plugin added or removed since may claim a remote the cache holds as unknown.
+    let cachedPluginKinds = "";
+    const forgetIfPluginsChanged = Effect.suspend(() => {
+      const kinds = pluginRegistrations()
+        .map((registration) => registration.kind)
+        .join("\u0000");
+      if (kinds === cachedPluginKinds) return Effect.void;
+      cachedPluginKinds = kinds;
+      return Cache.invalidateAll(unknownRemoteCache);
+    });
+
     const refineContext = (
       cwd: string,
       context: SourceControlProvider.SourceControlProviderContext | null,
     ): Effect.Effect<SourceControlProvider.SourceControlProviderContext | null> =>
       context === null || context.provider.kind !== "unknown"
         ? Effect.succeed(context)
-        : Cache.get(
-            unknownRemoteCache,
-            new UnknownRemoteLookup(
-              context,
-              refineUnknownRemoteProvider({ specs: discoverySpecs, process, cwd, context }),
+        : forgetIfPluginsChanged.pipe(
+            Effect.andThen(
+              Cache.get(
+                unknownRemoteCache,
+                new UnknownRemoteLookup(
+                  context,
+                  refineUnknownRemoteProvider({ specs: discoverySpecs(), process, cwd, context }),
+                ),
+              ),
             ),
-          ).pipe(Effect.map(({ provider }) => (provider ? { ...context, provider } : context)));
+            Effect.map(({ provider }) => (provider ? { ...context, provider } : context)),
+          );
 
     const detectProviderContext = Effect.fn("SourceControlProviderRegistry.detectProviderContext")(
       function* (cwd: string) {
@@ -327,7 +356,7 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
       ).pipe(
         Effect.map((context) => {
           const kind = context?.provider.kind ?? SourceControlProviderKind.make("unknown");
-          const provider = providers.get(kind) ?? unsupportedProvider(kind);
+          const provider = providerFor(kind) ?? unsupportedProvider(kind);
           return {
             provider: bindProviderContext(provider, context),
             context,
@@ -341,35 +370,43 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
           return undefined;
         }
         const kind = sourceControlDefinitions.recognizeRemote(input.url.href)?.kind;
-        return kind ? providers.get(kind)?.resolveLink?.(input) : undefined;
+        return kind ? providerFor(kind)?.resolveLink?.(input) : undefined;
       },
       get,
       resolveHandle,
       resolve: Effect.fn("SourceControlProviderRegistry.resolve")(function (input) {
         return resolveHandle(input).pipe(Effect.map((handle) => handle.provider));
       }),
-      discover: Effect.forEach(
-        discoverySpecs,
-        (spec) =>
-          probeSourceControlProvider({
-            spec,
-            process,
-            cwd: config.cwd,
-          }),
-        { concurrency: "unbounded" },
+      discover: Effect.suspend(() =>
+        Effect.forEach(
+          discoverySpecs(),
+          (spec) =>
+            probeSourceControlProvider({
+              spec,
+              process,
+              cwd: config.cwd,
+            }),
+          { concurrency: "unbounded" },
+        ),
       ),
     });
   },
 );
 
+const toRegistration = ({
+  driver,
+  instance,
+}: BuiltInDrivers.SourceControlDriverEntry): SourceControlProviderRegistration => ({
+  kind: driver.kind,
+  provider: instance.sourceControl,
+  discovery: instance.discovery,
+});
+
 const make = Effect.gen(function* () {
   const drivers = yield* BuiltInDrivers.SourceControlDrivers;
-  return yield* makeWithProviders(
-    drivers.map(({ driver, instance }): SourceControlProviderRegistration => ({
-      kind: driver.kind,
-      provider: instance.sourceControl,
-      discovery: instance.discovery,
-    })),
+  const plugins = yield* BuiltInDrivers.SourceControlPluginDrivers;
+  return yield* makeWithProviders(drivers.map(toRegistration), () =>
+    plugins.current().map(toRegistration),
   );
 });
 

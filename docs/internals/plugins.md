@@ -38,7 +38,8 @@ with only Node's frames then stops the server. The server still allows Node 22.1
 ## The API and manifests
 
 The server bundle inlines `effect`, so plugins never share the host's Effect runtime or `Schema`
-instances. They get Promises, `AsyncIterable` streams and `AbortSignal`.
+instances. They get Promises, `AsyncIterable` streams and `AbortSignal`. Source control hosts are
+the one exception (below).
 
 Manifests ignore keys they don't know, so a newer manifest key is lost silently on an older T3.
 `engines.t3` is how a plugin asks for a newer T3: the server refuses to install, update to or start
@@ -138,3 +139,17 @@ MCP has no tool removal, so a stopped plugin's tools stay listed and answer that
 disabled. The `t3_plugins_*` tools start off, because every agent turn pays for the advertised tool
 list. The loader reports a web half's failure with `plugins.reportWebFailure`, which needs the
 settings write scope because agents read the text.
+
+## ACP agents and source control hosts
+
+`registerAcpAgent` builds a driver from plain data on the shared ACP adapter, like `fx`, not on the
+ACP Registry driver, whose instances carry the registry's kind and whose status check opens a
+session. So an ACP agent shows "ready" with unknown sign-in until a turn runs. It sets
+`supportsTextGeneration: false` to stay out of the text generation pickers: the router switches
+providers only on a usage limit, so a selected provider that can't write text fails every title.
+
+Source control drivers are Effect code in the server's runtime. A plugin's own `effect` would work
+only while it matched the server's, so drivers build with `api.providers.runtime`. The SDK's source
+control types are T3's own, and those change with every nightly, so such a plugin tracks one T3
+version. A plugin host joins remote recognition after the built-ins, so it cannot take a built-in
+host's remotes.

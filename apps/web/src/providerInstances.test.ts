@@ -513,6 +513,28 @@ describe("resolveDefaultProviderModelSelection", () => {
 });
 
 describe("provider icon metadata", () => {
+  it("draws a plugin driver's icon from its snapshot, and a built-in's from its package", () => {
+    const iconUrl = "data:image/svg+xml,%3Csvg%2F%3E";
+    const [plugin, builtIn] = deriveProviderInstanceEntries([
+      {
+        ...provider({
+          provider: ProviderDriverKind.make("echoAgent"),
+          instanceId: ProviderInstanceId.make("echoAgent"),
+        }),
+        iconUrl,
+      },
+      {
+        ...provider({
+          provider: ProviderDriverKind.make("codex"),
+          instanceId: ProviderInstanceId.make("codex"),
+        }),
+        iconUrl,
+      },
+    ]);
+    expect(plugin?.acpRegistryIconUrl).toBe(iconUrl);
+    expect(builtIn?.acpRegistryIconUrl).toBeUndefined();
+  });
+
   it("clears stale registry branding when an instance switches to a local command", () => {
     const instanceId = ProviderInstanceId.make("custom-acp");
     const driver = ProviderDriverKind.make("acpRegistry");
