@@ -159,10 +159,24 @@ export const makeFacadeContext = (input: {
         ),
       );
     },
-    iterate: (stream) =>
-      Stream.toAsyncIterableWith(
+    // The plugin pulls, but each pull runs T3's side of the stream, so it leaves the scope too.
+    iterate: (stream) => {
+      const iterable = Stream.toAsyncIterableWith(
         stream.pipe(Stream.interruptWhen(abortEffect(activation.controller.signal))),
         context,
-      ),
+      );
+      return {
+        [Symbol.asyncIterator]: () => {
+          const iterator = pluginCodeScope.exit(() => iterable[Symbol.asyncIterator]());
+          return {
+            next: () => pluginCodeScope.exit(() => iterator.next()),
+            return: () =>
+              pluginCodeScope.exit(
+                () => iterator.return?.() ?? Promise.resolve({ done: true, value: undefined }),
+              ),
+          };
+        },
+      };
+    },
   };
 };

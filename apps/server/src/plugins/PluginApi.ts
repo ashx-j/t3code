@@ -7,7 +7,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 
-import { makeFacadeContext, refused } from "./api/facade.ts";
+import { makeFacadeContext, pluginCodeScope, refused } from "./api/facade.ts";
 import { makeMcpApi } from "./api/mcp.ts";
 import type * as PluginMcpTools from "./PluginMcpTools.ts";
 import type * as PluginSettingsStore from "./PluginSettingsStore.ts";
@@ -72,14 +72,12 @@ export const makePluginApi = (input: {
   const facade = makeFacadeContext({ pluginId: id, activation, context });
   const { call } = facade;
   const log =
-    (level: "Debug" | "Info" | "Warn" | "Error") =>
-    (message: string, fields?: Schema.JsonObject) => {
-      Effect.runForkWith(context)(
+    (level: "Debug" | "Info" | "Warn" | "Error") => (message: string, fields?: Schema.JsonObject) =>
+      facade.fork(
         Effect.logWithLevel(level)(message, fields ?? {}).pipe(
           Effect.annotateLogs({ pluginId: id }),
         ),
       );
-    };
 
   const storage: PluginApi["storage"] = {
     get: (key) => call(services.storage.get(id, key).pipe(Effect.map(Option.getOrUndefined))),
@@ -121,7 +119,12 @@ export const makePluginApi = (input: {
           throw new TypeError(`"${channel}" is not a valid channel name.`);
         }
         if (!isJson(value)) throw new TypeError("Published values must be JSON.");
-        for (const queue of activation.channels.get(channel) ?? []) Queue.offerUnsafe(queue, value);
+        // Waking a subscriber schedules T3's work, which must not run in the plugin's scope.
+        pluginCodeScope.exit(() => {
+          for (const queue of activation.channels.get(channel) ?? []) {
+            Queue.offerUnsafe(queue, value);
+          }
+        });
       },
     },
     // Something created after deactivation has nothing left to wait for, so it cleans up now.

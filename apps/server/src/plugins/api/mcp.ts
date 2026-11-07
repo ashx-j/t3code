@@ -5,7 +5,7 @@ import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
 import * as PluginMcpTools from "../PluginMcpTools.ts";
-import type { FacadeContext } from "./facade.ts";
+import { type FacadeContext, pluginCodeScope } from "./facade.ts";
 
 const isAccess = Schema.is(Schema.Literals(["read", "write"]));
 const isJsonObject = Schema.is(Schema.JsonObject);
@@ -42,18 +42,21 @@ export const makeMcpApi = (
           `Tool "${tool.name}" has ${combinator} at the top of its input schema, which model APIs refuse. Put the alternatives in a property instead.`,
         );
       }
-      const registered = Effect.runSyncExitWith(facade.context)(
-        services.mcpTools.register({
-          pluginId,
-          tool,
-          handler: (input, { signal, threadId }) =>
-            facade.asPlugin(() =>
-              Promise.resolve().then(() =>
-                handler(input, { signal: AbortSignal.any([signal, deactivated]), threadId }),
+      // Registering tells `/mcp` clients, which is T3's work, not the plugin's.
+      const registered = pluginCodeScope.exit(() =>
+        Effect.runSyncExitWith(facade.context)(
+          services.mcpTools.register({
+            pluginId,
+            tool,
+            handler: (input, { signal, threadId }) =>
+              facade.asPlugin(() =>
+                Promise.resolve().then(() =>
+                  handler(input, { signal: AbortSignal.any([signal, deactivated]), threadId }),
+                ),
               ),
-            ),
-          deactivated,
-        }),
+            deactivated,
+          }),
+        ),
       );
       if (Exit.isFailure(registered)) {
         const error = Cause.squash(registered.cause);

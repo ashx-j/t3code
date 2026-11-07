@@ -2,9 +2,10 @@ import { assert, it } from "@effect/vitest";
 import { PluginId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import { makePluginActivation } from "../PluginApi.ts";
-import { makeFacadeContext } from "./facade.ts";
+import { makeFacadeContext, pluginCodeScope } from "./facade.ts";
 
 class CallFailedError extends Schema.TaggedError<CallFailedError>()("CallFailedError", {}) {}
 
@@ -47,4 +48,26 @@ it.effect("keeps a failed call the plugin never awaits from stopping the server"
     );
     assert.strictEqual(awaited, "PluginDeactivated");
   }).pipe(Effect.scoped),
+);
+
+// A failure there would be tied to the plugin, and the guard would not stop the server for it.
+it.effect("runs T3's side of a stream the plugin reads outside the plugin's scope", () =>
+  Effect.gen(function* () {
+    const pluginId = PluginId.make("reading");
+    const facade = makeFacadeContext({
+      pluginId,
+      activation: makePluginActivation(),
+      context: yield* Effect.context<never>(),
+    });
+    const scopes = facade.iterate(Stream.fromEffect(Effect.sync(() => pluginCodeScope.getStore())));
+    // As a plugin's `for await` over `api.settings.changes()`.
+    const seen = yield* Effect.promise(() =>
+      pluginCodeScope.run(pluginId, async () => {
+        const values: Array<string | undefined> = [];
+        for await (const value of scopes) values.push(value);
+        return values;
+      }),
+    );
+    assert.deepStrictEqual(seen, [undefined]);
+  }),
 );
