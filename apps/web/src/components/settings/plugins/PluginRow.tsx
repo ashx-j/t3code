@@ -8,6 +8,7 @@ import {
   RotateCwIcon,
   SlidersHorizontalIcon,
   Trash2Icon,
+  Undo2Icon,
 } from "lucide-react";
 import { useId, useState } from "react";
 
@@ -74,6 +75,7 @@ export function PluginRow({
   const reload = useAtomCommand(pluginEnvironment.reloadPlugin, "plugin reload");
   const uninstall = useAtomCommand(pluginEnvironment.uninstallPlugin, "plugin removal");
   const update = useAtomCommand(pluginEnvironment.updatePlugin, "plugin update");
+  const rollback = useAtomCommand(pluginEnvironment.rollbackPlugin, "plugin rollback");
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Plugin UI loads from the main environment only, so its settings panel and web failure do too.
@@ -96,6 +98,9 @@ export function PluginRow({
   // Only a shadowed link can be dropped on its own, by its folder; see `pluginRows`.
   const shadowedLink = shadowed && plugin.source === "dev" ? plugin.linkedFolder : undefined;
   const source = updatable[0]?.plugin.installSource;
+  // Copies on different environments may have replaced different versions; the first one is named.
+  const rollbackable = copies.filter((copy) => copy.plugin.rollbackVersion !== undefined);
+  const rollbackVersion = rollbackable[0]?.plugin.rollbackVersion;
   const availableUpdate = copies.find((copy) => copy.plugin.availableUpdate !== undefined)?.plugin
     .availableUpdate;
   const problems = [
@@ -231,6 +236,22 @@ export function PluginRow({
                 }
               >
                 <DownloadIcon className="size-4" />
+              </Button>
+            )}
+            {rollbackVersion === undefined ? null : (
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                disabled={busy || !canManage}
+                aria-label={`Roll back ${plugin.name} to ${updateLabel(rollbackVersion)}`}
+                title={`Roll back to ${updateLabel(rollbackVersion)}, the version its last update replaced`}
+                onClick={() =>
+                  void runOn(rollbackable, (copy) =>
+                    rollback({ environmentId: copy.environmentId, input: { pluginId: plugin.id } }),
+                  )
+                }
+              >
+                <Undo2Icon className="size-4" />
               </Button>
             )}
             <RemovePluginPopover
