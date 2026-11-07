@@ -265,8 +265,8 @@ parts of your design to survive that. Build each part on the most stable thing T
 - **Draw `original` for steps you don't handle.** The `timeline.item` part's `item` describes
   commands, file changes, searches, tool calls and reasoning. Other kinds of step have the type
   `other`, and T3 can add kinds in any release.
-- **Ship what the plugin runs.** Adding a folder in Settings → Plugins leaves out `.git` and
-  `node_modules`, so build everything into the files the manifest names.
+- **Ship what the plugin runs.** Installing a folder leaves out `.git` and `node_modules`, so
+  build everything into the files the manifest names.
 - **Ask for a seam.** When T3 doesn't hand over what you need, ask for a piece, part or token on
   the T3 Code repository instead of reaching into its markup.
 

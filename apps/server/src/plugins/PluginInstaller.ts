@@ -101,6 +101,9 @@ type InstallOrigin =
 
 const decodeManifestJson = Schema.decodeUnknownEffect(Schema.fromJsonString(PluginManifest));
 
+// Left out at any depth, as Settings leaves them out of a folder it sends.
+const LEFT_OUT = new Set([".git", "node_modules"]);
+
 const installFailed = (reason: string) => (cause: unknown) =>
   new PluginInstallError({ reason, cause });
 
@@ -189,7 +192,19 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
     // Before copying, so a folder that is not a plugin (a home folder) is never copied.
     yield* readSourceManifest(from);
     // Copied rather than linked: the installed plugin never changes when the source does.
-    yield* fs.copy(from, into).pipe(Effect.mapError(installFailed(`Could not copy ${folder}.`)));
+    yield* Effect.gen(function* () {
+      const pending = [""];
+      for (let dir = pending.pop(); dir !== undefined; dir = pending.pop()) {
+        yield* fs.makeDirectory(path.join(into, dir), { recursive: true });
+        for (const name of yield* fs.readDirectory(path.join(from, dir))) {
+          if (LEFT_OUT.has(name)) continue;
+          const entry = path.join(dir, name);
+          const info = yield* fs.stat(path.join(from, entry));
+          if (info.type === "Directory") pending.push(entry);
+          else yield* fs.copyFile(path.join(from, entry), path.join(into, entry));
+        }
+      }
+    }).pipe(Effect.mapError(installFailed(`Could not copy ${folder}.`)));
   });
 
   /** Why this server cannot run `manifest`, checked before anything is stopped or moved. */

@@ -986,10 +986,8 @@ module.exports = { activate(api) {
         yield* writeFile(`${notPlugin}/notes.txt`, "Not a plugin.");
         const copiedFrom: Array<string> = [];
         const layerCopies = layerFileSystemWith((real) => ({
-          copy: (from, to, options) =>
-            Effect.sync(() => copiedFrom.push(from)).pipe(
-              Effect.andThen(real.copy(from, to, options)),
-            ),
+          copyFile: (from, to) =>
+            Effect.sync(() => copiedFrom.push(from)).pipe(Effect.andThen(real.copyFile(from, to))),
         }));
         yield* Effect.gen(function* () {
           const host = yield* PluginHost.PluginHost;
@@ -1006,7 +1004,7 @@ module.exports = { activate(api) {
             .install({ type: "path", path: notPlugin })
             .pipe(Effect.flip);
           assert.strictEqual(notInstalled.message, "The source has no t3-plugin.json.");
-          assert.notInclude(copiedFrom, notPlugin);
+          assert.isFalse(copiedFrom.some((file) => file.startsWith(notPlugin)));
 
           const source = { type: "path" as const, path: `${fixturesDir}hello-plugin` };
           const installed = yield* installer.install(source);
@@ -1073,6 +1071,29 @@ module.exports = { activate(api) {
           assert.include(yield* installer.install(source), { status: "disabled", enabled: false });
         }).pipe(Effect.provide(layerHost().pipe(Layer.provide(layerCopies))));
       }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("leaves .git and node_modules out of a folder installed from the server", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const folder = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-plugin-checkout-" });
+      yield* fs.copy(`${fixturesDir}hello-plugin`, folder, { overwrite: true });
+      yield* writeFile(`${folder}/.git/HEAD`, "ref: refs/heads/main");
+      yield* writeFile(`${folder}/node_modules/dep/index.js`, "module.exports = 1;");
+      yield* writeFile(`${folder}/lib/node_modules/dep/index.js`, "module.exports = 1;");
+      yield* writeFile(`${folder}/lib/util.js`, "module.exports = 2;");
+      yield* Effect.gen(function* () {
+        const installer = yield* PluginInstaller.PluginInstaller;
+        yield* installer.install({ type: "path", path: folder });
+        const installed = `${stateDir}/plugins/hello-plugin`;
+        assert.isTrue(yield* fs.exists(`${installed}/server.cjs`));
+        assert.isTrue(yield* fs.exists(`${installed}/lib/util.js`));
+        assert.isFalse(yield* fs.exists(`${installed}/.git`));
+        assert.isFalse(yield* fs.exists(`${installed}/node_modules`));
+        assert.isFalse(yield* fs.exists(`${installed}/lib/node_modules`));
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
   );
 
   it.effect("installs a dropped folder and lists folders put in the plugins folder, off", () =>
