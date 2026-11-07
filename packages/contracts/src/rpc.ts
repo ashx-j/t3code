@@ -392,8 +392,11 @@ import {
   PluginCheckUpdatesInput,
   PluginListResult,
   PluginRescanInput,
+  PluginReportWebFailureInput,
   PluginMutationResult,
   PluginReloadInput,
+  PluginSetAgentToolsInput,
+  PluginSetAgentToolsResult,
   PluginSetEnabledInput,
   PluginSettingsGetInput,
   PluginSettingsResult,
@@ -578,6 +581,7 @@ export const WS_METHODS = {
   pluginsList: "plugins.list",
   pluginsSubscribeStates: "plugins.subscribeStates",
   pluginsSetEnabled: "plugins.setEnabled",
+  pluginsSetAgentTools: "plugins.setAgentTools",
   pluginsReload: "plugins.reload",
   pluginsInstall: "plugins.install",
   pluginsInstallFiles: "plugins.installFiles",
@@ -588,6 +592,7 @@ export const WS_METHODS = {
   pluginsUpdate: "plugins.update",
   pluginsRollback: "plugins.rollback",
   pluginsCheckUpdates: "plugins.checkUpdates",
+  pluginsReportWebFailure: "plugins.reportWebFailure",
   pluginsSettingsGet: "plugins.settings.get",
   pluginsSettingsUpdate: "plugins.settings.update",
   pluginsInvoke: "plugins.invoke",
@@ -2017,6 +2022,12 @@ const WsPluginsSetEnabledRpc = Rpc.make(WS_METHODS.pluginsSetEnabled, {
   error: PluginRpcError,
 });
 
+const WsPluginsSetAgentToolsRpc = Rpc.make(WS_METHODS.pluginsSetAgentTools, {
+  payload: PluginSetAgentToolsInput,
+  success: PluginSetAgentToolsResult,
+  error: PluginRpcError,
+});
+
 const WsPluginsReloadRpc = Rpc.make(WS_METHODS.pluginsReload, {
   payload: PluginReloadInput,
   success: PluginMutationResult,
@@ -2060,6 +2071,13 @@ const WsPluginsRollbackRpc = Rpc.make(WS_METHODS.pluginsRollback, {
 const WsPluginsCheckUpdatesRpc = Rpc.make(WS_METHODS.pluginsCheckUpdates, {
   payload: PluginCheckUpdatesInput,
   success: PluginListResult,
+  error: PluginRpcError,
+});
+
+/** Tells the server why a plugin's web half failed, so agents can read it. */
+const WsPluginsReportWebFailureRpc = Rpc.make(WS_METHODS.pluginsReportWebFailure, {
+  payload: PluginReportWebFailureInput,
+  success: Schema.Void,
   error: PluginRpcError,
 });
 
@@ -2195,6 +2213,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPluginsListRpc,
   WsPluginsSubscribeStatesRpc,
   WsPluginsSetEnabledRpc,
+  WsPluginsSetAgentToolsRpc,
   WsPluginsReloadRpc,
   WsPluginsInstallRpc,
   WsPluginsInstallFilesRpc,
@@ -2205,6 +2224,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPluginsUpdateRpc,
   WsPluginsRollbackRpc,
   WsPluginsCheckUpdatesRpc,
+  WsPluginsReportWebFailureRpc,
   WsPluginsSettingsGetRpc,
   WsPluginsSettingsUpdateRpc,
   WsPluginsInvokeRpc,

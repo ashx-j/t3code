@@ -2,7 +2,8 @@ import * as Schema from "effect/Schema";
 
 import { ForwardCompatibleArray, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
-// Lowercase because the id names the plugin's directory on case-insensitive filesystems.
+// Lowercase because the id names the plugin's directory on case-insensitive filesystems. No
+// underscores, so the `plg_<id>_` prefix on plugin MCP tool names belongs to exactly one plugin.
 export const PluginId = TrimmedNonEmptyString.check(
   Schema.isMaxLength(32),
   Schema.isPattern(/^[a-z][a-z0-9-]*$/),
@@ -141,7 +142,7 @@ export const PluginState = Schema.Struct({
   styles: Schema.optionalKey(
     Schema.Array(Schema.Struct({ file: Schema.String, revision: Schema.String })),
   ),
-  /** The folder a `dev` plugin loads from, as plugins.json lists it. */
+  /** The folder a `dev` plugin loads from, where an agent or plugins.json linked it. */
   linkedFolder: Schema.optionalKey(Schema.String),
   /** Where it was installed from, when installed through `plugins.install`; updates reuse it. */
   installSource: Schema.optionalKey(PluginInstallSource),
@@ -151,6 +152,10 @@ export const PluginState = Schema.Struct({
   rollbackVersion: Schema.optionalKey(Schema.String),
   hasServer: Schema.Boolean,
   hasWeb: Schema.Boolean,
+  /** Has a `skills` folder, whose skills agents on this environment get while it runs. */
+  hasSkills: Schema.optionalKey(Schema.Boolean),
+  /** Why its web half failed in a client since it last started, as that client reported it. */
+  webFailure: Schema.optionalKey(Schema.String),
   /** Why its server code failed outside a call since it last started, such as in a timer. */
   serverFailure: Schema.optionalKey(Schema.String),
   settingsSchema: Schema.optionalKey(Schema.JsonObject),
@@ -169,6 +174,8 @@ export type PluginListInput = typeof PluginListInput.Type;
 
 export const PluginListResult = Schema.Struct({
   plugins: ForwardCompatibleArray(PluginState),
+  /** Whether agents get the `t3_plugins_*` tools. Older servers leave it out. */
+  agentTools: Schema.optionalKey(Schema.Boolean),
 });
 export type PluginListResult = typeof PluginListResult.Type;
 
@@ -179,11 +186,13 @@ export type PluginListResult = typeof PluginListResult.Type;
 export const PluginStatesEvent = Schema.Union([
   Schema.TaggedStruct("snapshot", {
     plugins: Schema.Array(PluginState),
+    agentTools: Schema.Boolean,
   }),
   Schema.TaggedStruct("changed", {
     /** How many plugins the list has now; rows past it are gone. */
     length: Schema.Number,
     rows: Schema.Array(Schema.Struct({ index: Schema.Number, plugin: PluginState })),
+    agentTools: Schema.Boolean,
   }),
 ]);
 export type PluginStatesEvent = typeof PluginStatesEvent.Type;
@@ -193,11 +202,17 @@ export const applyPluginStatesEvent = (
   current: PluginListResult,
   event: PluginStatesEvent,
 ): PluginListResult => {
-  if (event._tag === "snapshot") return { plugins: event.plugins };
+  if (event._tag === "snapshot") return { plugins: event.plugins, agentTools: event.agentTools };
   const plugins = current.plugins.slice(0, event.length);
   for (const { index, plugin } of event.rows) plugins[index] = plugin;
-  return { plugins };
+  return { plugins, agentTools: event.agentTools };
 };
+
+export const PluginSetAgentToolsInput = Schema.Struct({ enabled: Schema.Boolean });
+export type PluginSetAgentToolsInput = typeof PluginSetAgentToolsInput.Type;
+
+export const PluginSetAgentToolsResult = Schema.Struct({ agentTools: Schema.Boolean });
+export type PluginSetAgentToolsResult = typeof PluginSetAgentToolsResult.Type;
 
 export const PluginSetEnabledInput = Schema.Struct({
   pluginId: PluginId,
@@ -250,6 +265,17 @@ export type PluginRollbackInput = typeof PluginRollbackInput.Type;
 
 export const PluginCheckUpdatesInput = Schema.Struct({});
 export type PluginCheckUpdatesInput = typeof PluginCheckUpdatesInput.Type;
+
+/**
+ * A client's report that a plugin's web half failed. `revision` is the start the client loaded,
+ * so a report about an earlier start is ignored.
+ */
+export const PluginReportWebFailureInput = Schema.Struct({
+  pluginId: PluginId,
+  revision: Schema.Number,
+  message: Schema.String,
+});
+export type PluginReportWebFailureInput = typeof PluginReportWebFailureInput.Type;
 
 export const PluginUninstallInput = Schema.Struct({
   pluginId: PluginId,

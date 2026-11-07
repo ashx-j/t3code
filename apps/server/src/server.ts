@@ -91,6 +91,7 @@ import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as PluginHooks from "./plugins/PluginHooks.ts";
 import * as PluginHost from "./plugins/PluginHost.ts";
 import * as PluginHttpRoutes from "./plugins/PluginHttpRoutes.ts";
+import * as PluginMcpTools from "./plugins/PluginMcpTools.ts";
 import * as PluginSettingsStore from "./plugins/PluginSettingsStore.ts";
 import * as PluginStorage from "./plugins/PluginStorage.ts";
 import * as Keybindings from "./keybindings.ts";
@@ -686,8 +687,10 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(Layer.mergeAll(NativeAppIconResolver.layer, layerProjectFaviconResolver)),
   Layer.provideMerge(layerRepositoryIdentityResolver),
   Layer.provideMerge(CodexManagedTokenBroker.layer),
-  // One registry each for the dispatch path and HTTP below and the plugin host above.
-  Layer.provideMerge(Layer.mergeAll(PluginHooks.layer, PluginHttpRoutes.layer)),
+  // One registry each for the dispatch path, MCP and HTTP below and the plugin host above.
+  Layer.provideMerge(
+    Layer.mergeAll(PluginHooks.layer, PluginMcpTools.layer, PluginHttpRoutes.layer),
+  ),
   Layer.provideMerge(layerServerEnvironment),
   Layer.provideMerge(layerAuth),
   Layer.provideMerge(ServerSecretStore.layer),

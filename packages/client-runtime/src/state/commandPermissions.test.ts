@@ -100,6 +100,8 @@ describe("command permissions", () => {
     WS_METHODS.serverRunStorageCleanup,
     // Installing, enabling, reloading or configuring a plugin runs its code in the server.
     WS_METHODS.pluginsSetEnabled,
+    // Plugin tools let agents install plugins, so turning them on is a settings change.
+    WS_METHODS.pluginsSetAgentTools,
     WS_METHODS.pluginsReload,
     WS_METHODS.pluginsInstall,
     WS_METHODS.pluginsInstallFiles,
@@ -110,6 +112,7 @@ describe("command permissions", () => {
     WS_METHODS.pluginsRollback,
     WS_METHODS.pluginsCheckUpdates,
     WS_METHODS.pluginsSettingsUpdate,
+    WS_METHODS.pluginsReportWebFailure,
   ])("requires the destination settings grant for %s", (method) =>
     Effect.scoped(
       Effect.gen(function* () {

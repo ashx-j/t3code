@@ -6,6 +6,7 @@ import * as NodeModule from "node:module";
 import {
   AuthEnvironmentScope,
   AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
   AuthSettingsWriteScope,
   type PluginFailure,
   PluginId,
@@ -39,6 +40,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
@@ -49,6 +51,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import { parseSkillFrontmatter } from "../provider/Drivers/ClaudeSkills.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -67,12 +70,20 @@ import { errorText, PluginCodeError, pluginCodeScope } from "./api/facade.ts";
 import { makeRuntimeRequestHooks } from "./api/runtimeRequests.ts";
 import { makePluginFailureGuard } from "./pluginFailureGuard.ts";
 import { discoverPlugins, type DiscoveredPlugin } from "./pluginDiscovery.ts";
+import {
+  checkPluginFolder,
+  type PluginCheckFinding,
+  type PluginCheckReport,
+} from "./pluginCheck.ts";
 import * as PluginHooks from "./PluginHooks.ts";
 import * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
 import * as PluginInstaller from "./PluginInstaller.ts";
+import * as PluginMcpTools from "./PluginMcpTools.ts";
 import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
 
+// Clients send web failures and agents read them, so they are bounded like plugin errors.
+const MAX_WEB_FAILURE_CHARS = 1_000;
 const WEB_CONTENT_TYPES: Readonly<Record<string, string>> = {
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -126,7 +137,7 @@ export class PluginMethodNotFoundError extends Schema.TaggedError<PluginMethodNo
   "PluginMethodNotFoundError",
   { pluginId: PluginId, method: Schema.String, methods: Schema.Array(Schema.String) },
 ) {
-  // The methods it has, since nothing else lists them.
+  // The methods it has, since nothing else lists them to an agent.
   override get message(): string {
     return `Plugin ${this.pluginId} has no method ${this.method}. Its methods: ${this.methods.join(", ") || "none"}.`;
   }
@@ -168,6 +179,8 @@ export class PluginHost extends Context.Service<
     readonly list: Effect.Effect<ReadonlyArray<PluginState>>;
     /** The current list, then the whole list after every change. */
     readonly streamStates: Stream.Stream<ReadonlyArray<PluginState>>;
+    /** Whether agents get the `t3_plugins_*` tools now, then after every change. */
+    readonly agentTools: Stream.Stream<boolean>;
     /** `list` as a client with `scopes` sees it: server folder paths only if it manages plugins. */
     readonly listForClient: (
       scopes: ReadonlyArray<AuthEnvironmentScope>,
@@ -176,6 +189,8 @@ export class PluginHost extends Context.Service<
     readonly streamForClient: (
       scopes: ReadonlyArray<AuthEnvironmentScope>,
     ) => Stream.Stream<PluginStatesEvent>;
+    /** Turns the `t3_plugins_*` tools on or off for agents, overriding the default. */
+    readonly setAgentTools: (enabled: boolean) => Effect.Effect<boolean, PluginConfigError>;
     /** Persists the flag, then waits for activation or deactivation to finish. */
     readonly setEnabled: (
       pluginId: PluginId,
@@ -206,6 +221,22 @@ export class PluginHost extends Context.Service<
       Schema.JsonObject,
       PluginNotFoundError | PluginNotActiveError | PluginSettingsError
     >;
+    /**
+     * Lists what would stop a plugin loading or break it when T3 updates, from its folder on
+     * disk; an installed plugin's last failure comes first. Runs none of its code.
+     */
+    readonly check: (
+      target: { readonly pluginId: PluginId } | { readonly path: string },
+    ) => Effect.Effect<PluginCheckReport, PluginNotFoundError>;
+    /**
+     * Keeps the latest web failure a client reported for the plugin's current start, in memory.
+     * A report about an earlier start is ignored.
+     */
+    readonly reportWebFailure: (input: {
+      readonly pluginId: PluginId;
+      readonly revision: number;
+      readonly message: string;
+    }) => Effect.Effect<void, PluginNotFoundError>;
     /** `scopes` are the caller's; methods the plugin registered as writes need the operate scope. */
     readonly invoke: (input: {
       readonly pluginId: PluginId;
@@ -241,6 +272,8 @@ type PluginSettingsError =
 const PluginsConfigFile = Schema.StructWithRest(
   Schema.Struct({
     enabled: Schema.optionalKey(Schema.Record(Schema.String, Schema.Boolean)),
+    /** Whether agents get the `t3_plugins_*` tools; off until the user turns them on. */
+    agentTools: Schema.optionalKey(Schema.Boolean),
     devPaths: Schema.optionalKey(Schema.Array(Schema.String)),
     /** Where each plugin installed through `install` came from, so `update` can fetch it again. */
     sources: Schema.optionalKey(Schema.Record(Schema.String, PluginInstallSource)),
@@ -265,6 +298,9 @@ const PluginsConfigFile = Schema.StructWithRest(
 );
 export type PluginsConfigFile = typeof PluginsConfigFile.Type;
 const decodeConfig = Schema.decodeUnknownEffect(Schema.fromJsonString(PluginsConfigFile));
+const encodeClaudePluginManifest = Schema.encodeEffect(
+  fromJsonStringPretty(Schema.Struct({ name: Schema.String, description: Schema.String })),
+);
 const encodeConfig = Schema.encodeEffect(fromJsonStringPretty(PluginsConfigFile));
 const isJson = Schema.is(Schema.Json);
 
@@ -293,6 +329,7 @@ const managesPlugins = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
 
 interface ClientList {
   readonly plugins: ReadonlyArray<PluginState>;
+  readonly agentTools: boolean;
 }
 
 // Compared per subscriber, since each one sees its own view of the list.
@@ -304,12 +341,14 @@ const statesEvent = (
   const rows = next.plugins.flatMap((plugin, index) =>
     Equal.equals(plugin, previous.plugins[index]) ? [] : [{ index, plugin }],
   );
-  return rows.length === 0 && next.plugins.length === previous.plugins.length
+  return rows.length === 0 &&
+    next.plugins.length === previous.plugins.length &&
+    next.agentTools === previous.agentTools
     ? undefined
-    : { _tag: "changed", length: next.plugins.length, rows };
+    : { _tag: "changed", length: next.plugins.length, rows, agentTools: next.agentTools };
 };
 
-// Git URLs can carry credentials, and plugin state reaches read-only clients.
+// Git URLs can carry credentials, and plugin state reaches read-only clients and agents.
 const shownSource = (source: PluginInstallSource): PluginInstallSource => {
   if (source.type !== "git" || !URL.canParse(source.url)) return source;
   const url = new URL(source.url);
@@ -322,6 +361,7 @@ const shownSource = (source: PluginInstallSource): PluginInstallSource => {
 const toState = (
   record: PluginRecord,
   config: PluginsConfigFile,
+  webFailure: string | undefined,
   serverFailure: string | undefined,
 ): PluginState => {
   const manifest = manifestOf(record.plugin);
@@ -362,6 +402,8 @@ const toState = (
     ...(rollbackVersion === undefined ? {} : { rollbackVersion }),
     hasServer: manifest?.server !== undefined,
     hasWeb: manifest?.web !== undefined,
+    ...("hasSkills" in record.plugin ? { hasSkills: record.plugin.hasSkills } : {}),
+    ...(webFailure === undefined ? {} : { webFailure }),
     ...(serverFailure === undefined ? {} : { serverFailure }),
   };
 };
@@ -404,6 +446,7 @@ const make = Effect.gen(function* () {
     providers: yield* ProviderRegistry.ProviderRegistry,
     hooks: yield* PluginHooks.PluginHooks,
     runtimeRequests: makeRuntimeRequestHooks({ context, orchestrator, threads, crypto }),
+    mcpTools: yield* PluginMcpTools.PluginMcpTools,
     httpRoutes: yield* PluginHttpRoutes.PluginHttpRoutes,
     environment: yield* ServerEnvironment.ServerEnvironment,
     serverSettings: yield* ServerSettings.ServerSettingsService,
@@ -413,6 +456,11 @@ const make = Effect.gen(function* () {
   const environmentThemes = yield* EnvironmentTheme.EnvironmentThemeService;
 
   const pluginsDir = path.join(config.stateDir, "plugins");
+  // Claude loads a plugin folder whole, with its commands, agents, hooks and MCP servers, so
+  // agents get a generated folder holding only the plugin's skills. Copied, not linked: linking
+  // a folder needs extra rights on Windows.
+  const agentFoldersRoot = path.join(config.stateDir, "plugin-agents");
+  const agentFolderOf = (pluginId: PluginId) => path.join(agentFoldersRoot, pluginId);
   const configPath = path.join(config.stateDir, "plugins.json");
 
   const records = yield* Ref.make<ReadonlyArray<PluginRecord>>([]);
@@ -421,14 +469,18 @@ const make = Effect.gen(function* () {
   let revision = yield* Clock.currentTimeMillis;
   const nextRevision = () => ++revision;
   const pluginsConfig = yield* Ref.make<PluginsConfigFile>({});
-  // By plugin id, for the start it was reported for: a new start's revision hides the old one. A
-  // stopped plugin's leftover timers fail with no revision.
+  // By plugin id, for the start it was reported for: a new start's revision hides the old one.
+  const webFailures = yield* Ref.make<
+    ReadonlyMap<PluginId, { readonly revision: number; readonly message: string }>
+  >(new Map());
+  // Like web failures. A stopped plugin's leftover timers fail with no revision.
   const serverFailures = yield* Ref.make<
     ReadonlyMap<PluginId, { readonly revision: number | undefined; readonly message: string }>
   >(new Map());
   const changes = yield* PubSub.sliding<ReadonlyArray<PluginState>>(1);
   const lifecycle = yield* Semaphore.make(1);
   const publishLock = yield* Semaphore.make(1);
+  const agentToolsOffered = yield* SubscriptionRef.make(false);
   // Update checks write plugins.json outside the lifecycle lock, so every read that is written
   // back, or kept as the current config, holds this one.
   const configLock = yield* Semaphore.make(1);
@@ -437,12 +489,17 @@ const make = Effect.gen(function* () {
 
   const statesOf = Effect.fn("PluginHost.statesOf")(function* (all: ReadonlyArray<PluginRecord>) {
     const config = yield* Ref.get(pluginsConfig);
+    const failures = yield* Ref.get(webFailures);
     const serverFailed = yield* Ref.get(serverFailures);
     return all.map((record) => {
+      const webFailure = failures.get(record.plugin.id);
       const serverFailure = serverFailed.get(record.plugin.id);
       return toState(
         record,
         config,
+        webFailure !== undefined && webFailure.revision === record.revision
+          ? webFailure.message
+          : undefined,
         serverFailure !== undefined && serverFailure.revision === record.revision
           ? serverFailure.message
           : undefined,
@@ -451,15 +508,29 @@ const make = Effect.gen(function* () {
   });
   const currentStates = Ref.get(records).pipe(Effect.flatMap(statesOf));
   // What the last publish sent, starting from the empty list clients get before any. Settings
-  // rescans on every visit, and a list sent again would make every client stream rebuild what it
-  // already shows.
+  // rescans on every visit, and a list sent again would make every client and provider stream
+  // rebuild what it already shows.
   let published: ReadonlyArray<PluginState> = [];
+  // Agents get the management tools only once the user turns them on, so no turn pays for them
+  // unasked.
+  const syncAgentTools = Effect.gen(function* () {
+    const offered = (yield* Ref.get(pluginsConfig)).agentTools ?? false;
+    yield* services.mcpTools.offerManagementTools(offered);
+    if ((yield* SubscriptionRef.get(agentToolsOffered)) !== offered) {
+      yield* SubscriptionRef.set(agentToolsOffered, offered);
+    }
+  });
   // Reading and publishing under one lock, so a slower fiber cannot publish an older list last.
   const publishUnderLock = publishLock.withPermits(1)(
     Effect.gen(function* () {
       const all = yield* Ref.get(records);
       const states = yield* statesOf(all);
-      if (Equal.equals(states, published)) return;
+      // Still synced, so a saved choice applies at startup in an environment with no plugins.
+      if (Equal.equals(states, published)) return yield* syncAgentTools;
+      yield* services.mcpTools.setInstalledPlugins(states);
+      const active = all.flatMap((record, index) =>
+        states[index]?.status === "active" ? [record.plugin] : [],
+      );
       // Every enabled plugin that has not failed, so a starting or restarting one keeps its themes:
       // windows would otherwise paint T3's colors, forget the saved theme, then switch back.
       yield* environmentThemes.setPluginThemeDirectories(
@@ -470,8 +541,22 @@ const make = Effect.gen(function* () {
             : [];
         }),
       );
+      const withSkills = yield* Effect.filter(
+        active.map((plugin) => {
+          const folder = agentFolderOf(plugin.id);
+          return { plugin, folder: { plugin: folder, skills: path.join(folder, "skills") } };
+        }),
+        ({ folder }) => fs.exists(folder.skills).pipe(Effect.orElseSucceed(() => false)),
+      );
+      yield* services.hooks.setSkillFolders(
+        withSkills.map(({ folder }) => folder),
+        (yield* Effect.forEach(withSkills, ({ plugin, folder }) =>
+          skillsIn(plugin, folder.skills),
+        )).flat(),
+      );
       yield* PubSub.publish(changes, states);
       published = states;
+      yield* syncAgentTools;
     }),
   );
   // A caller that disconnects mid-publish must not leave a change it made unsent.
@@ -733,6 +818,74 @@ const make = Effect.gen(function* () {
     return styles.flat();
   });
 
+  // Read when plugins change, so provider lists name each skill without reading files.
+  const skillsIn = (plugin: DiscoveredPlugin, skillsDir: string) =>
+    fs.readDirectory(skillsDir).pipe(
+      Effect.orElseSucceed((): ReadonlyArray<string> => []),
+      Effect.flatMap((folders) =>
+        Effect.forEach(folders.toSorted(), (folder) => {
+          const skillPath = path.join(skillsDir, folder, "SKILL.md");
+          return fs.readFileString(skillPath).pipe(
+            Effect.map((contents): ReadonlyArray<PluginHooks.PluginSkill> => {
+              const frontmatter = parseSkillFrontmatter(contents);
+              // Agents cannot load a skill they cannot parse, and agent-only skills stay unlisted.
+              if (
+                frontmatter.kind === "malformed" ||
+                (frontmatter.kind === "parsed" && frontmatter.userInvocable === false)
+              ) {
+                return [];
+              }
+              return [
+                {
+                  pluginId: plugin.id,
+                  pluginName: manifestOf(plugin)?.name ?? plugin.id,
+                  folder,
+                  path: skillPath,
+                  ...(frontmatter.kind === "parsed" && frontmatter.name !== undefined
+                    ? { name: frontmatter.name }
+                    : {}),
+                  ...(frontmatter.kind === "parsed" && frontmatter.description !== undefined
+                    ? { description: frontmatter.description }
+                    : {}),
+                },
+              ];
+            }),
+            Effect.orElseSucceed((): ReadonlyArray<PluginHooks.PluginSkill> => []),
+          );
+        }),
+      ),
+      Effect.map((lists) => lists.flat()),
+    );
+  const removeAgentFolder = (pluginId: PluginId) =>
+    fs.remove(agentFolderOf(pluginId), { recursive: true, force: true }).pipe(Effect.ignore);
+  const prepareAgentFolder = Effect.fn("PluginHost.prepareAgentFolder")(
+    function* (plugin: DiscoveredPlugin, name: string) {
+      yield* removeAgentFolder(plugin.id);
+      const skills = path.join(plugin.rootDir, "skills");
+      if (!(yield* fs.exists(skills))) return;
+      const target = agentFolderOf(plugin.id);
+      yield* fs.makeDirectory(path.join(target, ".claude-plugin"), { recursive: true });
+      const manifest = yield* encodeClaudePluginManifest({
+        name: plugin.id,
+        description: `Skills from the T3 Code plugin ${name}.`,
+      });
+      yield* fs.writeFileString(
+        path.join(target, ".claude-plugin", "plugin.json"),
+        `${manifest}\n`,
+      );
+      yield* fs.copy(skills, path.join(target, "skills"));
+    },
+    (effect, plugin) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("could not prepare a plugin's skills for agents", {
+            pluginId: plugin.id,
+            cause: Cause.pretty(cause).slice(0, 500),
+          }).pipe(Effect.andThen(removeAgentFolder(plugin.id))),
+        ),
+      ),
+  );
+
   const activatePlugin = Effect.fn("PluginHost.activate")(function* (plugin: DiscoveredPlugin) {
     const manifest = manifestOf(plugin);
     if (manifest === undefined) return;
@@ -753,6 +906,7 @@ const make = Effect.gen(function* () {
       styles: yield* serveStyles(plugin),
     };
     if (manifest.server === undefined) {
+      yield* prepareAgentFolder(plugin, manifest.name);
       return yield* setRecord(plugin.id, { ...started, revision: nextRevision() });
     }
     yield* setRecord(plugin.id, { status: "loading" });
@@ -792,6 +946,7 @@ const make = Effect.gen(function* () {
           }).pipe(Effect.timeoutOption(ACTIVATE_DEADLINE)),
         ).pipe(Effect.exit);
         if (activated._tag === "Success" && Option.isSome(activated.value)) {
+          yield* prepareAgentFolder(plugin, manifest.name);
           yield* setRecord(plugin.id, { ...started, activation, revision: nextRevision() });
           return yield* Effect.logInfo("plugin activated", { pluginId: plugin.id });
         }
@@ -825,6 +980,7 @@ const make = Effect.gen(function* () {
       next.delete(pluginId);
       return next;
     });
+    yield* removeAgentFolder(pluginId);
     // Plugins without server code have no activation but may still serve files.
     yield* services.httpRoutes.unregisterPlugin(pluginId);
     const record = yield* findRecord(pluginId);
@@ -1043,6 +1199,8 @@ const make = Effect.gen(function* () {
     .withPermits(1)(
       Effect.gen(function* () {
         yield* recoverStaging;
+        // Folders of plugins the last run left active; activation writes them again.
+        yield* fs.remove(agentFoldersRoot, { recursive: true, force: true }).pipe(Effect.ignore);
         const { plugins, enabled } = yield* discover(true);
         yield* Ref.set(
           records,
@@ -1080,20 +1238,25 @@ const make = Effect.gen(function* () {
       return Stream.concat(Stream.make(snapshot), Stream.fromSubscription(subscription));
     }),
   );
+  const agentTools = SubscriptionRef.changes(agentToolsOffered);
   const forClient =
     (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
-    (plugins: ReadonlyArray<PluginState>): ClientList => ({
+    ([plugins, offered]: readonly [ReadonlyArray<PluginState>, boolean]): ClientList => ({
       plugins: managesPlugins(scopes) ? plugins : plugins.map(withoutServerPaths),
+      agentTools: offered,
     });
 
   const service = PluginHost.of({
     list: currentStates,
     streamStates,
     listForClient: Effect.fn("PluginHost.listForClient")(function* (scopes) {
-      return forClient(scopes)(yield* currentStates);
+      return forClient(scopes)([
+        yield* currentStates,
+        yield* SubscriptionRef.get(agentToolsOffered),
+      ]);
     }),
     streamForClient: (scopes) =>
-      streamStates.pipe(
+      Stream.zipLatest(streamStates, agentTools).pipe(
         Stream.map(forClient(scopes)),
         Stream.mapAccum(
           (): ClientList | undefined => undefined,
@@ -1106,6 +1269,80 @@ const make = Effect.gen(function* () {
     setEnabled,
     reload,
     rescan: rescan(),
+    agentTools,
+    setAgentTools: Effect.fn("PluginHost.setAgentTools")(function* (enabled) {
+      yield* writeConfig((current) => ({ ...current, agentTools: enabled }));
+      yield* publishLock.withPermits(1)(syncAgentTools);
+      return enabled;
+    }),
+    check: Effect.fn("PluginHost.check")(function* (target) {
+      const { folder, state } =
+        "path" in target
+          ? { folder: path.resolve(target.path), state: undefined }
+          : yield* findRecord(target.pluginId).pipe(
+              Effect.flatMap((record) =>
+                record === undefined
+                  ? Effect.fail(new PluginNotFoundError({ pluginId: target.pluginId }))
+                  : stateOf(target.pluginId).pipe(
+                      Effect.map((state) => ({ folder: record.plugin.rootDir, state })),
+                    ),
+              ),
+            );
+      const report = yield* checkPluginFolder(folder, packageJson.version).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+      );
+      const failures: ReadonlyArray<PluginCheckFinding> = [
+        ...(state?.failure === undefined
+          ? []
+          : [
+              {
+                code: "last-start-failed",
+                severity: "error" as const,
+                file: null,
+                problem: `Its last start failed at ${state.failure.stage}: ${state.failure.message}`,
+                fix: "Fix it, then reload the plugin.",
+              },
+            ]),
+        ...(state?.webFailure === undefined
+          ? []
+          : [
+              {
+                code: "web-failed",
+                severity: "error" as const,
+                file: null,
+                problem: `Its web half failed in the browser: ${state.webFailure}`,
+                fix: "Fix it, rebuild the web bundle, then reload the plugin.",
+              },
+            ]),
+        ...(state?.serverFailure === undefined
+          ? []
+          : [
+              {
+                code: "server-failed",
+                severity: "error" as const,
+                file: null,
+                problem: `Its server code failed outside a call, such as in a timer or a hook: ${state.serverFailure}`,
+                fix: "Catch errors in its timers and callbacks, and stop its timers in onDeactivate, then reload the plugin.",
+              },
+            ]),
+      ];
+      return { ...report, findings: [...failures, ...report.findings] };
+    }),
+    reportWebFailure: Effect.fn("PluginHost.reportWebFailure")(function* (report) {
+      const record = yield* findRecord(report.pluginId);
+      if (record === undefined) {
+        return yield* new PluginNotFoundError({ pluginId: report.pluginId });
+      }
+      if (record.revision !== report.revision) return;
+      yield* Ref.update(webFailures, (all) =>
+        new Map(all).set(report.pluginId, {
+          revision: report.revision,
+          message: report.message.slice(0, MAX_WEB_FAILURE_CHARS),
+        }),
+      );
+      yield* publishStates;
+    }),
     getSettings: Effect.fn("PluginHost.getSettings")(function* (pluginId) {
       const manifest = yield* manifestFor(pluginId);
       return yield* settingsStore.getForClient(pluginId, manifest.settingsSchema);
@@ -1211,6 +1448,29 @@ const make = Effect.gen(function* () {
       );
     }),
   );
+  // Agents reach these through the `t3_plugins_*` tools, which MCP already gates as writes, so
+  // the call carries operate access.
+  yield* services.mcpTools.setHostActions({
+    invoke: (pluginId, method, input) =>
+      service.invoke({
+        pluginId,
+        method,
+        input,
+        scopes: [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
+      }),
+    setEnabled: service.setEnabled,
+    reload: service.reload,
+    install: installer.install,
+    uninstall: installer.uninstall,
+    check: service.check,
+    getSettings: Effect.fn("PluginHost.getSettingsForAgent")(function* (pluginId) {
+      const { settingsSchema } = yield* manifestFor(pluginId);
+      const settings = yield* settingsStore.getForClient(pluginId, settingsSchema);
+      return settingsSchema === undefined ? { settings } : { settings, settingsSchema };
+    }),
+    updateSettings: service.updateSettings,
+    slashCommands: services.hooks.currentSlashCommands,
+  });
   return Context.make(PluginHost, service).pipe(
     Context.add(PluginInstaller.PluginInstaller, installer),
   );

@@ -59,6 +59,7 @@ import * as PluginHooks from "./PluginHooks.ts";
 import * as PluginHost from "./PluginHost.ts";
 import * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
 import * as PluginInstaller from "./PluginInstaller.ts";
+import * as PluginMcpTools from "./PluginMcpTools.ts";
 import { makePluginRpcHandlers } from "./pluginRpcHandlers.ts";
 import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
@@ -171,7 +172,9 @@ const layerHost = (services: typeof layerUnusedServices = layerUnusedServices) =
       Layer.provide(layerThemes),
       Layer.provide(ProcessRunner.layer),
       Layer.provide(layerNpmRegistry),
-      Layer.provideMerge(Layer.mergeAll(PluginHooks.layer, PluginHttpRoutes.layer)),
+      Layer.provideMerge(
+        Layer.mergeAll(PluginHooks.layer, PluginMcpTools.layer, PluginHttpRoutes.layer),
+      ),
     ),
   );
 
@@ -216,9 +219,6 @@ const writeInstalledPlugin = Effect.fn(function* (id: string, serverSource: stri
   yield* writeFile(`${rootDir}/server.cjs`, serverSource);
   return rootDir;
 });
-
-const manifestJson = (id: string) =>
-  JSON.stringify({ id, name: id, version: "0.1.0", engines: { t3: ">=0.1.0" } });
 
 const upgrade = PluginId.make("upgrade");
 /** Version `version` of the `upgrade` plugin in `folder`, whose `activate` runs `activate`. */
@@ -514,6 +514,96 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
           yield* storage.get(id, cursorKey),
           Option.some({ sequence: 3, runIds: [] }),
         );
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("gives agents a plugin's skills and instructions until it is disabled", () =>
+    Effect.gen(function* () {
+      const skills = PluginId.make("skills-plugin");
+      const rootDir = `${fixturesDir}skills-plugin`;
+      yield* writePluginsConfig({ enabled: { [skills]: true }, devPaths: [rootDir] });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const hooks = yield* PluginHooks.PluginHooks;
+        yield* waitForStatuses(host, { [skills]: "active" });
+        const fs = yield* FileSystem.FileSystem;
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        // Claude loads a whole folder as a plugin, so it gets one holding only the skills.
+        const agentFolder = `${stateDir}/plugin-agents/skills-plugin`;
+        assert.deepStrictEqual(yield* hooks.agentContext, {
+          instructions: [
+            '<t3_code_plugin name="Release helper">\nWrite release notes in the past tense.\n</t3_code_plugin>',
+          ],
+          skillFolders: [{ plugin: agentFolder, skills: `${agentFolder}/skills` }],
+        });
+        // In plugin id order, so a restart changes neither Claude's process key nor Codex's keys.
+        const removeEarlier = yield* hooks.addAgentInstructions("aaa-plugin", "Earlier.");
+        assert.strictEqual((yield* hooks.agentContext)?.instructions[0], "Earlier.");
+        yield* removeEarlier;
+        assert.deepStrictEqual((yield* fs.readDirectory(agentFolder)).toSorted(), [
+          ".claude-plugin",
+          "skills",
+        ]);
+        assert.include(
+          JSON.parse(yield* fs.readFileString(`${agentFolder}/.claude-plugin/plugin.json`)),
+          { name: "skills-plugin" },
+        );
+        assert.isTrue(yield* fs.exists(`${agentFolder}/skills/release-notes/SKILL.md`));
+
+        // The `$` picker lists the skill for the providers that receive it, by each one's name.
+        // A provider's own skill of that name stays.
+        const ownSkill = {
+          name: "release-notes",
+          path: "/home/user/.codex/skills/release-notes",
+          enabled: true,
+        };
+        const listed = PluginHooks.withPluginSkills(
+          [
+            {
+              driver: "claudeAgent",
+              skills: [],
+              workspaceSnapshots: [{ cwd: "/repo", skills: [] }],
+            },
+            { driver: "codex", skills: [] },
+            { driver: "cursor", skills: [] },
+            { driver: "codex", skills: [ownSkill] },
+          ] as unknown as ReadonlyArray<ServerProvider>,
+          yield* hooks.currentSkills,
+        );
+        const skill = {
+          path: `${agentFolder}/skills/release-notes/SKILL.md`,
+          enabled: true,
+          scope: "plugin",
+          displayName: "Release helper: release-notes",
+          description: "Drafts release notes from the commits since the last tag.",
+        };
+        const claudeSkill = { name: "skills-plugin:release-notes", ...skill };
+        assert.deepStrictEqual(
+          listed.map((provider) => provider.skills),
+          [[claudeSkill], [{ name: "release-notes", ...skill }], [], [ownSkill]],
+        );
+        assert.deepStrictEqual(listed[0]?.workspaceSnapshots?.[0]?.skills, [claudeSkill]);
+
+        // A rescan that finds nothing new publishes nothing, so provider lists are not rebuilt.
+        const skillLists = yield* hooks.skills.pipe(
+          Stream.take(2),
+          Stream.runCollect,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* host.rescan;
+        // Neither does a change elsewhere on the plugin's row.
+        const revision = stateOf(yield* host.list, skills)?.revision;
+        assert.isDefined(revision);
+        yield* host.reportWebFailure({ pluginId: skills, revision, message: "load threw" });
+        yield* host.setEnabled(skills, false);
+        assert.deepStrictEqual(
+          (yield* Fiber.join(skillLists)).map((list) => list.length),
+          [1, 0],
+        );
+        assert.isUndefined(yield* hooks.agentContext);
+        assert.deepStrictEqual(yield* hooks.currentSkills, []);
+        assert.isFalse(yield* fs.exists(agentFolder));
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
@@ -883,6 +973,89 @@ module.exports = { activate(api) {
     }).pipe(Effect.provide(layerConfig())),
   );
 
+  it.effect("keeps the web failure a client reports for a plugin's current start", () =>
+    Effect.gen(function* () {
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      yield* writeFile(
+        `${stateDir}/plugins/web-only/t3-plugin.json`,
+        JSON.stringify({
+          id: "web-only",
+          name: "Web only",
+          version: "0.1.0",
+          engines: { t3: ">=0.1.0" },
+          web: "./web.js",
+        }),
+      );
+      yield* writeFile(`${stateDir}/plugins/web-only/web.js`, "export default {};");
+      yield* writePluginsConfig({ enabled: { "web-only": true } });
+      // Holds a publish at its skills check, which it runs for each active plugin.
+      let held:
+        | { readonly reached: Deferred.Deferred<void>; readonly release: Deferred.Deferred<void> }
+        | undefined;
+      const layerHeldPublish = layerFileSystemWith((fs) => ({
+        exists: (target) =>
+          held !== undefined && target.endsWith("skills")
+            ? Deferred.succeed(held.reached, undefined).pipe(
+                Effect.andThen(Deferred.await(held.release)),
+                Effect.andThen(fs.exists(target)),
+              )
+            : fs.exists(target),
+      }));
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const id = PluginId.make("web-only");
+        const revision = stateOf(yield* waitForStatuses(host, { [id]: "active" }), id)?.revision;
+        assert.isDefined(revision);
+        const webFailure = Effect.map(host.list, (states) => stateOf(states, id)?.webFailure);
+        const report = (message: string, at = revision) =>
+          host.reportWebFailure({ pluginId: id, revision: at, message });
+
+        // A client that disconnects mid-publish still gets its report to the others.
+        const sent = yield* host.streamStates.pipe(
+          Stream.filter((states) => stateOf(states, id)?.webFailure === "load threw"),
+          Stream.runHead,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        held = { reached: yield* Deferred.make<void>(), release: yield* Deferred.make<void>() };
+        const reporting = yield* report("load threw").pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Deferred.await(held.reached);
+        const interrupting = yield* Fiber.interrupt(reporting).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Deferred.succeed(held.release, undefined);
+        held = undefined;
+        yield* Fiber.join(interrupting);
+        yield* report("load threw");
+        assert.isTrue(Option.isSome(yield* Fiber.join(sent)));
+
+        const call = yield* host
+          .invoke({ pluginId: id, method: "ping", input: undefined, scopes: operate })
+          .pipe(Effect.flip);
+        assert.strictEqual(
+          call.message,
+          "Plugin web-only has no server half, so it has no methods or channels.",
+        );
+
+        yield* report("activate threw");
+        assert.strictEqual(yield* webFailure, "activate threw");
+        yield* report("a part threw");
+        assert.deepInclude((yield* host.check({ pluginId: id })).findings[0], {
+          code: "web-failed",
+          problem: "Its web half failed in the browser: a part threw",
+        });
+        // A restart forgets it, and a report about the earlier start is ignored.
+        const reloaded = yield* host.reload(id);
+        assert.isUndefined(reloaded.webFailure);
+        yield* report("stale");
+        assert.isUndefined(yield* webFailure);
+        yield* report("fresh", reloaded.revision);
+        assert.strictEqual(yield* webFailure, "fresh");
+      }).pipe(Effect.provide(layerHost().pipe(Layer.provide(layerHeldPublish))));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
   it.effect("finishes disabling a plugin when the caller gives up during its cleanup", () =>
     Effect.gen(function* () {
       const started = Promise.withResolvers<void>();
@@ -917,6 +1090,48 @@ module.exports = { activate(api) {
       }).pipe(Effect.provide(layerHost()));
       Reflect.deleteProperty(globalThis, "__t3PluginHostCleanupStarted");
       Reflect.deleteProperty(globalThis, "__t3PluginHostCleanupGate");
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("tears down a plugin turned off while its skills are copied for agents", () =>
+    Effect.gen(function* () {
+      const id = PluginId.make("held");
+      const rootDir = yield* writeInstalledPlugin(
+        id,
+        `module.exports = { activate(api) { api.slashCommands.register({ name: "held" }, () => undefined); } };`,
+      );
+      yield* writeFile(`${rootDir}/skills/notes/SKILL.md`, "---\nname: notes\n---\nTake notes.\n");
+      yield* writePluginsConfig({ enabled: { [id]: true } });
+      const copying = yield* Deferred.make<void>();
+      const released = yield* Deferred.make<void>();
+      // Holds the skills copy until the disable has saved plugins.json (its temporary folder is
+      // removed last). The release is scheduled, so the disable asks the activation to stop first.
+      const layerHeldCopy = layerFileSystemWith((fs) => ({
+        copy: (from, to, options) =>
+          (from.endsWith("skills")
+            ? Deferred.succeed(copying, undefined).pipe(Effect.andThen(Deferred.await(released)))
+            : Effect.void
+          ).pipe(Effect.andThen(fs.copy(from, to, options))),
+        remove: (target, options) =>
+          fs
+            .remove(target, options)
+            .pipe(
+              Effect.tap(() =>
+                target.includes("plugins.json.")
+                  ? Effect.forkDetach(Deferred.succeed(released, undefined))
+                  : Effect.void,
+              ),
+            ),
+      }));
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const hooks = yield* PluginHooks.PluginHooks;
+        yield* Deferred.await(copying);
+
+        yield* host.setEnabled(id, false);
+        assert.deepStrictEqual(yield* hooks.currentSlashCommands, []);
+        assert.include(yield* host.setEnabled(id, true), { status: "active" });
+      }).pipe(Effect.provide(layerHost().pipe(Layer.provide(layerHeldCopy))));
     }).pipe(Effect.provide(layerConfig())),
   );
 
@@ -1214,6 +1429,9 @@ module.exports = { activate(api) {
           const host = yield* PluginHost.PluginHost;
           const installer = yield* PluginInstaller.PluginInstaller;
           yield* waitForStatuses(host, {});
+          // Agents get the plugin tools only once the user turns them on, plugins or not.
+          const agentTools = Stream.runHead(host.agentTools).pipe(Effect.map(Option.getOrThrow));
+          assert.isFalse(yield* agentTools);
 
           // A folder that is not a plugin, such as a home folder, is refused before it is copied.
           const notInstalled = yield* installer
@@ -1225,6 +1443,11 @@ module.exports = { activate(api) {
           const source = { type: "path" as const, path: `${fixturesDir}hello-plugin` };
           const installed = yield* installer.install(source);
           assert.deepStrictEqual(installed.installSource, source);
+          assert.isFalse(yield* agentTools);
+          yield* host.setAgentTools(true);
+          assert.isTrue(yield* agentTools);
+          yield* host.setAgentTools(false);
+          assert.isFalse(yield* agentTools);
           const updated = yield* installer.update(hello);
           assert.include(updated, { status: "active" });
           assert.notStrictEqual(updated.revision, installed.revision);
@@ -1356,8 +1579,13 @@ module.exports = { activate(api) {
 
         // Copied in by hand under any name, a plugin is listed on the next rescan, turned off.
         yield* writeFile(`${stateDir}/plugins/My Notes/t3-plugin.json`, notesManifest("1.0.0"));
+        yield* writeFile(`${stateDir}/plugins/My Notes/skills/notes/SKILL.md`, "Notes.");
         const { plugins } = yield* host.rescan;
-        assert.include(stateOf(plugins, "notes"), { status: "disabled", enabled: false });
+        assert.include(stateOf(plugins, "notes"), {
+          status: "disabled",
+          enabled: false,
+          hasSkills: true,
+        });
         // A new version copied over one that is off is what Settings lists and what starts.
         yield* writeFile(`${stateDir}/plugins/My Notes/t3-plugin.json`, notesManifest("1.0.5"));
         assert.include(stateOf((yield* host.rescan).plugins, "notes"), { version: "1.0.5" });
@@ -1458,7 +1686,10 @@ module.exports = { activate(api) {
             handlers[WS_METHODS.pluginsSubscribeStates]({}).pipe(
               Stream.runHead,
               Effect.map((first) =>
-                applyPluginStatesEvent({ plugins: [] }, Option.getOrThrow(first)),
+                applyPluginStatesEvent(
+                  { plugins: [], agentTools: false },
+                  Option.getOrThrow(first),
+                ),
               ),
             ),
           ]).pipe(Effect.map((results) => results.flatMap((result) => result.plugins)));
@@ -1503,7 +1734,10 @@ module.exports = { activate(api) {
             [hello],
           );
         }
-        const folded = [first!, ...changes].reduce(applyPluginStatesEvent, { plugins: [] });
+        const folded = [first!, ...changes].reduce(applyPluginStatesEvent, {
+          plugins: [],
+          agentTools: false,
+        });
         assert.deepStrictEqual(folded, yield* host.listForClient(operate));
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
@@ -1800,15 +2034,15 @@ module.exports = { activate(api) {
       const { stateDir } = yield* ServerConfig.ServerConfig;
       const reached = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
-      // Holds startup inside its lock, as it lists the plugins folder.
+      // Holds startup inside its lock, before it lists the plugins folder.
       const layerHeldStartup = layerFileSystemWith((fs) => ({
-        readDirectory: (target, options) =>
-          target.endsWith("/plugins")
+        remove: (target, options) =>
+          target.endsWith("plugin-agents")
             ? Deferred.succeed(reached, undefined).pipe(
                 Effect.andThen(Deferred.await(release)),
-                Effect.andThen(fs.readDirectory(target, options)),
+                Effect.andThen(fs.remove(target, options)),
               )
-            : fs.readDirectory(target, options),
+            : fs.remove(target, options),
       }));
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
@@ -1822,7 +2056,15 @@ module.exports = { activate(api) {
         yield* Deferred.succeed(release, undefined);
         // Waits for startup's lock, so startup has published whatever it does by then.
         yield* host.rescan;
-        yield* writeFile(`${stateDir}/plugins/late/t3-plugin.json`, manifestJson("late"));
+        yield* writeFile(
+          `${stateDir}/plugins/late/t3-plugin.json`,
+          JSON.stringify({
+            id: "late",
+            name: "Late",
+            version: "0.1.0",
+            engines: { t3: ">=0.1.0" },
+          }),
+        );
         yield* host.rescan;
         assert.deepStrictEqual(yield* Fiber.join(lists), [[], ["late"]]);
       }).pipe(Effect.provide(layerHost().pipe(Layer.provide(layerHeldStartup))));

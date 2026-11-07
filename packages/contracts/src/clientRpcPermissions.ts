@@ -59,6 +59,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.scheduledTasksDelete]: AuthOrchestrationOperateScope,
   // Enabling a plugin runs its code in the server, like pointing a provider at a binary.
   [WS_METHODS.pluginsSetEnabled]: AuthSettingsWriteScope,
+  [WS_METHODS.pluginsSetAgentTools]: AuthSettingsWriteScope,
   [WS_METHODS.pluginsReload]: AuthSettingsWriteScope,
   [WS_METHODS.pluginsInstall]: AuthSettingsWriteScope,
   [WS_METHODS.pluginsInstallFiles]: AuthSettingsWriteScope,
@@ -69,6 +70,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.pluginsRollback]: AuthSettingsWriteScope,
   [WS_METHODS.pluginsCheckUpdates]: AuthSettingsWriteScope,
   [WS_METHODS.pluginsSettingsUpdate]: AuthSettingsWriteScope,
+  // Agents read the report, so a guest or read-only client must not write it.
+  [WS_METHODS.pluginsReportWebFailure]: AuthSettingsWriteScope,
   [WS_METHODS.scheduledTasksRunNow]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksRotateWebhookToken]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,

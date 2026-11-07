@@ -22,6 +22,8 @@ import { Button } from "../ui/button";
 import ChatMarkdown from "../ChatMarkdown";
 import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
 import { RenderErrorBoundary } from "../RenderErrorBoundary";
+import { pluginToolNameOf } from "../../plugins/pluginUi";
+import type { PluginUi } from "../../plugins/pluginUiParts";
 import { CommandOutputPanel, useCommandOutputStreaming } from "./CommandOutputPanel";
 import { resolveExternalWebLinkHref } from "./externalLinkContextMenu";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
@@ -36,6 +38,7 @@ interface V2ItemInspectorProps {
   readonly onOpenToolDiff?: ((target: ToolCallDiffTarget) => void) | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   readonly source?: TurnItemSource | undefined;
+  readonly pluginUi: PluginUi | null;
 }
 
 function SyntaxTokens({
@@ -243,6 +246,15 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
   );
   const item = fetched.item;
   const outputState = fetched.output;
+  const dynamicToolBody =
+    item.type === "dynamic_tool" ? (
+      <ToolCallBody
+        toolName={item.toolName}
+        args={item.input}
+        {...outputState}
+        onImageExpand={props.onImageExpand}
+      />
+    ) : null;
   return (
     <div className="space-y-2 text-xs" data-v2-item-inspector={item.type}>
       {item.type === "reasoning" && item.text ? (
@@ -378,13 +390,21 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
         </ul>
       ) : null}
 
-      {item.type === "dynamic_tool" ? (
-        <ToolCallBody
-          toolName={item.toolName}
-          args={item.input}
-          {...outputState}
-          onImageExpand={props.onImageExpand}
-        />
+      {item.type === "dynamic_tool" && dynamicToolBody !== null ? (
+        props.pluginUi !== null &&
+        pluginToolNameOf(item.toolName) !== undefined &&
+        item.toolName !== null ? (
+          <props.pluginUi.PluginToolBody
+            environmentId={props.environmentId}
+            toolName={item.toolName}
+            input={item.input}
+            output={outputState.output}
+            status={item.status}
+            fallback={dynamicToolBody}
+          />
+        ) : (
+          dynamicToolBody
+        )
       ) : null}
 
       {item.type === "approval_request" ? <StructuredValue value={item.prompt} /> : null}

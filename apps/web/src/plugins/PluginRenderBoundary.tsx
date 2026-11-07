@@ -7,14 +7,15 @@ import { type PluginOwner, setPluginWebFailure } from "./pluginRegistry";
 // Once per plugin start: a broken part in every timeline row would otherwise report once each.
 const reported = new WeakSet<PluginOwner>();
 
-// On the plugin's row in Settings and in a toast, since the fallback quietly takes the plugin's
-// place.
+// On the plugin's row in Settings, to agents through the server, and in a toast, since the
+// fallback quietly takes the plugin's place.
 const reportRenderFailure = (owner: PluginOwner, what: string, error: unknown) => {
   if (reported.has(owner)) return;
   reported.add(owner);
   const reason = error instanceof Error ? error.message : String(error);
   const message = `${what} stopped with an error: ${reason}`;
   setPluginWebFailure(owner.environmentId, owner.pluginId, message);
+  owner.report?.(message);
   toastManager.add({
     type: "error",
     title: `${owner.pluginName} hit an error`,

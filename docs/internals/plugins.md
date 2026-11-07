@@ -62,12 +62,12 @@ to `plugin-rollback/<id>`. Git may use only https, ssh and file: plain http and 
 change the code, and others such as `ext::` run commands. Update checks download a newer version to
 read its `engines.t3`, so they offer only versions this server runs.
 
-Installing a folder with `link` adds it to `devPaths`. Symlinks into `plugins/` would do the same
-but need extra rights on Windows. Clients send the files of a dropped folder, never its path, which
-would mean nothing on a remote environment. Sent files record no source, so dropping a folder
-cannot take over a git or npm plugin. Discovery takes the id from the manifest, because people copy
-plugin folders in by hand. Nothing watches `plugins/`: the server reads it at startup, on reload
-and when Settings asks.
+An agent writing a plugin installs its folder with `link`, which adds it to `devPaths`. Symlinks
+into `plugins/` would do the same but need extra rights on Windows. Clients send the files of a
+dropped folder, never its path, which would mean nothing on a remote environment. Sent files record
+no source, so dropping a folder cannot take over a git or npm plugin. Discovery takes the id from
+the manifest, because people copy plugin folders in by hand. Nothing watches `plugins/`: the server
+reads it at startup, on reload and when Settings asks.
 
 ## Clients
 
@@ -76,7 +76,8 @@ resend the whole config on every plugin change.
 
 Plugin UI loads from the main environment. With none, as on app.t3.codes or a desktop with its local
 environment off, it loads from the one picked under "Load plugin UI from", which starts as none and
-is kept in that browser. Settings installs a plugin with no server code on that environment alone.
+is kept in that browser. Settings installs a plugin with no server code or agent skills on that
+environment alone.
 
 At startup the app loads only a small stub, [`pluginUi.ts`](../../apps/web/src/plugins/pluginUi.ts).
 Once the app is idle,
@@ -121,3 +122,14 @@ Text generation hooks wrap the `TextGeneration` router, which every caller goes 
 gets 3 seconds and all of them share 5 per text, then T3 generates the text itself. Drivers that
 pick a runtime per call, such as OpenCode's, must forward the optional `generateText`, or
 `textGeneration.generate` sees it missing.
+
+Instructions and skill folders ride on each adapter turn input, so adapters never look up plugins.
+Claude loads a `--plugin-dir` folder whole, hooks and MCP servers included, so the host generates
+`<stateDir>/plugin-agents/<id>` with only a manifest and `skills/`. Claude reads it only when its
+process starts, so it is part of the adapter's process reuse key. Codex gets skills through
+`skills/extraRoots/set`. Other adapters each need their own change.
+
+MCP has no tool removal, so a stopped plugin's tools stay listed and answer that the plugin is
+disabled. The `t3_plugins_*` tools start off, because every agent turn pays for the advertised tool
+list. The loader reports a web half's failure with `plugins.reportWebFailure`, which needs the
+settings write scope because agents read the text.

@@ -31,6 +31,7 @@ import * as HtmlRender from "../htmlRender/HtmlRender.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as PluginMcpTools from "../plugins/PluginMcpTools.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import {
   type AgentThread,
@@ -1140,6 +1141,69 @@ export const layerDeviceToolkit = Layer.mergeAll(
   layerDeviceScreenshotRegistration,
 );
 
+const isJsonObject = Schema.is(Schema.JsonObject);
+
+const pluginToolResult = (output: Schema.Json) =>
+  new McpSchema.CallToolResult({
+    isError: false,
+    ...(isJsonObject(output) ? { structuredContent: output } : {}),
+    content: [{ type: "text", text: JSON.stringify(output) }],
+  });
+
+const pluginToolFailure = (error: { readonly message: string }) =>
+  new McpSchema.CallToolResult({ isError: true, content: [{ type: "text", text: error.message }] });
+
+/**
+ * Plugins add tools while the server runs, so they register here directly instead of through
+ * a toolkit. Kept out of `layerTools`: with no plugin installed there are none to measure.
+ */
+export const layerPluginTools = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const plugins = yield* PluginMcpTools.PluginMcpTools;
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    yield* plugins.attach((entry) => {
+      const checked = (access: "read" | "write") =>
+        McpToolAccess.dynamic(access, (input: Schema.JsonObject) =>
+          McpInvocationContext.McpInvocationContext.pipe(
+            Effect.flatMap((scope) =>
+              entry.call(input, { threadId: scope.thread?.threadId ?? null }),
+            ),
+          ),
+        );
+      const reads = checked("read");
+      const writes = checked("write");
+      const call = (input: Schema.JsonObject) =>
+        (typeof entry.access === "function" ? entry.access(input) : entry.access) === "read"
+          ? reads(input)
+          : writes(input);
+      return server.addTool({
+        tool: new McpSchema.Tool({
+          name: entry.name,
+          description: entry.description,
+          inputSchema: entry.inputSchema,
+          annotations: {
+            ...(entry.title === undefined ? {} : { title: entry.title }),
+            readOnlyHint: entry.access === "read",
+          },
+        }),
+        annotations: Context.empty(),
+        handle: (payload) =>
+          Effect.withFiber((fiber) =>
+            call(isJsonObject(payload) ? payload : {}).pipe(
+              Effect.provideService(
+                McpInvocationContext.McpInvocationContext,
+                Context.getUnsafe(fiber.context, McpInvocationContext.McpInvocationContext),
+              ),
+              Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
+              Effect.match({ onFailure: pluginToolFailure, onSuccess: pluginToolResult }),
+            ),
+          ),
+      });
+    });
+  }),
+).pipe(Layer.provide(McpServer.McpServer.layer));
+
 export const layerMcpTransport = McpServer.layerHttp({
   name: "T3 Code",
   version: packageJson.version,
@@ -1148,7 +1212,7 @@ export const layerMcpTransport = McpServer.layerHttp({
   allowSessionTermination: true,
 }).pipe(Layer.provide(layerMcpAuthMiddleware));
 
-/** Every tool the T3 MCP server advertises. AgentContextBudget.test.ts measures this set. */
+/** Every built-in tool the T3 MCP server advertises. AgentContextBudget.test.ts measures this set. */
 export const layerTools = Layer.mergeAll(
   layerPreviewToolkit,
   layerOrchestratorToolkit,
@@ -1163,4 +1227,6 @@ export const layerTools = Layer.mergeAll(
   layerHtmlToolkit,
 );
 
-export const layer = layerTools.pipe(Layer.provideMerge(layerMcpTransport));
+export const layer = Layer.merge(layerTools, layerPluginTools).pipe(
+  Layer.provideMerge(layerMcpTransport),
+);

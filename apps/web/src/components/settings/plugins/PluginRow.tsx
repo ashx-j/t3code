@@ -40,11 +40,11 @@ const FAILURE_STAGES = {
 } as const;
 
 /**
- * Where a plugin that changes the app runs, as the installer decides: with no server code it goes
- * only to the environment plugin UI loads from, named by `source`.
+ * Where a plugin that changes the app runs, as the installer decides: with no server code or agent
+ * skills it goes only to the environment plugin UI loads from, named by `source`.
  */
 const webReach = (plugin: PluginState, source: string) =>
-  !plugin.hasServer
+  !plugin.hasServer && plugin.hasSkills !== true
     ? `Changes only this app. It runs from ${source} and isn't installed on other servers.`
     : plugin.hasWeb
       ? `Its web part runs in this app from ${source} only. Other servers get just its server side.`
@@ -97,7 +97,7 @@ export function PluginRow({
     setBusy(false);
   };
   const updatable = copies.filter((copy) => copy.plugin.installSource !== undefined);
-  // A plugin loaded from its own folder is unlinked instead; the folder stays.
+  // A plugin an agent linked from its own folder is unlinked instead; the folder stays.
   const removeLabel = copies.every((copy) => copy.plugin.source === "dev") ? "Unlink" : "Remove";
   // Only a shadowed link can be dropped on its own, by its folder; see `pluginRows`.
   const shadowedLink = shadowed && plugin.source === "dev" ? plugin.linkedFolder : undefined;

@@ -53,6 +53,20 @@ export interface PluginBannerEntry {
   readonly dismiss: () => void;
 }
 
+export interface PluginToolRendererEntry {
+  readonly environmentId: EnvironmentId;
+  /** The MCP tool name agents see: `plg_<pluginId>_<tool>`. */
+  readonly toolName: string;
+  readonly component: ComponentType<PluginToolRendererProps>;
+  readonly owner: PluginOwner;
+}
+
+export interface PluginToolRendererProps {
+  readonly input: unknown;
+  readonly output: string | null;
+  readonly status: string;
+}
+
 // Plain maps with one list-level version: chat code reads them on render and re-renders on the
 // version alone, so a plugin never adds a subscription per row or per panel. App code outside the
 // plugin runtime and lazy routes reads them through `pluginUi.ts`, so this stays out of startup.
@@ -63,6 +77,7 @@ const commands = new Map<string, PluginCommandEntry>();
 // Each name keeps every plugin that claims it; see `firstById`.
 const slashCommands = new Map<string, Array<PluginSlashCommandEntry>>();
 const banners = new Map<string, PluginBannerEntry>();
+const toolRenderers = new Map<string, PluginToolRendererEntry>();
 
 // Reads go through atoms derived from the version, so React Compiler cannot cache a stale lookup.
 const versionAtom = Atom.make(0).pipe(Atom.keepAlive);
@@ -274,6 +289,31 @@ export const pluginBannersAtom = Atom.family((environmentId: string) => {
   });
 });
 
+export const pluginToolRendererKey = (environmentId: EnvironmentId, toolName: string) =>
+  `${environmentId}\u0000${toolName}`;
+
+/** Draws a plugin MCP tool's calls in the timeline; returns the function that removes it. */
+export function registerPluginToolRenderer(entry: PluginToolRendererEntry): () => void {
+  const key = pluginToolRendererKey(entry.environmentId, entry.toolName);
+  if (toolRenderers.has(key)) {
+    throw new Error(`A renderer for "${entry.toolName}" is already registered.`);
+  }
+  toolRenderers.set(key, entry);
+  bump();
+  return () => {
+    if (toolRenderers.get(key) !== entry) return;
+    toolRenderers.delete(key);
+    bump();
+  };
+}
+
+export const pluginToolRendererAtom = Atom.family((key: string) =>
+  Atom.make((get) => {
+    get(versionAtom);
+    return toolRenderers.get(key);
+  }),
+);
+
 export interface PluginCodeBlockEntry {
   readonly component: ComponentType<{ readonly code: string }>;
   readonly owner: PluginOwner;
@@ -318,6 +358,8 @@ export interface PluginOwner {
   readonly environmentId: EnvironmentId;
   readonly pluginId: string;
   readonly pluginName: string;
+  /** Passes a failure on to the server, where agents' plugin tools see it. */
+  readonly report?: (message: string) => void;
 }
 
 /** Where a plugin action shows, and what its `run` receives there. */

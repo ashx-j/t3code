@@ -19,9 +19,11 @@ import type * as SecretRequests from "../secrets/SecretRequests.ts";
 import type * as ServerSettings from "../serverSettings.ts";
 import type * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import type * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { makeAgentsApi } from "./api/agents.ts";
 import { makeEventsApi, storedEvents } from "./api/events.ts";
 import { makeFacadeContext, refused } from "./api/facade.ts";
 import { makeHttpApi } from "./api/http.ts";
+import { makeMcpApi } from "./api/mcp.ts";
 import { makeProvidersApi } from "./api/providers.ts";
 import type { RuntimeRequestHooks } from "./api/runtimeRequests.ts";
 import { makeScheduleApi } from "./api/schedule.ts";
@@ -34,6 +36,7 @@ import { makeTurnsApi, T3_STORAGE_PREFIX } from "./api/turns.ts";
 import { makeWorktreesApi } from "./api/worktrees.ts";
 import type * as PluginHooks from "./PluginHooks.ts";
 import type * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
+import type * as PluginMcpTools from "./PluginMcpTools.ts";
 import type * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import type * as PluginStorage from "./PluginStorage.ts";
 
@@ -93,6 +96,7 @@ export interface PluginApiServices {
   readonly providers: ProviderRegistry.ProviderRegistry["Service"];
   readonly hooks: PluginHooks.PluginHooksRegistry;
   readonly runtimeRequests: RuntimeRequestHooks;
+  readonly mcpTools: PluginMcpTools.PluginMcpTools["Service"];
   readonly httpRoutes: PluginHttpRoutes.PluginHttpRoutes["Service"];
   readonly environment: ServerEnvironment.ServerEnvironment["Service"];
   readonly serverSettings: ServerSettings.ServerSettingsService["Service"];
@@ -218,7 +222,9 @@ export const makePluginApi = (input: {
       ...makeTextGenerationApi(facade, services),
       generate: makeGenerateText(facade, services, input.rootDir),
     },
+    agents: makeAgentsApi(facade, services, input.name),
     providers: makeProvidersApi(facade, services),
+    mcp: makeMcpApi(facade, services),
     http: makeHttpApi(facade, services),
     server: makeServerApi(facade, {
       version: services.version,

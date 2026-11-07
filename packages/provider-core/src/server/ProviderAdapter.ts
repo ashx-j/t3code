@@ -453,6 +453,15 @@ export interface ProviderAdapterV2TurnInput {
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly appContext?: ReadonlyArray<{ readonly key: string; readonly text: string }>;
+  /**
+   * Instructions from T3 Code plugins, and for each plugin with skills a folder holding only a
+   * Claude Code plugin manifest and its `skills` folder of `<name>/SKILL.md` skills, for adapters
+   * whose provider can take them.
+   */
+  readonly plugins?: {
+    readonly instructions: ReadonlyArray<string>;
+    readonly skillFolders: ReadonlyArray<{ readonly plugin: string; readonly skills: string }>;
+  };
 }
 
 export interface ProviderAdapterV2SteerInput {

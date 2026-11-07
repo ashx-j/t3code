@@ -269,6 +269,24 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.isUndefined(options.extraArgs?.["dangerously-skip-permissions"]);
   });
 
+  it("loads plugin skill folders as Claude Code plugins and appends plugin instructions", () => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "native-plugins",
+      resume: false,
+      cwd: "/workspace",
+      settings: { ...AUTO_COMPACT_CLAUDE_SETTINGS, launchArgs: "--append-system-prompt Mine" },
+      plugins: {
+        instructions: ["Use pnpm."],
+        skillFolders: [{ plugin: "/plugins/notes", skills: "/plugins/notes/skills" }],
+      },
+    });
+    assert.deepEqual(options.plugins, [{ type: "local", path: "/plugins/notes" }]);
+    const append = (options.systemPrompt as { readonly append?: string }).append ?? "";
+    // The user's own launch text stays last.
+    assert.isTrue(append.endsWith("Use pnpm.\n\nMine"));
+  });
+
   it("passes every --add-dir launch directory to Claude", () => {
     const options = ClaudeAdapterV2.makeClaudeQueryOptions({
       modelSelection: CLAUDE_TEST_MODEL_SELECTION,
@@ -542,7 +560,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     assert.isFalse(overrides.allowedTools?.includes(ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_WILDCARD));
   });
 
-  it("invalidates live-query reuse when MCP credentials rotate", () => {
+  it("invalidates live-query reuse when MCP credentials rotate or plugins change", () => {
     const threadId = ThreadId.make("thread-claude-mcp-credential-rotation");
     const mcpSession = mcpSessionFor(threadId);
     const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
@@ -565,6 +583,14 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       }),
     );
     assert.notEqual(rotatedKey, initialKey);
+
+    // A plugin turned on or off changes what a new process loads, so the live one is replaced.
+    const withPlugin = ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(
+      queryPolicy,
+      ClaudeAdapterV2.claudeMcpQueryOverrides({ mcpSession, readOnlySandbox: false }),
+      { instructions: ["Use pnpm."], skillFolders: [] },
+    );
+    assert.notEqual(withPlugin, initialKey);
   });
 
   it("matches the read-only allowlist to the orchestrator toolkit annotations", () => {

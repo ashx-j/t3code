@@ -39,7 +39,10 @@ interface PluginLocation {
 
 /** A plugin directory, with its manifest when it could be read and decoded. */
 export type DiscoveredPlugin = PluginLocation &
-  ({ readonly manifest: PluginManifest } | { readonly failure: PluginFailure });
+  (
+    | { readonly manifest: PluginManifest; readonly hasSkills: boolean }
+    | { readonly failure: PluginFailure }
+  );
 
 const failed = (location: PluginLocation, failure: PluginFailure): DiscoveredPlugin => ({
   ...location,
@@ -97,12 +100,16 @@ export const discoverPlugins = Effect.fn("PluginDiscovery.discover")(function* (
     }
     const decoded = decodeManifest(manifest.raw);
     if (decoded._tag === "Success") {
+      const hasSkills = yield* fs
+        .exists(path.join(rootDir, "skills"))
+        .pipe(Effect.orElseSucceed(() => false));
       return {
         id: decoded.value.id,
         rootDir,
         folder: location,
         source,
         manifest: decoded.value,
+        hasSkills,
       } as const;
     }
     const looseId = decodeLooseId(manifest.raw);

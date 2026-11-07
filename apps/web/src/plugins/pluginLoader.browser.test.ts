@@ -15,6 +15,7 @@ vi.mock(import("../state/session"), async (original) => ({
       : { _tag: "Bearer", token: "token" },
   })) as never,
 }));
+const reportWebFailure = vi.hoisted(() => vi.fn());
 const { live, channel } = await vi.hoisted(async () => {
   const { Atom, AsyncResult } = await import("effect/reactivity");
   return {
@@ -34,6 +35,13 @@ vi.mock(import("../state/plugins"), () => ({
       run: async (_registry: unknown, input: { readonly url: string }) =>
         AsyncResult.success({ authorization: "DPoP relay-token", dpop: `proof for ${input.url}` }),
     },
+    reportPluginWebFailure: {
+      label: "plugin-web-failure",
+      run: async (_registry: unknown, input: unknown) => {
+        reportWebFailure(input);
+        return AsyncResult.success({});
+      },
+    },
   } as never,
 }));
 
@@ -48,6 +56,8 @@ import {
   pluginRightPanelKey,
   pluginSettingsPanelAtom,
   pluginSlashCommandsAtom,
+  pluginToolRendererAtom,
+  pluginToolRendererKey,
   pluginThreadBadgesAtom,
   pluginWebFailureAtom,
 } from "./pluginRegistry";
@@ -109,12 +119,22 @@ describe("startPluginLoader", () => {
           pluginWebFailureAtom(pluginContributionKey(environmentId, "broken-web")),
         ),
       ).toBe("The request for /web.js failed with 500.");
-      expect(
-        appAtomRegistry.get(
-          pluginWebFailureAtom(pluginContributionKey(environmentId, "no-activate-web")),
-        ),
-      ).toBe("The web bundle does not export a plugin with an activate function.");
     });
+    // Agents' plugin tools hear about the plugin's own failures through the server, tied to the
+    // start that failed. A failed download is this client's network, so it stays here.
+    await vi.waitFor(() =>
+      expect(reportWebFailure).toHaveBeenCalledWith({
+        environmentId,
+        input: {
+          pluginId: "no-activate-web",
+          revision: 4,
+          message: "The web bundle does not export a plugin with an activate function.",
+        },
+      }),
+    );
+    expect(reportWebFailure).not.toHaveBeenCalledWith(
+      expect.objectContaining({ input: expect.objectContaining({ pluginId: "broken-web" }) }),
+    );
     expect(String(fetchSpy.mock.calls[1]?.[0])).toBe(
       "http://plugins.test/api/plugins/hello-web/web.js?v=0.1.0",
     );
@@ -136,6 +156,10 @@ describe("startPluginLoader", () => {
     );
 
     expect(document.querySelectorAll('style[data-plugin="hello-web"]')).toHaveLength(1);
+    const greetRenderer = pluginToolRendererAtom(
+      pluginToolRendererKey(environmentId, "plg_hello-web_greet"),
+    );
+    expect(appAtomRegistry.get(greetRenderer)).toBeDefined();
 
     // Turning a plugin off takes effect while another still hangs. A failed download is tried
     // again on that change; a bundle that downloaded and then failed waits for a restart.
@@ -164,6 +188,7 @@ describe("startPluginLoader", () => {
     expect(appAtomRegistry.get(pluginCommandsAtom(environmentId))).toEqual([]);
     expect(appAtomRegistry.get(pluginSlashCommandsAtom(environmentId))).toEqual([]);
     expect(appAtomRegistry.get(pluginBannersAtom(environmentId))).toEqual([]);
+    expect(appAtomRegistry.get(greetRenderer)).toBeUndefined();
   });
 
   it("tries a download again after a bad gateway", async () => {

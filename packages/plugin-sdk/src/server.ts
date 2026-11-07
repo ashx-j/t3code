@@ -29,6 +29,29 @@ export interface PluginStoredEvent {
   readonly event: JsonObject;
 }
 
+export interface PluginMcpTool {
+  /** Agents see the tool as `plg_<pluginId>_<name>`. Letters, digits, `_` and `-`. */
+  readonly name: string;
+  readonly description: string;
+  /** JSON Schema for the tool's arguments. */
+  readonly inputSchema: JsonObject;
+  /**
+   * Every agent sees the tool. A `write` tool runs only for an agent in a thread set to Full
+   * access and not in Plan mode, or an outside agent approved with Full access; others get a
+   * refusal that says so. Agents from linked environments can't call it.
+   */
+  readonly access: PluginRpcAccess;
+}
+
+export type PluginMcpToolHandler = (
+  input: JsonObject,
+  context: {
+    readonly signal: AbortSignal;
+    /** The thread whose agent called the tool, or null for an MCP client outside a thread. */
+    readonly threadId: string | null;
+  },
+) => JsonValue | Promise<JsonValue>;
+
 export interface PluginHttpRequest {
   readonly method: string;
   /** The path after `/api/plugins/<pluginId>`, starting with `/`. */
@@ -291,8 +314,9 @@ export interface PluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
   };
   readonly rpc: {
     /**
-     * Answers `plugins.invoke` calls for `method` from clients. `input` has the type `Rpc` gives
-     * it, but a client can call any method with any JSON, so check input before acting on it.
+     * Answers `plugins.invoke` calls for `method` from clients and agents. `input` has the type
+     * `Rpc` gives it, but agents can call any method with any JSON through `t3_plugins_invoke`, so
+     * check input before acting on it.
      */
     readonly register: <Method extends Extract<keyof Rpc["methods"], string>>(
       method: Method,
@@ -543,12 +567,27 @@ export interface PluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
         | Promise<PluginTextGenerationTasks[K]["output"] | void>,
     ) => void;
   };
+  readonly agents: {
+    /**
+     * Adds `text` (up to 4,000 bytes) to the instructions T3 Code gives Claude and Codex agents,
+     * from their next turn or session until the plugin deactivates. A `skills/` folder of
+     * `<name>/SKILL.md` skills beside the manifest reaches the same agents with no code.
+     */
+    readonly addInstructions: (text: string) => void;
+  };
   readonly providers: {
     /**
      * The provider instances clients list, with each model and the options it takes. Read it
      * for the ids and values `threads.create` accepts, since they differ per provider.
      */
     readonly list: () => Promise<ReadonlyArray<PluginProviderInstance>>;
+  };
+  readonly mcp: {
+    /**
+     * Offers a tool to agents in every thread. MCP cannot take a tool back, so after the plugin
+     * deactivates it stays listed and answers that the plugin is disabled until it starts again.
+     */
+    readonly registerTool: (tool: PluginMcpTool, handler: PluginMcpToolHandler) => void;
   };
   readonly http: {
     /**

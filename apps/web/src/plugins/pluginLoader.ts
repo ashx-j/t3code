@@ -52,6 +52,7 @@ import {
   registerPluginRightPanel,
   registerPluginSidebarSection,
   registerPluginSlashCommand,
+  registerPluginToolRenderer,
   registerPluginSettingsPanel,
   capPluginMentionText,
   pluginMentionContextId,
@@ -70,6 +71,8 @@ import { isLoadableWebPlugin } from "./pluginWatch";
 
 const PANEL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
 const COMMAND_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
+// The server's rule for a plugin's own tool names.
+const TOOL_NAME = /^[a-zA-Z0-9_-]+$/;
 const BADGE_TONES = new Set(["info", "success", "warning", "error"]);
 const TOAST_TYPES = new Set(["info", "success", "warning", "error"]);
 const CODE_LANGUAGE = /^[a-z0-9][a-z0-9+#.-]{0,31}$/;
@@ -121,6 +124,18 @@ const installHostModules = () =>
       Textarea,
     } satisfies Record<(typeof HOST_UI_EXPORTS)[number], unknown>,
   });
+
+/** Tells the server why a plugin's web half failed, so agents' plugin tools can say. */
+const reportWebFailure = (environmentId: EnvironmentId, plugin: PluginState, message: string) => {
+  if (plugin.revision === undefined) return;
+  void runAtomCommand(
+    appAtomRegistry,
+    pluginEnvironment.reportPluginWebFailure,
+    { environmentId, input: { pluginId: plugin.id, revision: plugin.revision, message } },
+    // A client without settings access may not report; the Plugins page still shows it.
+    { reportFailure: false, reportDefect: false },
+  );
+};
 
 const isWebPluginDefinition = (value: unknown): value is WebPluginDefinition =>
   typeof value === "object" &&
@@ -215,8 +230,13 @@ function makeWebPluginApi({
   const badgedThreads = new Set<string>();
   let badgesTracked = false;
   let mentionCleanupTracked = false;
-  // Shared by everything the plugin draws, so a render failure reaches its row once.
-  const owner: PluginOwner = { environmentId, pluginId, pluginName: plugin.name };
+  // Shared by everything the plugin draws, so a render failure reaches its row and agents once.
+  const owner: PluginOwner = {
+    environmentId,
+    pluginId,
+    pluginName: plugin.name,
+    report: (message) => reportWebFailure(environmentId, plugin, message),
+  };
   return {
     version: 1,
     id: pluginId,
@@ -507,6 +527,28 @@ function makeWebPluginApi({
         track(registerPluginCodeBlock(renderer.language, { component: renderer.component, owner }));
       },
     },
+    timeline: {
+      registerToolRenderer: (renderer) => {
+        // The tool's own name, as the server half registered it, without the `plg_` prefix.
+        if (
+          typeof renderer.tool !== "string" ||
+          !TOOL_NAME.test(renderer.tool) ||
+          renderer.tool.startsWith(`plg_${pluginId}_`)
+        ) {
+          throw new TypeError(
+            `"${String(renderer.tool)}" is not a tool name this plugin registers. Use the name given to api.mcp.registerTool, without plg_<id>_.`,
+          );
+        }
+        track(
+          registerPluginToolRenderer({
+            environmentId,
+            toolName: `plg_${pluginId}_${renderer.tool}`,
+            component: renderer.component,
+            owner,
+          }),
+        );
+      },
+    },
     injectStyles: (css) => {
       const style = document.createElement("style");
       style.dataset.plugin = pluginId;
@@ -664,6 +706,9 @@ export function startPluginLoader(
       // restart instead of failing again on every change.
       if (!downloaded) loaded.delete(plugin.id);
       setPluginWebFailure(environmentId, plugin.id, errorText(error));
+      // Only the plugin's own failures reach agents. A failed download is this client's network,
+      // and clients that each report a different one would republish the list back and forth.
+      if (downloaded) reportWebFailure(environmentId, plugin, errorText(error));
     }
   };
 

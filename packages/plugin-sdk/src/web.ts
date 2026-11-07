@@ -53,6 +53,17 @@ export interface WebPluginBanner {
   readonly variant?: "info" | "success" | "warning" | "error";
 }
 
+export interface WebPluginToolRenderer {
+  /** The name the server half passed to `mcp.registerTool`. */
+  readonly tool: string;
+  /** Replaces the tool call's details in the timeline. `output` is the tool's text result. */
+  readonly component: WebPluginComponent<{
+    readonly input: unknown;
+    readonly output: string | null;
+    readonly status: string;
+  }>;
+}
+
 export interface WebPluginCodeBlockRenderer {
   /** The fence language, such as `chart` for ```chart blocks. `mermaid` and `math` are T3's own. */
   readonly language: string;
@@ -205,6 +216,10 @@ export interface WebPluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
   readonly assetUrl: (name: string) => Promise<string>;
   readonly markdown: {
     readonly registerCodeBlock: (renderer: WebPluginCodeBlockRenderer) => void;
+  };
+  readonly timeline: {
+    /** Draws this plugin's agent tool calls in the timeline instead of the generic view. */
+    readonly registerToolRenderer: (renderer: WebPluginToolRenderer) => void;
   };
   /**
    * Adds a stylesheet until the plugin unloads. Rules that reach T3's own elements restyle the app

@@ -29,8 +29,8 @@ and need no build. `hello-web` uses most of the web API.
 ```
 
 - `id` uses lowercase letters, digits and hyphens, starts with a letter and has up to 32
-  characters. It names the plugin's folder, its HTTP routes (`/api/plugins/<id>/…`) and its
-  keybinding commands (`plugin.<id>.<command>`).
+  characters. It names the plugin's folder, its HTTP routes (`/api/plugins/<id>/…`), its agent
+  tools (`plg_<id>_<tool>`) and its keybinding commands (`plugin.<id>.<command>`).
 - `engines.t3` is a version range made of `^`, `>=`, `>`, `<=`, `<`, `=` and `||`, such as
   `>=0.1.6`. A server outside it refuses to install the plugin, update to it or start it, and says
   why.
@@ -39,11 +39,13 @@ and need no build. `hello-web` uses most of the web API.
 - `server` must be CommonJS ending in `.cjs`. `web` is a single-file ES module.
 - `settingsSchema` is JSON Schema. T3 Code draws a form from it on the Plugins page, and top-level
   string fields with `"format": "t3-secret"` are stored in the server's secret store and never shown
-  again. `t3-secret` anywhere else is saved as plain text.
+  again. `t3-secret` anywhere else is saved as plain text, and `t3_plugins_check` warns about it.
   The form covers top-level strings, numbers, integers, booleans, `enum`s of strings or numbers,
   and arrays of strings. One property of any other shape, such as an object or a nullable type,
   turns the whole form into a JSON box. Every save is checked against the schema with the top-level `default`s
-  filled in, so a default its own field rejects refuses every save.
+  filled in, so a default its own field rejects refuses every save; `t3_plugins_check` reports it.
+  Agents read the settings and the schema, and change settings, with the `t3_plugins_settings`
+  tool.
 - A `themes/` folder of theme JSON files is published while the plugin is active, and an `assets/`
   folder is served to the web half when the plugin has one. T3 Code remembers the published
   themes, so the boot screen and the desktop window start in the active theme's colors. A theme
@@ -57,6 +59,11 @@ and need no build. `hello-web` uses most of the web API.
   the main environment or the one picked in **Load plugin UI from** in Settings → Plugins.
   **Reload** picks up edits. The page gets each file's text, so a `url()` can't reach the
   plugin's folder; use a `data:` URL for an image.
+- A `skills/` folder of `<name>/SKILL.md` skills reaches Claude and Codex agents while the plugin
+  is active, and the composer's `$` menu lists them for those agents with the plugin's name. Claude
+  invokes one as `<plugin id>:<folder>`, Codex by the `name` in its frontmatter. Nothing else in
+  the plugin's folder reaches agents. The skills are copied when the plugin starts, so **Reload**
+  picks up changes.
 
 ## Server half
 
@@ -81,7 +88,7 @@ module.exports = {
 - send hooks that add to, replace or block a message, and slash commands that run on the server
   and may replace or block the message. A message's hooks share 2 seconds, and slash commands never
   reach them;
-- answers to agents' approvals and questions;
+- answers to agents' approvals and questions, instructions for agents, and MCP tools for agents;
 - secrets the user enters on a card in a thread with a turn in progress;
 - the text T3 Code generates, such as thread titles and commit messages, and free-form text from
   the text generation model chosen in the settings. Each plugin gets 3 seconds to answer and all of
@@ -92,10 +99,10 @@ Everything a plugin registers is released when it is disabled, reloaded or unins
 own cleanup with `api.onDeactivate`.
 
 A failure in plugin code that nothing awaits, such as a throw in a timer, a schedule or a hook,
-doesn't stop T3 Code. It shows on the plugin's row in Settings → Plugins, and the plugin keeps
-running. Give every child process, socket and stream you create an `'error'` listener anyway: Node
-reports an unhandled `'error'` event as a crash, and when T3 Code can't tell it came from your
-plugin, the server stops.
+doesn't stop T3 Code. It shows on the plugin's row in Settings → Plugins and in
+`t3_plugins_check`, and the plugin keeps running. Give every child process, socket and stream you
+create an `'error'` listener anyway: Node reports an unhandled `'error'` event as a crash, and when
+T3 Code can't tell it came from your plugin, the server stops.
 
 HTTP route handlers get the request body as UTF-8 text, so a binary upload arrives corrupted, and a
 query key that appears twice keeps its last value.
@@ -151,8 +158,9 @@ export default defineWebPlugin({
 ```
 
 `activate` receives the [`WebPluginApi`](./src/web.ts): calls into the server half, right panels,
-a settings panel, palette commands, composer slash commands and banners, renderers for fenced code
-languages, styles, assets, navigation and toasts.
+a settings panel, palette commands, composer slash commands and banners, timeline renderers for
+the plugin's agent tools, renderers for fenced code languages, styles, assets, navigation and
+toasts.
 
 `api.rpc.invoke` and `api.rpc.subscribe` reach the methods and channels the server half adds with
 `rpc.register` and `rpc.publish`. Describe them once as a `PluginRpcMap` type from
@@ -221,11 +229,18 @@ parts of your design to survive that. Build each part on the most stable thing T
 - **Ask for a seam.** When T3 doesn't hand over what you need, ask for a region or token on the
   T3 Code repository instead of reaching into its markup.
 
+After a T3 update, ask an agent to run `t3_plugins_check` on your plugin. It lists the patterns
+above that your plugin uses, so you know what to recheck.
+
 ## Developing a plugin
 
-Add the plugin's folder to `devPaths` in `plugins.json` in the T3 Code data directory, turn the
-plugin on in Settings → Plugins, and use **Reload** after each change. It loads from that folder,
-so nothing is copied.
+An agent writing a plugin installs its folder in place with `t3_plugins_install` and
+`link: true`, then edits the files and calls `t3_plugins_reload` to load them. Nothing is copied,
+and unlinking leaves the folder alone. `t3_plugins_check` lists what will stop the plugin from
+loading and what is likely to break in a T3 update. Agents get these tools only after you turn on
+the switch for them in Settings → Plugins. They are off until then. Without an agent, add the
+folder to `devPaths` in `plugins.json` in the T3 Code data directory, turn the plugin on in
+Settings → Plugins, and use **Reload** after each change.
 
 To install a finished plugin, drag its folder onto Settings → Plugins, or use **Add plugin** with a
 folder, a git repository or an npm package.

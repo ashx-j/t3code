@@ -14,6 +14,7 @@ import {
   withPluginThreadMenuItems,
 } from "./pluginRegistry";
 import { PluginSidebarSections } from "./PluginSidebarSections";
+import { PluginToolBody } from "./PluginToolBody";
 
 /** What app code reaches through `pluginUiAtom` once the plugin loader publishes it. */
 export const pluginUi = {
@@ -23,6 +24,7 @@ export const pluginUi = {
   PluginPanelMenuItems,
   PluginSidebarSections,
   PluginThreadBadges,
+  PluginToolBody,
   pluginBannersAtom,
   pluginCommandLabel,
   pluginCommandsAtom,

@@ -147,6 +147,31 @@ const secretFields = (settingsSchema: Schema.JsonObject | undefined): ReadonlySe
   );
 };
 
+/**
+ * JSON Pointers to the places a schema marks `t3-secret` other than top-level string fields, whose
+ * values are saved in plain text with the rest.
+ */
+export const secretsOutsideStore = (settingsSchema: Schema.JsonObject): ReadonlyArray<string> => {
+  const properties = settingsSchema.properties;
+  const stored = new Set(
+    [...secretFields(settingsSchema)].map((field) =>
+      Predicate.isObject(properties) ? properties[field] : undefined,
+    ),
+  );
+  const found: Array<string> = [];
+  const visit = (value: unknown, pointer: string) => {
+    if (typeof value !== "object" || value === null) return;
+    if ("format" in value && value.format === "t3-secret" && !stored.has(value)) {
+      found.push(pointer === "" ? "/" : pointer);
+    }
+    for (const [key, child] of Object.entries(value)) {
+      visit(child, `${pointer}/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`);
+    }
+  };
+  visit(settingsSchema, "");
+  return found;
+};
+
 // Top-level `default`s, which the plugin reads for fields nobody saved. Secrets have none.
 const defaultsOf = (settingsSchema: Schema.JsonObject | undefined): Schema.JsonObject => {
   const properties = settingsSchema?.properties;
@@ -209,6 +234,23 @@ const compileSettingsSchema = (settingsSchema: Schema.JsonObject) =>
 
 const importerReason = (cause: unknown) =>
   (cause instanceof Error ? cause.message : String(cause)).slice(0, MAX_SCHEMA_REASON_LENGTH);
+
+/**
+ * What would make saving a plugin's settings fail whatever the user enters: a schema the importer
+ * cannot read, or a top-level default its own field rejects. Fields with no default are the
+ * user's to fill, so `required` is left out when checking the defaults.
+ */
+export const settingsSchemaProblem = (settingsSchema: Schema.JsonObject) => {
+  const { required: _required, ...withoutRequired } = settingsSchema;
+  const validator = compileSettingsSchema(withoutRequired);
+  if (Result.isFailure(validator)) {
+    return { kind: "unreadable", reason: importerReason(validator.failure) } as const;
+  }
+  const validation = validator.success(defaultsOf(settingsSchema));
+  return Result.isFailure(validation)
+    ? ({ kind: "default", reason: summarizeIssue(validation.failure.issue) } as const)
+    : undefined;
+};
 
 const make = Effect.gen(function* () {
   const { stateDir } = yield* ServerConfig.ServerConfig;

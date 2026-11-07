@@ -8,6 +8,7 @@ import { pluginEnvironment } from "../../../state/plugins";
 import { formatEnvironmentQueryError } from "../../../state/query";
 import { useAtomCommand } from "../../../state/use-atom-command";
 import { Button } from "../../ui/button";
+import { Switch } from "../../ui/switch";
 import { SettingsRow, SettingsSection } from "../settingsLayout";
 import { LeftoverPluginData } from "./LeftoverPluginData";
 import { PluginRow } from "./PluginRow";
@@ -92,10 +93,21 @@ export function PluginList({
     error === null ? [] : [several ? `${target.label}: ${error}` : error],
   );
   const updatable = copies.filter(fromGitOrNpm);
+  const agentTools = loaded.flatMap(({ target }, index) => {
+    const value = AsyncResult.getOrElse(
+      lists[index] ?? AsyncResult.initial(true),
+      () => null,
+    )?.agentTools;
+    // Servers from before the switch leave it out.
+    return value === undefined ? [] : [{ environmentId: target.environmentId, value }];
+  });
   return (
     <>
       <SettingsSection title="Plugins">
         {children}
+        {agentTools.length === 0 ? null : (
+          <AgentToolsRow environmentId={main.environmentId} environments={agentTools} />
+        )}
         {updatable.length === 0 ? null : (
           <CheckPluginUpdates environmentId={main.environmentId} copies={updatable} />
         )}
@@ -217,6 +229,42 @@ function CheckPluginUpdates({
             </Button>
           ) : null}
         </div>
+      }
+    />
+  );
+}
+
+/** Whether agents get the tools that list, install, check and change plugins. Off by default. */
+function AgentToolsRow(props: {
+  readonly environmentId: EnvironmentId;
+  readonly environments: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly value: boolean;
+  }>;
+}) {
+  const canChange = useAtomValue(
+    pluginEnvironment.setAgentTools.permissionAtom(props.environmentId),
+  );
+  const setAgentTools = useAtomCommand(pluginEnvironment.setAgentTools, "plugin tools for agents");
+  const [busy, setBusy] = useState(false);
+  return (
+    <SettingsRow
+      title="Plugin tools for agents"
+      description="Lets agents manage plugins. Changes need a thread in Full access."
+      control={
+        <Switch
+          checked={props.environments.every((environment) => environment.value)}
+          disabled={busy || !canChange}
+          aria-label="Plugin tools for agents"
+          onCheckedChange={(enabled) => {
+            setBusy(true);
+            void Promise.all(
+              props.environments.map((environment) =>
+                setAgentTools({ environmentId: environment.environmentId, input: { enabled } }),
+              ),
+            ).finally(() => setBusy(false));
+          }}
+        />
       }
     />
   );

@@ -53,6 +53,13 @@ export const pluginCommandsAtom = Atom.family((environmentId: string) =>
 /** The context kind of a plugin `@` item's chip. Clients without plugins treat it as unknown. */
 export const PLUGIN_CONTEXT_KIND = "plugin";
 
+/**
+ * The `plg_<pluginId>_<tool>` name inside a reported tool name: Codex reports it bare, Claude as
+ * `mcp__<server>__plg_…` and ACP agents as `<server>.plg_…`. Undefined for other tools.
+ */
+export const pluginToolNameOf = (toolName: string | null | undefined) =>
+  toolName?.match(/(?:^|__|\.)(plg_[a-z][a-z0-9-]*_[A-Za-z0-9_-]+)$/)?.[1];
+
 /** Records for the plugin chips in a message; see `pluginRegistry`. */
 export const pluginMentionContextRecords = (prompt: string): UnknownContextRecord[] =>
   loadedPluginUi()?.pluginMentionContextRecords(prompt) ?? [];
