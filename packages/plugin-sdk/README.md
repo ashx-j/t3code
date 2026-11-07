@@ -22,8 +22,7 @@ The SDK has no dependencies of its own. What else a plugin needs depends on its 
 - A web half needs `react` and `@types/react` as dev dependencies, plus `react-dom` if it imports
   it, and Vite 8 or later to build it. The bundle uses T3's own React at runtime, but the build
   reads React's exports.
-- Atoms from `@t3tools/plugin-sdk/atom` need `effect`. So does typechecking a server half, which
-  also needs `@types/node`. Use the `effect` version the SDK lists as a peer dependency.
+- Typechecking a server half needs `@types/node`.
 
 ## Manifest
 
@@ -141,14 +140,14 @@ import { defineConfig } from "vite";
 export default defineConfig({ plugins: [t3PluginWeb({ entry: "web.tsx", outDir: "dist" })] });
 ```
 
-Point the manifest's `web` at `dist/web.js`. Only the hooks listed in `HOST_ATOM_REACT_EXPORTS`, the
-`Atom` functions in `@t3tools/plugin-sdk/atom` and the components in `@t3tools/plugin-sdk/ui` are
-shared.
+Point the manifest's `web` at `dist/web.js`.
 
-Make atoms with `import * as Atom from "@t3tools/plugin-sdk/atom"`, not with `Atom` from `effect`,
-which would bundle a second copy of effect. Build them from values and functions. An atom that runs
-an Effect or a Stream would use your copy of effect inside T3's.
-[`examples/quick-notes`](./examples/quick-notes) keeps its notes in an atom.
+Make atoms with `import * as Atom from "@t3tools/plugin-sdk/atom"` and read them with the hooks in
+`@t3tools/plugin-sdk/atom-react`, such as `useAtomValue`. Both run T3's own copies, so your atoms
+live in T3's registry and the bundle has no effect in it. Their types belong to the SDK, so they
+don't change when T3 upgrades effect. Atoms from `effect` itself or hooks from `@effect/atom-react`
+would bundle a second copy. [`examples/quick-notes`](./examples/quick-notes) keeps its notes in an
+atom.
 
 ## Keeping a plugin working across T3 updates
 

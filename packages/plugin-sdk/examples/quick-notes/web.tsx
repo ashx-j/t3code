@@ -1,5 +1,5 @@
-import { useAtomValue } from "@effect/atom-react";
 import * as Atom from "@t3tools/plugin-sdk/atom";
+import { useAtomValue } from "@t3tools/plugin-sdk/atom-react";
 import { Button, Input } from "@t3tools/plugin-sdk/ui";
 import { defineWebPlugin } from "@t3tools/plugin-sdk/web";
 import { useState } from "react";

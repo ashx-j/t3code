@@ -8,7 +8,6 @@ import {
 } from "@effect/atom-react";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, PluginState } from "@t3tools/contracts";
-import type * as SdkAtom from "@t3tools/plugin-sdk/atom";
 import {
   type HOST_ATOM_EXPORTS,
   type HOST_ATOM_REACT_EXPORTS,
@@ -73,7 +72,6 @@ const installHostModules = () =>
       useAtomSubscribe,
       useAtomValue,
     } satisfies Record<(typeof HOST_ATOM_REACT_EXPORTS)[number], unknown>,
-    // The SDK declares these with T3's own types, so a plugin's atoms type as T3's.
     atom: {
       family: Atom.family,
       keepAlive: Atom.keepAlive,
@@ -84,7 +82,7 @@ const installHostModules = () =>
       transform: Atom.transform,
       withLabel: Atom.withLabel,
       writable: Atom.writable,
-    } satisfies { readonly [Name in (typeof HOST_ATOM_EXPORTS)[number]]: (typeof SdkAtom)[Name] },
+    } satisfies Record<(typeof HOST_ATOM_EXPORTS)[number], unknown>,
     ui: {
       Badge,
       Button,

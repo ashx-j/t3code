@@ -87,6 +87,12 @@ A bare `import(url)` cannot send credentials, so the loader fetches each bundle 
 connection's credentials and imports it from a `blob:` URL, which the desktop CSP allows. Mobile
 release builds cannot load code, so the mobile app shows no plugin UI, settings or themes.
 
+Bundles get React, the UI kit, `Atom` functions and atom hooks from `globalThis.__t3PluginHost`,
+because a second React or effect would not share T3's renderer or atom registry. The SDK declares
+its own atom types, so a plugin needs no `effect` and T3's effect upgrades don't break its
+typecheck. Nothing compares those types with effect's, so an effect upgrade that changes a shared
+function or hook needs a matching change in the SDK's `atom.ts` or `atom-react.ts`.
+
 Plugin themes arrive over the server config stream after the first paint, so the client saves them
 in localStorage for the boot script in `index.html`. The server marks plugin themes, so the client
 can show only those of chosen environments. The desktop main process cannot read localStorage, so

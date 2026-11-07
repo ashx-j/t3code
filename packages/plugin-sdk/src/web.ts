@@ -104,7 +104,7 @@ export interface WebPluginDefinition<Rpc extends PluginRpcMap = PluginRpcMap> {
   readonly activate: (api: WebPluginApi<Rpc>) => void | Promise<void>;
 }
 
-/** `@effect/atom-react` exports T3 shares with web plugins. Other exports are not available. */
+/** Hooks T3 shares with web plugins through `@t3tools/plugin-sdk/atom-react`. */
 export const HOST_ATOM_REACT_EXPORTS = [
   "RegistryContext",
   "useAtomMount",

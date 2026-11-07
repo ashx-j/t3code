@@ -11,14 +11,14 @@ const HOST_MODULES: Readonly<Record<string, string>> = {
   react: "react",
   "react-dom": "reactDom",
   "react/jsx-runtime": "jsxRuntime",
-  "@effect/atom-react": "atomReact",
   "@t3tools/plugin-sdk/atom": "atom",
+  "@t3tools/plugin-sdk/atom-react": "atomReact",
   "@t3tools/plugin-sdk/ui": "ui",
 };
 
 const FIXED_EXPORTS: Readonly<Record<string, ReadonlyArray<string>>> = {
-  "@effect/atom-react": HOST_ATOM_REACT_EXPORTS,
   "@t3tools/plugin-sdk/atom": HOST_ATOM_EXPORTS,
+  "@t3tools/plugin-sdk/atom-react": HOST_ATOM_REACT_EXPORTS,
   "@t3tools/plugin-sdk/ui": HOST_UI_EXPORTS,
 };
 
@@ -45,7 +45,7 @@ export interface T3PluginWebOptions {
 
 /**
  * Builds a plugin's web half as the single-file ESM bundle T3 loads. React, react-dom, the JSX
- * runtime, `@effect/atom-react`, `@t3tools/plugin-sdk/atom` and `@t3tools/plugin-sdk/ui` become reads from
+ * runtime and the SDK's `atom`, `atom-react` and `ui` modules become reads from
  * `globalThis.__t3PluginHost`, so the bundle uses T3's copies instead of shipping its own.
  * Point the manifest's `web` at `<outDir>/web.js`.
  */

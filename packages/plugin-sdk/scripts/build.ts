@@ -4,7 +4,6 @@
 // manifest exports the sources.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
-import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
@@ -13,9 +12,9 @@ import { build } from "vite-plus/pack";
 const packageRoot = NodePath.resolve(import.meta.dirname, "..");
 const repoRoot = NodePath.resolve(packageRoot, "../..");
 const outDir = NodePath.join(packageRoot, "dist");
-const entries = ["atom", "server", "shared", "ui", "vite", "web"];
+const entries = ["atom", "atom-react", "server", "shared", "ui", "vite", "web"];
 // What the published declarations may import besides each other.
-const PEER_IMPORT = /^(effect|react)(\/|$)/;
+const PEER_IMPORT = /^react(\/|$)/;
 const tsc = NodePath.join(repoRoot, "node_modules/.bin/tsc");
 
 interface PackageManifest {
@@ -121,10 +120,8 @@ const checked = NodeChildProcess.spawnSync(
 if (checked.status !== 0)
   throw new Error(`The published declarations don't typecheck:\n${checked.stdout}`);
 
-// The source manifest, private and exporting src, becomes one that exports dist. `catalog:` ranges
-// become the version this checkout builds with, the one T3 Code runs.
+// The source manifest, private and exporting src, becomes one that exports dist.
 const sources = readManifest(NodePath.join(packageRoot, "package.json"));
-const require = NodeModule.createRequire(NodePath.join(packageRoot, "package.json"));
 const published = {
   name: sources.name,
   version: sources.version,
@@ -139,12 +136,7 @@ const published = {
       return [subpath, { types: `./${name}.d.ts`, default: `./${name}.js` }];
     }),
   ),
-  peerDependencies: Object.fromEntries(
-    Object.entries(sources.peerDependencies ?? {}).map(([name, range]) => [
-      name,
-      range === "catalog:" ? readManifest(require.resolve(`${name}/package.json`)).version : range,
-    ]),
-  ),
+  peerDependencies: sources.peerDependencies,
   peerDependenciesMeta: sources.peerDependenciesMeta,
 };
 NodeFS.writeFileSync(

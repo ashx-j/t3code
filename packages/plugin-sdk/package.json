@@ -23,6 +23,10 @@
       "types": "./src/atom.ts",
       "import": "./src/atom.ts"
     },
+    "./atom-react": {
+      "types": "./src/atom-react.ts",
+      "import": "./src/atom-react.ts"
+    },
     "./shared": {
       "types": "./src/shared.ts",
       "import": "./src/shared.ts"
@@ -42,17 +46,14 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@effect/atom-react": "catalog:",
     "@types/node": "catalog:",
     "@types/react": "catalog:",
-    "effect": "catalog:",
     "react": "catalog:",
     "vite-plus": "catalog:"
   },
   "peerDependencies": {
     "@types/node": "*",
     "@types/react": ">=19",
-    "effect": "catalog:",
     "react": ">=19"
   },
   "peerDependenciesMeta": {
@@ -60,9 +61,6 @@
       "optional": true
     },
     "@types/react": {
-      "optional": true
-    },
-    "effect": {
       "optional": true
     },
     "react": {
