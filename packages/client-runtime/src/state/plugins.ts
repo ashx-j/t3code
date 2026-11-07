@@ -56,6 +56,10 @@ export function createPluginEnvironmentAtoms<R, E>(
       label: "environment-data:plugins:update",
       tag: WS_METHODS.pluginsUpdate,
     }),
+    rollbackPlugin: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:plugins:rollback",
+      tag: WS_METHODS.pluginsRollback,
+    }),
     checkPluginUpdates: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:plugins:check-updates",
       tag: WS_METHODS.pluginsCheckUpdates,

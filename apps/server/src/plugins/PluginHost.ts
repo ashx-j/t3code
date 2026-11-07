@@ -276,6 +276,13 @@ const PluginsConfigFile = Schema.StructWithRest(
         available: Schema.Record(Schema.String, Schema.String),
       }),
     ),
+    /** The version each plugin's last update replaced, kept in `plugin-rollback/<id>`. */
+    rollback: Schema.optionalKey(
+      Schema.Record(
+        Schema.String,
+        Schema.Struct({ version: Schema.String, installed: Schema.optionalKey(Schema.String) }),
+      ),
+    ),
   }),
   [Schema.Record(Schema.String, Schema.Json)],
 );
@@ -310,13 +317,16 @@ const shownSource = (source: PluginInstallSource): PluginInstallSource => {
 
 const toState = (
   record: PluginRecord,
-  enabled: boolean,
-  installSource: PluginInstallSource | undefined,
-  availableUpdate: string | undefined,
+  config: PluginsConfigFile,
   webFailure: string | undefined,
   serverFailure: string | undefined,
 ): PluginState => {
   const manifest = manifestOf(record.plugin);
+  const { id } = record.plugin;
+  const installSource = config.sources?.[id];
+  const availableUpdate = config.updates?.available[id];
+  const rollbackVersion =
+    record.plugin.source === "installed" ? config.rollback?.[id]?.version : undefined;
   return {
     id: record.plugin.id,
     name: manifest?.name ?? record.plugin.id,
@@ -332,7 +342,7 @@ const toState = (
     permissions: manifest?.permissions ?? [],
     source: record.plugin.source,
     ...(record.plugin.source === "dev" ? { linkedFolder: record.plugin.folder } : {}),
-    enabled,
+    enabled: config.enabled?.[id] === true,
     status: record.status,
     ...(record.failure === undefined ? {} : { failure: record.failure }),
     ...(record.revision === undefined ? {} : { revision: record.revision }),
@@ -344,6 +354,7 @@ const toState = (
             ? {}
             : { availableUpdate: { version: availableUpdate } }),
         }),
+    ...(rollbackVersion === undefined ? {} : { rollbackVersion }),
     hasServer: manifest?.server !== undefined,
     hasWeb: manifest?.web !== undefined,
     ...("hasSkills" in record.plugin ? { hasSkills: record.plugin.hasSkills } : {}),
@@ -432,7 +443,6 @@ const make = Effect.gen(function* () {
 
   const statesOf = Effect.fn("PluginHost.statesOf")(function* (all: ReadonlyArray<PluginRecord>) {
     const config = yield* Ref.get(pluginsConfig);
-    const enabled = config.enabled ?? {};
     const failures = yield* Ref.get(webFailures);
     const serverFailed = yield* Ref.get(serverFailures);
     return all.map((record) => {
@@ -440,9 +450,7 @@ const make = Effect.gen(function* () {
       const serverFailure = serverFailed.get(record.plugin.id);
       return toState(
         record,
-        enabled[record.plugin.id] === true,
-        config.sources?.[record.plugin.id],
-        config.updates?.available[record.plugin.id],
+        config,
         webFailure !== undefined && webFailure.revision === record.revision
           ? webFailure.message
           : undefined,

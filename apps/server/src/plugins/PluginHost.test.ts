@@ -1781,6 +1781,42 @@ module.exports = { activate(api) {
     }).pipe(Effect.provide(layerConfig())),
   );
 
+  it.effect("keeps the version an update replaced, so the user can roll back to it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const folder = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-plugin-upgrade-" });
+      const kept = `${stateDir}/plugin-rollback/upgrade`;
+      yield* writeUpgradeVersion(folder, "1.0.0");
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const installer = yield* PluginInstaller.PluginInstaller;
+        yield* waitForStatuses(host, {});
+        assert.isUndefined(
+          (yield* installer.install({ type: "path", path: folder })).rollbackVersion,
+        );
+        yield* writeUpgradeVersion(folder, "2.0.0");
+        assert.include(yield* installer.update(upgrade), {
+          version: "2.0.0",
+          rollbackVersion: "1.0.0",
+        });
+
+        const rolledBack = yield* installer.rollback(upgrade);
+        assert.include(rolledBack, { version: "1.0.0", status: "active" });
+        assert.isUndefined(rolledBack.rollbackVersion);
+        assert.isFalse(yield* fs.exists(kept));
+        const again = yield* installer.rollback(upgrade).pipe(Effect.flip);
+        assert.strictEqual(again.message, "upgrade has no earlier version to roll back to.");
+
+        // Removing the plugin removes the version it kept.
+        yield* installer.update(upgrade);
+        assert.isTrue(yield* fs.exists(kept));
+        yield* installer.uninstall(upgrade, false);
+        assert.isFalse(yield* fs.exists(kept));
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
   it.effect("refuses an update that needs a newer T3 Code before stopping the version in use", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

@@ -66,8 +66,15 @@ export class PluginInstaller extends Context.Service<
     readonly installFiles: (
       files: ReadonlyArray<PluginUploadFile>,
     ) => Effect.Effect<PluginState, PluginInstallError | PluginNotFoundError | PluginConfigError>;
-    /** Installs a plugin again from the source it was installed from. */
+    /**
+     * Installs a plugin again from the source it was installed from. The version it replaces is
+     * kept, one per plugin, for `rollback`.
+     */
     readonly update: (
+      pluginId: PluginId,
+    ) => Effect.Effect<PluginState, PluginInstallError | PluginNotFoundError | PluginConfigError>;
+    /** Puts back the version the plugin's last update replaced, like an update to it. */
+    readonly rollback: (
       pluginId: PluginId,
     ) => Effect.Effect<PluginState, PluginInstallError | PluginNotFoundError | PluginConfigError>;
     /**
@@ -122,10 +129,14 @@ export interface PluginInstallerHost {
   readonly publish: Effect.Effect<void>;
 }
 
-/** What an install takes a plugin from: a source it records, or files a client sent. */
+/**
+ * What an install takes a plugin from: a source it records, files a client sent, or the version
+ * an update replaced.
+ */
 type InstallOrigin =
   | { readonly source: PluginInstallSource }
-  | { readonly files: ReadonlyArray<PluginUploadFile> };
+  | { readonly files: ReadonlyArray<PluginUploadFile> }
+  | { readonly kept: string };
 
 // Git output can carry the URL's credentials, with or without its scheme
 // (`unable to look up user:token@host`).
@@ -200,6 +211,8 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
 
   const pluginsDir = path.join(config.stateDir, "plugins");
   const stagingRoot = path.join(config.stateDir, "plugin-staging");
+  const rollbackRoot = path.join(config.stateDir, "plugin-rollback");
+  const rollbackFolderOf = (pluginId: PluginId) => path.join(rollbackRoot, pluginId);
 
   // An install interrupted mid-swap (a crash) can leave the old version only in staging. Put it
   // back if nothing replaced it, then drop every leftover staging folder.
@@ -382,6 +395,8 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
     readonly installed: InstallRecord;
     /** Set by `update`: the id the source must still provide, checked before anything moves. */
     readonly expectedId: PluginId | undefined;
+    /** Keeps the replaced version for `rollback` once the new one has started. */
+    readonly keepReplaced: boolean;
   }) {
     const { manifest, stagingDir } = input;
     const source = input.installed.source;
@@ -469,8 +484,44 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
         ),
       );
     const started = yield* host.reload(manifest.id);
-    if (swapped.replaced === undefined || started.status !== "failed") return started;
     const { replaced } = swapped;
+    if (replaced === undefined) return started;
+    if (started.status !== "failed") {
+      const { version } = replaced;
+      if (!input.keepReplaced || version === undefined) return started;
+      // The update already succeeded, so a copy that cannot be kept only loses the rollback.
+      yield* host
+        .lifecycle(
+          Effect.gen(function* () {
+            const kept = rollbackFolderOf(manifest.id);
+            yield* fs.remove(kept, { recursive: true, force: true });
+            yield* fs.makeDirectory(rollbackRoot, { recursive: true });
+            yield* fs.rename(previous, kept);
+            yield* host.writeConfig((current) => ({
+              ...current,
+              rollback: {
+                ...current.rollback,
+                [manifest.id]: {
+                  version,
+                  ...(replaced.installed.installed === undefined
+                    ? {}
+                    : { installed: replaced.installed.installed }),
+                },
+              },
+            }));
+            yield* host.publish;
+          }),
+        )
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("could not keep the version a plugin update replaced", {
+              pluginId: manifest.id,
+              cause: Cause.pretty(cause).slice(0, 500),
+            }),
+          ),
+        );
+      return yield* host.state(manifest.id);
+    }
     yield* host
       .lifecycle(
         Effect.gen(function* () {
@@ -510,7 +561,14 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
       const fetched =
         "source" in origin
           ? yield* fetchSource(origin.source, staged)
-          : yield* writeFiles(origin.files, staged).pipe(Effect.as(undefined));
+          : "files" in origin
+            ? yield* writeFiles(origin.files, staged).pipe(Effect.as(undefined))
+            : yield* fs
+                .copy(origin.kept, staged)
+                .pipe(
+                  Effect.as(undefined),
+                  Effect.mapError(installFailed("The kept version could not be copied.")),
+                );
       return { stagingDir, manifest: yield* readSourceManifest(staged), fetched };
     }).pipe(Effect.tapError(() => removeStaging(stagingDir)));
   });
@@ -532,6 +590,7 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
       manifest,
       stagingDir,
       expectedId,
+      keepReplaced: true,
       installed: {
         source: "source" in origin ? origin.source : undefined,
         installed: fetched,
@@ -632,6 +691,53 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
       return yield* inHostScope(installOrigin({ source }, pluginId));
     },
   );
+
+  // Copied rather than moved, so the kept version stays if putting it back fails.
+  const rollback: PluginInstaller["Service"]["rollback"] = Effect.fn("PluginInstaller.rollback")(
+    (pluginId) =>
+      inHostScope(
+        Effect.gen(function* () {
+          const current = yield* host.config;
+          const kept = current.rollback?.[pluginId];
+          if (kept === undefined) {
+            return yield* new PluginInstallError({
+              reason: `${pluginId} has no earlier version to roll back to.`,
+            });
+          }
+          const { stagingDir, manifest } = yield* stage({ kept: rollbackFolderOf(pluginId) });
+          const refusal = engineRefusal(manifest);
+          if (refusal !== undefined) {
+            yield* removeStaging(stagingDir);
+            return yield* new PluginInstallError({ reason: refusal });
+          }
+          yield* swapIn({
+            manifest,
+            stagingDir,
+            expectedId: pluginId,
+            keepReplaced: false,
+            // The version rolled back from is still the newer one at its source.
+            installed: {
+              source: current.sources?.[pluginId],
+              installed: kept.installed,
+              available: current.installed?.[pluginId],
+            },
+          });
+          yield* host.lifecycle(forgetRollback(pluginId).pipe(Effect.andThen(host.publish)));
+          return yield* host.state(pluginId);
+        }),
+      ),
+  );
+
+  const forgetRollback = (pluginId: PluginId) =>
+    fs.remove(rollbackFolderOf(pluginId), { recursive: true, force: true }).pipe(
+      Effect.mapError(installFailed(`Could not delete the kept version of ${pluginId}.`)),
+      Effect.andThen(
+        host.writeConfig((current) => {
+          const { [pluginId]: _kept, ...rollback } = current.rollback ?? {};
+          return { ...current, rollback };
+        }),
+      ),
+    );
 
   const checkUpdates = Effect.fn("PluginInstaller.checkUpdates")(function* () {
     const current = yield* host.config;
@@ -762,6 +868,7 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
               .pipe(Effect.mapError(installFailed(`Could not delete ${folder}.`)));
           }
           yield* removeFromConfig(pluginId);
+          yield* forgetRollback(pluginId);
           yield* host.forget(pluginId, folder);
           // Under the lock, or an install that starts meanwhile could lose its new settings.
           if (removeData) {
@@ -786,6 +893,7 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
       install,
       installFiles,
       update,
+      rollback,
       checkUpdates: checkUpdates(),
       uninstall,
     }),

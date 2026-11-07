@@ -384,6 +384,7 @@ import {
   PluginUninstallInput,
   PluginUninstallResult,
   PluginUpdateInput,
+  PluginRollbackInput,
   PluginListInput,
   PluginCheckUpdatesInput,
   PluginListResult,
@@ -583,6 +584,7 @@ export const WS_METHODS = {
   pluginsRescan: "plugins.rescan",
   pluginsUninstall: "plugins.uninstall",
   pluginsUpdate: "plugins.update",
+  pluginsRollback: "plugins.rollback",
   pluginsCheckUpdates: "plugins.checkUpdates",
   pluginsReportWebFailure: "plugins.reportWebFailure",
   pluginsSettingsGet: "plugins.settings.get",
@@ -2052,6 +2054,13 @@ const WsPluginsUpdateRpc = Rpc.make(WS_METHODS.pluginsUpdate, {
   error: PluginRpcError,
 });
 
+/** Puts back the version a plugin's last update replaced. */
+const WsPluginsRollbackRpc = Rpc.make(WS_METHODS.pluginsRollback, {
+  payload: PluginRollbackInput,
+  success: PluginMutationResult,
+  error: PluginRpcError,
+});
+
 /** Checks every plugin installed from git or npm for a newer version now. */
 const WsPluginsCheckUpdatesRpc = Rpc.make(WS_METHODS.pluginsCheckUpdates, {
   payload: PluginCheckUpdatesInput,
@@ -2192,6 +2201,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPluginsRescanRpc,
   WsPluginsUninstallRpc,
   WsPluginsUpdateRpc,
+  WsPluginsRollbackRpc,
   WsPluginsCheckUpdatesRpc,
   WsPluginsReportWebFailureRpc,
   WsPluginsSettingsGetRpc,

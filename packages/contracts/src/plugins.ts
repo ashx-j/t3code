@@ -136,6 +136,8 @@ export const PluginState = Schema.Struct({
   installSource: Schema.optionalKey(PluginInstallSource),
   /** A newer npm version or git commit at its install source, found by the last update check. */
   availableUpdate: Schema.optionalKey(Schema.Struct({ version: Schema.String })),
+  /** The version its last update replaced, which `plugins.rollback` puts back. */
+  rollbackVersion: Schema.optionalKey(Schema.String),
   hasServer: Schema.Boolean,
   hasWeb: Schema.Boolean,
   /** Has a `skills` folder, whose skills agents on this environment get while it runs. */
@@ -217,6 +219,9 @@ export type PluginRescanInput = typeof PluginRescanInput.Type;
 export const PluginUpdateInput = Schema.Struct({ pluginId: PluginId });
 export type PluginUpdateInput = typeof PluginUpdateInput.Type;
 
+export const PluginRollbackInput = Schema.Struct({ pluginId: PluginId });
+export type PluginRollbackInput = typeof PluginRollbackInput.Type;
+
 export const PluginCheckUpdatesInput = Schema.Struct({});
 export type PluginCheckUpdatesInput = typeof PluginCheckUpdatesInput.Type;
 
@@ -246,7 +251,10 @@ export type PluginUninstallInput = typeof PluginUninstallInput.Type;
 export const PluginUninstallResult = Schema.Struct({ pluginId: PluginId });
 export type PluginUninstallResult = typeof PluginUninstallResult.Type;
 
-/** Result of `plugins.setEnabled`, `plugins.reload`, `plugins.install` and `plugins.update`. */
+/**
+ * Result of `plugins.setEnabled`, `plugins.reload`, `plugins.install`, `plugins.update` and
+ * `plugins.rollback`.
+ */
 export const PluginMutationResult = Schema.Struct({
   plugin: PluginState,
 });

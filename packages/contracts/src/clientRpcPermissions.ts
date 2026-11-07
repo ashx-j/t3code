@@ -66,6 +66,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.pluginsRescan]: AuthSettingsWriteScope,
   [WS_METHODS.pluginsUninstall]: AuthSettingsWriteScope,
   [WS_METHODS.pluginsUpdate]: AuthSettingsWriteScope,
+  [WS_METHODS.pluginsRollback]: AuthSettingsWriteScope,
   [WS_METHODS.pluginsCheckUpdates]: AuthSettingsWriteScope,
   [WS_METHODS.pluginsSettingsUpdate]: AuthSettingsWriteScope,
   // Agents read the report, so a guest or read-only client must not write it.
