@@ -11,6 +11,7 @@ import { useAtomCommand } from "../../../state/use-atom-command";
 import { Button } from "../../ui/button";
 import { Switch } from "../../ui/switch";
 import { SettingsRow, SettingsSection } from "../settingsLayout";
+import { LeftoverPluginData } from "./LeftoverPluginData";
 import { PluginRow } from "./PluginRow";
 import type { PluginCopy, PluginTarget } from "./pluginTargets";
 
@@ -140,6 +141,7 @@ export function PluginList({
           ))
         )}
       </SettingsSection>
+      <LeftoverPluginData targets={targets} installed={copies} labelled={several} />
     </>
   );
 }
