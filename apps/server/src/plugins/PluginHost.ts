@@ -905,10 +905,8 @@ const make = Effect.gen(function* () {
           methods: [...activation.methods.keys()],
         });
       }
-      if (
-        registered.access === "write" &&
-        !request.scopes.includes(AuthOrchestrationOperateScope)
-      ) {
+      const access = request.scopes.includes(AuthOrchestrationOperateScope) ? "write" : "read";
+      if (registered.access === "write" && access !== "write") {
         return yield* new PluginAccessDeniedError({
           pluginId: request.pluginId,
           method: request.method,
@@ -931,6 +929,7 @@ const make = Effect.gen(function* () {
               Promise.resolve().then(() =>
                 registered.handler(request.input, {
                   signal: AbortSignal.any([signal, deactivated]),
+                  access,
                 }),
               ),
             ),

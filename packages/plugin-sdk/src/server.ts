@@ -9,6 +9,11 @@ export interface PluginRpcContext {
    * within 30 seconds, when the call fails.
    */
   readonly signal: AbortSignal;
+  /**
+   * What the caller's session may call: `write` if it may call `write` methods, else `read`. A
+   * `read` method can use it to tell a read-only session, such as a guest's, from the owner's.
+   */
+  readonly access: PluginRpcAccess;
 }
 
 /** Answers one method of a `PluginRpcMap`. */

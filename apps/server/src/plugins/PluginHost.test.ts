@@ -67,15 +67,21 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
         const states = yield* waitForStatuses(host, { [hello]: "active" });
         assert.include(stateOf(states, hello), { source: "dev", hasServer: true, enabled: true });
 
-        const ping = (input: string) =>
-          host.invoke({ pluginId: hello, method: "ping", input, scopes: operate });
-        assert.deepStrictEqual(yield* ping("a"), { pong: "a", greeting: "hello" });
+        const ping = (input: string, scopes: ReadonlyArray<AuthEnvironmentScope> = operate) =>
+          host.invoke({ pluginId: hello, method: "ping", input, scopes });
+        assert.deepStrictEqual(yield* ping("a"), { pong: "a", greeting: "hello", access: "write" });
+        // A read method tells a session that can only read from one that can also write.
+        assert.deepStrictEqual(yield* ping("a", [AuthOrchestrationReadScope]), {
+          pong: "a",
+          greeting: "hello",
+          access: "read",
+        });
         const changed = yield* host
           .subscribe({ pluginId: hello, channel: "settings" })
           .pipe(Stream.runHead, Effect.forkChild({ startImmediately: true }));
         yield* host.updateSettings(hello, { greeting: "hey" });
         assert.deepStrictEqual(yield* Fiber.join(changed), Option.some({ greeting: "hey" }));
-        assert.deepStrictEqual(yield* ping("b"), { pong: "b", greeting: "hey" });
+        assert.deepStrictEqual(yield* ping("b"), { pong: "b", greeting: "hey", access: "write" });
 
         const counted = yield* host
           .subscribe({ pluginId: hello, channel: "counted" })

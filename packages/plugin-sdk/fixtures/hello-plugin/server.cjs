@@ -6,10 +6,10 @@ module.exports = {
     api.log.info("hello-plugin activated");
     api.rpc.register(
       "ping",
-      async (input) => {
+      async (input, { access }) => {
         const settings = await api.settings.get();
         const greeting = typeof settings.greeting === "string" ? settings.greeting : "hello";
-        return { pong: input ?? null, greeting };
+        return { pong: input ?? null, greeting, access };
       },
       { access: "read" },
     );
