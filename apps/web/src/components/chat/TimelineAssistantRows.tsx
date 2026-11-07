@@ -33,20 +33,6 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
   );
   const text = liveText ?? row.message.text;
   const messageText = text || (row.message.streaming ? "" : "(empty response)");
-  const markdown = (
-    <ChatMarkdown
-      text={messageText}
-      cwd={ctx.markdownCwd}
-      threadRef={ctx.threadRef ?? undefined}
-      isStreaming={Boolean(row.message.streaming)}
-      lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
-      skills={ctx.skills}
-      headingLevelOffset={MESSAGE_HEADING_LEVEL}
-      onUseArtifactTemplate={ctx.onUseArtifactTemplate}
-      onRunShellCommand={ctx.onRunShellCommand}
-      onImageExpand={ctx.onImageExpand}
-    />
-  );
 
   return (
     <>
@@ -60,21 +46,18 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
             request={ctx.citationRequest}
             listRef={ctx.listRef}
           >
-            {ctx.pluginUi === null ? (
-              markdown
-            ) : (
-              <ctx.pluginUi.PluginReplaceable
-                part="message.assistant"
-                environmentId={ctx.threadRef?.environmentId ?? null}
-                pieces={{
-                  original: markdown,
-                  text: messageText,
-                  messageId: row.message.id,
-                  threadId: ctx.threadRef?.threadId ?? null,
-                  streaming: Boolean(row.message.streaming),
-                }}
-              />
-            )}
+            <ChatMarkdown
+              text={messageText}
+              cwd={ctx.markdownCwd}
+              threadRef={ctx.threadRef ?? undefined}
+              isStreaming={Boolean(row.message.streaming)}
+              lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
+              skills={ctx.skills}
+              headingLevelOffset={MESSAGE_HEADING_LEVEL}
+              onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+              onRunShellCommand={ctx.onRunShellCommand}
+              onImageExpand={ctx.onImageExpand}
+            />
           </AssistantCitationSource>
         </div>
         {ctx.onOpenTurnDiff ? (
@@ -204,18 +187,6 @@ function AssistantMessageMeta({
       />
       {projectedItem?.item.type === "assistant_message" ? (
         <AssistantForkButton projectedItem={projectedItem} />
-      ) : null}
-      {ctx.pluginUi && ctx.threadRef && !message.streaming ? (
-        <ctx.pluginUi.PluginActionButtons
-          place="message"
-          environmentId={ctx.threadRef.environmentId}
-          context={{
-            threadId: ctx.threadRef.threadId,
-            messageId: message.id,
-            role: "assistant",
-            text: message.text,
-          }}
-        />
       ) : null}
       {!message.streaming && (
         <Tooltip>

@@ -44,8 +44,8 @@ The SDK has no dependencies of its own. What else a plugin needs depends on its 
 ```
 
 - `id` uses lowercase letters, digits and hyphens, starts with a letter and has up to 32
-  characters. It names the plugin's folder, its HTTP routes (`/api/plugins/<id>/…`), its agent
-  tools (`plg_<id>_<tool>`) and its keybinding commands (`plugin.<id>.<command>`).
+  characters. It names the plugin's folder, its agent tools (`plg_<id>_<tool>`) and its keybinding
+  commands (`plugin.<id>.<command>`).
 - `engines.t3` is a version range made of `^`, `>=`, `>`, `<=`, `<`, `=` and `||`, such as
   `>=0.1.6`. A server outside it refuses to install the plugin or start it, and says why.
 - `permissions` is an optional list of what the plugin says it uses. Settings → Plugins shows it on
@@ -53,13 +53,11 @@ The SDK has no dependencies of its own. What else a plugin needs depends on its 
 - `server` must be CommonJS ending in `.cjs`. `web` is a single-file ES module.
 - `settingsSchema` is JSON Schema. T3 Code draws a form from it on the Plugins page, and top-level
   string fields with `"format": "t3-secret"` are stored in the server's secret store and never shown
-  again. `t3-secret` anywhere else is saved as plain text, and `t3_plugins_check` warns about it.
-  The form covers top-level strings, numbers, integers, booleans, `enum`s of strings or numbers,
-  and arrays of strings. One property of any other shape, such as an object or a nullable type,
-  turns the whole form into a JSON box. Every save is checked against the schema with the top-level `default`s
-  filled in, so a default its own field rejects refuses every save; `t3_plugins_check` reports it.
-  Agents read the settings and the schema, and change settings, with the `t3_plugins_settings`
-  tool.
+  again. `t3-secret` anywhere else is saved as plain text. The form covers top-level strings,
+  numbers, integers, booleans, `enum`s of strings or numbers, and arrays of strings. One property
+  of any other shape, such as an object or a nullable type, turns the whole form into a JSON box.
+  Every save is checked against the schema with the top-level `default`s filled in, so a default
+  its own field rejects refuses every save.
 - A `themes/` folder of theme JSON files is published while the plugin is active, and an `assets/`
   folder is served to the web half when the plugin has one. T3 Code remembers the published
   themes, so the boot screen and the desktop window start in the active theme's colors. A theme
@@ -74,13 +72,6 @@ The SDK has no dependencies of its own. What else a plugin needs depends on its 
   starts with just the main environment.
   **Reload** picks up edits. The page gets each file's text, so a `url()` can't reach the
   plugin's folder; use a `data:` URL for an image.
-- A `skills/` folder of `<name>/SKILL.md` skills reaches Claude and Codex agents while the plugin is
-  active, and the composer's `$` menu lists them for those agents with the plugin's name. Claude
-  invokes one as `<plugin id>:<folder>`, Codex by the `name` in its frontmatter. Nothing else in the
-  plugin's folder reaches agents. The skills are copied when the plugin starts, so **Reload** picks
-  up changes. A running Claude thread keeps the skills and instructions its process started with
-  until that process restarts. A message that picks a skill from a plugin the process started
-  without restarts it.
 
 ## Server half
 
@@ -89,73 +80,20 @@ The SDK has no dependencies of its own. What else a plugin needs depends on its 
 module.exports = {
   activate(api) {
     api.rpc.register("greeting", () => "Hello", { access: "read" });
-    api.turns.afterRunCompleted("log", (run) => api.log.info("run ended", { status: run.status }));
   },
 };
 ```
 
-`activate` receives the [`PluginApi`](./src/server.ts):
-
-- settings, storage, and RPC methods and channels for the web half;
-- stored orchestration events, run-completed hooks and notes in threads;
-- threads and projects: read, start, archive, snooze, settle and delete threads, add and change
-  projects, and list a project's git worktrees;
-- provider instances and their models, with the options each model takes, such as reasoning
-  effort (`api.providers.list`), so a new thread can set them in `threads.create`;
-- send hooks that add to, replace or block a message, and slash commands that run on the server and
-  may replace or block the message. A message's hooks share 2 seconds, and slash commands never
-  reach them. A slash command that takes over 10 seconds blocks its message;
-- answers to agents' approvals and questions, instructions for agents, and MCP tools for agents;
-- secrets the user enters on a card in a thread with a turn in progress;
-- HTTP routes, schedules and server info.
+`activate` receives the [`PluginApi`](./src/server.ts): settings, storage, RPC methods and channels
+for the web half, and MCP tools for agents.
 
 Everything a plugin registers is released when it is disabled, reloaded or uninstalled; add your
 own cleanup with `api.onDeactivate`.
 
-A failure in plugin code that nothing awaits, such as a throw in a timer, a schedule or a hook,
-doesn't stop T3 Code. It shows on the plugin's row in Settings → Plugins and in
-`t3_plugins_check`, and the plugin keeps running. Give every child process, socket and stream you
-create an `'error'` listener anyway: Node reports an unhandled `'error'` event as a crash, and when
-T3 Code can't tell it came from your plugin, the server stops.
-
-HTTP routes need a signed-in T3 Code session, so a route can't take webhooks from other services. A
-`GET` needs `orchestration:read`, which read-only sessions have, so never change anything in one.
-Other methods need `orchestration:operate`. Handlers get the request body as UTF-8 text, so a binary
-upload arrives corrupted, and a query key that appears twice keeps its last value.
-
-Runs that `turns.afterRunCompleted` hands over and events from `events.stored` have the SDK's own
-shapes, `PluginCompletedRun` and `PluginStoredEvent`, not T3's internal data, which changes between
-releases. A stored event says only what happened in which thread and run, so read the thread for the
-rest.
-
-## Work that runs over many turns
-
-A plugin can run work in steps, such as asking several models for an answer and then having each
-one review the others. Start each model's thread with `threads.create`, with the model and options
-`providers.list` names. T3 Code can restart between any 2 steps, and the plugin with it, so build
-each step to resume:
-
-- Keep each job's state in `storage`, such as `job:<id>` with its threads and the step it reached.
-  Storage outlives restarts and updates.
-- Move to the next step from `turns.afterRunCompleted`. Runs that end while the plugin is off
-  arrive when it starts again. T3 saves how far each handler got under the name you give it, so
-  keep a handler's name when you update the plugin, and give a new handler a new name. Runs of
-  every thread arrive, so look up `run.threadId` in your state. T3 waits for your handler before
-  it sends the next run, and counts a run as handled once the handler resolves or throws, so a
-  run whose handler a restart cut short arrives again. A handler gets 30 seconds per run. After
-  that its `signal` aborts, T3 moves on to the next run and shows the timeout on the plugin's row,
-  so start long work, such as a model's turn, with a call that returns once T3 accepts it.
-- Pass an `idempotencyKey` to `threads.create` and `threads.sendMessage`, made from the job and the
-  step, such as `review-42:answer:codex`. A call T3 already accepted with that key starts no new
-  turn, so repeating a step after a restart costs nothing.
-- Write back to a thread that may be busy with `sendMessage` and `mode: "queue"`, which waits for
-  the running turn to end. The default, `auto`, steers the message into a running turn.
-- To cancel a job, `interrupt` each of its threads, which resolves even when nothing is running,
-  then `archive` or `delete` the ones you no longer need. An interrupted run arrives at
-  `afterRunCompleted` with the status `interrupted`.
-- Set `engines.t3` to the first T3 version that has every call you use, instead of checking
-  `api.server.version`. An older T3 refuses to install or start the plugin and says why, where it
-  would otherwise ignore a field it doesn't know, such as `idempotencyKey`.
+A failure in plugin code that nothing awaits, such as a throw in a timer, doesn't stop T3 Code. It
+shows on the plugin's row in Settings → Plugins, and the plugin keeps running. Give every child
+process, socket and stream you create an `'error'` listener anyway: Node reports an unhandled
+`'error'` event as a crash, and when T3 Code can't tell it came from your plugin, the server stops.
 
 ## Web half
 
@@ -180,8 +118,7 @@ export default defineWebPlugin({
 ```
 
 `activate` receives the [`WebPluginApi`](./src/web.ts): calls into the server half, right panels, a
-settings panel, palette commands, composer slash commands and banners, timeline renderers for the
-plugin's agent tools, renderers for fenced code languages, styles, assets, navigation and toasts.
+settings panel, palette and keybinding commands, styles, assets, navigation and toasts.
 
 `api.rpc.invoke` and `api.rpc.subscribe` reach the methods and channels the server half adds with
 `rpc.register` and `rpc.publish`. Describe them once as a `PluginRpcMap` type from
@@ -189,33 +126,9 @@ plugin's agent tools, renderers for fenced code languages, styles, assets, navig
 wrong method name, input or value fails to typecheck in either half.
 [`examples/quick-notes`](./examples/quick-notes) keeps its map in `rpc.ts`.
 
-Plugins can also add buttons and menu items to T3's own toolbars and menus: under each message
-(`messages.addAction`), in the thread header (`threads.addHeaderButton`), beside the composer's
-attach button (`composer.addButton`) and in the thread actions menu (`threads.addMenuItem`).
-`threads.setBadge` shows a short badge on a thread's sidebar row and header.
-[`examples/review-flags`](./examples/review-flags) uses all of them. `composer.setMentionItems`
-offers items in the composer's `@` menu; a picked item shows as a chip, and the agent gets its text
-with the message. [`examples/quick-notes`](./examples/quick-notes) offers its notes that way.
-
-`pages.register` adds a full page at `/plugins/<pluginId>/<name>`, shown beside the sidebar in
-place of the thread; a `t3code://plugins/<pluginId>/<name>` link opens the desktop app on it.
-`sidebar.addSection` adds a titled section under the thread list.
-[`examples/quick-notes`](./examples/quick-notes) keeps notes in its server half's storage and shows
-them in both.
-
-The app can load web halves from several environments at once. Buttons, menu items, badges, banners,
-slash commands, `@` items, right panels, tool renderers and replaced parts show only in the threads
-of the environment the plugin runs on, which `api.environmentId` names. Code block renderers apply
-in every thread. Pages, palette and keybinding commands and sidebar sections come only from the
-first of those environments, the main one unless it's turned off.
-
-`api.ui.replace(part, component)` draws one of T3's own parts your way. The component receives
-T3's own controls as ready-made pieces to arrange, plus `original`, T3's own drawing of the part.
-The parts and their pieces are listed in `WebPluginParts`. If your component throws, T3 draws its
-own part. [`examples/classic-composer`](./examples/classic-composer) moves the composer's controls
-back to their layout from before T3's redesign.
-[`examples/message-extras`](./examples/message-extras) adds a word count under assistant messages,
-redraws expanded commands and sums up diffs.
+The app can load web halves from several environments at once. Right panels show only in the threads
+of the environment the plugin runs on, which `api.environmentId` names. Palette and keybinding
+commands come only from the first of those environments, the main one unless it's turned off.
 
 Build it with the Vite preset, which makes the bundle use T3 Code's own React, atoms, atom hooks and
 UI components instead of shipping copies:
@@ -242,48 +155,33 @@ an Effect or a Stream would use your copy of effect inside T3's.
 T3 changes its markup, class names, labels and layout in most releases. You don't need to drop
 parts of your design to survive that. Build each part on the most stable thing T3 offers for it:
 
-- **Arrange pieces instead of rebuilding T3's controls.** `ui.replace` gives you T3's own controls,
-  already wired up. Place them, wrap them or leave them out. A copied control, with its markup,
-  icons and labels, misses every fix T3 makes to the real one.
 - **Style with theme tokens.** Colors, radii and fonts come from the theme. Set them in a theme
   file in `themes/`, and use `var(--border)`, `var(--radius)` and the other tokens in your own
   components instead of hex or rgb values.
 - **Scope CSS to a region.** T3 keeps the `data-t3-region` names of the window's main areas
   across releases: `sidebar`, `main` (everything beside the sidebar), `timeline`, `composer`,
   `thread-details`, `right-panel`, `terminal`, `home`, `pull-requests`, `settings`,
-  `settings-nav`, `plugin-page` and `command-palette`. A plain `background` rule recolors most
-  regions, such as `[data-t3-region="composer"] { background: #101820; }`. The surfaces inside
-  `main` and `right-panel` paint over them, so set `--background` on those two instead. For
-  `terminal`, set `--terminal-background`, which a terminal reads when it opens.
+  `settings-nav` and `command-palette`. A plain `background` rule recolors most regions, such as
+  `[data-t3-region="composer"] { background: #101820; }`. The surfaces inside `main` and
+  `right-panel` paint over them, so set `--background` on those two instead. For `terminal`, set
+  `--terminal-background`, which a terminal reads when it opens.
 - **Reach into T3's markup only as a last resort.** Selectors on `aria-label`, `data-slot`, class
   names such as `[class~="border-border/65"]` or `.lucide-shield-off`, and `:has()` break when T3
-  renames or moves things. Use one only when no theme value, region, piece or part does the job.
-  Keep each rule small and in one commented place, prefer one that falls back to T3's own look
-  when the markup changes, and list it in the plugin's README with the seam that would replace it.
+  renames or moves things. Use one only when no theme value or region does the job. Keep each rule
+  small and in one commented place, prefer one that falls back to T3's own look when the markup
+  changes, and list it in the plugin's README with the seam that would replace it.
 - **Leave T3's frame to T3.** The title bar row, the room for the window buttons on Windows and
   Linux, drag areas, phone safe areas and breakpoints are T3's, so don't resize or pad them.
-- **Draw `original` for steps you don't handle.** The `timeline.item` part's `item` describes
-  commands, file changes, searches, tool calls and reasoning. Other kinds of step have the type
-  `other`, and T3 can add kinds in any release.
 - **Ship what the plugin runs.** Installing a folder leaves out `.git` and `node_modules`, so
   build everything into the files the manifest names.
-- **Ask for a seam.** When T3 doesn't hand over what you need, ask for a piece, part or token on
-  the T3 Code repository instead of reaching into its markup.
-
-After a T3 update, ask an agent to run `t3_plugins_check` on your plugin. It lists the patterns
-above that your plugin uses, so you know what to recheck. If one of your replacements throws,
-Settings → Plugins shows a note on the plugin's row, and T3 draws its own part there until the
-plugin reloads.
+- **Ask for a seam.** When T3 doesn't hand over what you need, ask for a region or token on the
+  T3 Code repository instead of reaching into its markup.
 
 ## Developing a plugin
 
-An agent writing a plugin installs its folder in place with `t3_plugins_install` and
-`link: true`, then edits the files and calls `t3_plugins_reload` to load them. Nothing is copied,
-and unlinking leaves the folder alone. `t3_plugins_check` lists what will stop the plugin from
-loading and what is likely to break in a T3 update. Agents get these tools only after you turn on
-the switch for them in Settings → Plugins. They are off until then. Without an agent, add the
-folder to `devPaths` in `plugins.json` in the T3 Code data directory, turn the plugin on in
-Settings → Plugins, and use **Reload** after each change.
+Add the plugin's folder to `devPaths` in `plugins.json` in the T3 Code data directory, turn the
+plugin on in Settings → Plugins, and use **Reload** after each change. **Unlink** on its row removes
+it from `devPaths` and leaves the folder alone.
 
 To install a finished plugin, drag its folder onto Settings → Plugins, or use **Add plugin** to
 choose it.

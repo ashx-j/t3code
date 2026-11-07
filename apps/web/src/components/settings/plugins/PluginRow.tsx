@@ -35,11 +35,11 @@ const FAILURE_STAGES = {
 } as const;
 
 /**
- * Where a plugin that changes the app runs, as the installer decides: with no server code or agent
- * skills it goes only to the first environment plugin UI loads from.
+ * Where a plugin that changes the app runs, as the installer decides: with no server code it goes
+ * only to the first environment plugin UI loads from.
  */
 const webReach = (plugin: PluginState) =>
-  !plugin.hasServer && plugin.hasSkills !== true
+  !plugin.hasServer
     ? "Changes only this app, so it isn't installed on other servers."
     : plugin.hasWeb
       ? "Its web part runs in this app only from the servers chosen in Load plugin UI from."
@@ -86,7 +86,7 @@ export function PluginRow({
     await Promise.all(on.map(action));
     setBusy(false);
   };
-  // A plugin an agent linked from its own folder is unlinked instead; the folder stays.
+  // A plugin loaded from its own folder through `devPaths` is unlinked instead; the folder stays.
   const removeLabel = copies.every((copy) => copy.plugin.source === "dev") ? "Unlink" : "Remove";
   // Only a shadowed link can be dropped on its own, by its folder; see `pluginRows`.
   const shadowedLink = shadowed && plugin.source === "dev" ? plugin.linkedFolder : undefined;

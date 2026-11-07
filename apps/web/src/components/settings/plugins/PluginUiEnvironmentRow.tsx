@@ -50,7 +50,7 @@ export function PluginUiEnvironmentRow() {
       description={
         appWide === undefined || others.length === 0
           ? "The chosen servers' plugins run code in this window."
-          : `The chosen servers' plugins run code in this window. Pages, commands and sidebar sections come from ${labelOf(appWide)}.`
+          : `The chosen servers' plugins run code in this window. Commands come from ${labelOf(appWide)}.`
       }
       control={
         <Menu>

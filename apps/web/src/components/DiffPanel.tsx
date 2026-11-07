@@ -1,5 +1,4 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
-import { DiffViewPart } from "../plugins/DiffViewPart";
 import { useAtomValue } from "@effect/atom-react";
 import type { FileDiffContentsLoader, FileDiffMetadata } from "@pierre/diffs";
 import {
@@ -1332,10 +1331,7 @@ export default function DiffPanel({
                 </div>
               )
             ) : lazySource || renderablePatch?.kind === "files" ? (
-              <DiffViewPart
-                environmentId={activeThread?.environmentId ?? null}
-                patch={typeof selectedPatch === "string" ? selectedPatch : null}
-              >
+              <div className="flex min-h-0 flex-1 overflow-hidden">
                 <div
                   className="min-h-0 min-w-0 flex-1"
                   onClickCapture={(event) => {
@@ -1463,7 +1459,7 @@ export default function DiffPanel({
                     />
                   </aside>
                 ) : null}
-              </DiffViewPart>
+              </div>
             ) : (
               <div className="min-h-0 flex-1 overflow-auto p-2">
                 <div className="space-y-2">

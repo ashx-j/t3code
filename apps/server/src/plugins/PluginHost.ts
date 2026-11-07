@@ -5,7 +5,6 @@ import * as NodeModule from "node:module";
 import {
   AuthEnvironmentScope,
   AuthOrchestrationOperateScope,
-  AuthOrchestrationReadScope,
   AuthSettingsWriteScope,
   type PluginFailure,
   PluginId,
@@ -14,14 +13,12 @@ import {
   type PluginState,
   type PluginStatesEvent,
   type PluginStatus,
-  type ThreadId,
 } from "@t3tools/contracts";
 import type { PluginDefinition } from "@t3tools/plugin-sdk/server";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -36,22 +33,10 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
-import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as EnvironmentTheme from "../environmentTheme.ts";
-import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
-import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
-import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
-import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
-import * as ProjectService from "../project/ProjectService.ts";
-import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
-import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
-import * as ServerSettings from "../serverSettings.ts";
-import * as SecretRequests from "../secrets/SecretRequests.ts";
-import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { forkParked } from "../serverActivation.ts";
 import {
   makePluginActivation,
@@ -61,12 +46,8 @@ import {
   type PluginPublication,
 } from "./PluginApi.ts";
 import { errorText, PluginCodeError, pluginCodeScope } from "./api/facade.ts";
-import { makeRuntimeRequestHooks } from "./api/runtimeRequests.ts";
-import { makePluginAgentFolders } from "./pluginAgentFolders.ts";
 import { makePluginFailureGuard } from "./pluginFailureGuard.ts";
 import { discoverPlugins, type DiscoveredPlugin } from "./pluginDiscovery.ts";
-import { checkPluginFolder, failureFindings, type PluginCheckReport } from "./pluginCheck.ts";
-import * as PluginHooks from "./PluginHooks.ts";
 import * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
 import * as PluginInstaller from "./PluginInstaller.ts";
 import * as PluginMcpTools from "./PluginMcpTools.ts";
@@ -79,7 +60,7 @@ import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
 import { makePluginWebFiles } from "./pluginWebFiles.ts";
 
-// Clients send web failures and agents read them, so they are bounded like plugin errors.
+// Clients send web failures, so they are bounded like plugin errors.
 const MAX_WEB_FAILURE_CHARS = 1_000;
 // Plugin code that never settles must not keep a plugin loading, or Disable and Reload waiting,
 // forever. The cleanup deadline covers all of a plugin's cleanups together.
@@ -121,7 +102,7 @@ export class PluginMethodNotFoundError extends Schema.TaggedError<PluginMethodNo
   "PluginMethodNotFoundError",
   { pluginId: PluginId, method: Schema.String, methods: Schema.Array(Schema.String) },
 ) {
-  // The methods it has, since nothing else lists them to an agent.
+  // The methods it has, since nothing else lists them.
   override get message(): string {
     return `Plugin ${this.pluginId} has no method ${this.method}. Its methods: ${this.methods.join(", ") || "none"}.`;
   }
@@ -154,8 +135,6 @@ export class PluginHost extends Context.Service<
     readonly list: Effect.Effect<ReadonlyArray<PluginState>>;
     /** The current list, then the whole list after every change. */
     readonly streamStates: Stream.Stream<ReadonlyArray<PluginState>>;
-    /** Whether agents get the `t3_plugins_*` tools now, then after every change. */
-    readonly agentTools: Stream.Stream<boolean>;
     /** `list` as a client with `scopes` sees it: server folder paths only if it manages plugins. */
     readonly listForClient: (
       scopes: ReadonlyArray<AuthEnvironmentScope>,
@@ -164,8 +143,6 @@ export class PluginHost extends Context.Service<
     readonly streamForClient: (
       scopes: ReadonlyArray<AuthEnvironmentScope>,
     ) => Stream.Stream<PluginStatesEvent>;
-    /** Turns the `t3_plugins_*` tools on or off for agents, overriding the default. */
-    readonly setAgentTools: (enabled: boolean) => Effect.Effect<boolean, PluginConfigError>;
     /** Persists the flag, then waits for activation or deactivation to finish. */
     readonly setEnabled: (
       pluginId: PluginId,
@@ -196,13 +173,6 @@ export class PluginHost extends Context.Service<
       Schema.JsonObject,
       PluginNotFoundError | PluginNotActiveError | PluginSettingsError
     >;
-    /**
-     * Lists what would stop a plugin loading or break it when T3 updates, from its folder on
-     * disk; an installed plugin's last failure comes first. Runs none of its code.
-     */
-    readonly check: (
-      target: { readonly pluginId: PluginId } | { readonly path: string },
-    ) => Effect.Effect<PluginCheckReport, PluginNotFoundError>;
     /**
      * Keeps the latest web failure a client reported for the plugin's current start, in memory.
      * A report about an earlier start is ignored.
@@ -268,7 +238,6 @@ const managesPlugins = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
 
 interface ClientList {
   readonly plugins: ReadonlyArray<PluginState>;
-  readonly agentTools: boolean;
 }
 
 // Compared per subscriber, since each one sees its own view of the list.
@@ -280,11 +249,9 @@ const statesEvent = (
   const rows = next.plugins.flatMap((plugin, index) =>
     Equal.equals(plugin, previous.plugins[index]) ? [] : [{ index, plugin }],
   );
-  return rows.length === 0 &&
-    next.plugins.length === previous.plugins.length &&
-    next.agentTools === previous.agentTools
+  return rows.length === 0 && next.plugins.length === previous.plugins.length
     ? undefined
-    : { _tag: "changed", length: next.plugins.length, rows, agentTools: next.agentTools };
+    : { _tag: "changed", length: next.plugins.length, rows };
 };
 
 const toState = (
@@ -318,7 +285,6 @@ const toState = (
     ...(record.styles === undefined || record.styles.length === 0 ? {} : { styles: record.styles }),
     hasServer: manifest?.server !== undefined,
     hasWeb: manifest?.web !== undefined,
-    ...("hasSkills" in record.plugin ? { hasSkills: record.plugin.hasSkills } : {}),
     ...(webFailure === undefined ? {} : { webFailure }),
     ...(serverFailure === undefined ? {} : { serverFailure }),
   };
@@ -339,37 +305,17 @@ const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const context = yield* Effect.context<never>();
-  const orchestrator = yield* Orchestrator.OrchestratorV2;
-  const eventStore = yield* OrchestrationEventStore.OrchestrationEventStore;
-  const threads = yield* ThreadManagementService.ThreadManagementService;
-  const crypto = yield* Crypto.Crypto;
   const services: PluginApiServices = {
-    version: packageJson.version,
     settings: yield* PluginSettingsStore.PluginSettingsStore,
     storage: yield* PluginStorage.PluginStorage,
-    orchestrator,
-    eventStore,
-    threads,
-    projects: yield* ProjectStore.ProjectStoreV2,
-    launches: yield* ThreadLaunchService.ThreadLaunchService,
-    projectService: yield* ProjectService.ProjectService,
-    git: yield* GitVcsDriver.GitVcsDriver,
-    secretRequests: yield* SecretRequests.SecretRequests,
-    providers: yield* ProviderRegistry.ProviderRegistry,
-    hooks: yield* PluginHooks.PluginHooks,
-    runtimeRequests: makeRuntimeRequestHooks({ context, orchestrator, threads, crypto }),
     mcpTools: yield* PluginMcpTools.PluginMcpTools,
-    httpRoutes: yield* PluginHttpRoutes.PluginHttpRoutes,
-    environment: yield* ServerEnvironment.ServerEnvironment,
-    serverSettings: yield* ServerSettings.ServerSettingsService,
-    crypto,
   };
   const settingsStore = services.settings;
   const environmentThemes = yield* EnvironmentTheme.EnvironmentThemeService;
+  const httpRoutes = yield* PluginHttpRoutes.PluginHttpRoutes;
 
   const pluginsDir = path.join(config.stateDir, "plugins");
   const pluginsConfig = yield* makePluginsConfig;
-  const agentFolders = yield* makePluginAgentFolders;
   const webFiles = yield* makePluginWebFiles;
 
   const records = yield* Ref.make<ReadonlyArray<PluginRecord>>([]);
@@ -388,7 +334,6 @@ const make = Effect.gen(function* () {
   const changes = yield* PubSub.sliding<ReadonlyArray<PluginState>>(1);
   const lifecycle = yield* Semaphore.make(1);
   const publishLock = yield* Semaphore.make(1);
-  const agentToolsOffered = yield* SubscriptionRef.make(false);
   const activations = yield* FiberMap.make<PluginId>();
   const hostScope = yield* Effect.scope;
 
@@ -413,29 +358,15 @@ const make = Effect.gen(function* () {
   });
   const currentStates = Ref.get(records).pipe(Effect.flatMap(statesOf));
   // What the last publish sent, starting from the empty list clients get before any. Settings
-  // rescans on every visit, and a list sent again would make every client and provider stream
-  // rebuild what it already shows.
+  // rescans on every visit, and a list sent again would make every client stream rebuild what it
+  // already shows.
   let published: ReadonlyArray<PluginState> = [];
-  // Agents get the management tools only once the user turns them on, so no turn pays for them
-  // unasked.
-  const syncAgentTools = Effect.gen(function* () {
-    const offered = (yield* pluginsConfig.current).agentTools ?? false;
-    yield* services.mcpTools.offerManagementTools(offered);
-    if ((yield* SubscriptionRef.get(agentToolsOffered)) !== offered) {
-      yield* SubscriptionRef.set(agentToolsOffered, offered);
-    }
-  });
   // Reading and publishing under one lock, so a slower fiber cannot publish an older list last.
   const publishUnderLock = publishLock.withPermits(1)(
     Effect.gen(function* () {
       const all = yield* Ref.get(records);
       const states = yield* statesOf(all);
-      // Still synced, so a saved choice applies at startup in an environment with no plugins.
-      if (Equal.equals(states, published)) return yield* syncAgentTools;
-      yield* services.mcpTools.setInstalledPlugins(states);
-      const active = all.flatMap((record, index) =>
-        states[index]?.status === "active" ? [record.plugin] : [],
-      );
+      if (Equal.equals(states, published)) return;
       // Every enabled plugin that has not failed, so a starting or restarting one keeps its themes:
       // windows would otherwise paint T3's colors, forget the saved theme, then switch back.
       yield* environmentThemes.setPluginThemeDirectories(
@@ -446,10 +377,8 @@ const make = Effect.gen(function* () {
             : [];
         }),
       );
-      yield* agentFolders.publish(active);
       yield* PubSub.publish(changes, states);
       published = states;
-      yield* syncAgentTools;
     }),
   );
   // A caller that disconnects mid-publish must not leave a change it made unsent.
@@ -593,7 +522,6 @@ const make = Effect.gen(function* () {
       styles: yield* webFiles.serveStyles(plugin),
     };
     if (manifest.server === undefined) {
-      yield* agentFolders.prepare(plugin, manifest.name);
       return yield* setRecord(plugin.id, { ...started, revision: nextRevision() });
     }
     yield* setRecord(plugin.id, { status: "loading" });
@@ -611,13 +539,11 @@ const make = Effect.gen(function* () {
     );
     const api = makePluginApi({
       id: plugin.id,
-      name: manifest.name,
       rootDir: plugin.rootDir,
       settingsSchema: manifest.settingsSchema,
       activation,
       context,
       services,
-      onFailure: (error) => reportServerFailure(plugin.id, error),
     });
     // Only `activate` can be interrupted. A stop that lands after it waits until the record holds
     // the activation, so `stopPlugin` always finds what to tear down.
@@ -633,7 +559,6 @@ const make = Effect.gen(function* () {
           }).pipe(Effect.timeoutOption(ACTIVATE_DEADLINE)),
         ).pipe(Effect.exit);
         if (activated._tag === "Success" && Option.isSome(activated.value)) {
-          yield* agentFolders.prepare(plugin, manifest.name);
           yield* setRecord(plugin.id, { ...started, activation, revision: nextRevision() });
           return yield* Effect.logInfo("plugin activated", { pluginId: plugin.id });
         }
@@ -667,9 +592,8 @@ const make = Effect.gen(function* () {
       next.delete(pluginId);
       return next;
     });
-    yield* agentFolders.remove(pluginId);
     // Plugins without server code have no activation but may still serve files.
-    yield* services.httpRoutes.unregisterPlugin(pluginId);
+    yield* httpRoutes.unregisterPlugin(pluginId);
     const record = yield* findRecord(pluginId);
     if (record?.activation === undefined) return;
     yield* setRecord(pluginId, { status: "disabled" });
@@ -868,8 +792,6 @@ const make = Effect.gen(function* () {
     .withPermits(1)(
       Effect.gen(function* () {
         yield* recoverStaging;
-        // Folders of plugins the last run left active; activation writes them again.
-        yield* agentFolders.removeAll;
         const { plugins, enabled } = yield* discover(true);
         yield* Ref.set(
           records,
@@ -907,25 +829,20 @@ const make = Effect.gen(function* () {
       return Stream.concat(Stream.make(snapshot), Stream.fromSubscription(subscription));
     }),
   );
-  const agentTools = SubscriptionRef.changes(agentToolsOffered);
   const forClient =
     (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
-    ([plugins, offered]: readonly [ReadonlyArray<PluginState>, boolean]): ClientList => ({
+    (plugins: ReadonlyArray<PluginState>): ClientList => ({
       plugins: managesPlugins(scopes) ? plugins : plugins.map(withoutServerPaths),
-      agentTools: offered,
     });
 
   const service = PluginHost.of({
     list: currentStates,
     streamStates,
     listForClient: Effect.fn("PluginHost.listForClient")(function* (scopes) {
-      return forClient(scopes)([
-        yield* currentStates,
-        yield* SubscriptionRef.get(agentToolsOffered),
-      ]);
+      return forClient(scopes)(yield* currentStates);
     }),
     streamForClient: (scopes) =>
-      Stream.zipLatest(streamStates, agentTools).pipe(
+      streamStates.pipe(
         Stream.map(forClient(scopes)),
         Stream.mapAccum(
           (): ClientList | undefined => undefined,
@@ -938,34 +855,6 @@ const make = Effect.gen(function* () {
     setEnabled,
     reload,
     rescan: rescan(),
-    agentTools,
-    setAgentTools: Effect.fn("PluginHost.setAgentTools")(function* (enabled) {
-      yield* pluginsConfig.write((current) => ({ ...current, agentTools: enabled }));
-      yield* publishLock.withPermits(1)(syncAgentTools);
-      return enabled;
-    }),
-    check: Effect.fn("PluginHost.check")(function* (target) {
-      const { folder, state } =
-        "path" in target
-          ? { folder: path.resolve(target.path), state: undefined }
-          : yield* findRecord(target.pluginId).pipe(
-              Effect.flatMap((record) =>
-                record === undefined
-                  ? Effect.fail(new PluginNotFoundError({ pluginId: target.pluginId }))
-                  : stateOf(target.pluginId).pipe(
-                      Effect.map((state) => ({ folder: record.plugin.rootDir, state })),
-                    ),
-              ),
-            );
-      const report = yield* checkPluginFolder(folder, packageJson.version).pipe(
-        Effect.provideService(FileSystem.FileSystem, fs),
-        Effect.provideService(Path.Path, path),
-      );
-      return {
-        ...report,
-        findings: [...(state === undefined ? [] : failureFindings(state)), ...report.findings],
-      };
-    }),
     reportWebFailure: Effect.fn("PluginHost.reportWebFailure")(function* (report) {
       const record = yield* findRecord(report.pluginId);
       if (record === undefined) {
@@ -1062,51 +951,6 @@ const make = Effect.gen(function* () {
           ),
         ),
       ),
-  });
-  // The composer lists the commands of the thread's folder, where a repository adds its own.
-  // Untraced: it runs for every message sent while a plugin has slash commands.
-  const workspaceOf = Effect.fnUntraced(function* (threadId: ThreadId) {
-    const shell = yield* threads.getThreadShell(threadId);
-    if (shell === null) return undefined;
-    if (shell.worktreePath !== null) return shell.worktreePath;
-    const project = yield* services.projectService.getById(shell.projectId);
-    return Option.isSome(project) ? project.value.workspaceRoot : undefined;
-  });
-  yield* services.hooks.setProviderSlashCommands((instanceId, threadId) =>
-    Effect.gen(function* () {
-      const provider = (yield* services.providers.getProviders).find(
-        (candidate) => candidate.instanceId === instanceId,
-      );
-      if (provider === undefined) return [];
-      const cwd = yield* workspaceOf(threadId).pipe(Effect.orElseSucceed(() => undefined));
-      const workspace = provider.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd);
-      return [...provider.slashCommands, ...(workspace?.slashCommands ?? [])].map(
-        (command) => command.name,
-      );
-    }),
-  );
-  // Agents reach these through the `t3_plugins_*` tools, which MCP already gates as writes, so
-  // the call carries operate access.
-  yield* services.mcpTools.setHostActions({
-    invoke: (pluginId, method, input) =>
-      service.invoke({
-        pluginId,
-        method,
-        input,
-        scopes: [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
-      }),
-    setEnabled: service.setEnabled,
-    reload: service.reload,
-    install: installer.install,
-    uninstall: installer.uninstall,
-    check: service.check,
-    getSettings: Effect.fn("PluginHost.getSettingsForAgent")(function* (pluginId) {
-      const { settingsSchema } = yield* manifestFor(pluginId);
-      const settings = yield* settingsStore.getForClient(pluginId, settingsSchema);
-      return settingsSchema === undefined ? { settings } : { settings, settingsSchema };
-    }),
-    updateSettings: service.updateSettings,
-    slashCommands: services.hooks.currentSlashCommands,
   });
   return Context.make(PluginHost, service).pipe(
     Context.add(PluginInstaller.PluginInstaller, installer),

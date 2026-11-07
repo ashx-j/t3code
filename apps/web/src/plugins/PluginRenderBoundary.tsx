@@ -4,10 +4,10 @@ import { RenderErrorBoundary } from "../components/RenderErrorBoundary";
 import { toastManager } from "../components/ui/toast";
 import { type PluginOwner, setPluginWebFailure } from "./pluginRegistry";
 
-// Once per plugin start: a broken part in every timeline row would otherwise report once each.
+// Once per plugin start: a panel that breaks on every render would otherwise report each time.
 const reported = new WeakSet<PluginOwner>();
 
-// On the plugin's row in Settings, to agents through the server, and in a toast, since the
+// On the plugin's row in Settings, through the server for other clients, and in a toast, since the
 // fallback quietly takes the plugin's place.
 const reportRenderFailure = (owner: PluginOwner, what: string, error: unknown) => {
   if (reported.has(owner)) return;
@@ -25,7 +25,7 @@ const reportRenderFailure = (owner: PluginOwner, what: string, error: unknown) =
 
 /**
  * Draws something a plugin contributed, and `fallback` once it throws. `what` names it for
- * people, such as "Its sidebar section Notes".
+ * people, such as "Its panel Notes".
  */
 export function PluginRenderBoundary(props: {
   readonly owner: PluginOwner;

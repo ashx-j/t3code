@@ -8,7 +8,6 @@ import {
   type PluginReloadInput,
   type PluginReportWebFailureInput,
   type PluginRescanInput,
-  type PluginSetAgentToolsInput,
   type PluginSetEnabledInput,
   type PluginSettingsGetInput,
   type PluginSettingsUpdateInput,
@@ -38,11 +37,6 @@ export const makePluginRpcHandlers = (
   [WS_METHODS.pluginsList]: (_input: PluginListInput) => pluginHost.listForClient(scopes),
   [WS_METHODS.pluginsSubscribeStates]: (_input: PluginListInput) =>
     pluginHost.streamForClient(scopes),
-  [WS_METHODS.pluginsSetAgentTools]: (input: PluginSetAgentToolsInput) =>
-    pluginHost.setAgentTools(input.enabled).pipe(
-      Effect.map((agentTools) => ({ agentTools })),
-      Effect.mapError((error) => new PluginError({ message: error.message })),
-    ),
   [WS_METHODS.pluginsSetEnabled]: (input: PluginSetEnabledInput) =>
     pluginHost.setEnabled(input.pluginId, input.enabled).pipe(
       Effect.map((plugin) => ({ plugin })),

@@ -9,10 +9,9 @@ A plugin is a folder with a `t3-plugin.json` manifest
 ## Trust and failure
 
 Plugins are trusted code the user chose to install. Server entries run in the server process and web
-bundles run as React code in the page with every connection's credentials, with no sandbox. With
-"Plugin tools for agents" on, a Full access agent can install one. Manifest `permissions` are shown
-on the plugin's row and not enforced, and `settings.get()` and `secrets.request` hand plugins secret
-values in plain text. Do not shape the API around a future sandbox.
+bundles run as React code in the page with every connection's credentials, with no sandbox. Manifest
+`permissions` are shown on the plugin's row and not enforced, and `settings.get()` hands plugins
+secret values in plain text. Do not shape the API around a future sandbox.
 
 The host isolates failure instead. A plugin that throws or hangs while starting is marked failed,
 and a throw in a handler fails that call. Node exits on a rejection nobody handles, so every promise
@@ -48,12 +47,12 @@ outside it.
 
 ## State lives beside T3's
 
-`<stateDir>/plugins.json` holds enabled flags, dev paths and the agent tools switch. Settings go in
-`plugin-data/<id>/` and storage in `plugins.sqlite`. They stay out of `settings.json`, whose writer
-drops keys it doesn't know, and out of `statev2.sqlite`, whose numbered migrations refuse to start
-when a fork's id collides with an upstream one. Settings stay out of `plugins/<id>/`, so replacing a
-plugin's files keeps them. Removing a plugin deletes its settings, secrets and storage, so nothing
-is left that no plugin can reach.
+`<stateDir>/plugins.json` holds enabled flags and dev paths. Settings go in `plugin-data/<id>/` and
+storage in `plugins.sqlite`. They stay out of `settings.json`, whose writer drops keys it doesn't
+know, and out of `statev2.sqlite`, whose numbered migrations refuse to start when a fork's id
+collides with an upstream one. Settings stay out of `plugins/<id>/`, so replacing a plugin's files
+keeps them. Removing a plugin deletes its settings, secrets and storage, so nothing is left that no
+plugin can reach.
 
 ## Installing
 
@@ -66,75 +65,38 @@ environment. They post them over HTTP to a URL `plugins.createUploadUrl` signs f
 because one large WebSocket message holds up every other stream on the socket. As for attachments,
 the signature is the credential, so the upload works the same on every kind of connection.
 
-An agent writing a plugin installs its folder with `link`, which adds it to `devPaths`. Symlinks
-into `plugins/` would do the same but need extra rights on Windows. Discovery takes the id from the
-manifest, because people copy plugin folders in by hand. Nothing watches `plugins/`: the server
-reads it at startup, on reload and when Settings asks.
+Discovery takes the id from the manifest, because people copy plugin folders in by hand. Nothing
+watches `plugins/`: the server reads it at startup, on reload and when Settings asks.
 
 ## Clients
 
 Each browser keeps its own choice of the environments it loads plugin UI from, the main one by
-default, because that code runs with every connection's credentials. Contributions in a thread, such
-as buttons, right panels and replaced parts, show only in their environment's threads. Pages,
-commands and sidebar sections have no thread, so only the first chosen environment registers them.
-Settings installs a plugin with no server code or agent skills there alone.
+default, because that code runs with every connection's credentials. Right panels show only in their
+environment's threads. Commands have no thread, so only the first chosen environment registers them.
+Settings installs a plugin with no server code there alone.
 
 At startup the app loads only a small stub, [`pluginUi.ts`](../../apps/web/src/plugins/pluginUi.ts).
 Once the app is idle, [`PluginLoaderStarter`](../../apps/web/src/plugins/PluginLoaderStarter.tsx)
 follows `plugins.subscribeStates` for each chosen environment, a stream of its own because the
 server config stream would resend the whole config on every plugin change. It downloads the web
 loader only when an active plugin has a web part, and a separate small styles chunk only when one
-has a `styles/` folder. Until then, rows read nothing from plugins, so a client without them
-downloads no plugin code. The server starts plugins after it is listening.
+has a `styles/` folder, so a client without them downloads no plugin code. The server starts plugins
+after it is listening.
 
 A bare `import(url)` cannot send credentials, so the loader fetches each bundle with the
 connection's credentials and imports it from a `blob:` URL, which the desktop CSP allows. Mobile
 release builds cannot load code, so the mobile app shows no plugin UI, settings or themes.
-
-`ui.replace` hands a plugin T3's own controls as elements T3 has already wired, so a plugin
-rearranges them instead of copying them. When a part gains a control, put it inside an existing
-piece where it fits, such as `actions`, so plugins that place that piece get it without an update.
-A new top-level piece is invisible to every plugin that replaced the part before it existed.
 
 Plugin themes arrive over the server config stream after the first paint, so the client saves them
 in localStorage for the boot script in `index.html`. The server marks plugin themes, so the client
 can show only those of chosen environments. The desktop main process cannot read localStorage, so
 the page sends it the canvas it paints under a light and a dark native theme.
 
-Thread menus are built and dispatched in two places, the header hook and the sidebar. Both hand
-`plugin:` ids to `runPluginThreadMenuItem` before their own `switch`, and a new menu must too.
+The loader reports a web half's failure with `plugins.reportWebFailure`, which needs the settings
+write scope, so a guest or read-only client cannot put text on the plugin's row.
 
-## Reaching into orchestration
-
-The orchestrator stays pure. Send hooks run in `ThreadManagementService.dispatch` before the
-command reaches it, behind one call into
-[`pluginSendHooks.ts`](../../apps/server/src/plugins/pluginSendHooks.ts), because that service is
-one of upstream's busiest files. All of a message's hooks share a 2-second budget, and a hook that
-starts late still gets 100ms. Hooks run as soon as a message arrives. While any hook or plugin
-command is registered, only the dispatch waits for the thread's previous message, so messages keep
-their order and slow hooks never add up. Queued edits and delegated task prompts run the hooks
-too, or editing a queued message would bypass a redaction plugin.
-
-`turns.onRuntimeRequest` answers through the same `runtime-request.respond` command a client sends,
-so it covers every adapter. Plugins choose only from the decisions a request offers, because
-adapters map the rest differently: Claude treats `acceptAlways` as a deny. The user sees the request
-while plugins decide, because holding it back would need a change in every adapter.
-
-Server plugins' slash commands are provider slash commands, added where the server adds
-`/usage-limits`, so every client lists them with no plugin code. `threads.notify` is its own
-internal command in `Orchestrator.ts`, because every `message.dispatch` starts a run.
-
-Instructions and skill folders ride on each adapter turn input, so adapters never look up plugins.
-Claude loads a `--plugin-dir` folder whole, hooks and MCP servers included, so
-[`pluginAgentFolders.ts`](../../apps/server/src/plugins/pluginAgentFolders.ts) generates
-`<stateDir>/plugin-agents/<id>` with only a manifest and `skills/`. Claude reads instructions and
-skills only when its process starts, but plugins stay out of the process reuse key, or a plugin
-toggle would restart every Claude thread and drop its prompt cache. A turn that picks a skill from a
-plugin the live process lacks starts a new process. Codex gets skills through
-`skills/extraRoots/set`. Other adapters each need their own change.
+## Agent tools
 
 MCP servers can't remove a tool, so each plugin tool registers with an `EnabledWhen` check that the
-server runs on every list and call. A stopped plugin's tools, and the `t3_plugins_*` tools once
-turned off, leave new listings and answer as not found. The `t3_plugins_*` tools start off, because
-every agent turn pays for the advertised tool list. The loader reports a web half's failure with
-`plugins.reportWebFailure`, which needs the settings write scope because agents read the text.
+server runs on every list and call. A stopped plugin's tools leave new listings and answer as not
+found.

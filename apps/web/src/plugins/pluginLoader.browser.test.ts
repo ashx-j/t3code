@@ -1,5 +1,4 @@
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { EnvironmentId, PluginId, ThreadId, type PluginState } from "@t3tools/contracts";
+import { EnvironmentId, PluginId, type PluginState } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -49,21 +48,12 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { startPluginLoader } from "./pluginLoader";
 import { startPluginStyles } from "./pluginStyles";
 import {
-  pluginActionAtoms,
-  pluginBannersAtom,
   pluginCommandsAtom,
   pluginContributionKey,
-  pluginPageAtom,
-  pluginPageKey,
-  pluginReplacementAtoms,
   pluginRightPanelAtom,
   pluginRightPanelKey,
+  pluginRightPanelsAtom,
   pluginSettingsPanelAtom,
-  pluginSidebarSectionsAtom,
-  pluginSlashCommandsAtom,
-  pluginToolRendererAtom,
-  pluginToolRendererKey,
-  pluginThreadBadgesAtom,
   pluginWebFailuresAtom,
 } from "./pluginRegistry";
 
@@ -123,8 +113,8 @@ describe("startPluginLoader", () => {
         "The request for /web.js failed with 500.",
       );
     });
-    // Agents' plugin tools hear about the plugin's own failures through the server, tied to the
-    // start that failed. A failed download is this client's network, so it stays here.
+    // The server hears of the plugin's own failures, tied to the start that failed, so its row
+    // shows them in every client. A failed download is this client's network, so it stays here.
     await vi.waitFor(() =>
       expect(reportWebFailure).toHaveBeenCalledWith({
         environmentId,
@@ -149,20 +139,8 @@ describe("startPluginLoader", () => {
     expect(command?.command).toBe("plugin.hello-web.open-settings");
     command?.run();
     await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith("/settings/plugins"));
-    const [slashCommand] = appAtomRegistry.get(pluginSlashCommandsAtom(environmentId));
-    expect(slashCommand?.name).toBe("hello");
-    slashCommand?.run({ threadId: "thread-1" });
-    await vi.waitFor(() =>
-      expect(appAtomRegistry.get(pluginBannersAtom(environmentId))[0]?.description).toBe(
-        "Thread thread-1",
-      ),
-    );
 
     expect(document.querySelectorAll('style[data-plugin="hello-web"]')).toHaveLength(1);
-    const greetRenderer = pluginToolRendererAtom(
-      pluginToolRendererKey(environmentId, "plg_hello-web_greet"),
-    );
-    expect(appAtomRegistry.get(greetRenderer)).toBeDefined();
 
     // Turning a plugin off takes effect while another still hangs. A failed download is tried
     // again on that change; a bundle that downloaded and then failed waits for a restart.
@@ -189,9 +167,6 @@ describe("startPluginLoader", () => {
     expect(document.querySelectorAll('style[data-plugin="hello-web"]')).toHaveLength(0);
     expect(appAtomRegistry.get(helloPanel)).toBeUndefined();
     expect(appAtomRegistry.get(pluginCommandsAtom(environmentId))).toEqual([]);
-    expect(appAtomRegistry.get(pluginSlashCommandsAtom(environmentId))).toEqual([]);
-    expect(appAtomRegistry.get(pluginBannersAtom(environmentId))).toEqual([]);
-    expect(appAtomRegistry.get(greetRenderer)).toBeUndefined();
   });
 
   it("tries a download again after a bad gateway", async () => {
@@ -274,62 +249,12 @@ describe("startPluginLoader", () => {
     expect(appAtomRegistry.get(settingsPanel)).toBeUndefined();
   });
 
-  it("gives a shared slash command to the plugin whose id sorts first, and ignores a plugin's calls after it unloads", async () => {
-    const source = (id: string) => `export default { activate(api) {
-      globalThis.__api_${id} = api;
-      api.composer.registerSlashCommand({ name: "notes", description: "${id}", run() {} });
-      api.commands.register({ id: "open", title: "Open ${id}", run() {} });
-    } };`;
-    using _fetch = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation(
-        async (input) =>
-          new Response(source(String(input).includes("/first-web/") ? "first" : "second")),
-      );
-    const environmentId = EnvironmentId.make("environment:plugin-loader-clash");
-    const stop = startPluginLoader(environmentId, vi.fn(), true);
-    using _loader = { [Symbol.dispose]: stop };
-
-    appAtomRegistry.set(
-      live,
-      AsyncResult.success({ plugins: [webPlugin("first-web"), webPlugin("second-web")] }),
-    );
-    // Both start, whatever order they finish in, and `/notes` belongs to first-web.
-    await vi.waitFor(() =>
-      expect(appAtomRegistry.get(pluginCommandsAtom(environmentId))).toHaveLength(2),
-    );
-    expect(
-      appAtomRegistry.get(pluginSlashCommandsAtom(environmentId)).map((entry) => entry.pluginId),
-    ).toEqual(["first-web"]);
-
-    // A timer the plugin left running changes nothing once it is off.
-    const api = Reflect.get(globalThis, "__api_first") as {
-      readonly threads: { readonly setBadge: (threadId: string, badge: object) => void };
-    };
-    appAtomRegistry.set(live, AsyncResult.success({ plugins: [webPlugin("second-web")] }));
-    await vi.waitFor(() =>
-      expect(appAtomRegistry.get(pluginCommandsAtom(environmentId))).toHaveLength(1),
-    );
-    // Without first-web, second-web's `/notes` takes over.
-    expect(
-      appAtomRegistry.get(pluginSlashCommandsAtom(environmentId)).map((entry) => entry.pluginId),
-    ).toEqual(["second-web"]);
-    api.threads.setBadge("thread-1", { label: "Late" });
-    const threadKey = scopedThreadKey(scopeThreadRef(environmentId, ThreadId.make("thread-1")));
-    expect(appAtomRegistry.get(pluginThreadBadgesAtom(threadKey))).toEqual([]);
-  });
-
-  it("keeps each environment's thread contributions to its own threads and takes app-wide ones from the first", async () => {
-    // Thread parts only from environment B, app-wide parts from both.
+  it("keeps each environment's right panels to its own threads and takes commands from the first", async () => {
+    // Right panels only from environment B, commands from both.
     const source = `export default { activate(api) {
       api.commands.register({ id: "open", title: "Open", run() {} });
-      api.pages.register({ name: "all", title: "All notes", component: () => null });
-      api.sidebar.addSection({ id: "recent", title: "Recent", component: () => null });
-      api.markdown.registerCodeBlock({ language: "notes", component: () => null });
       if (!api.environmentId.endsWith(":b")) return;
-      api.composer.registerSlashCommand({ name: "notes", description: "Notes", run() {} });
-      api.threads.addHeaderButton({ id: "flag", title: "Flag", run() {} });
-      api.ui.replace("message.user", () => null);
+      api.rightPanel.register({ name: "notes", title: "Notes", component: () => null });
     } };`;
     using _fetch = vi
       .spyOn(globalThis, "fetch")
@@ -342,32 +267,16 @@ describe("startPluginLoader", () => {
 
     await vi.waitFor(() => {
       expect(appAtomRegistry.get(pluginCommandsAtom(environmentA))).toHaveLength(1);
-      expect(
-        appAtomRegistry.get(pluginReplacementAtoms["message.user"](environmentB)),
-      ).toBeDefined();
+      expect(appAtomRegistry.get(pluginRightPanelsAtom(environmentB))).toHaveLength(1);
     });
-    expect(appAtomRegistry.get(pluginSlashCommandsAtom(environmentA))).toEqual([]);
-    expect(appAtomRegistry.get(pluginSlashCommandsAtom(environmentB))).toHaveLength(1);
-    expect(appAtomRegistry.get(pluginActionAtoms.threadHeader(environmentA))).toEqual([]);
-    expect(appAtomRegistry.get(pluginActionAtoms.threadHeader(environmentB))).toHaveLength(1);
-    expect(
-      appAtomRegistry.get(pluginReplacementAtoms["message.user"](environmentA)),
-    ).toBeUndefined();
-    // A page, command or section has no thread to say which environment it belongs to.
+    expect(appAtomRegistry.get(pluginRightPanelsAtom(environmentA))).toEqual([]);
+    // A command has no thread to say which environment it belongs to.
     expect(appAtomRegistry.get(pluginCommandsAtom(environmentB))).toEqual([]);
-    expect(
-      appAtomRegistry.get(pluginPageAtom(pluginPageKey("notes-web", "all")))?.owner.environmentId,
-    ).toBe(environmentA);
-    expect(
-      appAtomRegistry.get(pluginSidebarSectionsAtom).map((section) => section.owner.environmentId),
-    ).toEqual([environmentA]);
-    // The same plugin claims its code block language from each environment without failing.
-    expect(appAtomRegistry.get(pluginWebFailuresAtom("notes-web")).size).toBe(0);
   });
 
   it("starts a channel the plugin subscribes to and hands it the values", async () => {
     const channelSource = `export default { activate(api) {
-      api.rpc.subscribe("notes", (value) => api.composer.showBanner({ title: String(value) }));
+      api.rpc.subscribe("notes", (value) => api.injectStyles("/* " + String(value) + " */"));
     } };`;
     using _fetch = vi
       .spyOn(globalThis, "fetch")
@@ -379,7 +288,9 @@ describe("startPluginLoader", () => {
     appAtomRegistry.set(live, AsyncResult.success({ plugins: [webPlugin("channel-web")] }));
 
     await vi.waitFor(() =>
-      expect(appAtomRegistry.get(pluginBannersAtom(environmentId))[0]?.title).toBe("first value"),
+      expect(document.querySelector('style[data-plugin="channel-web"]')?.textContent).toBe(
+        "/* first value */",
+      ),
     );
   });
 

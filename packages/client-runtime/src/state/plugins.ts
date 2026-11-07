@@ -14,7 +14,7 @@ import {
   createRuntimeCommand,
 } from "./runtime.ts";
 
-const NO_PLUGINS: PluginListResult = { plugins: [], agentTools: false };
+const NO_PLUGINS: PluginListResult = { plugins: [] };
 
 /** Plugin management and calls into plugins. Nothing here runs until something reads it. */
 export function createPluginEnvironmentAtoms<R, E>(
@@ -42,10 +42,6 @@ export function createPluginEnvironmentAtoms<R, E>(
       label: "environment-data:plugins:set-enabled",
       tag: WS_METHODS.pluginsSetEnabled,
     }),
-    setAgentTools: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:plugins:set-agent-tools",
-      tag: WS_METHODS.pluginsSetAgentTools,
-    }),
     reloadPlugin: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:plugins:reload",
       tag: WS_METHODS.pluginsReload,
@@ -63,7 +59,7 @@ export function createPluginEnvironmentAtoms<R, E>(
       label: "environment-data:plugins:uninstall",
       tag: WS_METHODS.pluginsUninstall,
     }),
-    // The web loader reports why a plugin's web half failed, so agents can read it.
+    // The web loader reports why a plugin's web half failed, so its row shows it in every client.
     reportPluginWebFailure: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:plugins:report-web-failure",
       tag: WS_METHODS.pluginsReportWebFailure,

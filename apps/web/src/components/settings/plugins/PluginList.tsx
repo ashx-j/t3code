@@ -2,12 +2,10 @@ import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { type ReactNode, useContext, useEffect, useState } from "react";
+import { type ReactNode, useContext, useEffect } from "react";
 
 import { pluginEnvironment } from "../../../state/plugins";
 import { formatEnvironmentQueryError } from "../../../state/query";
-import { useAtomCommand } from "../../../state/use-atom-command";
-import { Switch } from "../../ui/switch";
 import { SettingsRow, SettingsSection } from "../settingsLayout";
 import { PluginRow } from "./PluginRow";
 import { type PluginCopy, type PluginTarget, usePluginUiSource } from "./pluginTargets";
@@ -89,22 +87,9 @@ export function PluginList({
   const errors = loaded.flatMap(({ target, error }) =>
     error === null ? [] : [several ? `${target.label}: ${error}` : error],
   );
-  const agentTools = loaded.flatMap(({ target }, index) => {
-    const value = AsyncResult.getOrElse(
-      lists[index] ?? AsyncResult.initial(true),
-      () => null,
-    )?.agentTools;
-    // Servers from before the switch leave it out.
-    return value === undefined ? [] : [{ environmentId: target.environmentId, value }];
-  });
   return (
     <>
-      <SettingsSection title="Plugins">
-        {children}
-        {agentTools.length === 0 ? null : (
-          <AgentToolsRow environmentId={main.environmentId} environments={agentTools} />
-        )}
-      </SettingsSection>
+      <SettingsSection title="Plugins">{children}</SettingsSection>
       {targets.map((target) => (
         <ScanPluginsFolder key={target.environmentId} environmentId={target.environmentId} />
       ))}
@@ -152,40 +137,4 @@ function ScanPluginsFolder({ environmentId }: { readonly environmentId: Environm
     );
   }, [registry, environmentId, canRescan]);
   return null;
-}
-
-/** Whether agents get the tools that list, install, check and change plugins. Off by default. */
-function AgentToolsRow(props: {
-  readonly environmentId: EnvironmentId;
-  readonly environments: ReadonlyArray<{
-    readonly environmentId: EnvironmentId;
-    readonly value: boolean;
-  }>;
-}) {
-  const canChange = useAtomValue(
-    pluginEnvironment.setAgentTools.permissionAtom(props.environmentId),
-  );
-  const setAgentTools = useAtomCommand(pluginEnvironment.setAgentTools, "plugin tools for agents");
-  const [busy, setBusy] = useState(false);
-  return (
-    <SettingsRow
-      title="Plugin tools for agents"
-      description="Lets agents manage plugins. Changes need a thread in Full access."
-      control={
-        <Switch
-          checked={props.environments.every((environment) => environment.value)}
-          disabled={busy || !canChange}
-          aria-label="Plugin tools for agents"
-          onCheckedChange={(enabled) => {
-            setBusy(true);
-            void Promise.all(
-              props.environments.map((environment) =>
-                setAgentTools({ environmentId: environment.environmentId, input: { enabled } }),
-              ),
-            ).finally(() => setBusy(false));
-          }}
-        />
-      }
-    />
-  );
 }

@@ -22,7 +22,7 @@ type ClaudeSkillRoot = {
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 
-export type SkillFrontmatter =
+type SkillFrontmatter =
   | { readonly kind: "missing" }
   | { readonly kind: "malformed" }
   | {
@@ -56,7 +56,7 @@ function parseFrontmatterBoolean(value: unknown): boolean | undefined {
   }
 }
 
-export function parseSkillFrontmatter(contents: string): SkillFrontmatter {
+function parseSkillFrontmatter(contents: string): SkillFrontmatter {
   const match = FRONTMATTER_PATTERN.exec(contents);
   if (!match) {
     return { kind: "missing" };
@@ -409,26 +409,6 @@ const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function*
   return roots;
 });
 
-/** Folders passed with `--plugin-dir`: their skills are namespaced by the manifest's name. */
-const pluginDirectorySkillRoots = Effect.fn("pluginDirectorySkillRoots")(function* (
-  directories: ReadonlyArray<string>,
-) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const roots = yield* Effect.forEach(directories, (directory) =>
-    fileSystem.readFileString(path.join(directory, ".claude-plugin", "plugin.json")).pipe(
-      Effect.flatMap(Schema.decodeUnknownEffect(PluginManifest)),
-      Effect.map((manifest): ReadonlyArray<ClaudeSkillRoot> =>
-        manifest.name === undefined
-          ? []
-          : [{ directory: path.join(directory, "skills"), scope: "user", prefix: manifest.name }],
-      ),
-      Effect.orElseSucceed((): ReadonlyArray<ClaudeSkillRoot> => []),
-    ),
-  );
-  return roots.flat();
-});
-
 const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(function* (
   config: Pick<ClaudeSettings, "homePath">,
   environment: NodeJS.ProcessEnv,
@@ -505,15 +485,11 @@ export function claudeLaunchArgDirectories(launchArgs?: string): ReadonlyArray<s
   return directories;
 }
 
-/**
- * First name wins, matching Claude Code's precedence of user skills over project skills.
- * `pluginDirectories` are the `--plugin-dir` folders the session was started with.
- */
+/** First name wins, matching Claude Code's precedence of user skills over project skills. */
 export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* (
   config: Pick<ClaudeSettings, "homePath"> & Partial<Pick<ClaudeSettings, "launchArgs">>,
   cwd?: string,
   environment?: NodeJS.ProcessEnv,
-  pluginDirectories: ReadonlyArray<string> = [],
 ): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -539,7 +515,6 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
       enabledPlugins,
       environment ?? process.env,
     )),
-    ...(yield* pluginDirectorySkillRoots(pluginDirectories)),
   ];
 
   const skillsByName = new Map<string, ServerProviderSkill>();

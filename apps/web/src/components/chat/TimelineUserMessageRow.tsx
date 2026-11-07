@@ -1,6 +1,4 @@
 import { InlineAudioPreview } from "../files/InlineAudioPreview";
-import { SentPluginContextChip } from "../../plugins/PluginContextChip";
-import { PLUGIN_CONTEXT_KIND } from "../../plugins/pluginUi";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { findRevealRef } from "./markdownFindContext";
 import {
@@ -306,12 +304,7 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             className={cn("px-3 pb-3", !ctx.findActive && "max-h-96 overflow-auto")}
             data-thread-find-text="true"
           >
-            <UserMessageBody
-              messageId={row.message.id}
-              text={text}
-              skills={ctx.skills}
-              markdownCwd={ctx.markdownCwd}
-            />
+            <UserMessageBody text={text} skills={ctx.skills} markdownCwd={ctx.markdownCwd} />
           </div>
         ) : null}
       </div>
@@ -607,15 +600,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     event.clipboardData.setData(COMPOSER_CONTEXT_CLIPBOARD_MIME, fragment);
   };
   const renderContextReference = (reference: ChatMarkdownContextReference) => {
-    const rawRecord = resolvedContext.recordsById.get(reference.contextId);
-    if (rawRecord?.kind === PLUGIN_CONTEXT_KIND && "payload" in rawRecord) {
-      return (
-        <span data-thread-find-ignore>
-          <SentPluginContextChip label={reference.label} payload={rawRecord.payload} />
-        </span>
-      );
-    }
-    const record = asKnownContextRecord(rawRecord);
+    const record = asKnownContextRecord(resolvedContext.recordsById.get(reference.contextId));
     if (record?.kind === "file" && userAudio.some((file) => file.id === record.attachmentId))
       return null;
     const annotationImage =
@@ -818,18 +803,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             variant="ghost"
           />
         )}
-        {ctx.pluginUi && ctx.threadRef ? (
-          <ctx.pluginUi.PluginActionButtons
-            place="message"
-            environmentId={ctx.threadRef.environmentId}
-            context={{
-              threadId: ctx.threadRef.threadId,
-              messageId: row.message.id,
-              role: "user",
-              text: plainText,
-            }}
-          />
-        ) : null}
       </div>
     </div>
   );
@@ -1015,7 +988,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             {fileCardsOnly || audioOnly ? null : (
               <div onCopyCapture={onBodyCopyCapture}>
                 <CollapsibleUserMessageBody
-                  messageId={row.message.id}
                   text={resolvedContext.text}
                   renderContextReference={renderContextReference}
                   skills={ctx.skills}
@@ -1119,7 +1091,6 @@ const COLLAPSED_USER_MESSAGE_FADE_HEIGHT_REM = 1.75;
 const COLLAPSED_USER_MESSAGE_FADE_MASK = `linear-gradient(to bottom, black calc(100% - ${COLLAPSED_USER_MESSAGE_FADE_HEIGHT_REM}rem), transparent)`;
 
 const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(props: {
-  messageId: string;
   text: string;
   renderContextReference: (reference: ChatMarkdownContextReference) => ReactNode;
   skills: ReadonlyArray<ServerProviderSkill>;
@@ -1157,7 +1128,6 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
           }
         >
           <UserMessageBody
-            messageId={props.messageId}
             text={props.text}
             renderContextReference={props.renderContextReference}
             skills={props.skills}
@@ -1187,7 +1157,6 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
 });
 
 const UserMessageBody = memo(function UserMessageBody(props: {
-  messageId: string;
   text: string;
   renderContextReference?: (reference: ChatMarkdownContextReference) => ReactNode;
   skills: ReadonlyArray<ServerProviderSkill>;
@@ -1197,7 +1166,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
   if (props.text.length === 0) {
     return null;
   }
-  const markdown = (
+  return (
     <ChatMarkdown
       text={props.text}
       cwd={props.markdownCwd}
@@ -1208,19 +1177,6 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       parseRawHtml={false}
       renderContextReference={props.renderContextReference}
       headingLevelOffset={MESSAGE_HEADING_LEVEL}
-    />
-  );
-  if (ctx.pluginUi === null) return markdown;
-  return (
-    <ctx.pluginUi.PluginReplaceable
-      part="message.user"
-      environmentId={ctx.threadRef?.environmentId ?? null}
-      pieces={{
-        original: markdown,
-        text: props.text,
-        messageId: props.messageId,
-        threadId: ctx.threadRef?.threadId ?? null,
-      }}
     />
   );
 });

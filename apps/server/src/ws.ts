@@ -123,7 +123,6 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as PluginHost from "./plugins/PluginHost.ts";
 import * as PluginInstaller from "./plugins/PluginInstaller.ts";
-import * as PluginHooks from "./plugins/PluginHooks.ts";
 import { makePluginRpcHandlers } from "./plugins/pluginRpcHandlers.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
@@ -1330,7 +1329,6 @@ export const layerWsRpc = (
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
-      const pluginHooks = yield* PluginHooks.PluginHooks;
       const modelManifest = yield* ModelManifest.ModelManifest;
       const providerLatestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
       const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
@@ -1737,11 +1735,7 @@ export const layerWsRpc = (
         readonly workspaceSnapshotsOnDemand: boolean;
       }) {
         const keybindingsConfig = yield* keybindings.loadConfigState;
-        const currentProviders = PluginHooks.withPluginItems(
-          yield* providerRegistry.getProviders,
-          yield* pluginHooks.currentSlashCommands,
-          yield* pluginHooks.currentSkills,
-        );
+        const currentProviders = yield* providerRegistry.getProviders;
         const commandProviders = options.usageLimitsCommand
           ? withUsageLimitsCommands(currentProviders, yield* usageLimitSources.current)
           : currentProviders;
@@ -2365,16 +2359,11 @@ export const layerWsRpc = (
                 providers = yield* providerRegistry.refreshInstance(instance.instanceId);
               }
             }
-            const pluginProviders = PluginHooks.withPluginItems(
-              providers,
-              yield* pluginHooks.currentSlashCommands,
-              yield* pluginHooks.currentSkills,
-            );
-            if (input.workspaceSnapshotsOnDemand !== true) return { providers: pluginProviders };
+            if (input.workspaceSnapshotsOnDemand !== true) return { providers };
             const commandProviders =
               input.usageLimitsCommand === true
-                ? withUsageLimitsCommands(pluginProviders, yield* usageLimitSources.current)
-                : pluginProviders;
+                ? withUsageLimitsCommands(providers, yield* usageLimitSources.current)
+                : providers;
             const { instanceId, cwd } = input;
             if (instanceId === undefined || cwd === undefined) {
               return { providers: withoutWorkspaceSnapshots(commandProviders) };
@@ -3135,15 +3124,9 @@ export const layerWsRpc = (
               );
               const providerStatuses = Stream.zipLatestWith(
                 // Seed the changes-only stream so early source refreshes pair with current providers.
-                // Plugin lists are zipped first, so provider changes keep a single hop.
-                Stream.zipLatestWith(
-                  Stream.concat(
-                    Stream.fromEffect(providerRegistry.getProviders),
-                    providerRegistry.streamChanges,
-                  ),
-                  Stream.zipLatest(pluginHooks.slashCommands, pluginHooks.skills),
-                  (providers, [commands, skills]) =>
-                    PluginHooks.withPluginItems(providers, commands, skills),
+                Stream.concat(
+                  Stream.fromEffect(providerRegistry.getProviders),
+                  providerRegistry.streamChanges,
                 ),
                 usageLimitSources.streamChanges.pipe(
                   Stream.changesWith(

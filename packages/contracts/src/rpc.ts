@@ -389,8 +389,6 @@ import {
   PluginReportWebFailureInput,
   PluginMutationResult,
   PluginReloadInput,
-  PluginSetAgentToolsInput,
-  PluginSetAgentToolsResult,
   PluginSetEnabledInput,
   PluginSettingsGetInput,
   PluginSettingsResult,
@@ -575,7 +573,6 @@ export const WS_METHODS = {
   pluginsList: "plugins.list",
   pluginsSubscribeStates: "plugins.subscribeStates",
   pluginsSetEnabled: "plugins.setEnabled",
-  pluginsSetAgentTools: "plugins.setAgentTools",
   pluginsReload: "plugins.reload",
   pluginsCreateUploadUrl: "plugins.createUploadUrl",
   pluginsRescan: "plugins.rescan",
@@ -2010,12 +2007,6 @@ const WsPluginsSetEnabledRpc = Rpc.make(WS_METHODS.pluginsSetEnabled, {
   error: PluginRpcError,
 });
 
-const WsPluginsSetAgentToolsRpc = Rpc.make(WS_METHODS.pluginsSetAgentTools, {
-  payload: PluginSetAgentToolsInput,
-  success: PluginSetAgentToolsResult,
-  error: PluginRpcError,
-});
-
 const WsPluginsReloadRpc = Rpc.make(WS_METHODS.pluginsReload, {
   payload: PluginReloadInput,
   success: PluginMutationResult,
@@ -2036,7 +2027,7 @@ const WsPluginsRescanRpc = Rpc.make(WS_METHODS.pluginsRescan, {
   error: PluginRpcError,
 });
 
-/** Tells the server why a plugin's web half failed, so agents can read it. */
+/** Tells the server why a plugin's web half failed, so the plugin's row can show it. */
 const WsPluginsReportWebFailureRpc = Rpc.make(WS_METHODS.pluginsReportWebFailure, {
   payload: PluginReportWebFailureInput,
   success: Schema.Void,
@@ -2162,7 +2153,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsPluginsListRpc,
   WsPluginsSubscribeStatesRpc,
   WsPluginsSetEnabledRpc,
-  WsPluginsSetAgentToolsRpc,
   WsPluginsReloadRpc,
   WsPluginsCreateUploadUrlRpc,
   WsPluginsRescanRpc,

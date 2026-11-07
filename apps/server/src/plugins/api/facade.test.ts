@@ -2,10 +2,12 @@ import { assert, it } from "@effect/vitest";
 import { PluginId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as PubSub from "effect/PubSub";
+import * as Schema from "effect/Schema";
 
 import { makePluginActivation, type PluginPublication } from "../PluginApi.ts";
 import { makeFacadeContext } from "./facade.ts";
-import { PluginThreadNotFoundError } from "./threads.ts";
+
+class CallFailedError extends Schema.TaggedError<CallFailedError>()("CallFailedError", {}) {}
 
 // Two macrotask turns: Node reports a rejection nobody observed after the first.
 const afterNodeReportsRejections = Effect.promise(async () => {
@@ -30,7 +32,7 @@ it.effect("keeps a failed call the plugin never awaits from stopping the server"
       Effect.sync(() => process.off("unhandledRejection", onUnhandled)),
     );
 
-    void facade.call(Effect.fail(new PluginThreadNotFoundError({ threadId: "thread:gone" })));
+    void facade.call(Effect.fail(new CallFailedError()));
     activation.controller.abort();
     activation.ended.abort();
     // A timer such as `setInterval(() => void api.storage.set(...))` outliving the plugin.

@@ -1,7 +1,6 @@
 import {
   type PluginId,
   PluginManifest,
-  type PluginInstallSource,
   type PluginState,
   type PluginUploadFile,
 } from "@t3tools/contracts";
@@ -34,22 +33,18 @@ export class PluginInstallError extends Schema.TaggedError<PluginInstallError>()
 }
 
 /**
- * Installs, links and removes plugins. The host builds it and hands it the lifecycle lock, the
- * plugin list and plugins.json, so the host keeps discovery, activation and state, and a new
- * install source only changes this file.
+ * Installs and removes plugins. The host builds it and hands it the lifecycle lock, the plugin
+ * list and plugins.json, so the host keeps discovery, activation and state, and a new install
+ * source only changes this file.
  */
 export class PluginInstaller extends Context.Service<
   PluginInstaller,
   {
     /**
-     * Copies a plugin folder on the server into the plugins folder, enables it and starts it. It
-     * is staged first and swapped in with a rename, so a failed install leaves the previous
-     * version. A `link` folder is added to `devPaths` instead, so its edits apply on reload.
+     * Installs a plugin folder a client sent as files into the plugins folder, enables it and
+     * starts it. It is staged first and swapped in with a rename, so a failed install leaves the
+     * previous version.
      */
-    readonly install: (
-      source: PluginInstallSource,
-    ) => Effect.Effect<PluginState, PluginInstallError | PluginNotFoundError | PluginConfigError>;
-    /** Installs a plugin folder a client sent as files, like `install`. */
     readonly installFiles: (
       files: ReadonlyArray<PluginUploadFile>,
     ) => Effect.Effect<PluginState, PluginInstallError | PluginNotFoundError | PluginConfigError>;
@@ -94,15 +89,10 @@ export interface PluginInstallerHost {
   ) => Effect.Effect<void, PluginConfigError>;
 }
 
-/** What an install takes a plugin from: a folder on the server, or files a client sent. */
-type InstallOrigin =
-  | { readonly folder: string }
-  | { readonly files: ReadonlyArray<PluginUploadFile> };
+/** What an install takes a plugin from: files a client sent. */
+type InstallOrigin = { readonly files: ReadonlyArray<PluginUploadFile> };
 
 const decodeManifestJson = Schema.decodeUnknownEffect(Schema.fromJsonString(PluginManifest));
-
-// Left out at any depth, as Settings leaves them out of a folder it sends.
-const LEFT_OUT = new Set([".git", "node_modules"]);
 
 const installFailed = (reason: string) => (cause: unknown) =>
   new PluginInstallError({ reason, cause });
@@ -175,36 +165,6 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
           Effect.mapError(installFailed(`Could not write ${file.path}.`)),
         );
     }
-  });
-
-  // Plugins run with T3's own access, so install takes code only from the folder the user named.
-  const copyFolder = Effect.fn("PluginInstaller.copyFolder")(function* (
-    folder: string,
-    into: string,
-  ) {
-    const from = path.resolve(folder);
-    const info = yield* fs
-      .stat(from)
-      .pipe(Effect.mapError(installFailed(`${folder} does not exist on the server.`)));
-    if (info.type !== "Directory") {
-      return yield* new PluginInstallError({ reason: `${folder} is not a folder.` });
-    }
-    // Before copying, so a folder that is not a plugin (a home folder) is never copied.
-    yield* readSourceManifest(from);
-    // Copied rather than linked: the installed plugin never changes when the source does.
-    yield* Effect.gen(function* () {
-      const pending = [""];
-      for (let dir = pending.pop(); dir !== undefined; dir = pending.pop()) {
-        yield* fs.makeDirectory(path.join(into, dir), { recursive: true });
-        for (const name of yield* fs.readDirectory(path.join(from, dir))) {
-          if (LEFT_OUT.has(name)) continue;
-          const entry = path.join(dir, name);
-          const info = yield* fs.stat(path.join(from, entry));
-          if (info.type === "Directory") pending.push(entry);
-          else yield* fs.copyFile(path.join(from, entry), path.join(into, entry));
-        }
-      }
-    }).pipe(Effect.mapError(installFailed(`Could not copy ${folder}.`)));
   });
 
   /** Why this server cannot run `manifest`, checked before anything is stopped or moved. */
@@ -325,9 +285,7 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
       .makeDirectory(stagingDir, { recursive: true })
       .pipe(Effect.mapError(installFailed("Could not create the staging folder.")));
     return yield* Effect.gen(function* () {
-      yield* "folder" in origin
-        ? copyFolder(origin.folder, staged)
-        : writeFiles(origin.files, staged);
+      yield* writeFiles(origin.files, staged);
       return { stagingDir, manifest: yield* readSourceManifest(staged) };
     }).pipe(Effect.tapError(() => removeStaging(stagingDir)));
   });
@@ -346,58 +304,6 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
     }
     return yield* swapIn(manifest, stagingDir);
   });
-
-  // A folder loaded where it is, so an author's edits plus a reload are the whole loop.
-  const linkFolder = Effect.fn("PluginInstaller.link")(function* (folder: string) {
-    const from = path.resolve(folder);
-    const info = yield* fs
-      .stat(from)
-      .pipe(Effect.mapError(installFailed(`${folder} does not exist on the server.`)));
-    if (info.type !== "Directory") {
-      return yield* new PluginInstallError({ reason: `${folder} is not a folder.` });
-    }
-    const manifest = yield* readSourceManifest(from);
-    const existing = (yield* host.copies).find((copy) => copy.id === manifest.id);
-    // Linking an installed plugin's own folder would list it twice, and the copy that loses
-    // shares its id, so removing that copy would delete the installed one.
-    if (existing !== undefined && existing.source !== "dev") {
-      return yield* new PluginInstallError({
-        reason: `${manifest.id} is already installed. Remove it first.`,
-      });
-    }
-    if (existing !== undefined && existing.folder !== from) {
-      return yield* new PluginInstallError({
-        reason: `${manifest.id} is already linked from ${existing.folder}. Unlink it first.`,
-      });
-    }
-    // Discovery lists what is in the plugins folder as installed, and that copy wins, so removing
-    // the plugin would delete the folder instead of unlinking it.
-    const realPath = (target: string) =>
-      fs.realPath(target).pipe(Effect.orElseSucceed(() => target));
-    const fromPlugins = path.relative(yield* realPath(pluginsDir), yield* realPath(from));
-    const outside =
-      fromPlugins === ".." ||
-      fromPlugins.startsWith(`..${path.sep}`) ||
-      path.isAbsolute(fromPlugins);
-    if (!outside) {
-      return yield* new PluginInstallError({
-        reason: `${folder} is already in the plugins folder, so T3 finds it there without a link, and removing it deletes it. To keep the folder when removing the plugin, link one outside ${pluginsDir}.`,
-      });
-    }
-    yield* host.writeConfig((current) => ({
-      ...current,
-      devPaths: [...(current.devPaths ?? []).filter((entry) => path.resolve(entry) !== from), from],
-      enabled: { ...current.enabled, [manifest.id]: true },
-    }));
-    return yield* host.reload(manifest.id);
-  });
-
-  const install: PluginInstaller["Service"]["install"] = Effect.fn("PluginInstaller.install")(
-    (source) =>
-      inHostScope(
-        source.link === true ? linkFolder(source.path) : installOrigin({ folder: source.path }),
-      ),
-  );
 
   // `PluginUploadFiles` bounds the folder's size before it gets here.
   const installFiles: PluginInstaller["Service"]["installFiles"] = Effect.fn(
@@ -468,7 +374,7 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
   );
 
   return {
-    installer: PluginInstaller.of({ install, installFiles, uninstall }),
+    installer: PluginInstaller.of({ installFiles, uninstall }),
     recoverStaging,
   };
 });

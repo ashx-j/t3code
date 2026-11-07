@@ -40,7 +40,6 @@ import {
   startAttachmentUpload,
 } from "../../lib/attachmentUploadQueue";
 import { buildMessageContext } from "../../lib/composerContextRecords";
-import { pluginMentionContextRecords } from "../../plugins/pluginUi";
 import { readFileAsDataUrl } from "../../lib/imageCompression";
 import type { TerminalContextDraft } from "../../lib/terminalContext";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
@@ -144,7 +143,6 @@ async function submitQueuedRunEdit(input: {
           attachment,
           attachmentId: uploads[editing.existingAttachments.length + index]?.id ?? attachment.id,
         })),
-        extraRecords: pluginMentionContextRecords(editText),
       })?.records ?? [];
     const result = await input.editQueuedRun({
       environmentId,

@@ -1,9 +1,4 @@
-import {
-  PluginId,
-  type PluginInstallSource,
-  type PluginState,
-  TrimmedNonEmptyString,
-} from "@t3tools/contracts";
+import { PluginId } from "@t3tools/contracts";
 import type { PluginMcpTool, PluginRpcAccess } from "@t3tools/plugin-sdk/server";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -12,19 +7,10 @@ import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 
 import { abortEffect, errorText } from "./api/facade.ts";
-import { FRAGILE_CODES, type PluginCheckReport } from "./pluginCheck.ts";
 
 // MCP clients reject longer tool names.
 const MAX_TOOL_NAME_CHARS = 64;
 const TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
-const PLUGINS_LIST_TOOL = "t3_plugins_list";
-const PLUGINS_INVOKE_TOOL = "t3_plugins_invoke";
-const PLUGINS_SET_ENABLED_TOOL = "t3_plugins_set_enabled";
-const PLUGINS_INSTALL_TOOL = "t3_plugins_install";
-const PLUGINS_UNINSTALL_TOOL = "t3_plugins_uninstall";
-const PLUGINS_RELOAD_TOOL = "t3_plugins_reload";
-const PLUGINS_CHECK_TOOL = "t3_plugins_check";
-const PLUGINS_SETTINGS_TOOL = "t3_plugins_settings";
 
 const isJson = Schema.is(Schema.Json);
 
@@ -57,129 +43,16 @@ export class PluginMcpToolDisabledError extends Schema.TaggedError<PluginMcpTool
   }
 }
 
-export class PluginMcpManagementError extends Schema.TaggedError<PluginMcpManagementError>()(
-  "PluginMcpManagementError",
-  { reason: Schema.String },
-) {
-  override get message(): string {
-    return this.reason;
-  }
-}
-
-/** What the management tools do. The plugin host supplies them, since it depends on this service. */
-export interface PluginMcpHostActions {
-  readonly invoke: (
-    pluginId: PluginId,
-    method: string,
-    input: Schema.Json | undefined,
-  ) => Effect.Effect<Schema.Json, { readonly message: string }>;
-  readonly setEnabled: (
-    pluginId: PluginId,
-    enabled: boolean,
-  ) => Effect.Effect<PluginState, { readonly message: string }>;
-  readonly reload: (pluginId: PluginId) => Effect.Effect<PluginState, { readonly message: string }>;
-  readonly install: (
-    source: PluginInstallSource,
-  ) => Effect.Effect<PluginState, { readonly message: string }>;
-  readonly uninstall: (
-    pluginId: PluginId,
-    linkedFolder?: string,
-  ) => Effect.Effect<void, { readonly message: string }>;
-  readonly check: (
-    target: { readonly pluginId: PluginId } | { readonly path: string },
-  ) => Effect.Effect<PluginCheckReport, { readonly message: string }>;
-  /** Saved settings as clients see them, with secrets redacted, and the schema that lists them. */
-  readonly getSettings: (
-    pluginId: PluginId,
-  ) => Effect.Effect<
-    { readonly settings: Schema.JsonObject; readonly settingsSchema?: Schema.JsonObject },
-    { readonly message: string }
-  >;
-  readonly updateSettings: (
-    pluginId: PluginId,
-    patch: Schema.JsonObject,
-  ) => Effect.Effect<Schema.JsonObject, { readonly message: string }>;
-  /** Slash command names with each plugin's id, so agents can send `/name` to a thread. */
-  readonly slashCommands: Effect.Effect<
-    ReadonlyArray<{ readonly pluginId: string; readonly name: string }>
-  >;
-}
-
-const decodeInvokeInput = Schema.decodeUnknownEffect(
-  Schema.Struct({
-    pluginId: PluginId,
-    method: Schema.String,
-    input: Schema.optional(Schema.Json),
-  }),
-);
-const decodeSetEnabledInput = Schema.decodeUnknownEffect(
-  Schema.Struct({ pluginId: PluginId, enabled: Schema.Boolean }),
-);
-const decodeSettingsInput = Schema.decodeUnknownEffect(
-  Schema.Struct({ pluginId: PluginId, values: Schema.optional(Schema.JsonObject) }),
-);
-const decodeInstallInput = Schema.decodeUnknownEffect(
-  Schema.Struct({ path: TrimmedNonEmptyString, link: Schema.optional(Schema.Boolean) }),
-);
-const decodeUninstallInput = Schema.decodeUnknownEffect(
-  Schema.Struct({
-    pluginId: PluginId,
-    linkedFolder: Schema.optional(Schema.String),
-  }),
-);
-const decodeReloadInput = Schema.decodeUnknownEffect(Schema.Struct({ pluginId: PluginId }));
-const decodeCheckInput = Schema.decodeUnknownEffect(
-  Schema.Union([
-    Schema.Struct({ pluginId: PluginId }),
-    Schema.Struct({ path: TrimmedNonEmptyString }),
-  ]),
-);
-
-const CHECK_NEXT = "Run t3_plugins_check for the cause and a fix.";
-const failed = (state: PluginState) =>
-  state.failure !== undefined ||
-  state.webFailure !== undefined ||
-  state.serverFailure !== undefined;
-
-// What a lifecycle tool returns: enough to see whether the plugin runs, and why not.
-const toolState = (state: PluginState) => ({
-  id: state.id,
-  status: state.status,
-  enabled: state.enabled,
-  ...(state.failure === undefined
-    ? {}
-    : { failure: `${state.failure.stage}: ${state.failure.message}` }),
-  ...(state.webFailure === undefined ? {} : { webFailure: state.webFailure }),
-  ...(state.serverFailure === undefined ? {} : { serverFailure: state.serverFailure }),
-  ...(state.linkedFolder === undefined ? {} : { linkedFolder: state.linkedFolder }),
-});
-
-// Hints that cost nothing until they apply, instead of in every turn's tool descriptions.
-const lifecycleResult = (state: PluginState) => {
-  const next = failed(state)
-    ? CHECK_NEXT
-    : state.hasWeb && state.status === "active"
-      ? "Its web half loads in open T3 Code windows after this returns; t3_plugins_list then shows any webFailure."
-      : undefined;
-  return { ...toolState(state), ...(next === undefined ? {} : { next }) };
-};
-
 /** One tool as `/mcp` advertises it. `call` runs it; McpHttpServer checks `access` first. */
 export interface PluginMcpToolEntry {
   readonly name: string;
-  /** Shown to people in MCP clients, not to the model. */
-  readonly title?: string;
   readonly description: string;
   readonly inputSchema: Schema.JsonObject;
-  /** Picked per call by a tool whose input decides whether it reads or changes something. */
-  readonly access: PluginRpcAccess | ((input: Schema.JsonObject) => PluginRpcAccess);
+  readonly access: PluginRpcAccess;
   readonly call: (
     input: Schema.JsonObject,
     caller: { readonly threadId: string | null },
-  ) => Effect.Effect<
-    Schema.Json,
-    PluginMcpToolError | PluginMcpToolDisabledError | PluginMcpManagementError
-  >;
+  ) => Effect.Effect<Schema.Json, PluginMcpToolError | PluginMcpToolDisabledError>;
 }
 
 export class PluginMcpTools extends Context.Service<
@@ -199,12 +72,6 @@ export class PluginMcpTools extends Context.Service<
     }) => Effect.Effect<void, PluginMcpToolNameError>;
     /** Withdraws the plugin's tools. */
     readonly unregisterPlugin: (pluginId: PluginId) => Effect.Effect<void>;
-    /** The plugins `t3_plugins_list` reports. */
-    readonly setInstalledPlugins: (plugins: ReadonlyArray<PluginState>) => Effect.Effect<void>;
-    /** Offers or withdraws the `t3_plugins_*` management tools. */
-    readonly offerManagementTools: (offered: boolean) => Effect.Effect<void>;
-    /** Connects the management tools to the plugin host. */
-    readonly setHostActions: (actions: PluginMcpHostActions) => Effect.Effect<void>;
     /**
      * Whether `/mcp` lists and runs the tool, read on every list and call. Withdrawn tools stay
      * registered, because MCP servers can't remove one, so this hides them.
@@ -225,23 +92,7 @@ const make = () => {
   const tools = new Map<string, PluginMcpToolEntry>();
   const toolsByPlugin = new Map<PluginId, Set<string>>();
   const publishers = new Set<(tool: PluginMcpToolEntry) => Effect.Effect<void>>();
-  let installed: ReadonlyArray<PluginState> = [];
-  let hostActions: PluginMcpHostActions | undefined;
-  const withHost = <A>(
-    run: (actions: PluginMcpHostActions) => Effect.Effect<A, { readonly message: string }>,
-  ) =>
-    hostActions === undefined
-      ? Effect.fail(
-          new PluginMcpManagementError({
-            reason: "Plugins are still starting. Call again in a moment.",
-          }),
-        )
-      : run(hostActions).pipe(
-          Effect.mapError((error) => new PluginMcpManagementError({ reason: error.message })),
-        );
-  const invalidInput = (cause: { readonly message: string }) =>
-    new PluginMcpManagementError({ reason: `Invalid input: ${cause.message}` });
-  // Inside `register`, `unregisterPlugin` or `offerManagementTools`, which have their spans.
+  // Inside `register` or `unregisterPlugin`, which have their spans.
   const publish = Effect.fnUntraced(function* (entry: PluginMcpToolEntry) {
     tools.set(entry.name, entry);
     for (const publisher of publishers) yield* publisher(entry);
@@ -252,211 +103,6 @@ const make = () => {
     tools.delete(name);
     for (const publisher of publishers) yield* publisher(entry);
   });
-
-  const pluginsList: PluginMcpToolEntry = {
-    name: PLUGINS_LIST_TOOL,
-    title: "List plugins",
-    description: "List installed plugins with status, failures, and slash commands.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
-    access: "read",
-    call: () =>
-      (hostActions?.slashCommands ?? Effect.succeed([])).pipe(
-        Effect.map((commands) => ({
-          plugins: installed.map((plugin) => {
-            const slashCommands = commands
-              .filter((command) => command.pluginId === plugin.id)
-              .map((command) => `/${command.name}`);
-            return {
-              ...toolState(plugin),
-              name: plugin.name,
-              ...(plugin.version === undefined ? {} : { version: plugin.version }),
-              ...(slashCommands.length === 0 ? {} : { slashCommands }),
-            };
-          }),
-          ...(installed.some(failed) ? { next: CHECK_NEXT } : {}),
-        })),
-      ),
-  };
-
-  const pluginsInvoke: PluginMcpToolEntry = {
-    name: PLUGINS_INVOKE_TOOL,
-    title: "Call a plugin method",
-    description: "Call a method a plugin registered with `api.rpc.register`.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        pluginId: { type: "string" },
-        method: { type: "string" },
-        input: {},
-      },
-      required: ["pluginId", "method"],
-      additionalProperties: false,
-    },
-    access: "write",
-    call: (input) =>
-      decodeInvokeInput(input).pipe(
-        Effect.mapError(invalidInput),
-        Effect.flatMap((request) =>
-          withHost((actions) => actions.invoke(request.pluginId, request.method, request.input)),
-        ),
-      ),
-  };
-
-  const pluginsSetEnabled: PluginMcpToolEntry = {
-    name: PLUGINS_SET_ENABLED_TOOL,
-    title: "Enable or disable a plugin",
-    description: "Enable or disable a plugin. Enable only what the user asked for.",
-    inputSchema: {
-      type: "object",
-      properties: { pluginId: { type: "string" }, enabled: { type: "boolean" } },
-      required: ["pluginId", "enabled"],
-      additionalProperties: false,
-    },
-    access: "write",
-    call: (input) =>
-      decodeSetEnabledInput(input).pipe(
-        Effect.mapError(invalidInput),
-        Effect.flatMap((request) =>
-          withHost((actions) => actions.setEnabled(request.pluginId, request.enabled)),
-        ),
-        Effect.map(lifecycleResult),
-      ),
-  };
-
-  const pluginsInstall: PluginMcpToolEntry = {
-    name: PLUGINS_INSTALL_TOOL,
-    title: "Install a plugin",
-    description:
-      "Install and enable a plugin from a folder `path` on the server. Plugins run with T3 Code's access, so install only what the user asked for. While writing one, install its folder with `link: true`, then edit it and call `t3_plugins_reload`.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        path: { type: "string" },
-        link: { type: "boolean" },
-      },
-      required: ["path"],
-      additionalProperties: false,
-    },
-    access: "write",
-    call: (input) =>
-      decodeInstallInput(input).pipe(
-        Effect.mapError(invalidInput),
-        Effect.flatMap(({ path, link }) => {
-          const source: PluginInstallSource = {
-            type: "path",
-            path,
-            ...(link === undefined ? {} : { link }),
-          };
-          return withHost((actions) => actions.install(source));
-        }),
-        Effect.map(lifecycleResult),
-      ),
-  };
-
-  const pluginsUninstall: PluginMcpToolEntry = {
-    name: PLUGINS_UNINSTALL_TOOL,
-    title: "Remove a plugin",
-    description:
-      "Remove a plugin and delete its settings and storage. A linked one is only unlinked; its folder stays.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        pluginId: { type: "string" },
-        linkedFolder: { type: "string", description: "Unlink only the copy from this folder." },
-      },
-      required: ["pluginId"],
-      additionalProperties: false,
-    },
-    access: "write",
-    call: (input) =>
-      decodeUninstallInput(input).pipe(
-        Effect.mapError(invalidInput),
-        Effect.flatMap((request) =>
-          withHost((actions) => actions.uninstall(request.pluginId, request.linkedFolder)),
-        ),
-        Effect.as({ removed: true }),
-      ),
-  };
-
-  const pluginsReload: PluginMcpToolEntry = {
-    name: PLUGINS_RELOAD_TOOL,
-    title: "Reload a plugin",
-    description: "Restart a plugin from its current files, t3-plugin.json included.",
-    inputSchema: {
-      type: "object",
-      properties: { pluginId: { type: "string" } },
-      required: ["pluginId"],
-      additionalProperties: false,
-    },
-    access: "write",
-    call: (input) =>
-      decodeReloadInput(input).pipe(
-        Effect.mapError(invalidInput),
-        Effect.flatMap((request) => withHost((actions) => actions.reload(request.pluginId))),
-        Effect.map(lifecycleResult),
-      ),
-  };
-
-  const pluginsCheck: PluginMcpToolEntry = {
-    name: PLUGINS_CHECK_TOOL,
-    title: "Check a plugin",
-    description:
-      "Find a plugin's problems, each with a fix, without running it: its failures, manifest, build, and code likely to break when T3 updates. Pass `pluginId` or a folder `path`.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        pluginId: { type: "string" },
-        path: { type: "string" },
-      },
-      additionalProperties: false,
-    },
-    // A path can name any folder on the server, which a read-only client must not probe.
-    access: (input) => (input.path === undefined ? "read" : "write"),
-    call: (input) =>
-      decodeCheckInput(input).pipe(
-        Effect.mapError(() => invalidInput({ message: "Give either pluginId or path." })),
-        Effect.flatMap((target) => withHost((actions) => actions.check(target))),
-        Effect.map((report) =>
-          report.findings.some((finding) => FRAGILE_CODES.has(finding.code))
-            ? {
-                ...report,
-                readme:
-                  'The "Keeping a plugin working across T3 updates" section of the @t3tools/plugin-sdk README explains these warnings.',
-              }
-            : report,
-        ),
-      ),
-  };
-
-  const pluginsSettings: PluginMcpToolEntry = {
-    name: PLUGINS_SETTINGS_TOOL,
-    title: "Plugin settings",
-    description:
-      "Read a plugin's settings and settingsSchema, or change them with `values`. Omitted keys are unchanged; null resets one to its default.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        pluginId: { type: "string" },
-        values: { type: "object" },
-      },
-      required: ["pluginId"],
-      additionalProperties: false,
-    },
-    access: (input) => (input.values === undefined ? "read" : "write"),
-    call: (input) =>
-      decodeSettingsInput(input).pipe(
-        Effect.mapError(invalidInput),
-        Effect.flatMap(({ pluginId, values }) =>
-          withHost((actions) =>
-            values === undefined
-              ? actions.getSettings(pluginId)
-              : actions
-                  .updateSettings(pluginId, values)
-                  .pipe(Effect.map((settings) => ({ settings }))),
-          ),
-        ),
-      ),
-  };
 
   return PluginMcpTools.of({
     register: Effect.fn("PluginMcpTools.register")(function* ({
@@ -506,32 +152,6 @@ const make = () => {
       toolsByPlugin.delete(pluginId);
       for (const name of names ?? []) yield* withdraw(name);
     }),
-    setInstalledPlugins: Effect.fn("PluginMcpTools.setInstalledPlugins")((plugins) =>
-      Effect.sync(() => {
-        installed = plugins;
-      }),
-    ),
-    offerManagementTools: Effect.fn("PluginMcpTools.offerManagementTools")(function* (offered) {
-      if (offered === tools.has(PLUGINS_LIST_TOOL)) return;
-      const managementTools = [
-        pluginsList,
-        pluginsInvoke,
-        pluginsSetEnabled,
-        pluginsInstall,
-        pluginsUninstall,
-        pluginsReload,
-        pluginsCheck,
-        pluginsSettings,
-      ];
-      for (const entry of managementTools) {
-        yield* offered ? publish(entry) : withdraw(entry.name);
-      }
-    }),
-    setHostActions: Effect.fn("PluginMcpTools.setHostActions")((actions) =>
-      Effect.sync(() => {
-        hostActions = actions;
-      }),
-    ),
     isOffered: (name) => tools.has(name),
     attach: Effect.fn("PluginMcpTools.attach")((publisher) =>
       Effect.acquireRelease(

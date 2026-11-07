@@ -50,7 +50,6 @@ import { Route as ChatSettingsAccessRouteImport } from './routes/_chat.settings.
 import { Route as ChatSettingsAboutRouteImport } from './routes/_chat.settings.about'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
-import { Route as ChatPluginsPluginIdNameRouteImport } from './routes/_chat.plugins.$pluginId.$name'
 
 const WelcomeRoute = WelcomeRouteImport.update({
   id: '/welcome',
@@ -261,11 +260,6 @@ const ChatEnvironmentIdThreadIdRoute =
     path: '/$environmentId/$threadId',
     getParentRoute: () => ChatRoute,
   } as any)
-const ChatPluginsPluginIdNameRoute = ChatPluginsPluginIdNameRouteImport.update({
-  id: '/plugins/$pluginId/$name',
-  path: '/plugins/$pluginId/$name',
-  getParentRoute: () => ChatRoute,
-} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
@@ -308,7 +302,6 @@ export interface FileRoutesByFullPath {
   '/settings/storage': typeof ChatSettingsStorageRoute
   '/settings/threads': typeof ChatSettingsThreadsRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
-  '/plugins/$pluginId/$name': typeof ChatPluginsPluginIdNameRoute
 }
 export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
@@ -351,7 +344,6 @@ export interface FileRoutesByTo {
   '/settings/storage': typeof ChatSettingsStorageRoute
   '/settings/threads': typeof ChatSettingsThreadsRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
-  '/plugins/$pluginId/$name': typeof ChatPluginsPluginIdNameRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -396,7 +388,6 @@ export interface FileRoutesById {
   '/_chat/settings/storage': typeof ChatSettingsStorageRoute
   '/_chat/settings/threads': typeof ChatSettingsThreadsRoute
   '/_chat/settings/worktrees': typeof ChatSettingsWorktreesRoute
-  '/_chat/plugins/$pluginId/$name': typeof ChatPluginsPluginIdNameRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -441,7 +432,6 @@ export interface FileRouteTypes {
     | '/settings/storage'
     | '/settings/threads'
     | '/settings/worktrees'
-    | '/plugins/$pluginId/$name'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/connect'
@@ -484,7 +474,6 @@ export interface FileRouteTypes {
     | '/settings/storage'
     | '/settings/threads'
     | '/settings/worktrees'
-    | '/plugins/$pluginId/$name'
   id:
     | '__root__'
     | '/_chat'
@@ -528,7 +517,6 @@ export interface FileRouteTypes {
     | '/_chat/settings/storage'
     | '/_chat/settings/threads'
     | '/_chat/settings/worktrees'
-    | '/_chat/plugins/$pluginId/$name'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -830,13 +818,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatEnvironmentIdThreadIdRouteImport
       parentRoute: typeof ChatRoute
     }
-    '/_chat/plugins/$pluginId/$name': {
-      id: '/_chat/plugins/$pluginId/$name'
-      path: '/plugins/$pluginId/$name'
-      fullPath: '/plugins/$pluginId/$name'
-      preLoaderRoute: typeof ChatPluginsPluginIdNameRouteImport
-      parentRoute: typeof ChatRoute
-    }
   }
 }
 
@@ -912,7 +893,6 @@ interface ChatRouteChildren {
   ChatIndexRoute: typeof ChatIndexRoute
   ChatEnvironmentIdThreadIdRoute: typeof ChatEnvironmentIdThreadIdRoute
   ChatDraftDraftIdRoute: typeof ChatDraftDraftIdRoute
-  ChatPluginsPluginIdNameRoute: typeof ChatPluginsPluginIdNameRoute
 }
 
 const ChatRouteChildren: ChatRouteChildren = {
@@ -923,7 +903,6 @@ const ChatRouteChildren: ChatRouteChildren = {
   ChatIndexRoute: ChatIndexRoute,
   ChatEnvironmentIdThreadIdRoute: ChatEnvironmentIdThreadIdRoute,
   ChatDraftDraftIdRoute: ChatDraftDraftIdRoute,
-  ChatPluginsPluginIdNameRoute: ChatPluginsPluginIdNameRoute,
 }
 
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)

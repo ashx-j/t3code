@@ -12,18 +12,6 @@ import * as Stream from "effect/Stream";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as EnvironmentTheme from "../environmentTheme.ts";
 import * as ServerConfig from "../config.ts";
-import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
-import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
-import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
-import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
-import * as ProjectService from "../project/ProjectService.ts";
-import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
-import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
-import * as ServerSettings from "../serverSettings.ts";
-import * as SecretRequests from "../secrets/SecretRequests.ts";
-import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import * as PluginHooks from "./PluginHooks.ts";
 import * as PluginHost from "./PluginHost.ts";
 import * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
 import * as PluginMcpTools from "./PluginMcpTools.ts";
@@ -36,26 +24,6 @@ export const fixturesDir = new URL("../../../../packages/plugin-sdk/fixtures/", 
 export const layerConfig = () =>
   Layer.fresh(ServerConfig.layerTest(process.cwd(), { prefix: "t3code-plugin-host-test-" }));
 
-// Services the plugins in these tests never reach.
-const layerUnusedLaunchServices = Layer.mergeAll(
-  Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
-  Layer.mock(ProjectService.ProjectService)({}),
-  Layer.mock(ProviderRegistry.ProviderRegistry)({}),
-  Layer.mock(GitVcsDriver.GitVcsDriver)({}),
-  Layer.mock(SecretRequests.SecretRequests)({}),
-);
-
-// Orchestration services the lifecycle tests never reach.
-export const layerUnusedServices = Layer.mergeAll(
-  layerUnusedLaunchServices,
-  Layer.mock(Orchestrator.OrchestratorV2)({}),
-  Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({}),
-  Layer.mock(ThreadManagementService.ThreadManagementService)({}),
-  Layer.mock(ProjectStore.ProjectStoreV2)({}),
-  Layer.mock(ServerEnvironment.ServerEnvironment)({}),
-  Layer.mock(ServerSettings.ServerSettingsService)({}),
-);
-
 // Every list of theme folders the host published, for the web files case.
 export const publishedThemeDirectories: Array<ReadonlyArray<string>> = [];
 const layerThemes = Layer.mock(EnvironmentTheme.EnvironmentThemeService)({
@@ -65,16 +33,13 @@ const layerThemes = Layer.mock(EnvironmentTheme.EnvironmentThemeService)({
     }),
 });
 
-export const layerHost = (services: typeof layerUnusedServices = layerUnusedServices) =>
+export const layerHost = () =>
   Layer.fresh(
     PluginHost.layer.pipe(
       Layer.provideMerge(Layer.mergeAll(PluginSettingsStore.layer, PluginStorage.layer)),
       Layer.provide(ServerSecretStore.layer),
-      Layer.provide(services),
       Layer.provide(layerThemes),
-      Layer.provideMerge(
-        Layer.mergeAll(PluginHooks.layer, PluginMcpTools.layer, PluginHttpRoutes.layer),
-      ),
+      Layer.provideMerge(Layer.mergeAll(PluginMcpTools.layer, PluginHttpRoutes.layer)),
     ),
   );
 

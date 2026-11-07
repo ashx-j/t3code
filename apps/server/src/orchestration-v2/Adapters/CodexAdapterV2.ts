@@ -748,10 +748,6 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     /** ChatGPT token sharing does not accept service tiers. */
     readonly omitServiceTier?: boolean;
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
-    readonly pluginInstructions?: ReadonlyArray<{
-      readonly pluginId: string;
-      readonly text: string;
-    }>;
   }) {
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
     const approvalPolicy =
@@ -788,25 +784,10 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
             },
           )
         : undefined;
-    // T3 Code plugins are installed by the user, like T3's own instructions. Numbered within each
-    // plugin, so another plugin turning on or off renames none of its entries.
-    const pluginEntries = new Map<string, number>();
-    const pluginContext = Object.fromEntries(
-      (input.pluginInstructions ?? []).map(({ pluginId, text }) => {
-        const number = (pluginEntries.get(pluginId) ?? 0) + 1;
-        pluginEntries.set(pluginId, number);
-        return [
-          `t3_code_plugin_${pluginId}_${number}`,
-          { kind: "application" as const, value: text },
-        ];
-      }),
-    );
     const additionalContext =
-      t3Context === undefined &&
-      Object.keys(appContext).length === 0 &&
-      Object.keys(pluginContext).length === 0
+      t3Context === undefined && Object.keys(appContext).length === 0
         ? undefined
-        : { ...t3Context, ...pluginContext, ...appContext };
+        : { ...t3Context, ...appContext };
     return yield* decodeCodexTurnStartParamsWithCollaborationMode({
       threadId: input.nativeThreadId,
       input: input.codexInput,
@@ -6654,26 +6635,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           );
         });
 
-        // Plugin skill folders, sent only when they change; nothing is sent while no plugin has any.
-        // A refusal counts as sent too: an app server without the method would refuse every turn.
-        const appliedPluginSkillRoots = yield* Ref.make<ReadonlyArray<string>>([]);
-        const applyPluginSkillRoots = Effect.fnUntraced(function* (roots: ReadonlyArray<string>) {
-          const applied = yield* Ref.get(appliedPluginSkillRoots);
-          if (applied.length === roots.length && applied.every((root, i) => root === roots[i])) {
-            return;
-          }
-          yield* client
-            .request("skills/extraRoots/set", {
-              extraRoots: roots,
-            })
-            .pipe(
-              Effect.catchCause((cause) =>
-                Effect.logWarning("Codex did not accept plugin skill folders.", { cause }),
-              ),
-              Effect.andThen(Ref.set(appliedPluginSkillRoots, roots)),
-            );
-        });
-
         const startNativeTurn = Effect.fn("CodexAdapterV2.startNativeTurn")(
           function* (
             turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
@@ -6691,13 +6652,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,
               ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
-              ...(turnInput.plugins === undefined
-                ? {}
-                : { pluginInstructions: turnInput.plugins.instructions }),
             });
-            yield* applyPluginSkillRoots(
-              (turnInput.plugins?.skillFolders ?? []).map((folder) => folder.skills),
-            );
             yield* Ref.update(pendingRootTurns, (current) => {
               const updated = new Map(current);
               updated.set(threadId, turnInput);

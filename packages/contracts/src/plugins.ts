@@ -73,7 +73,7 @@ export const PluginManifest = Schema.Struct({
 });
 export type PluginManifest = typeof PluginManifest.Type;
 
-/** `dev` is a folder loaded where it is: one in `devPaths` or installed with `link`. */
+/** `dev` is a folder in `devPaths`, loaded where it is. */
 export const PluginSource = Schema.Literals(["installed", "dev"]);
 export type PluginSource = typeof PluginSource.Type;
 
@@ -94,15 +94,6 @@ export const PluginFailure = Schema.Struct({
   message: Schema.String,
 });
 export type PluginFailure = typeof PluginFailure.Type;
-
-/** The folder on the server `t3_plugins_install` takes a plugin from. */
-export const PluginInstallSource = Schema.Struct({
-  type: Schema.Literal("path"),
-  path: TrimmedNonEmptyString,
-  /** Loads the folder where it is instead of copying it; removing the plugin only unlinks it. */
-  link: Schema.optionalKey(Schema.Boolean),
-});
-export type PluginInstallSource = typeof PluginInstallSource.Type;
 
 /** What the server knows about one discovered plugin, including ones whose manifest failed. */
 export const PluginState = Schema.Struct({
@@ -130,12 +121,10 @@ export const PluginState = Schema.Struct({
   styles: Schema.optionalKey(
     Schema.Array(Schema.Struct({ file: Schema.String, revision: Schema.String })),
   ),
-  /** The folder a `dev` plugin loads from, where an agent or plugins.json linked it. */
+  /** The folder a `dev` plugin loads from, as plugins.json lists it. */
   linkedFolder: Schema.optionalKey(Schema.String),
   hasServer: Schema.Boolean,
   hasWeb: Schema.Boolean,
-  /** Has a `skills` folder, whose skills agents on this environment get while it runs. */
-  hasSkills: Schema.optionalKey(Schema.Boolean),
   /** Why its web half failed in a client since it last started, as that client reported it. */
   webFailure: Schema.optionalKey(Schema.String),
   /** Why its server code failed outside a call since it last started, such as in a timer. */
@@ -156,8 +145,6 @@ export type PluginListInput = typeof PluginListInput.Type;
 
 export const PluginListResult = Schema.Struct({
   plugins: ForwardCompatibleArray(PluginState),
-  /** Whether agents get the `t3_plugins_*` tools. Older servers leave it out. */
-  agentTools: Schema.optionalKey(Schema.Boolean),
 });
 export type PluginListResult = typeof PluginListResult.Type;
 
@@ -168,13 +155,11 @@ export type PluginListResult = typeof PluginListResult.Type;
 export const PluginStatesEvent = Schema.Union([
   Schema.TaggedStruct("snapshot", {
     plugins: Schema.Array(PluginState),
-    agentTools: Schema.Boolean,
   }),
   Schema.TaggedStruct("changed", {
     /** How many plugins the list has now; rows past it are gone. */
     length: Schema.Number,
     rows: Schema.Array(Schema.Struct({ index: Schema.Number, plugin: PluginState })),
-    agentTools: Schema.Boolean,
   }),
 ]);
 export type PluginStatesEvent = typeof PluginStatesEvent.Type;
@@ -184,17 +169,11 @@ export const applyPluginStatesEvent = (
   current: PluginListResult,
   event: PluginStatesEvent,
 ): PluginListResult => {
-  if (event._tag === "snapshot") return { plugins: event.plugins, agentTools: event.agentTools };
+  if (event._tag === "snapshot") return { plugins: event.plugins };
   const plugins = current.plugins.slice(0, event.length);
   for (const { index, plugin } of event.rows) plugins[index] = plugin;
-  return { plugins, agentTools: event.agentTools };
+  return { plugins };
 };
-
-export const PluginSetAgentToolsInput = Schema.Struct({ enabled: Schema.Boolean });
-export type PluginSetAgentToolsInput = typeof PluginSetAgentToolsInput.Type;
-
-export const PluginSetAgentToolsResult = Schema.Struct({ agentTools: Schema.Boolean });
-export type PluginSetAgentToolsResult = typeof PluginSetAgentToolsResult.Type;
 
 export const PluginSetEnabledInput = Schema.Struct({
   pluginId: PluginId,

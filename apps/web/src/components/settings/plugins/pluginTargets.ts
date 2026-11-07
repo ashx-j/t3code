@@ -20,7 +20,7 @@ export const runsPlugins = (environment: EnvironmentPresentation) =>
 
 /**
  * The environments this browser loads plugin UI from, those that run plugins. The first one also
- * supplies pages, commands and sidebar sections, and gets plugins that only change the app.
+ * supplies commands, and gets plugins that only change the app.
  */
 export function usePluginUiSource() {
   const environmentIds = useAtomValue(pluginUiEnvironmentsAtom);

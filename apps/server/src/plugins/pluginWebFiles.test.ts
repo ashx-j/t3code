@@ -94,13 +94,7 @@ it.layer(NodeServices.layer)("PluginWebFiles", (it) => {
           styles.map(({ file }) => file),
           ["base.css", "compact.css"],
         );
-        const request = {
-          method: "GET",
-          path: "/styles/base.css",
-          query: { v: styles[0]?.revision ?? "" },
-          headers: {},
-          body: "",
-        };
+        const request = { path: "/styles/base.css", query: { v: styles[0]?.revision ?? "" } };
         const response = yield* routes.handle({ pluginId: stylesPlugin, request });
         assert.strictEqual(response.status, 200);
         assert.strictEqual(response.headers["content-type"], "text/css; charset=utf-8");

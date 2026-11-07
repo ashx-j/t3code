@@ -2,10 +2,9 @@
 // must follow plugin code through Node's own callbacks.
 import * as NodeAsyncHooks from "node:async_hooks";
 
-import { CommandId, type PluginId } from "@t3tools/contracts";
+import type { PluginId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import type * as Context from "effect/Context";
-import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
@@ -60,8 +59,6 @@ export interface FacadeContext {
   readonly context: Context.Context<never>;
   /** Runs the plugin's own code, such as a handler, in its scope. */
   readonly asPlugin: <A>(run: () => A) => A;
-  /** Records a failure of a plugin callback that only T3 waits on, such as a schedule handler. */
-  readonly reportFailure: (error: unknown) => void;
   /**
    * Runs an effect as a Promise that rejects with an `Error` carrying the failure's `_tag` as `code`.
    * Map results inside the effect: a `.then` on the Promise is a new one that nothing handles.
@@ -69,25 +66,9 @@ export interface FacadeContext {
   readonly call: <A, E>(effect: Effect.Effect<A, E>) => Promise<A>;
   /** Runs an effect in the background for the plugin; failures are logged, not thrown. */
   readonly fork: <A, E>(effect: Effect.Effect<A, E>) => void;
-  /** Exposes a stream as an iterable that ends when the plugin deactivates or `signal` aborts. */
-  readonly iterate: <A, E>(stream: Stream.Stream<A, E>, signal?: AbortSignal) => AsyncIterable<A>;
+  /** Exposes a stream as an iterable that ends when the plugin deactivates. */
+  readonly iterate: <A, E>(stream: Stream.Stream<A, E>) => AsyncIterable<A>;
 }
-
-const PLUGIN_COMMAND_PREFIX = "command:plugin:";
-
-/** A fresh id for a command a plugin causes, which names the plugin. */
-export const newCommandId = (pluginId: string, crypto: Crypto.Crypto) =>
-  crypto.randomUUIDv4().pipe(
-    Effect.orDie,
-    Effect.map((id) => CommandId.make(`${PLUGIN_COMMAND_PREFIX}${pluginId}:${id}`)),
-  );
-
-/** The id every call of `operation` with `key` gets, so the command receipt dedupes a repeat. */
-export const keyedCommandId = (pluginId: string, operation: string, key: string) =>
-  CommandId.make(`${PLUGIN_COMMAND_PREFIX}${pluginId}:${operation}:${encodeURIComponent(key)}`);
-
-export const isPluginCommand = (commandId: CommandId) =>
-  commandId.startsWith(PLUGIN_COMMAND_PREFIX);
 
 /**
  * Hands a plugin a promise whose failure only the plugin sees: one it never awaits must not be an
@@ -122,25 +103,10 @@ export const abortEffect = (signal: AbortSignal) =>
     return Effect.sync(() => signal.removeEventListener("abort", onAbort));
   });
 
-/** Interrupts `effect` when the plugin deactivates or the plugin's own `signal` aborts. */
-export const stopOnAbort =
-  (activation: PluginActivation, signal: AbortSignal | undefined) =>
-  <A, E>(effect: Effect.Effect<A, E>) =>
-    Effect.raceFirst(
-      effect,
-      abortEffect(
-        signal === undefined
-          ? activation.controller.signal
-          : AbortSignal.any([signal, activation.controller.signal]),
-      ).pipe(Effect.andThen(Effect.interrupt)),
-    );
-
 export const makeFacadeContext = (input: {
   readonly pluginId: PluginId;
   readonly activation: PluginActivation;
   readonly context: Context.Context<never>;
-  /** Where `reportFailure` sends failures; the host shows them on the plugin's row. */
-  readonly onFailure?: (error: unknown) => void;
 }): FacadeContext => {
   const { activation, context, pluginId } = input;
   // T3's work for a call is not the plugin's code, so it leaves the plugin's scope.
@@ -151,12 +117,6 @@ export const makeFacadeContext = (input: {
     activation,
     context,
     asPlugin: (run) => pluginCodeScope.run(pluginId, run),
-    reportFailure:
-      input.onFailure ??
-      ((error) =>
-        Effect.runForkWith(context)(
-          Effect.logWarning("plugin code failed", { pluginId, reason: errorText(error) }),
-        )),
     // Cleanups may still save state; afterwards a disabled plugin's leftovers cannot act.
     call: (effect) =>
       activation.ended.signal.aborted
@@ -199,12 +159,9 @@ export const makeFacadeContext = (input: {
         ),
       );
     },
-    iterate: (stream, signal) =>
+    iterate: (stream) =>
       Stream.toAsyncIterableWith(
-        stream.pipe(
-          Stream.interruptWhen(abortEffect(activation.controller.signal)),
-          signal === undefined ? (self) => self : Stream.interruptWhen(abortEffect(signal)),
-        ),
+        stream.pipe(Stream.interruptWhen(abortEffect(activation.controller.signal))),
         context,
       ),
   };

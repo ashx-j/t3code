@@ -10,7 +10,6 @@ import {
   withAssistantCitationComment,
 } from "@t3tools/shared/assistantCitations";
 import { isCurrencyAmountQuery, isPathWord } from "@t3tools/shared/composerTrigger";
-import type { ComposerSlashCommand } from "@t3tools/shared/slashCommands";
 import {
   splitPromptIntoComposerSegments,
   type ComposerPromptSegment,
@@ -19,7 +18,7 @@ import {
 import { resolveShortcutCommand, type ShortcutEventLike } from "./keybindings";
 
 export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
-export type { ComposerSlashCommand };
+export type ComposerSlashCommand = "model" | "plan" | "default" | "side" | "btw";
 export type ComposerSubmissionIntent = "foreground" | "background" | "alternate";
 
 export interface ComposerTrigger {

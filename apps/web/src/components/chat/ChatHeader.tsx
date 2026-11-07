@@ -4,8 +4,7 @@ import {
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { pluginUiAtom } from "../../plugins/pluginUi";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   isAtomCommandInterrupted,
@@ -96,7 +95,6 @@ export const ChatHeader = memo(function ChatHeader({
     AuthOrchestrationOperateScope,
   );
   const canShareWithGuest = useAtomValue(canShareWithGuestAtom(activeThreadEnvironmentId));
-  const pluginUi = useAtomValue(pluginUiAtom);
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -429,22 +427,7 @@ export const ChatHeader = memo(function ChatHeader({
           ) : null}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
-      {isServerThread ? (
-        <>
-          {pluginUi === null ? null : (
-            <>
-              <pluginUi.PluginThreadBadges threadKey={scopedThreadKey(activeThreadRef)} />
-              <pluginUi.PluginActionButtons
-                place="threadHeader"
-                environmentId={activeThreadRef.environmentId}
-                context={{ threadId: activeThreadRef.threadId }}
-                size="icon-sm"
-              />
-            </>
-          )}
-          <GuestShareIndicator threadRef={activeThreadRef} />
-        </>
-      ) : null}
+      {isServerThread ? <GuestShareIndicator threadRef={activeThreadRef} /> : null}
     </div>
   );
 });

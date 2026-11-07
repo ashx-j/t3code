@@ -21,19 +21,10 @@ open **Settings → Plugins**. That folder is `~/.t3/userdata/plugins` on the en
 by default.
 
 With **All environments** selected, a plugin is installed on every connected environment that can
-run plugins. A plugin with no server code or agent skills only changes the app, so it goes only to
-the first environment you load plugin UI from (see [Where plugins live](#where-plugins-live)). The
-list then shows each plugin once, and turning it on or off, changing its settings or removing it
-applies to every environment that has it.
-
-With **Plugin tools for agents** on in **Settings → Plugins**, agents can also install, remove, turn
-on and off, call and change the settings of plugins when you ask them to. Only an agent in a thread
-set to **Full access**, and not in Plan mode, can do this, or an outside agent you approved with
-**Full access**. Agents from linked environments can't. Any agent can read a plugin's settings, with
-secrets hidden. T3 Code checks the thread's permission mode, not whether the person who started the
-thread may change Settings. The switch is off until you turn it on. If your browser loads plugin UI
-from that environment, a plugin an agent installs there can run code in your browser, with access to
-every environment your browser is connected to.
+run plugins. A plugin with no server code only changes the app, so it goes only to the first
+environment you load plugin UI from (see [Where plugins live](#where-plugins-live)). The list then
+shows each plugin once, and turning it on or off, changing its settings or removing it applies to
+every environment that has it.
 
 ## Turn a plugin on or off
 
@@ -54,9 +45,8 @@ the clear button next to one removes it.
 Choose **Remove** on the plugin's row and confirm in the popup. Removing a plugin also deletes its
 settings, secrets and stored data, and this can't be undone. Reinstalling it later starts fresh.
 
-A plugin loaded from its own folder, such as one an agent is writing, shows **Unlink** instead.
-Unlinking stops loading it and deletes its settings, secrets and stored data the same way, but
-leaves the folder where it is.
+A plugin loaded from its own folder shows **Unlink** instead. Unlinking stops loading it and deletes
+its settings, secrets and stored data the same way, but leaves the folder where it is.
 
 ## Themes and styles
 
@@ -66,34 +56,11 @@ the plugin is on, on top of T3 Code's own styles and your theme. A plugin can be
 folder and its manifest. Themes and styles load from the same environments as plugin UI (see [Where
 plugins live](#where-plugins-live)).
 
-## Plugins in your threads
-
-A plugin can answer an agent's approval requests and questions for you, for example to allow
-commands you always allow. The request still appears in the thread, and you can answer it yourself
-while the plugin decides. If no plugin answers within a few seconds, it waits for you as usual.
-
-A plugin can also change a message before it is sent, or stop it and say why. A stopped message
-stays in the composer, so you can edit it and send it again. Slash commands are never changed or
-stopped by plugins.
-
-Plugins can add slash commands. They appear in the composer's `/` menu with the agent's own
-commands. A command that runs on the server shows in every app, and one that runs in the app shows
-in the web and desktop apps. A command can send the agent a message the plugin prepares, or stop
-with a reason. The agent's own command wins over a plugin's with the same name. Between plugins, a
-command that runs on the server wins over one that runs in the app, and otherwise the plugin whose
-id comes first alphabetically gets it.
-
-A plugin can give Claude and Codex agents extra instructions and skills while the plugin is on. Its
-skills appear in the composer's `$` menu with the plugin's name for those agents. Codex gets changes
-on its next turn. A Claude thread that is already running keeps the instructions and skills it
-started with until T3 Code starts Claude again for it, such as after T3 Code restarts. Picking a
-skill from a newly added plugin starts Claude again for that message. Other agents don't get plugin
-instructions or skills yet.
+## Tools for agents
 
 A plugin can give agents new tools. Agents in threads started after you turn the plugin on see them.
 Turning the plugin off takes its tools away from every thread. Tools that only read work in any
-thread. Tools that change things work only in a thread set to **Full access** and not in Plan mode,
-the same as the plugin management tools above.
+thread. Tools that change things work only in a thread set to **Full access** and not in Plan mode.
 
 ## Where plugins live
 
@@ -110,9 +77,7 @@ choice applies to this browser only. Each chosen environment's plugins run code 
 access to every environment this window is connected to, so choose only environments whose plugins
 you trust.
 
-Buttons, menu items, badges, slash commands that run in the app, `@` items, banners, right panels,
-tool views and replaced parts of the app show only in the threads of the plugin's own environment.
-Code blocks a plugin draws show in every thread. Pages, sidebar sections and command palette
+A plugin's right panels show only in the threads of the plugin's own environment. Its command palette
 commands come from only one chosen environment, the main one unless you turn it off. When you choose
-more than one, **Load plugin UI from** says which. The mobile app doesn't show plugin UI, settings
-or themes, and a plugin page's `t3code://plugins/...` link opens only in the desktop and web apps.
+more than one, **Load plugin UI from** says which. The mobile app doesn't show plugin UI, settings or
+themes.

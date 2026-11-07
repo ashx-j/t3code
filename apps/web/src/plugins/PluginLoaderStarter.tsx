@@ -21,7 +21,7 @@ const whenIdle = (run: () => void) => {
 
 /**
  * Follows the plugins of each environment this browser loads plugin UI from, the main one unless
- * the user turned it off. The first one also supplies pages, commands and sidebar sections.
+ * the user turned it off. The first one also supplies palette and keybinding commands.
  */
 export function PluginLoaderStarter() {
   const environmentIds = useAtomValue(pluginUiEnvironmentsAtom);

@@ -18,7 +18,6 @@ const linkedCopy: DiscoveredPlugin = {
   folder: "/plugins/linked",
   source: "dev",
   manifest: { id: linked, name: "Linked", version: "1.0.0", engines: { t3: ">=0.0.1" } },
-  hasSkills: false,
 };
 
 /**

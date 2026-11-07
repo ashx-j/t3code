@@ -50,9 +50,9 @@ export function InstallProblems({ problems }: { readonly problems: ReadonlyArray
 }
 
 /**
- * Installs plugins on `targets`, the first one first. A plugin without server code or agent skills
- * only changes the app, so it is installed on the first one only, and does nothing unless the app
- * loads plugin UI from there.
+ * Installs plugins on `targets`, the first one first. A plugin without server code only changes the
+ * app, so it is installed on the first one only, and does nothing unless the app loads plugin UI
+ * from there.
  */
 export function usePluginInstaller(
   targets: ReadonlyArray<PluginTarget>,
@@ -76,7 +76,7 @@ export function usePluginInstaller(
       return null;
     });
     if (plugin === null) return;
-    if (!plugin.hasServer && plugin.hasSkills !== true) {
+    if (!plugin.hasServer) {
       // Such as when that environment is offline and another one came first.
       if (!uiSource.environmentIds.includes(main.environmentId)) {
         report(

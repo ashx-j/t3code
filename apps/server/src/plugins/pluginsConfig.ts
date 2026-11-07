@@ -6,7 +6,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
-import * as Semaphore from "effect/Semaphore";
 
 import * as ServerConfig from "../config.ts";
 
@@ -23,8 +22,6 @@ export class PluginConfigError extends Schema.TaggedError<PluginConfigError>()(
 const PluginsConfigFile = Schema.StructWithRest(
   Schema.Struct({
     enabled: Schema.optionalKey(Schema.Record(Schema.String, Schema.Boolean)),
-    /** Whether agents get the `t3_plugins_*` tools; off until the user turns them on. */
-    agentTools: Schema.optionalKey(Schema.Boolean),
     devPaths: Schema.optionalKey(Schema.Array(Schema.String)),
   }),
   [Schema.Record(Schema.String, Schema.Json)],
@@ -40,9 +37,6 @@ export const makePluginsConfig = Effect.gen(function* () {
   const path = yield* Path.Path;
   const configPath = path.join(config.stateDir, "plugins.json");
   const current = yield* Ref.make<PluginsConfigFile>({});
-  // `setAgentTools` writes plugins.json outside the lifecycle lock, so every read that is written
-  // back, or kept as the current config, holds this one.
-  const lock = yield* Semaphore.make(1);
 
   const read = Effect.gen(function* () {
     const exists = yield* fs.exists(configPath);
@@ -67,7 +61,7 @@ export const makePluginsConfig = Effect.gen(function* () {
       Effect.mapError((cause) => new PluginConfigError({ path: configPath, cause })),
     );
     yield* Ref.set(current, next);
-  }, lock.withPermits(1));
+  });
 
   const emptyConfig: PluginsConfigFile = {};
   return {
@@ -85,10 +79,7 @@ export const makePluginsConfig = Effect.gen(function* () {
             }),
           )
         : read
-      ).pipe(
-        Effect.tap((next) => Ref.set(current, next)),
-        lock.withPermits(1),
-      ),
+      ).pipe(Effect.tap((next) => Ref.set(current, next))),
     write,
     writeEnabled: (pluginId: PluginId, enabled: boolean) =>
       write((current) => ({

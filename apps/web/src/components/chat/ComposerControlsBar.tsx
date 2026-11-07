@@ -5,7 +5,6 @@ import { type AppModelOption } from "../../modelSelection";
 import { CircleAlertIcon } from "lucide-react";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { ComposerControl } from "./ComposerControl";
-import { TraitsPicker } from "./TraitsPicker";
 import {
   ComposerFooterModeControls,
   ComposerModelPicker,
@@ -89,8 +88,6 @@ export function ComposerControlsBar(props: {
   onModelPickerOpenChange: (open: boolean) => void;
   modelPickerIconClassName: string | undefined;
   getModelDisabledReason: ChatComposerProps["getModelDisabledReason"];
-  /** Renders one control on its own, for a plugin that lays out the row itself. */
-  piece?: "model" | "effort" | "access" | undefined;
 }) {
   const {
     environmentId,
@@ -139,7 +136,6 @@ export function ComposerControlsBar(props: {
     onModelPickerOpenChange,
     modelPickerIconClassName,
     getModelDisabledReason,
-    piece,
   } = props;
   const accessMatchesDefault = compatibleRuntimeMode === defaultRuntimeMode;
   const {
@@ -170,8 +166,6 @@ export function ComposerControlsBar(props: {
     planModeEnabled,
   });
   const effort = describeComposerEffort(traitsInput, props.effortDisplay, controlSize);
-  // A standalone model picker leaves effort and permissions to their own pieces.
-  const modelOnly = piece === "model";
   const restingBlockDefs = showModeBlock
     ? [
         {
@@ -226,24 +220,20 @@ export function ComposerControlsBar(props: {
         MODEL_TRIGGER_STATES,
         composerControlsCollapsed ? "min-w-13 shrink text-xs!" : "min-w-13",
       )}
-      {...(modelOnly
-        ? { tooltip: true }
-        : {
-            triggerSuffix: effort.suffix,
-            triggerDetail: effort.detail,
-            triggerShortcuts: pickerOwnsModeShortcut
-              ? "composer.effort composer.mode"
-              : "composer.effort",
-            effortColumn: <ComposerEffortColumn traits={traitsInput} />,
-            footer: (
-              <ComposerPickerFooter
-                traits={traitsInput}
-                runtimeMode={compatibleRuntimeMode}
-                runtimeModeOptions={compatibleRuntimeModeOptions}
-                onRuntimeModeChange={handleRuntimeModeChange}
-              />
-            ),
-          })}
+      triggerSuffix={effort.suffix}
+      triggerDetail={effort.detail}
+      triggerShortcuts={
+        pickerOwnsModeShortcut ? "composer.effort composer.mode" : "composer.effort"
+      }
+      effortColumn={<ComposerEffortColumn traits={traitsInput} />}
+      footer={
+        <ComposerPickerFooter
+          traits={traitsInput}
+          runtimeMode={compatibleRuntimeMode}
+          runtimeModeOptions={compatibleRuntimeModeOptions}
+          onRuntimeModeChange={handleRuntimeModeChange}
+        />
+      }
       terminalOpen={terminalOpen}
       open={modelPickerOpen}
       instanceIndicatorBackground={
@@ -259,7 +249,7 @@ export function ComposerControlsBar(props: {
       onOpenProviderSetup={onOpenProviderSetup}
     />
   );
-  const providerUnavailableControl = (
+  return showProviderUnavailable ? (
     <ComposerControl
       type="button"
       disabled={!providerSetupInstanceId}
@@ -274,41 +264,6 @@ export function ComposerControlsBar(props: {
       <CircleAlertIcon className="size-4" />
       {providerSetupInstanceId ? "Open provider settings" : "No provider available"}
     </ComposerControl>
-  );
-  if (piece !== undefined) {
-    if (showProviderUnavailable) return piece === "model" ? providerUnavailableControl : null;
-    switch (piece) {
-      case "model":
-        return composerModelPicker;
-      case "effort":
-        return traitsInput ? (
-          <TraitsPicker
-            {...traitsInput}
-            size={controlSize}
-            hidden={composerControlsHidden}
-            disabled={providerCatalogPending || isSendBusy}
-            triggerShortcuts="composer.effort"
-          />
-        ) : null;
-      case "access":
-        return (
-          <ComposerFooterModeControls
-            showInteractionModeToggle={planModeUiEnabled}
-            interactionMode={interactionMode}
-            runtimeMode={compatibleRuntimeMode}
-            runtimeModeOptions={compatibleRuntimeModeOptions}
-            size={controlSize}
-            hidden={composerControlsHidden}
-            accessDisplay="label"
-            emphasized={!accessMatchesDefault}
-            onToggleInteractionMode={toggleInteractionMode}
-            onRuntimeModeChange={handleRuntimeModeChange}
-          />
-        );
-    }
-  }
-  return showProviderUnavailable ? (
-    providerUnavailableControl
   ) : (
     <>
       {composerModelPicker}

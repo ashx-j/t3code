@@ -61,21 +61,6 @@ export type ComposerCommandItem =
     }
   | {
       id: string;
-      type: "plugin-mention";
-      contextId: string;
-      label: string;
-      description: string;
-    }
-  | {
-      id: string;
-      type: "plugin-slash-command";
-      command: { readonly name: string };
-      run: (context: { readonly threadId: string | null }) => void;
-      label: string;
-      description: string;
-    }
-  | {
-      id: string;
       type: "skill";
       provider: ProviderDriverKind;
       skill: ServerProviderSkill;
@@ -228,9 +213,6 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       ) : null}
       {props.item.type === "thread" ? (
         <MessagesSquareIcon aria-hidden="true" className="size-4 shrink-0 text-secondary-label" />
-      ) : null}
-      {props.item.type === "plugin-mention" ? (
-        <BlocksIcon aria-hidden="true" className="size-4 shrink-0 text-secondary-label" />
       ) : null}
       {props.item.type === "environment" ? (
         <EnvironmentMachineIcon

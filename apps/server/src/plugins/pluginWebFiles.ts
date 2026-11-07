@@ -73,17 +73,14 @@ export const makePluginWebFiles = Effect.gen(function* () {
     within: string,
     revisioned = false,
   ) =>
-    httpRoutes
-      .register({
-        pluginId: plugin.id,
-        method: "GET",
-        path: routePath,
-        handler: (request) =>
-          Effect.runPromiseWith(context)(
-            readWebFile(within, read(request.path), revisioned ? request.query.v : undefined),
-          ),
-      })
-      .pipe(Effect.orDie);
+    httpRoutes.register({
+      pluginId: plugin.id,
+      path: routePath,
+      handler: (request) =>
+        Effect.runPromiseWith(context)(
+          readWebFile(within, read(request.path), revisioned ? request.query.v : undefined),
+        ),
+    });
 
   // Serves the plugin's `name` folder below `/<name>/` and resolves with its real path, if it has
   // one. A symlinked folder outside the plugin would serve whatever it points at.

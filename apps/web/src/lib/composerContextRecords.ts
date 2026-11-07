@@ -319,8 +319,6 @@ export function buildMessageContext(input: {
   threadContexts?: ReadonlyArray<ThreadContextRecord>;
   environmentContexts?: ReadonlyArray<EnvironmentContextRecord>;
   attachments?: ReadonlyArray<BoundComposerAttachment>;
-  /** Records the draft does not hold, such as plugin chips read when the message is sent. */
-  extraRecords?: ReadonlyArray<ComposerContextRecord>;
 }): OrchestrationMessageContext | undefined {
   const screenshotAttachmentIds = new Set(
     (input.attachments ?? []).flatMap(({ attachment }) =>
@@ -338,7 +336,6 @@ export function buildMessageContext(input: {
       }),
     ),
     ...(input.attachments ?? []).map(attachmentContextRecord),
-    ...(input.extraRecords ?? []),
   ];
   return records.length === 0 ? undefined : { version: 1, records };
 }

@@ -7,9 +7,9 @@ import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { serverEnvironment } from "../state/server";
 
 /**
- * The environment app-wide plugin contributions come from: pages, palette and keybinding
- * commands and sidebar sections. `PluginLoaderStarter` sets it once the app is idle, so readers of
- * its plugins open no stream during startup.
+ * The environment app-wide plugin contributions come from: palette and keybinding commands.
+ * `PluginLoaderStarter` sets it once the app is idle, so readers of its plugins open no stream
+ * during startup.
  */
 export const followedPluginEnvironmentAtom = Atom.make<EnvironmentId | null>(null).pipe(
   Atom.keepAlive,

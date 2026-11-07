@@ -22,8 +22,6 @@ import { Button } from "../ui/button";
 import ChatMarkdown from "../ChatMarkdown";
 import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
 import { RenderErrorBoundary } from "../RenderErrorBoundary";
-import { pluginToolNameOf } from "../../plugins/pluginUi";
-import type { PluginUi } from "../../plugins/pluginUiParts";
 import { CommandOutputPanel, useCommandOutputStreaming } from "./CommandOutputPanel";
 import { resolveExternalWebLinkHref } from "./externalLinkContextMenu";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
@@ -38,7 +36,6 @@ interface V2ItemInspectorProps {
   readonly onOpenToolDiff?: ((target: ToolCallDiffTarget) => void) | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   readonly source?: TurnItemSource | undefined;
-  readonly pluginUi: PluginUi | null;
 }
 
 function SyntaxTokens({
@@ -246,24 +243,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
   );
   const item = fetched.item;
   const outputState = fetched.output;
-  const dynamicToolBody =
-    item.type === "dynamic_tool" ? (
-      <ToolCallBody
-        toolName={item.toolName}
-        args={item.input}
-        {...outputState}
-        onImageExpand={props.onImageExpand}
-      />
-    ) : null;
-  const commandOutput = streamsOutput ? (
-    <CommandOutputPanel
-      environmentId={props.environmentId}
-      threadId={props.projectedItem.sourceThreadId}
-      itemId={props.projectedItem.sourceItemId}
-      source={props.source?.commandOutput}
-    />
-  ) : null;
-  const inspector = (
+  return (
     <div className="space-y-2 text-xs" data-v2-item-inspector={item.type}>
       {item.type === "reasoning" && item.text ? (
         <div className="rounded-md border border-border/45 bg-muted/15 p-2 italic text-muted-foreground">
@@ -285,7 +265,16 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
           exitCode={item.exitCode}
           {...outputState}
           onImageExpand={props.onImageExpand}
-          outputSlot={commandOutput ?? undefined}
+          outputSlot={
+            streamsOutput ? (
+              <CommandOutputPanel
+                environmentId={props.environmentId}
+                threadId={props.projectedItem.sourceThreadId}
+                itemId={props.projectedItem.sourceItemId}
+                source={props.source?.commandOutput}
+              />
+            ) : undefined
+          }
         />
       ) : null}
 
@@ -389,21 +378,13 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
         </ul>
       ) : null}
 
-      {item.type === "dynamic_tool" && dynamicToolBody !== null ? (
-        props.pluginUi !== null &&
-        pluginToolNameOf(item.toolName) !== undefined &&
-        item.toolName !== null ? (
-          <props.pluginUi.PluginToolBody
-            environmentId={props.environmentId}
-            toolName={item.toolName}
-            input={item.input}
-            output={outputState.output}
-            status={item.status}
-            fallback={dynamicToolBody}
-          />
-        ) : (
-          dynamicToolBody
-        )
+      {item.type === "dynamic_tool" ? (
+        <ToolCallBody
+          toolName={item.toolName}
+          args={item.input}
+          {...outputState}
+          onImageExpand={props.onImageExpand}
+        />
       ) : null}
 
       {item.type === "approval_request" ? <StructuredValue value={item.prompt} /> : null}
@@ -432,18 +413,5 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
         />
       ) : null}
     </div>
-  );
-  if (props.pluginUi === null) return inspector;
-  return (
-    <props.pluginUi.PluginReplaceable
-      part="timeline.item"
-      environmentId={props.environmentId}
-      pieces={{
-        original: inspector,
-        item: props.pluginUi.toPluginTimelineItem(item),
-        output: outputState.output,
-        commandOutput,
-      }}
-    />
   );
 });

@@ -87,8 +87,6 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   size?: ComposerControlSize;
   compact?: boolean;
   isComposerOwned?: boolean;
-  /** Keeps the name and shortcut tooltip on a composer-owned picker placed on its own. */
-  tooltip?: boolean;
   disabled?: boolean;
   terminalOpen?: boolean;
   open?: boolean;
@@ -367,7 +365,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               />
             </span>
           ) : null}
-          {props.isComposerOwned && props.tooltip !== true ? (
+          {props.isComposerOwned ? (
             <span {...triggerTextProps}>{triggerText}</span>
           ) : (
             <Tooltip>
