@@ -135,6 +135,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExecutable.ts";
 import {
+  claudeSkillMentions,
   planClaudeSkillDispatch,
   type ClaudeSkillTarget,
 } from "../../provider/Drivers/ClaudeSkillDispatch.ts";
@@ -4083,6 +4084,8 @@ interface ClaudeLiveQueryContext {
   readonly nativeThreadId: string;
   readonly query: ClaudeAgentSdkQuerySession;
   readonly queryPolicyKey: string;
+  /** The plugin instructions and skill folders the process started with, which it keeps. */
+  readonly plugins: ProviderAdapter.ProviderAdapterV2TurnInput["plugins"];
   selection: CompiledClaudeModelSelection;
   readonly closed: Deferred.Deferred<void, never>;
   lastTurn: ActiveClaudeTurnContext | null;
@@ -10104,6 +10107,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const openQuery = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           nativeThreadId: string,
+          skills: ReadonlyMap<string, ClaudeSkillTarget>,
         ) {
           const queryPolicy = yield* queryPolicyForTurn(turnInput);
           const mcpSession = yield* mcpSessions.read(turnInput.threadId);
@@ -10116,6 +10120,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : { allowedTools: queryPolicy.allowedTools }),
           });
           const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides);
+          // The composer offers current plugin skills, so a turn that picks one from a plugin the
+          // process started without needs a new process.
+          const pickedPluginFolders = claudeSkillMentions(turnInput.message.text, skills).flatMap(
+            ({ skill }) =>
+              (turnInput.plugins?.skillFolders ?? []).flatMap((folder) =>
+                skill.path.startsWith(`${folder.skills}${path.sep}`) ? [folder.plugin] : [],
+              ),
+          );
+          const keepsProcess = (live: ClaudeLiveQueryContext) =>
+            live.queryPolicyKey === queryPolicyKey &&
+            pickedPluginFolders.every((folder) =>
+              live.plugins?.skillFolders.some((started) => started.plugin === folder),
+            );
           const compiledSelection = compileClaudeModelSelection(turnInput.modelSelection);
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
@@ -10131,7 +10148,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
-            existing.queryPolicyKey === queryPolicyKey &&
+            keepsProcess(existing) &&
             !existing.stopping &&
             existing.selection.queryIdentity !== compiledSelection.queryIdentity &&
             canApplyClaudeSelectionLive(existing.selection, compiledSelection) &&
@@ -10160,7 +10177,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
-            existing.queryPolicyKey === queryPolicyKey &&
+            keepsProcess(existing) &&
             !existing.stopping &&
             existing.selection.queryIdentity === compiledSelection.queryIdentity
           ) {
@@ -10308,6 +10325,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             nativeThreadId,
             query: querySession,
             queryPolicyKey,
+            plugins: turnInput.plugins,
             selection: compiledSelection,
             closed,
             lastTurn: null,
@@ -10439,6 +10457,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               pdfBudgets.get(nativeThreadId)!,
               persistAttachmentBudget(nativeThreadId),
             );
+            const skills =
+              promptUuid === null
+                ? new Map<string, ClaudeSkillTarget>()
+                : yield* userInvocableSkills(turnInput.runtimePolicy.cwd, turnInput.plugins);
             const userMessage =
               promptUuid === null
                 ? null
@@ -10451,16 +10473,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     attachmentsDir,
                     fileSystem,
                     pdfReservation,
-                    skills: yield* userInvocableSkills(
-                      turnInput.runtimePolicy.cwd,
-                      turnInput.plugins,
-                    ),
+                    skills,
                     uuid: promptUuid,
                   }).pipe(
                     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
                     Effect.provideService(Path.Path, path),
                   );
-            const querySession = yield* openQuery(turnInput, nativeThreadId);
+            const querySession = yield* openQuery(turnInput, nativeThreadId, skills);
             const context: ActiveClaudeTurnContext = {
               input: turnInput,
               queryPolicy: querySession.queryPolicy,

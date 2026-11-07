@@ -19,17 +19,25 @@ export interface ClaudeSkillDispatch {
   readonly commandText: string;
 }
 
-export function planClaudeSkillDispatch(
+/** The mentions in `prompt` that name one of `skills`, in order. */
+export function claudeSkillMentions(
   prompt: string,
   skills: ReadonlyMap<string, ClaudeSkillTarget>,
-): ClaudeSkillDispatch | undefined {
-  const mentions = [...prompt.matchAll(SKILL_MENTION_PATTERN)].flatMap((match) => {
+) {
+  return [...prompt.matchAll(SKILL_MENTION_PATTERN)].flatMap((match) => {
     const name = match[2] ?? "";
     const skill = skills.get(name);
     if (!skill) return [];
     const start = (match.index ?? 0) + (match[1]?.length ?? 0);
     return [{ name, skill, start, end: (match.index ?? 0) + match[0].length }];
   });
+}
+
+export function planClaudeSkillDispatch(
+  prompt: string,
+  skills: ReadonlyMap<string, ClaudeSkillTarget>,
+): ClaudeSkillDispatch | undefined {
+  const mentions = claudeSkillMentions(prompt, skills);
   const last = mentions.at(-1);
   if (!last) {
     return undefined;

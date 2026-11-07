@@ -13609,8 +13609,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  // regression: #20413 an unreadable append file must not tear down the running process
-  it.effect("keeps the live process when a plugin turns on", () =>
+  it.effect("keeps the live process when a plugin turns on, until a turn picks its skill", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -13670,17 +13669,34 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           Effect.forkScoped,
         );
         const now = yield* DateTime.now;
-        const turn = (attempt: string, ordinal: number) =>
+        const turn = (attempt: string, ordinal: number, text = "Go on.") =>
           makeClaudeTestTurnInput({
             threadId,
             providerThread:
               ordinal === 1 ? providerThread : { ...providerThread, status: "active" },
             now,
             attemptId: RunAttemptId.make(`attempt-claude-plugin-toggle-${attempt}`),
-            text: "Go on.",
+            text,
             attachments: [],
             providerTurnOrdinal: ordinal,
           });
+        const pluginFolder = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-plugin-toggle-skills-",
+        });
+        yield* fileSystem.makeDirectory(`${pluginFolder}/.claude-plugin`);
+        yield* fileSystem.writeFileString(
+          `${pluginFolder}/.claude-plugin/plugin.json`,
+          JSON.stringify({ name: "notes" }),
+        );
+        yield* fileSystem.makeDirectory(`${pluginFolder}/skills/release`, { recursive: true });
+        yield* fileSystem.writeFileString(
+          `${pluginFolder}/skills/release/SKILL.md`,
+          "---\nname: release\n---\nDraft release notes.\n",
+        );
+        const plugins = {
+          instructions: [{ pluginId: "notes", text: "Cite notes." }],
+          skillFolders: [{ plugin: pluginFolder, skills: `${pluginFolder}/skills` }],
+        };
 
         yield* runtime.startTurn(turn("a", 1));
         yield* Queue.offer(
@@ -13689,14 +13705,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         yield* Queue.take(terminals);
         // Every running thread would otherwise restart and lose its prompt cache.
-        yield* runtime.startTurn({
-          ...turn("b", 2),
-          plugins: {
-            instructions: [{ pluginId: "notes", text: "Cite notes." }],
-            skillFolders: [{ plugin: "/plugins/notes", skills: "/plugins/notes/skills" }],
-          },
-        });
+        yield* runtime.startTurn({ ...turn("b", 2), plugins });
         assert.lengthOf(processQueues, 1);
+        yield* Queue.offer(
+          processQueues[0]!,
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000b02", result: "Done" }),
+        );
+        yield* Queue.take(terminals);
+        // The composer offers the plugin's skill, which the live process cannot run.
+        yield* runtime.startTurn({ ...turn("c", 3, "$notes:release for 1.2"), plugins });
+        assert.lengthOf(processQueues, 2);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
@@ -13705,6 +13723,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  // regression: #20413 an unreadable append file must not tear down the running process
   it.effect("keeps the live process when its replacement cannot read the append file", () =>
     Effect.scoped(
       Effect.gen(function* () {
