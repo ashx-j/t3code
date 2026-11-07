@@ -95,7 +95,7 @@ export const PluginFailure = Schema.Struct({
 });
 export type PluginFailure = typeof PluginFailure.Type;
 
-/** Where `plugins.install` gets a plugin: a folder on the server. */
+/** The folder on the server `t3_plugins_install` takes a plugin from. */
 export const PluginInstallSource = Schema.Struct({
   type: Schema.Literal("path"),
   path: TrimmedNonEmptyString,
@@ -271,7 +271,7 @@ export type PluginUninstallInput = typeof PluginUninstallInput.Type;
 export const PluginUninstallResult = Schema.Struct({ pluginId: PluginId });
 export type PluginUninstallResult = typeof PluginUninstallResult.Type;
 
-/** Result of `plugins.setEnabled`, `plugins.reload`, `plugins.install` and a folder upload. */
+/** Result of `plugins.setEnabled`, `plugins.reload` and a folder upload. */
 export const PluginMutationResult = Schema.Struct({
   plugin: PluginState,
 });
