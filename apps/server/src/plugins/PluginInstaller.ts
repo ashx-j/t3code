@@ -399,7 +399,7 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
       ),
   );
 
-  // `PluginInstallFilesInput` bounds the folder's size before it gets here.
+  // `PluginUploadFiles` bounds the folder's size before it gets here.
   const installFiles: PluginInstaller["Service"]["installFiles"] = Effect.fn(
     "PluginInstaller.installFiles",
   )((files) => inHostScope(installOrigin({ files })));
