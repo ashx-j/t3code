@@ -623,16 +623,21 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
           }
           yield* removeFromConfig(pluginId);
           yield* host.forget(pluginId, folder);
+          // Under the lock, or an install that starts meanwhile could lose its new settings.
+          if (removeData) {
+            yield* settingsStore
+              .clear(pluginId, settingsSchema)
+              .pipe(
+                Effect.mapError(installFailed("The plugin is removed, but its settings are not.")),
+              );
+            yield* storage
+              .clear(pluginId)
+              .pipe(
+                Effect.mapError(installFailed("The plugin is removed, but its storage is not.")),
+              );
+          }
         }),
       );
-      if (removeData) {
-        yield* settingsStore
-          .clear(pluginId, settingsSchema)
-          .pipe(Effect.mapError(installFailed("The plugin is removed, but its settings are not.")));
-        yield* storage
-          .clear(pluginId)
-          .pipe(Effect.mapError(installFailed("The plugin is removed, but its storage is not.")));
-      }
     },
   );
 
