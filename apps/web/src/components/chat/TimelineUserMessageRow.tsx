@@ -306,7 +306,12 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             className={cn("px-3 pb-3", !ctx.findActive && "max-h-96 overflow-auto")}
             data-thread-find-text="true"
           >
-            <UserMessageBody text={text} skills={ctx.skills} markdownCwd={ctx.markdownCwd} />
+            <UserMessageBody
+              messageId={row.message.id}
+              text={text}
+              skills={ctx.skills}
+              markdownCwd={ctx.markdownCwd}
+            />
           </div>
         ) : null}
       </div>
@@ -1010,6 +1015,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             {fileCardsOnly || audioOnly ? null : (
               <div onCopyCapture={onBodyCopyCapture}>
                 <CollapsibleUserMessageBody
+                  messageId={row.message.id}
                   text={resolvedContext.text}
                   renderContextReference={renderContextReference}
                   skills={ctx.skills}
@@ -1113,6 +1119,7 @@ const COLLAPSED_USER_MESSAGE_FADE_HEIGHT_REM = 1.75;
 const COLLAPSED_USER_MESSAGE_FADE_MASK = `linear-gradient(to bottom, black calc(100% - ${COLLAPSED_USER_MESSAGE_FADE_HEIGHT_REM}rem), transparent)`;
 
 const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(props: {
+  messageId: string;
   text: string;
   renderContextReference: (reference: ChatMarkdownContextReference) => ReactNode;
   skills: ReadonlyArray<ServerProviderSkill>;
@@ -1150,6 +1157,7 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
           }
         >
           <UserMessageBody
+            messageId={props.messageId}
             text={props.text}
             renderContextReference={props.renderContextReference}
             skills={props.skills}
@@ -1179,6 +1187,7 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
 });
 
 const UserMessageBody = memo(function UserMessageBody(props: {
+  messageId: string;
   text: string;
   renderContextReference?: (reference: ChatMarkdownContextReference) => ReactNode;
   skills: ReadonlyArray<ServerProviderSkill>;
@@ -1188,7 +1197,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
   if (props.text.length === 0) {
     return null;
   }
-  return (
+  const markdown = (
     <ChatMarkdown
       text={props.text}
       cwd={props.markdownCwd}
@@ -1199,6 +1208,18 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       parseRawHtml={false}
       renderContextReference={props.renderContextReference}
       headingLevelOffset={MESSAGE_HEADING_LEVEL}
+    />
+  );
+  if (ctx.pluginUi === null) return markdown;
+  return (
+    <ctx.pluginUi.PluginReplaceable
+      part="message.user"
+      pieces={{
+        original: markdown,
+        text: props.text,
+        messageId: props.messageId,
+        threadId: ctx.threadRef?.threadId ?? null,
+      }}
     />
   );
 });

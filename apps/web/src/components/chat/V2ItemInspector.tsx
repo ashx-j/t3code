@@ -255,7 +255,15 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
         onImageExpand={props.onImageExpand}
       />
     ) : null;
-  return (
+  const commandOutput = streamsOutput ? (
+    <CommandOutputPanel
+      environmentId={props.environmentId}
+      threadId={props.projectedItem.sourceThreadId}
+      itemId={props.projectedItem.sourceItemId}
+      source={props.source?.commandOutput}
+    />
+  ) : null;
+  const inspector = (
     <div className="space-y-2 text-xs" data-v2-item-inspector={item.type}>
       {item.type === "reasoning" && item.text ? (
         <div className="rounded-md border border-border/45 bg-muted/15 p-2 italic text-muted-foreground">
@@ -277,16 +285,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
           exitCode={item.exitCode}
           {...outputState}
           onImageExpand={props.onImageExpand}
-          outputSlot={
-            streamsOutput ? (
-              <CommandOutputPanel
-                environmentId={props.environmentId}
-                threadId={props.projectedItem.sourceThreadId}
-                itemId={props.projectedItem.sourceItemId}
-                source={props.source?.commandOutput}
-              />
-            ) : undefined
-          }
+          outputSlot={commandOutput ?? undefined}
         />
       ) : null}
 
@@ -433,5 +432,17 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
         />
       ) : null}
     </div>
+  );
+  if (props.pluginUi === null) return inspector;
+  return (
+    <props.pluginUi.PluginReplaceable
+      part="timeline.item"
+      pieces={{
+        original: inspector,
+        item: props.pluginUi.toPluginTimelineItem(item),
+        output: outputState.output,
+        commandOutput,
+      }}
+    />
   );
 });

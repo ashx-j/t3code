@@ -13,7 +13,9 @@ import {
   runPluginThreadMenuItem,
   withPluginThreadMenuItems,
 } from "./pluginRegistry";
+import { PluginReplaceable } from "./PluginReplaceable";
 import { PluginSidebarSections } from "./PluginSidebarSections";
+import { toPluginTimelineItem } from "./pluginTimelineItem";
 import { PluginToolBody } from "./PluginToolBody";
 
 /** What app code reaches through `pluginUiAtom` once the plugin loader publishes it. */
@@ -22,6 +24,7 @@ export const pluginUi = {
   PluginCodeBlock,
   PluginPanelLauncherItems,
   PluginPanelMenuItems,
+  PluginReplaceable,
   PluginSidebarSections,
   PluginThreadBadges,
   PluginToolBody,
@@ -34,6 +37,7 @@ export const pluginUi = {
   pluginMentionItemsAtom,
   pluginSlashCommandsAtom,
   runPluginThreadMenuItem,
+  toPluginTimelineItem,
   withPluginThreadMenuItems,
 };
 

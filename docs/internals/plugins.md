@@ -91,6 +91,11 @@ A bare `import(url)` cannot send credentials, so the loader fetches each bundle 
 connection's credentials and imports it from a `blob:` URL, which the desktop CSP allows. Mobile
 release builds cannot load code, so the mobile app shows no plugin UI, settings or themes.
 
+`ui.replace` hands a plugin T3's own controls as elements T3 has already wired, so a plugin
+rearranges them instead of copying them. When a part gains a control, put it inside an existing
+piece where it fits, such as `actions`, so plugins that place that piece get it without an update.
+A new top-level piece is invisible to every plugin that replaced the part before it existed.
+
 Plugin themes arrive over the server config stream after the first paint, so the client saves them
 in localStorage for the boot script in `index.html`. The desktop main process cannot read
 localStorage, so the page sends it the canvas it paints under a light and a dark native theme.

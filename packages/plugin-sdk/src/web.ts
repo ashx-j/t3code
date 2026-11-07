@@ -109,6 +109,117 @@ export interface WebPluginMessage {
 }
 
 /**
+ * One step of an agent's work, as the `timeline.item` part hands it over. `type` narrows the other
+ * fields. Kinds of step this type doesn't describe are `other`; draw `original` for them.
+ */
+export type WebPluginTimelineItem = {
+  readonly id: string;
+  readonly threadId: string;
+  /** T3's short label for the step, such as the tool's name, or null. */
+  readonly title: string | null;
+  readonly status:
+    | "idle"
+    | "pending"
+    | "running"
+    | "waiting"
+    | "completed"
+    | "failed"
+    | "cancelled"
+    | "interrupted";
+} & (
+  | {
+      readonly type: "command";
+      readonly command: string;
+      /** Null while it runs, or when the agent doesn't report one. */
+      readonly exitCode: number | null;
+    }
+  | {
+      readonly type: "file_change";
+      readonly path: string;
+      /** Null when the agent doesn't report line counts. */
+      readonly additions: number | null;
+      readonly deletions: number | null;
+    }
+  | { readonly type: "file_search"; readonly pattern: string | null }
+  | { readonly type: "web_search"; readonly queries: ReadonlyArray<string> }
+  | {
+      /** A call to an MCP or other tool that isn't a command, an edit or a search. */
+      readonly type: "tool";
+      readonly toolName: string | null;
+      /** The tool's arguments as the agent sent them. */
+      readonly input: unknown;
+    }
+  | { readonly type: "reasoning"; readonly text: string }
+  | { readonly type: "other" }
+);
+
+/**
+ * T3's own parts a plugin can draw its own way with `ui.replace`. Each piece is a React element T3
+ * has already wired up: place it, wrap it or leave it out. `original` is T3's own drawing.
+ */
+export interface WebPluginParts {
+  /**
+   * The row under the composer's text box. While no provider is available, `model` offers to open
+   * provider settings and `effort` and `access` draw nothing. Only T3's own row folds the controls
+   * into a menu as it narrows; pieces placed elsewhere keep their full width.
+   */
+  readonly "composer.controls": {
+    readonly original: WebPluginNode;
+    /** The attach button, or null where the composer offers no attachments. */
+    readonly attach: WebPluginNode;
+    /** T3's grouped model, effort and permissions controls. */
+    readonly controls: WebPluginNode;
+    /** A picker that only chooses the model. */
+    readonly model: WebPluginNode;
+    /** The reasoning effort picker; draws nothing when the model has no options. */
+    readonly effort: WebPluginNode;
+    /** The permissions picker, always labelled, and the plan toggle when plan mode is on. */
+    readonly access: WebPluginNode;
+    /** Send, stop and the other primary actions. */
+    readonly actions: WebPluginNode;
+    /** Buttons plugins added with `composer.addButton`; draws nothing when there are none. */
+    readonly buttons: WebPluginNode;
+  };
+  /** An assistant message's text in the timeline, drawn as Markdown. */
+  readonly "message.assistant": {
+    readonly original: WebPluginNode;
+    /** The message's Markdown, growing while it streams. */
+    readonly text: string;
+    readonly messageId: string;
+    /** Null outside a thread, such as in a shared guest view. */
+    readonly threadId: string | null;
+    readonly streaming: boolean;
+  };
+  /** A user message's text in the timeline, drawn as Markdown. */
+  readonly "message.user": {
+    readonly original: WebPluginNode;
+    /** The message's Markdown. Each chip in it is a link to a `t3-context:` address. */
+    readonly text: string;
+    readonly messageId: string;
+    /** Null outside a thread, such as in a shared guest view. */
+    readonly threadId: string | null;
+  };
+  /** The details shown when a tool call, command or other step of an agent's work is expanded. */
+  readonly "timeline.item": {
+    readonly original: WebPluginNode;
+    readonly item: WebPluginTimelineItem;
+    /**
+     * The step's text output, when T3 has it as text. A command's output streams instead, so for
+     * commands this is null where `commandOutput` draws it.
+     */
+    readonly output: string | null;
+    /** T3's live output panel for a command, or null for other steps. */
+    readonly commandOutput: WebPluginNode;
+  };
+  /** The file diffs in the diff panel. */
+  readonly "diff.view": {
+    readonly original: WebPluginNode;
+    /** The selection's unified diff, or null while T3 loads it file by file. */
+    readonly patch: string | null;
+  };
+}
+
+/**
  * What a web plugin's `activate` receives. Everything is released when the plugin unloads. `Rpc`
  * types the calls into the plugin's server half.
  */
@@ -220,6 +331,16 @@ export interface WebPluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
   readonly timeline: {
     /** Draws this plugin's agent tool calls in the timeline instead of the generic view. */
     readonly registerToolRenderer: (renderer: WebPluginToolRenderer) => void;
+  };
+  readonly ui: {
+    /**
+     * Draws one of T3's parts until the plugin unloads. When several plugins replace the same
+     * part, the one whose id sorts first wins. If the component throws, T3 draws its own part.
+     */
+    readonly replace: <Part extends keyof WebPluginParts>(
+      part: Part,
+      component: WebPluginComponent<WebPluginParts[Part]>,
+    ) => void;
   };
   /**
    * Adds a stylesheet until the plugin unloads. Rules that reach T3's own elements restyle the app

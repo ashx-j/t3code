@@ -182,6 +182,14 @@ place of the thread; a `t3code://plugins/<pluginId>/<name>` link opens the deskt
 [`examples/quick-notes`](./examples/quick-notes) keeps notes in its server half's storage and shows
 them in both.
 
+`api.ui.replace(part, component)` draws one of T3's own parts your way. The component receives
+T3's own controls as ready-made pieces to arrange, plus `original`, T3's own drawing of the part.
+The parts and their pieces are listed in `WebPluginParts`. If your component throws, T3 draws its
+own part. [`examples/classic-composer`](./examples/classic-composer) moves the composer's controls
+back to their layout from before T3's redesign.
+[`examples/message-extras`](./examples/message-extras) adds a word count under assistant messages,
+redraws expanded commands and sums up diffs.
+
 Build it with the Vite preset, which makes the bundle use T3 Code's own React, atoms, atom hooks and
 UI components instead of shipping copies:
 
@@ -207,9 +215,12 @@ an Effect or a Stream would use your copy of effect inside T3's.
 T3 changes its markup, class names, labels and layout in most releases. You don't need to drop
 parts of your design to survive that. Build each part on the most stable thing T3 offers for it:
 
+- **Arrange pieces instead of rebuilding T3's controls.** `ui.replace` gives you T3's own controls,
+  already wired up. Place them, wrap them or leave them out. A copied control, with its markup,
+  icons and labels, misses every fix T3 makes to the real one.
 - **Style with theme tokens.** Colors, radii and fonts come from the theme. Set them in a theme
-  file in `themes/`, and use `var(--border)`, `var(--radius)` and the other tokens in your styles
-  instead of hex or rgb values.
+  file in `themes/`, and use `var(--border)`, `var(--radius)` and the other tokens in your own
+  components instead of hex or rgb values.
 - **Scope CSS to a region.** T3 keeps the `data-t3-region` names of the window's main areas
   across releases: `sidebar`, `main` (everything beside the sidebar), `timeline`, `composer`,
   `thread-details`, `right-panel`, `terminal`, `home`, `pull-requests`, `settings`,
@@ -219,18 +230,23 @@ parts of your design to survive that. Build each part on the most stable thing T
   `terminal`, set `--terminal-background`, which a terminal reads when it opens.
 - **Reach into T3's markup only as a last resort.** Selectors on `aria-label`, `data-slot`, class
   names such as `[class~="border-border/65"]` or `.lucide-shield-off`, and `:has()` break when T3
-  renames or moves things. Use one only when no theme value or region does the job. Keep each rule
-  small and in one commented place, prefer one that falls back to T3's own look when the markup
-  changes, and list it in the plugin's README with the seam that would replace it.
+  renames or moves things. Use one only when no theme value, region, piece or part does the job.
+  Keep each rule small and in one commented place, prefer one that falls back to T3's own look
+  when the markup changes, and list it in the plugin's README with the seam that would replace it.
 - **Leave T3's frame to T3.** The title bar row, the room for the window buttons on Windows and
   Linux, drag areas, phone safe areas and breakpoints are T3's, so don't resize or pad them.
+- **Draw `original` for steps you don't handle.** The `timeline.item` part's `item` describes
+  commands, file changes, searches, tool calls and reasoning. Other kinds of step have the type
+  `other`, and T3 can add kinds in any release.
 - **Ship what the plugin runs.** Adding a folder leaves out `.git` and `node_modules`, and npm
   installs don't install dependencies, so build everything into the files the manifest names.
-- **Ask for a seam.** When T3 doesn't hand over what you need, ask for a region or token on the
-  T3 Code repository instead of reaching into its markup.
+- **Ask for a seam.** When T3 doesn't hand over what you need, ask for a piece, part or token on
+  the T3 Code repository instead of reaching into its markup.
 
 After a T3 update, ask an agent to run `t3_plugins_check` on your plugin. It lists the patterns
-above that your plugin uses, so you know what to recheck.
+above that your plugin uses, so you know what to recheck. If one of your replacements throws,
+Settings → Plugins shows a note on the plugin's row, and T3 draws its own part there until the
+plugin reloads.
 
 ## Developing a plugin
 

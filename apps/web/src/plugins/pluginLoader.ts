@@ -49,6 +49,7 @@ import {
   registerPluginAction,
   pluginPageKey,
   registerPluginPage,
+  registerPluginReplacement,
   registerPluginRightPanel,
   registerPluginSidebarSection,
   registerPluginSlashCommand,
@@ -547,6 +548,11 @@ function makeWebPluginApi({
             owner,
           }),
         );
+      },
+    },
+    ui: {
+      replace: (part, component) => {
+        track(registerPluginReplacement(part, component, owner));
       },
     },
     injectStyles: (css) => {

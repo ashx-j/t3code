@@ -132,7 +132,7 @@ you trust.
 
 Plugins on other environments you connect show in **Settings → Plugins**, but their UI doesn't
 load. Buttons, menu items, badges, slash commands that run in the app, `@` items, banners, right
-panels and tool views show only in the threads of the environment plugin UI loads from. Code
-blocks, pages, sidebar sections and command palette commands show wherever you are. The mobile app
-doesn't show plugin UI, settings or themes, and a plugin page's `t3code://plugins/...` link opens
-only in the desktop and web apps.
+panels and tool views show only in the threads of the environment plugin UI loads from. Replaced
+parts of the app, code blocks, pages, sidebar sections and command palette commands show wherever
+you are. The mobile app doesn't show plugin UI, settings or themes, and a plugin page's
+`t3code://plugins/...` link opens only in the desktop and web apps.
