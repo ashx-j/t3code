@@ -74,7 +74,7 @@ function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrationInpu
     "'self'",
     "'unsafe-inline'",
     "'wasm-unsafe-eval'",
-    // Web plugins run from object URLs: their bundles are fetched with the session's credentials.
+    // Only the page holds each environment's credentials, so plugin bundles it fetches run from blob URLs.
     "blob:",
     ...(clerkOrigin ? [clerkOrigin] : []),
     "https://challenges.cloudflare.com",
