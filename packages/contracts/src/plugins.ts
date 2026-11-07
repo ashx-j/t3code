@@ -130,6 +130,11 @@ export const PluginState = Schema.Struct({
   failure: Schema.optionalKey(PluginFailure),
   /** Changes each time the plugin starts, so clients can reload its web half after a restart. */
   revision: Schema.optionalKey(Schema.Number),
+  /**
+   * Names the contents of its web bundle while it runs. Sent as the bundle URL's `v`, which the
+   * server then lets browsers cache for good.
+   */
+  webRevision: Schema.optionalKey(Schema.String),
   /** The folder a `dev` plugin loads from, where an agent or plugins.json linked it. */
   linkedFolder: Schema.optionalKey(Schema.String),
   /** Where it was installed from, when installed through `plugins.install`; updates reuse it. */

@@ -1534,6 +1534,18 @@ module.exports = { activate(api) {
         const response = yield* routes.handle({ pluginId: helloWeb, request });
         assert.strictEqual(response.status, 200);
         assert.strictEqual(response.headers["content-type"], "text/javascript; charset=utf-8");
+        // The bundle's revision names its contents, so browsers keep that URL's copy for good.
+        const webRevision = stateOf(yield* host.list, helloWeb)?.webRevision ?? "";
+        assert.match(webRevision, /^[0-9a-f]{16}$/);
+        const revised = yield* routes.handle({
+          pluginId: helloWeb,
+          request: { ...request, query: { v: webRevision } },
+        });
+        assert.strictEqual(
+          revised.headers["cache-control"],
+          "private, max-age=31536000, immutable",
+        );
+        assert.strictEqual(response.headers["cache-control"], "no-store");
         const themes = `${fixturesDir}hello-web/themes`;
         assert.deepStrictEqual(publishedThemeDirectories.at(-1), [themes]);
         // A reload publishes its folder again, so its files are read again, without dropping it

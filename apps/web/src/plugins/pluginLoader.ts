@@ -175,10 +175,12 @@ const isPassingDownloadFailure = (error: unknown) =>
   (error instanceof PluginFileRequestError && [502, 503, 504].includes(error.status));
 const DOWNLOAD_RETRY_DELAYS_MS = [1_000, 5_000, 30_000];
 
+// The bundle's URL names its contents, which the server lets browsers cache for good.
 async function fetchPluginFile(
   environmentId: EnvironmentId,
   plugin: PluginState,
   filePath: string,
+  revision = plugin.version ?? "0",
 ): Promise<Response> {
   const connection = readPreparedConnection(environmentId);
   if (connection === null) throw new Error("The environment is not connected.");
@@ -187,7 +189,7 @@ async function fetchPluginFile(
     `/api/plugins/${encodeURIComponent(plugin.id)}${filePath}`,
     connection.httpBaseUrl,
   );
-  url.searchParams.set("v", plugin.version ?? "0");
+  url.searchParams.set("v", revision);
   const response = await fetch(url, await pluginFileRequestInit(authorization, url));
   if (!response.ok) throw new PluginFileRequestError(response.status, filePath);
   return response;
@@ -730,7 +732,9 @@ export function startPluginLoader(
     let downloaded = false;
     const download = () =>
       withDeadline(
-        fetchPluginFile(environmentId, plugin, "/web.js").then((response) => response.text()),
+        fetchPluginFile(environmentId, plugin, "/web.js", plugin.webRevision).then((response) =>
+          response.text(),
+        ),
         "Loading the web bundle",
       );
     try {

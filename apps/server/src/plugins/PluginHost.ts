@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - plugins load through Node's CommonJS loader, which
-// the FileSystem service does not wrap.
+// the FileSystem service does not wrap, and bundle revisions are sha256 digests.
+import * as NodeCrypto from "node:crypto";
 import * as NodeModule from "node:module";
 
 import {
@@ -311,6 +312,7 @@ interface PluginRecord {
   readonly failure?: PluginFailure;
   readonly activation?: PluginActivation;
   readonly revision?: number;
+  readonly webRevision?: string;
 }
 
 const manifestOf = (plugin: DiscoveredPlugin): PluginManifest | undefined =>
@@ -388,6 +390,7 @@ const toState = (
     status: record.status,
     ...(record.failure === undefined ? {} : { failure: record.failure }),
     ...(record.revision === undefined ? {} : { revision: record.revision }),
+    ...(record.webRevision === undefined ? {} : { webRevision: record.webRevision }),
     ...(installSource === undefined || record.plugin.source !== "installed"
       ? {}
       : {
@@ -408,6 +411,9 @@ const toState = (
 // One loader for the packaged single executable and plain Node: a require created from an
 // absolute path loads files from disk in both, and plugin code resolves its own imports.
 const requireFromDisk = NodeModule.createRequire(process.execPath);
+
+const contentRevision = (contents: Uint8Array) =>
+  NodeCrypto.createHash("sha256").update(contents).digest("hex").slice(0, 16);
 
 const isPluginDefinition = (value: unknown): value is PluginDefinition =>
   typeof value === "object" &&
@@ -708,9 +714,11 @@ const make = Effect.gen(function* () {
     });
 
   // Web files are served from the plugin's real folder; a path or symlink out of `within` is refused.
+  // A request whose `revision` names the file's contents may be cached for good.
   const readWebFile = Effect.fn("PluginHost.readWebFile")(function* (
     within: string,
     file: string | undefined,
+    revision?: string,
   ) {
     const notFound = { status: 404, body: "Not found." };
     if (file === undefined) return notFound;
@@ -720,14 +728,18 @@ const make = Effect.gen(function* () {
     if (real !== within && !real.startsWith(`${within}${path.sep}`)) return notFound;
     const info = yield* fs.stat(real).pipe(Effect.option);
     if (Option.isNone(info) || info.value.type !== "File") return notFound;
+    const body = yield* fs.readFile(real);
     return {
       status: 200,
       headers: {
         "content-type":
           WEB_CONTENT_TYPES[path.extname(real).toLowerCase()] ?? "application/octet-stream",
-        "cache-control": "no-store",
+        "cache-control":
+          revision !== undefined && revision === contentRevision(body)
+            ? "private, max-age=31536000, immutable"
+            : "no-store",
       },
-      body: yield* fs.readFile(real),
+      body,
     };
   });
 
@@ -739,6 +751,7 @@ const make = Effect.gen(function* () {
       routePath: string,
       read: (requestPath: string) => string | undefined,
       within: string,
+      revisioned = false,
     ) =>
       services.httpRoutes
         .register({
@@ -746,10 +759,13 @@ const make = Effect.gen(function* () {
           method: "GET",
           path: routePath,
           handler: (request) =>
-            Effect.runPromiseWith(context)(readWebFile(within, read(request.path))),
+            Effect.runPromiseWith(context)(
+              readWebFile(within, read(request.path), revisioned ? request.query.v : undefined),
+            ),
         })
         .pipe(Effect.orDie);
-    yield* register("/web.js", () => path.join(plugin.rootDir, entry), plugin.rootDir);
+    const bundle = path.join(plugin.rootDir, entry);
+    yield* register("/web.js", () => bundle, plugin.rootDir, true);
     const assetsDir = yield* fs.realPath(path.join(plugin.rootDir, "assets")).pipe(Effect.option);
     // A symlinked `assets` folder outside the plugin would serve whatever it points at.
     if (Option.isSome(assetsDir) && assetsDir.value.startsWith(`${plugin.rootDir}${path.sep}`)) {
@@ -769,6 +785,10 @@ const make = Effect.gen(function* () {
         assetsDir.value,
       );
     }
+    // The bundle's contents now, for its URL; one that cannot be read gets no revision.
+    return yield* fs
+      .readFile(bundle)
+      .pipe(Effect.map(contentRevision), Effect.option, Effect.map(Option.getOrUndefined));
   });
 
   // Read when plugins change, so provider lists name each skill without reading files.
@@ -851,10 +871,15 @@ const make = Effect.gen(function* () {
         },
       });
     }
-    if (manifest.web !== undefined) yield* serveWebFiles(plugin, manifest.web);
+    const webRevision =
+      manifest.web === undefined ? undefined : yield* serveWebFiles(plugin, manifest.web);
+    const started = {
+      status: "active" as const,
+      ...(webRevision === undefined ? {} : { webRevision }),
+    };
     if (manifest.server === undefined) {
       yield* prepareAgentFolder(plugin, manifest.name);
-      return yield* setRecord(plugin.id, { status: "active", revision: nextRevision() });
+      return yield* setRecord(plugin.id, { ...started, revision: nextRevision() });
     }
     yield* setRecord(plugin.id, { status: "loading" });
     // Before loading, since a module can start timers as it loads.
@@ -894,7 +919,7 @@ const make = Effect.gen(function* () {
         ).pipe(Effect.exit);
         if (activated._tag === "Success" && Option.isSome(activated.value)) {
           yield* prepareAgentFolder(plugin, manifest.name);
-          yield* setRecord(plugin.id, { status: "active", activation, revision: nextRevision() });
+          yield* setRecord(plugin.id, { ...started, activation, revision: nextRevision() });
           return yield* Effect.logInfo("plugin activated", { pluginId: plugin.id });
         }
         yield* teardown(plugin.id, activation);
