@@ -105,8 +105,6 @@ const DesktopSettingsDocument = Schema.Struct({
   wslMode: Schema.optionalKey(Schema.Literals(["local", "wsl"])),
   wslDistro: Schema.optionalKey(Schema.NullOr(Schema.String)),
   wslOnly: Schema.optionalKey(Schema.Boolean),
-  // One color from older builds. The canvases take a new key so those builds can still read the file.
-  windowBackground: Schema.optionalKey(Schema.NullOr(Schema.String)),
   windowCanvases: Schema.optionalKey(Schema.Unknown),
 });
 
@@ -223,14 +221,6 @@ function normalizeWindowBackground(value: unknown): DesktopWindowBackground | nu
   });
 }
 
-/** An older build's single color stood for whichever appearance showed last, so it serves both. */
-function legacyWindowBackground(value: unknown): DesktopWindowBackground | null {
-  const color = normalizeWindowColor(value);
-  return color === null
-    ? null
-    : { light: { appearance: "light", color }, dark: { appearance: "dark", color } };
-}
-
 export function normalizeMainWindowBounds(value: unknown): DesktopWindowBounds | null {
   return Option.getOrNull(decodeDesktopWindowBounds(value));
 }
@@ -267,9 +257,7 @@ function normalizeDesktopSettingsDocument(
     wslBackendEnabled,
     wslDistro: normalizeWslDistro(parsed.wslDistro),
     wslOnly: parsed.wslOnly === true,
-    windowBackground:
-      normalizeWindowBackground(parsed.windowCanvases) ??
-      legacyWindowBackground(parsed.windowBackground),
+    windowBackground: normalizeWindowBackground(parsed.windowCanvases),
   };
 }
 

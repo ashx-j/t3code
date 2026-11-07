@@ -172,7 +172,6 @@ describe("DesktopSettings", () => {
             "tailscaleServeEnabled": true,
             "tailscaleServePort": 8443,
             "mainWindowBounds": { "x": 120, "y": 80, "width": 1280, "height": 900 },
-            "windowBackground": "#151515",
           }\n`,
         );
 
@@ -189,11 +188,7 @@ describe("DesktopSettings", () => {
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
-          // Older builds saved one color, whichever appearance showed last.
-          windowBackground: {
-            light: { appearance: "light", color: "#151515" },
-            dark: { appearance: "dark", color: "#151515" },
-          },
+          windowBackground: null,
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
     ),
