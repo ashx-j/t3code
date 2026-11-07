@@ -80,7 +80,8 @@ the `.tgz` file it writes.
   is active, and the composer's `$` menu lists them for those agents with the plugin's name. Claude
   invokes one as `<plugin id>:<folder>`, Codex by the `name` in its frontmatter. Nothing else in
   the plugin's folder reaches agents. The skills are copied when the plugin starts, so **Reload**
-  picks up changes.
+  picks up changes. A running Claude thread keeps the skills and instructions its process started
+  with, and gets changes when that process next starts.
 
 ## Server half
 

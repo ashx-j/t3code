@@ -1599,7 +1599,7 @@ export function makeClaudeQueryOptions(input: {
               (deviceInstructions
                 ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n`
                 : "")),
-        ...(input.plugins?.instructions ?? []),
+        ...(input.plugins?.instructions ?? []).map((entry) => entry.text),
         ...launchAppendSystemPrompt,
       ].join("\n\n"),
     },
@@ -2709,14 +2709,15 @@ function claudeRuntimeQueryPolicyKey(policy: ClaudeRuntimeQueryPolicy): string {
 }
 
 // Live-query reuse must include MCP pre-approvals, which can differ for the same policy key.
+// Plugin instructions and skills are left out: a live process keeps the ones it started with, and
+// a plugin turned on or off reaches the thread when its process next starts, so a toggle doesn't
+// restart every Claude thread and drop its prompt cache.
 export function claudeEffectiveQueryPolicyKey(
   queryPolicy: ClaudeRuntimeQueryPolicy,
   mcpOverrides: {
     readonly allowedTools?: ReadonlyArray<string>;
     readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
   },
-  // Claude reads plugin instructions and skill folders only when its process starts.
-  plugins?: ProviderAdapter.ProviderAdapterV2TurnInput["plugins"],
 ): string {
   return JSON.stringify({
     runtimePolicy: claudeRuntimeQueryPolicyKey({
@@ -2726,7 +2727,6 @@ export function claudeEffectiveQueryPolicyKey(
         : { allowedTools: mcpOverrides.allowedTools }),
     }),
     mcpServers: mcpOverrides.mcpServers,
-    plugins,
   });
 }
 
@@ -10115,11 +10115,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? {}
               : { allowedTools: queryPolicy.allowedTools }),
           });
-          const queryPolicyKey = claudeEffectiveQueryPolicyKey(
-            queryPolicy,
-            mcpOverrides,
-            turnInput.plugins,
-          );
+          const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides);
           const compiledSelection = compileClaudeModelSelection(turnInput.modelSelection);
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);

@@ -467,9 +467,10 @@ export interface PluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
   };
   readonly agents: {
     /**
-     * Adds `text` (up to 4,000 bytes) to the instructions T3 Code gives Claude and Codex agents,
-     * from their next turn or session until the plugin deactivates. A `skills/` folder of
-     * `<name>/SKILL.md` skills beside the manifest reaches the same agents with no code.
+     * Adds `text` (up to 4,000 bytes) to the instructions T3 Code gives Claude and Codex agents
+     * until the plugin deactivates. Codex gets a change on its next turn; a running Claude process
+     * keeps what it started with until it restarts. A `skills/` folder of `<name>/SKILL.md` skills
+     * beside the manifest reaches the same agents with no code.
      */
     readonly addInstructions: (text: string) => void;
   };

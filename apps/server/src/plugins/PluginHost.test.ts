@@ -447,13 +447,16 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
         const agentFolder = `${stateDir}/plugin-agents/skills-plugin`;
         assert.deepStrictEqual(yield* hooks.agentContext, {
           instructions: [
-            '<t3_code_plugin name="Release helper">\nWrite release notes in the past tense.\n</t3_code_plugin>',
+            {
+              pluginId: skills,
+              text: '<t3_code_plugin name="Release helper">\nWrite release notes in the past tense.\n</t3_code_plugin>',
+            },
           ],
           skillFolders: [{ plugin: agentFolder, skills: `${agentFolder}/skills` }],
         });
-        // In plugin id order, so a restart changes neither Claude's process key nor Codex's keys.
+        // In plugin id order, so a new Claude process gets the same text whatever the start order.
         const removeEarlier = yield* hooks.addAgentInstructions("aaa-plugin", "Earlier.");
-        assert.strictEqual((yield* hooks.agentContext)?.instructions[0], "Earlier.");
+        assert.strictEqual((yield* hooks.agentContext)?.instructions[0]?.text, "Earlier.");
         yield* removeEarlier;
         assert.deepStrictEqual((yield* fs.readDirectory(agentFolder)).toSorted(), [
           ".claude-plugin",

@@ -748,7 +748,10 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     /** ChatGPT token sharing does not accept service tiers. */
     readonly omitServiceTier?: boolean;
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
-    readonly pluginInstructions?: ReadonlyArray<string>;
+    readonly pluginInstructions?: ReadonlyArray<{
+      readonly pluginId: string;
+      readonly text: string;
+    }>;
   }) {
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
     const approvalPolicy =
@@ -785,12 +788,18 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
             },
           )
         : undefined;
-    // T3 Code plugins are installed by the user, like T3's own instructions.
+    // T3 Code plugins are installed by the user, like T3's own instructions. Numbered within each
+    // plugin, so another plugin turning on or off renames none of its entries.
+    const pluginEntries = new Map<string, number>();
     const pluginContext = Object.fromEntries(
-      (input.pluginInstructions ?? []).map((text, index) => [
-        `t3_code_plugin_${String(index + 1).padStart(2, "0")}`,
-        { kind: "application" as const, value: text },
-      ]),
+      (input.pluginInstructions ?? []).map(({ pluginId, text }) => {
+        const number = (pluginEntries.get(pluginId) ?? 0) + 1;
+        pluginEntries.set(pluginId, number);
+        return [
+          `t3_code_plugin_${pluginId}_${number}`,
+          { kind: "application" as const, value: text },
+        ];
+      }),
     );
     const additionalContext =
       t3Context === undefined &&

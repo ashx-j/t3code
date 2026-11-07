@@ -87,7 +87,7 @@ export interface PluginSkill {
 
 /** What plugins give agents: instruction texts, and the folders of plugins that ship skills. */
 export interface PluginAgentContext {
-  readonly instructions: ReadonlyArray<string>;
+  readonly instructions: ReadonlyArray<{ readonly pluginId: string; readonly text: string }>;
   readonly skillFolders: ReadonlyArray<SkillFolder>;
 }
 
@@ -240,7 +240,7 @@ export interface PluginHooksRegistry {
   readonly currentSlashCommands: Effect.Effect<ReadonlyArray<PluginSlashCommand>>;
   /**
    * Adds instructions for agents and returns the effect that removes them. They are kept in plugin
-   * id order, so a plugin's restart changes neither Claude's process key nor Codex's context keys.
+   * id order, so the text a new Claude process starts with doesn't depend on start order.
    */
   readonly addAgentInstructions: (
     pluginId: string,
@@ -524,7 +524,7 @@ const make = Effect.gen(function* () {
       Effect.map(([texts, folders]) =>
         texts.length === 0 && folders.length === 0
           ? undefined
-          : { instructions: texts.map((entry) => entry.text), skillFolders: folders },
+          : { instructions: texts, skillFolders: folders },
       ),
     ),
     currentSlashCommands: SubscriptionRef.get(commands).pipe(

@@ -241,10 +241,17 @@ describe("CodexAdapterV2 runtime policy", () => {
           runtimePolicy: policy,
           modelSelection,
           appContext,
-          pluginInstructions: ["Use pnpm."],
+          pluginInstructions: [
+            { pluginId: "lint", text: "Use pnpm." },
+            { pluginId: "notes", text: "Cite notes." },
+            { pluginId: "notes", text: "Date them." },
+          ],
         });
+        // Keyed by plugin, so another plugin turning off renames none of them.
         assert.deepEqual(alone.additionalContext, {
-          t3_code_plugin_01: { kind: "application", value: "Use pnpm." },
+          t3_code_plugin_lint_1: { kind: "application", value: "Use pnpm." },
+          t3_code_plugin_notes_1: { kind: "application", value: "Cite notes." },
+          t3_code_plugin_notes_2: { kind: "application", value: "Date them." },
           "mcp_app_todos_list_todos_item-1": { kind: "untrusted", value: "Filtered to overdue" },
         });
         const withT3 = yield* CodexAdapterV2.buildCodexTurnStartParams({

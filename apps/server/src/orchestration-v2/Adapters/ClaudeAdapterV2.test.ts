@@ -277,7 +277,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       cwd: "/workspace",
       settings: { ...AUTO_COMPACT_CLAUDE_SETTINGS, launchArgs: "--append-system-prompt Mine" },
       plugins: {
-        instructions: ["Use pnpm."],
+        instructions: [{ pluginId: "notes", text: "Use pnpm." }],
         skillFolders: [{ plugin: "/plugins/notes", skills: "/plugins/notes/skills" }],
       },
     });
@@ -560,7 +560,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     assert.isFalse(overrides.allowedTools?.includes(ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_WILDCARD));
   });
 
-  it("invalidates live-query reuse when MCP credentials rotate or plugins change", () => {
+  it("invalidates live-query reuse when MCP credentials rotate", () => {
     const threadId = ThreadId.make("thread-claude-mcp-credential-rotation");
     const mcpSession = mcpSessionFor(threadId);
     const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
@@ -583,14 +583,6 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       }),
     );
     assert.notEqual(rotatedKey, initialKey);
-
-    // A plugin turned on or off changes what a new process loads, so the live one is replaced.
-    const withPlugin = ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(
-      queryPolicy,
-      ClaudeAdapterV2.claudeMcpQueryOverrides({ mcpSession, readOnlySandbox: false }),
-      { instructions: ["Use pnpm."], skillFolders: [] },
-    );
-    assert.notEqual(withPlugin, initialKey);
   });
 
   it("matches the read-only allowlist to the orchestrator toolkit annotations", () => {
@@ -13618,6 +13610,101 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   // regression: #20413 an unreadable append file must not tear down the running process
+  it.effect("keeps the live process when a plugin turns on", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const processQueues: Array<Queue.Queue<SDKMessage>> = [];
+        const terminals = yield* Queue.unbounded<void>();
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: {},
+          attachmentsDir: yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-plugin-toggle-attachments-",
+          }),
+          fileSystem,
+          path: yield* Path.Path,
+          crypto: yield* Crypto.Crypto,
+          idAllocator: yield* IdAllocator.IdAllocatorV2,
+          continuationRequests: { offer: () => Effect.void },
+          queryRunner: {
+            allocateSessionId: Effect.succeed(WAKE_NATIVE_SESSION),
+            open: () =>
+              Effect.gen(function* () {
+                const sdkMessages = yield* Queue.unbounded<SDKMessage>();
+                processQueues.push(sdkMessages);
+                return {
+                  messages: Stream.fromQueue(sdkMessages),
+                  offer: () => Effect.void,
+                  setModel: () => Effect.void,
+                  applyFlagSettings: () => Effect.void,
+                  setPermissionMode: () => Effect.void,
+                  backgroundTasks: () => Effect.succeed(false),
+                  stopTask: () => Effect.void,
+                  interrupt: Effect.void,
+                  close: Queue.shutdown(sdkMessages),
+                };
+              }),
+            forkSession: () => Effect.die("unused forkSession"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+        const threadId = ThreadId.make("thread-claude-plugin-toggle");
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-claude-plugin-toggle"),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) =>
+            event.type === "turn.terminal" ? Queue.offer(terminals, undefined) : Effect.void,
+          ),
+          Effect.forkScoped,
+        );
+        const now = yield* DateTime.now;
+        const turn = (attempt: string, ordinal: number) =>
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread:
+              ordinal === 1 ? providerThread : { ...providerThread, status: "active" },
+            now,
+            attemptId: RunAttemptId.make(`attempt-claude-plugin-toggle-${attempt}`),
+            text: "Go on.",
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+          });
+
+        yield* runtime.startTurn(turn("a", 1));
+        yield* Queue.offer(
+          processQueues[0]!,
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000b01", result: "Done" }),
+        );
+        yield* Queue.take(terminals);
+        // Every running thread would otherwise restart and lose its prompt cache.
+        yield* runtime.startTurn({
+          ...turn("b", 2),
+          plugins: {
+            instructions: [{ pluginId: "notes", text: "Cite notes." }],
+            skillFolders: [{ plugin: "/plugins/notes", skills: "/plugins/notes/skills" }],
+          },
+        });
+        assert.lengthOf(processQueues, 1);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect("keeps the live process when its replacement cannot read the append file", () =>
     Effect.scoped(
       Effect.gen(function* () {
