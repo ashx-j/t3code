@@ -1,0 +1,15 @@
+// Declarations for `scripts/build.ts`. The workspace packages the provider types reach are listed so
+// their declarations are written too, and the build bundles them into the SDK's own.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "allowJs": false,
+    "checkJs": false,
+    "rootDir": "../.."
+  },
+  "include": ["src", "../contracts/src", "../shared/src", "../source-control-core/src"],
+  "exclude": ["**/*.test.ts", "**/*.test.tsx", "**/testing/**"]
+}
