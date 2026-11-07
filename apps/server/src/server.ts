@@ -91,6 +91,7 @@ import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as PluginHooks from "./plugins/PluginHooks.ts";
 import * as PluginHost from "./plugins/PluginHost.ts";
 import * as PluginHttpRoutes from "./plugins/PluginHttpRoutes.ts";
+import * as PluginUploads from "./plugins/pluginUploads.ts";
 import * as PluginMcpTools from "./plugins/PluginMcpTools.ts";
 import * as PluginSettingsStore from "./plugins/PluginSettingsStore.ts";
 import * as PluginStorage from "./plugins/PluginStorage.ts";
@@ -751,6 +752,7 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerAttachmentUploadRoute,
     GuestHttp.layer,
     PluginHttpRoutes.layerRoute,
+    PluginUploads.layerRoute,
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,
     ServerHttp.layerStaticAndDevRoute,

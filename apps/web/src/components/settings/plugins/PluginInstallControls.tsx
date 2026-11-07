@@ -1,14 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId } from "@t3tools/contracts";
-import type * as Cause from "effect/Cause";
+import type { EnvironmentId, PluginState } from "@t3tools/contracts";
 import { FolderDownIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { cn } from "../../../lib/utils";
+import { uploadPluginFolder } from "../../../plugins/pluginFiles";
 import { type PluginFolder, pickedFolder } from "../../../plugins/pluginFolders";
 import { pluginEnvironment } from "../../../state/plugins";
-import { useAtomCommand } from "../../../state/use-atom-command";
 import { Button } from "../../ui/button";
 import {
   Dialog,
@@ -26,7 +24,7 @@ export function AddPluginButton(props: {
   readonly onClick: () => void;
 }) {
   const canInstall = useAtomValue(
-    pluginEnvironment.installPluginFiles.permissionAtom(props.environmentId),
+    pluginEnvironment.createPluginUploadUrl.permissionAtom(props.environmentId),
   );
   return (
     <Button
@@ -60,30 +58,24 @@ export function usePluginInstaller(
   targets: ReadonlyArray<PluginTarget>,
   uiSource: { readonly environmentId: EnvironmentId | null; readonly name: string },
 ) {
-  const installFiles = useAtomCommand(pluginEnvironment.installPluginFiles, {
-    label: "plugin install",
-    reportFailure: false,
-  });
   const [installing, setInstalling] = useState<string | null>(null);
   const [problems, setProblems] = useState<ReadonlyArray<string>>([]);
 
   const installOnTargets = async (
-    install: (environmentId: EnvironmentId) => ReturnType<typeof installFiles>,
+    install: (environmentId: EnvironmentId) => Promise<PluginState>,
     report: (problem: string) => void,
   ) => {
     const [main, ...others] = targets;
     if (main === undefined) return report("No environment here can run plugins.");
-    const reportFailure = (
-      target: PluginTarget,
-      result: { readonly cause: Cause.Cause<unknown> },
-    ) => {
-      const error = squashAtomCommandFailure(result);
+    const reportFailure = (target: PluginTarget, error: unknown) => {
       const message = error instanceof Error ? error.message : "Could not install the plugin.";
       report(targets.length > 1 ? `${target.label}: ${message}` : message);
     };
-    const first = await install(main.environmentId);
-    if (first._tag === "Failure") return reportFailure(main, first);
-    const { plugin } = first.value;
+    const plugin = await install(main.environmentId).catch((error: unknown) => {
+      reportFailure(main, error);
+      return null;
+    });
+    if (plugin === null) return;
     if (!plugin.hasServer && plugin.hasSkills !== true) {
       // Such as when that environment is offline and another one came first.
       if (main.environmentId !== uiSource.environmentId) {
@@ -93,9 +85,9 @@ export function usePluginInstaller(
       }
       return;
     }
-    const results = await Promise.all(others.map((target) => install(target.environmentId)));
+    const results = await Promise.allSettled(others.map((target) => install(target.environmentId)));
     results.forEach((result, index) => {
-      if (result._tag === "Failure") reportFailure(others[index]!, result);
+      if (result.status === "rejected") reportFailure(others[index]!, result.reason);
     });
   };
 
@@ -129,7 +121,7 @@ export function usePluginInstaller(
           });
           if (files === null) continue;
           await installOnTargets(
-            (environmentId) => installFiles({ environmentId, input: { files } }),
+            (environmentId) => uploadPluginFolder(environmentId, files),
             report,
           );
         }

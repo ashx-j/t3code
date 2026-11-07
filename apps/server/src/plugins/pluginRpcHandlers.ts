@@ -1,8 +1,8 @@
 import {
   type AuthEnvironmentScope,
   PluginError,
+  type PluginCreateUploadUrlInput,
   type PluginId,
-  type PluginInstallFilesInput,
   type PluginInstallInput,
   type PluginInvokeInput,
   type PluginListInput,
@@ -23,6 +23,7 @@ import * as Stream from "effect/Stream";
 import { rpcAuthorizationError } from "../auth/RpcAuthorization.ts";
 import * as PluginHost from "./PluginHost.ts";
 import type * as PluginInstaller from "./PluginInstaller.ts";
+import { issuePluginUploadUrl } from "./pluginUploads.ts";
 
 const toRpcError = (pluginId: PluginId) => (error: { readonly message: string }) =>
   PluginHost.isPluginAccessDeniedError(error)
@@ -58,9 +59,8 @@ export const makePluginRpcHandlers = (
       Effect.map((plugin) => ({ plugin })),
       Effect.mapError((error) => new PluginError({ message: error.message })),
     ),
-  [WS_METHODS.pluginsInstallFiles]: (input: PluginInstallFilesInput) =>
-    installer.installFiles(input.files).pipe(
-      Effect.map((plugin) => ({ plugin })),
+  [WS_METHODS.pluginsCreateUploadUrl]: (_input: PluginCreateUploadUrlInput) =>
+    issuePluginUploadUrl().pipe(
       Effect.mapError((error) => new PluginError({ message: error.message })),
     ),
   [WS_METHODS.pluginsRescan]: (_input: PluginRescanInput) =>

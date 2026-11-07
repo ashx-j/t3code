@@ -1,20 +1,16 @@
-import {
-  PLUGIN_UPLOAD_MAX_BYTES,
-  PLUGIN_UPLOAD_MAX_FILES,
-  type PluginUploadFile,
-} from "@t3tools/contracts";
+import { PLUGIN_UPLOAD_MAX_BYTES, PLUGIN_UPLOAD_MAX_FILES } from "@t3tools/contracts";
 
 const MANIFEST_FILE = "t3-plugin.json";
 const MAX_DEPTH = 32;
 
-/** A plugin folder the user dropped or picked, read into the files `plugins.installFiles` takes. */
+/** A plugin folder the user dropped or picked, listed as the files `uploadPluginFolder` sends. */
 export interface PluginFolder {
   readonly name: string;
   /** Rejects with an error meant for the user when the folder is not a plugin or too large. */
-  readonly read: () => Promise<ReadonlyArray<PluginUploadFile>>;
+  readonly read: () => Promise<ReadonlyArray<PluginFolderFile>>;
 }
 
-interface FolderFile {
+export interface PluginFolderFile {
   /** Relative to the plugin folder, with `/` separators. */
   readonly path: string;
   readonly file: File;
@@ -28,7 +24,7 @@ const notAPlugin = (name: string) =>
   new Error(`${name} has no ${MANIFEST_FILE}, so it is not a T3 Code plugin.`);
 
 // Names the top-level entry holding the most bytes, which is usually the reason.
-const tooLarge = (name: string, files: ReadonlyArray<FolderFile>) => {
+const tooLarge = (name: string, files: ReadonlyArray<PluginFolderFile>) => {
   const bytesByEntry = new Map<string, number>();
   for (const { path, file } of files) {
     const entry = path.split("/")[0] ?? path;
@@ -40,17 +36,12 @@ const tooLarge = (name: string, files: ReadonlyArray<FolderFile>) => {
   );
 };
 
-async function readFiles(name: string, files: ReadonlyArray<FolderFile>) {
+function withinLimits(name: string, files: ReadonlyArray<PluginFolderFile>) {
   const bytes = files.reduce((total, { file }) => total + file.size, 0);
   if (files.length > PLUGIN_UPLOAD_MAX_FILES || bytes > PLUGIN_UPLOAD_MAX_BYTES) {
     throw tooLarge(name, files);
   }
-  return Promise.all(
-    files.map(async ({ path, file }) => ({
-      path,
-      contents: new Uint8Array(await file.arrayBuffer()),
-    })),
-  );
+  return files;
 }
 
 // `readEntries` hands out a folder's entries in batches and signals the end with an empty one.
@@ -72,7 +63,7 @@ async function readDroppedFolder(folder: FileSystemDirectoryEntry) {
   if (!top.some((entry) => entry.isFile && entry.name === MANIFEST_FILE)) {
     throw notAPlugin(folder.name);
   }
-  const files: Array<FolderFile> = [];
+  const files: Array<PluginFolderFile> = [];
   let bytes = 0;
   const visit = async (entries: ReadonlyArray<FileSystemEntry>, prefix: string, depth: number) => {
     if (depth > MAX_DEPTH) throw tooLarge(folder.name, files);
@@ -95,7 +86,7 @@ async function readDroppedFolder(folder: FileSystemDirectoryEntry) {
     }
   };
   await visit(top, "", 0);
-  return readFiles(folder.name, files);
+  return withinLimits(folder.name, files);
 }
 
 /** The dropped folders. Read during the drop event: the browser empties the transfer after it. */
@@ -119,7 +110,7 @@ export function pickedFolder(files: ReadonlyArray<File>): PluginFolder | undefin
         .map((file) => ({ path: file.webkitRelativePath.slice(name.length + 1), file }))
         .filter(({ path }) => !isLeftOut(path));
       if (!inside.some(({ path }) => path === MANIFEST_FILE)) throw notAPlugin(name);
-      return readFiles(name, inside);
+      return withinLimits(name, inside);
     },
   };
 }

@@ -210,31 +210,42 @@ export type PluginReloadInput = typeof PluginReloadInput.Type;
 export const PluginInstallInput = Schema.Struct({ source: PluginInstallSource });
 export type PluginInstallInput = typeof PluginInstallInput.Type;
 
-/** Limits on a folder sent with `plugins.installFiles`, which travels as one message. */
+/** Limits on a plugin folder a client uploads to the URL `plugins.createUploadUrl` returns. */
 export const PLUGIN_UPLOAD_MAX_FILES = 1_000;
 export const PLUGIN_UPLOAD_MAX_BYTES = 25 * 1024 * 1024;
 
 /** One file of a plugin folder dropped into a client, by its path inside that folder. */
 export const PluginUploadFile = Schema.Struct({
   path: TrimmedNonEmptyString.check(Schema.isMaxLength(1024), isInsidePluginDirectory),
-  contents: Schema.Uint8ArrayFromBase64,
+  contents: Schema.Uint8Array,
 });
 export type PluginUploadFile = typeof PluginUploadFile.Type;
 
-export const PluginInstallFilesInput = Schema.Struct({
-  files: Schema.Array(PluginUploadFile).check(
-    Schema.isMaxLength(PLUGIN_UPLOAD_MAX_FILES, {
-      message: `A plugin folder can have up to ${PLUGIN_UPLOAD_MAX_FILES} files.`,
-    }),
-    Schema.makeFilter(
-      (files) =>
-        files.reduce((total, file) => total + file.contents.byteLength, 0) <=
-        PLUGIN_UPLOAD_MAX_BYTES,
-      { message: `A plugin folder can have up to ${PLUGIN_UPLOAD_MAX_BYTES / 1024 / 1024} MB.` },
-    ),
+/** The files of an uploaded plugin folder, which the server checks before it installs them. */
+export const PluginUploadFiles = Schema.Array(PluginUploadFile).check(
+  Schema.isMaxLength(PLUGIN_UPLOAD_MAX_FILES, {
+    message: `A plugin folder can have up to ${PLUGIN_UPLOAD_MAX_FILES} files.`,
+  }),
+  Schema.makeFilter(
+    (files) =>
+      files.reduce((total, file) => total + file.contents.byteLength, 0) <= PLUGIN_UPLOAD_MAX_BYTES,
+    { message: `A plugin folder can have up to ${PLUGIN_UPLOAD_MAX_BYTES / 1024 / 1024} MB.` },
   ),
+);
+
+export const PluginCreateUploadUrlInput = Schema.Struct({});
+export type PluginCreateUploadUrlInput = typeof PluginCreateUploadUrlInput.Type;
+
+/**
+ * A signed URL, relative to the environment, that takes one plugin folder as multipart form data:
+ * a `file` part per file, named with its path through `encodeURIComponent`. It answers with a
+ * `PluginMutationResult`, or a status and the reason as text.
+ */
+export const PluginCreateUploadUrlResult = Schema.Struct({
+  relativeUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+  expiresAt: Schema.Number,
 });
-export type PluginInstallFilesInput = typeof PluginInstallFilesInput.Type;
+export type PluginCreateUploadUrlResult = typeof PluginCreateUploadUrlResult.Type;
 
 export const PluginRescanInput = Schema.Struct({});
 export type PluginRescanInput = typeof PluginRescanInput.Type;
@@ -263,7 +274,7 @@ export type PluginUninstallInput = typeof PluginUninstallInput.Type;
 export const PluginUninstallResult = Schema.Struct({ pluginId: PluginId });
 export type PluginUninstallResult = typeof PluginUninstallResult.Type;
 
-/** Result of `plugins.setEnabled`, `plugins.reload` and `plugins.install`. */
+/** Result of `plugins.setEnabled`, `plugins.reload`, `plugins.install` and a folder upload. */
 export const PluginMutationResult = Schema.Struct({
   plugin: PluginState,
 });

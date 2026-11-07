@@ -88,7 +88,7 @@ function PluginsPage({
   const canInstall = useAtomValue(
     main === undefined
       ? NO_INSTALL_PERMISSION
-      : pluginEnvironment.installPluginFiles.permissionAtom(main.environmentId),
+      : pluginEnvironment.createPluginUploadUrl.permissionAtom(main.environmentId),
   );
   const isFileDrag = (event: DragEvent) => event.dataTransfer.types.includes("Files");
   return (

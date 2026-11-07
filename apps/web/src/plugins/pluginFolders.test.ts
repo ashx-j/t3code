@@ -53,7 +53,7 @@ describe("plugin folders", () => {
       "themes/b.json",
       "themes/c.json",
     ]);
-    expect(new TextDecoder().decode(files[1]?.contents)).toBe("draw()");
+    expect(await files[1]?.file.text()).toBe("draw()");
   });
 
   it("names a picked folder's files from inside it", async () => {

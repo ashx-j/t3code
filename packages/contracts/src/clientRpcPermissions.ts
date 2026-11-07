@@ -62,7 +62,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.pluginsSetAgentTools]: AuthSettingsWriteScope,
   [WS_METHODS.pluginsReload]: AuthSettingsWriteScope,
   [WS_METHODS.pluginsInstall]: AuthSettingsWriteScope,
-  [WS_METHODS.pluginsInstallFiles]: AuthSettingsWriteScope,
+  [WS_METHODS.pluginsCreateUploadUrl]: AuthSettingsWriteScope,
   [WS_METHODS.pluginsRescan]: AuthSettingsWriteScope,
   [WS_METHODS.pluginsUninstall]: AuthSettingsWriteScope,
   [WS_METHODS.pluginsSettingsUpdate]: AuthSettingsWriteScope,

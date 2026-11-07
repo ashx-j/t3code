@@ -376,8 +376,9 @@ import {
   ScheduledTaskMutationResult,
 } from "./scheduledTask.ts";
 import {
+  PluginCreateUploadUrlInput,
+  PluginCreateUploadUrlResult,
   PluginError,
-  PluginInstallFilesInput,
   PluginInstallInput,
   PluginInvokeInput,
   PluginInvokeResult,
@@ -578,7 +579,7 @@ export const WS_METHODS = {
   pluginsSetAgentTools: "plugins.setAgentTools",
   pluginsReload: "plugins.reload",
   pluginsInstall: "plugins.install",
-  pluginsInstallFiles: "plugins.installFiles",
+  pluginsCreateUploadUrl: "plugins.createUploadUrl",
   pluginsRescan: "plugins.rescan",
   pluginsUninstall: "plugins.uninstall",
   pluginsReportWebFailure: "plugins.reportWebFailure",
@@ -2029,10 +2030,10 @@ const WsPluginsInstallRpc = Rpc.make(WS_METHODS.pluginsInstall, {
   error: PluginRpcError,
 });
 
-/** Installs a plugin folder dropped into a client, sent as its files. */
-const WsPluginsInstallFilesRpc = Rpc.make(WS_METHODS.pluginsInstallFiles, {
-  payload: PluginInstallFilesInput,
-  success: PluginMutationResult,
+/** Signs the URL a client uploads a dropped plugin folder to, over HTTP. */
+const WsPluginsCreateUploadUrlRpc = Rpc.make(WS_METHODS.pluginsCreateUploadUrl, {
+  payload: PluginCreateUploadUrlInput,
+  success: PluginCreateUploadUrlResult,
   error: PluginRpcError,
 });
 
@@ -2172,7 +2173,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPluginsSetAgentToolsRpc,
   WsPluginsReloadRpc,
   WsPluginsInstallRpc,
-  WsPluginsInstallFilesRpc,
+  WsPluginsCreateUploadUrlRpc,
   WsPluginsRescanRpc,
   WsPluginsUninstallRpc,
   WsPluginsReportWebFailureRpc,

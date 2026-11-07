@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { PLUGIN_UPLOAD_MAX_BYTES, PluginInstallFilesInput, PluginManifest } from "./plugins.ts";
+import { PLUGIN_UPLOAD_MAX_BYTES, PluginManifest, PluginUploadFiles } from "./plugins.ts";
 
 const decodeManifest = Schema.decodeUnknownSync(PluginManifest);
 
@@ -47,18 +47,17 @@ describe("PluginManifest", () => {
   });
 });
 
-const decodeFileTypes = Schema.decodeUnknownSync(Schema.toType(PluginInstallFilesInput));
+describe("PluginUploadFiles", () => {
+  const decodeFiles = Schema.decodeUnknownSync(PluginUploadFiles);
 
-describe("PluginInstallFilesInput", () => {
-  const decodeFiles = Schema.decodeUnknownSync(PluginInstallFilesInput);
-
-  it("decodes file contents from base64 and refuses paths outside the folder", () => {
-    expect(decodeFiles({ files: [{ path: "dist/web.js", contents: "aGk=" }] }).files[0]).toEqual({
+  it("refuses paths outside the folder", () => {
+    const contents = new TextEncoder().encode("hi");
+    expect(decodeFiles([{ path: "dist/web.js", contents }])[0]).toEqual({
       path: "dist/web.js",
-      contents: new TextEncoder().encode("hi"),
+      contents,
     });
     for (const path of ["../outside.js", "/etc/passwd", "C:/plugin/web.js", "dist\\web.js"]) {
-      expect(() => decodeFiles({ files: [{ path, contents: "" }] })).toThrow();
+      expect(() => decodeFiles([{ path, contents }])).toThrow();
     }
   });
 
@@ -68,6 +67,6 @@ describe("PluginInstallFilesInput", () => {
       { path: "a.bin", contents: half },
       { path: "b.bin", contents: half },
     ];
-    expect(() => decodeFileTypes({ files })).toThrow("A plugin folder can have up to 25 MB.");
+    expect(() => decodeFiles(files)).toThrow("A plugin folder can have up to 25 MB.");
   });
 });

@@ -104,7 +104,7 @@ describe("command permissions", () => {
     WS_METHODS.pluginsSetAgentTools,
     WS_METHODS.pluginsReload,
     WS_METHODS.pluginsInstall,
-    WS_METHODS.pluginsInstallFiles,
+    WS_METHODS.pluginsCreateUploadUrl,
     WS_METHODS.pluginsRescan,
     WS_METHODS.pluginsUninstall,
     WS_METHODS.pluginsSettingsUpdate,
