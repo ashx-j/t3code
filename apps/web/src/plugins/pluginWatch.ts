@@ -8,17 +8,28 @@ import { pluginEnvironment } from "../state/plugins";
 export const isLoadableWebPlugin = (plugin: PluginState) =>
   plugin.hasWeb && plugin.enabled && plugin.status === "active";
 
+/** Whether this plugin has stylesheets for the page now. */
+export const hasLoadableStyles = (plugin: PluginState) =>
+  plugin.styles !== undefined &&
+  plugin.styles.length > 0 &&
+  plugin.enabled &&
+  plugin.status === "active";
+
 /**
- * Calls `onFound` once the environment has an active plugin with a web part; returns the function
- * that stops watching. The runtime follows the same atom, so it opens no second stream.
+ * Calls `onFound` once the environment has a plugin that `wanted` accepts; returns the function
+ * that stops watching. The runtimes follow the same atom, so they open no second stream.
  */
-export function watchForWebPlugins(environmentId: EnvironmentId, onFound: () => void): () => void {
+export function watchForPlugins(
+  environmentId: EnvironmentId,
+  wanted: (plugin: PluginState) => boolean,
+  onFound: () => void,
+): () => void {
   let found = false;
   return appAtomRegistry.subscribe(
     pluginEnvironment.pluginsLive({ environmentId, input: {} }),
     (result) => {
       if (found || !AsyncResult.isSuccess(result)) return;
-      if (!result.value.plugins.some(isLoadableWebPlugin)) return;
+      if (!result.value.plugins.some(wanted)) return;
       found = true;
       onFound();
     },

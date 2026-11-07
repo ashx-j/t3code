@@ -352,10 +352,11 @@ export const checkPluginFolder = Effect.fn("PluginCheck.check")(function* (
       );
     }
   }
-  // CSS beside the manifest and the web bundle, which a plugin passes to injectStyles.
+  // CSS beside the manifest and the web bundle, which a plugin passes to injectStyles, and the
+  // stylesheets T3 loads from `styles`.
   const webFolder = web?.slice(0, Math.max(0, web.lastIndexOf("/"))) ?? "";
   const cssFiles: Array<string> = [];
-  for (const within of new Set(["", webFolder])) {
+  for (const within of new Set(["", webFolder, "styles"])) {
     const entries = yield* fs
       .readDirectory(path.join(folder, within))
       .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
@@ -374,8 +375,8 @@ export const checkPluginFolder = Effect.fn("PluginCheck.check")(function* (
       code: "css-not-loaded",
       severity: "warning",
       file: emittedCss[0] ?? null,
-      problem: `${emittedCss.join(", ")} ${emittedCss.length === 1 ? "sits" : "sit"} beside the web bundle, and T3 never loads CSS files.`,
-      fix: 'Import the stylesheet with `import css from "./web.css?inline"` and pass it to `api.injectStyles(css)`.',
+      problem: `${emittedCss.join(", ")} ${emittedCss.length === 1 ? "sits" : "sit"} beside the web bundle, and T3 loads CSS files only from the styles folder.`,
+      fix: 'Import the stylesheet with `import css from "./web.css?inline"` and pass it to `api.injectStyles(css)`, or keep plain CSS in the styles folder.',
     });
   }
   for (const file of cssFiles.slice(0, MAX_CSS_FILES)) {

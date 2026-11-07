@@ -7,7 +7,6 @@ import {
   useAtomValue,
 } from "@effect/atom-react";
 import { T3_SLASH_COMMAND_NAMES } from "@t3tools/shared/slashCommands";
-import type { PreparedHttpAuthorization } from "@t3tools/client-runtime/connection";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { ThreadId, type EnvironmentId, type PluginState } from "@t3tools/contracts";
@@ -44,7 +43,6 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { registerCommands, type CommandHandlers } from "../shortcuts/dispatcher";
 import { isDesktopPluginCommand, registerDesktopPluginCommand } from "./desktopPluginCommands";
 import { pluginEnvironment } from "../state/plugins";
-import { readPreparedConnection } from "../state/session";
 import {
   registerPluginBanner,
   registerPluginCodeBlock,
@@ -68,6 +66,7 @@ import {
   type PluginActionPlace,
   type PluginOwner,
 } from "./pluginRegistry";
+import { fetchPluginFile, withDownloadRetries } from "./pluginFiles";
 import { pluginUiAtom } from "./pluginUi";
 import { pluginUi } from "./pluginUiParts";
 import { isLoadableWebPlugin } from "./pluginWatch";
@@ -154,62 +153,6 @@ const errorText = (error: unknown) =>
       ? error
       : "The plugin's web bundle failed."
   ).slice(0, 500);
-
-// Bearer and cookie sessions can fetch plugin files directly. A DPoP proof needs the relay
-// signer, which only the client runtime holds.
-async function pluginFileRequestInit(
-  authorization: PreparedHttpAuthorization | null,
-  url: URL,
-): Promise<RequestInit> {
-  if (authorization === null) return { credentials: "include" };
-  if (authorization._tag === "Bearer") {
-    return { headers: { authorization: `Bearer ${authorization.token}` } };
-  }
-  const headers = await runAtomCommand(
-    appAtomRegistry,
-    pluginEnvironment.pluginFileHeaders,
-    { authorization, url: url.href },
-    { reportFailure: false },
-  );
-  if (headers._tag !== "Success")
-    throw new Error("Could not authorize the request over T3 Connect.");
-  return { headers: { ...headers.value } };
-}
-
-class PluginFileRequestError extends Error {
-  constructor(
-    readonly status: number,
-    filePath: string,
-  ) {
-    super(`The request for ${filePath} failed with ${status}.`);
-  }
-}
-
-// A dropped connection or a gateway error, such as one bad gateway over T3 Connect, can pass.
-const isPassingDownloadFailure = (error: unknown) =>
-  error instanceof TypeError ||
-  (error instanceof PluginFileRequestError && [502, 503, 504].includes(error.status));
-const DOWNLOAD_RETRY_DELAYS_MS = [1_000, 5_000, 30_000];
-
-// The bundle's URL names its contents, which the server lets browsers cache for good.
-async function fetchPluginFile(
-  environmentId: EnvironmentId,
-  plugin: PluginState,
-  filePath: string,
-  revision = plugin.version ?? "0",
-): Promise<Response> {
-  const connection = readPreparedConnection(environmentId);
-  if (connection === null) throw new Error("The environment is not connected.");
-  const authorization = connection.httpAuthorization;
-  const url = new URL(
-    `/api/plugins/${encodeURIComponent(plugin.id)}${filePath}`,
-    connection.httpBaseUrl,
-  );
-  url.searchParams.set("v", revision);
-  const response = await fetch(url, await pluginFileRequestInit(authorization, url));
-  if (!response.ok) throw new PluginFileRequestError(response.status, filePath);
-  return response;
-}
 
 // A bare import() cannot send credentials, so the bundle runs from an object URL.
 async function importBundle(code: string) {
@@ -756,17 +699,7 @@ export function startPluginLoader(
         "Loading the web bundle",
       );
     try {
-      let bundle: string | undefined;
-      for (const delay of [...DOWNLOAD_RETRY_DELAYS_MS, undefined]) {
-        try {
-          bundle = await download();
-          break;
-        } catch (error) {
-          if (delay === undefined || !isPassingDownloadFailure(error)) throw error;
-          await new Promise((resume) => setTimeout(resume, delay));
-          if (entry.disposed) return;
-        }
-      }
+      const bundle = await withDownloadRetries(download, () => entry.disposed);
       if (bundle === undefined) return;
       downloaded = true;
       if (entry.disposed) return;

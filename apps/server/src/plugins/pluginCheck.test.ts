@@ -78,6 +78,7 @@ it.layer(NodeServices.layer)("checkPluginFolder", (it) => {
           "`;",
         ].join("\n"),
         "dist/extra.css": 'div[class*="titlebar"] { padding-right: env(titlebar-area-width); }',
+        "styles/look.css": ".lucide-send { opacity: 0.5; }",
       });
       const report = yield* checkPluginFolder(folder, SERVER_VERSION);
       assert.deepStrictEqual(
@@ -96,6 +97,7 @@ it.layer(NodeServices.layer)("checkPluginFolder", (it) => {
           ["css-not-loaded", "dist/extra.css"],
           ["class-attribute-selector", "dist/extra.css"],
           ["window-controls", "dist/extra.css"],
+          ["icon-class-selector", "styles/look.css"],
         ],
       );
       assert.include(

@@ -313,6 +313,7 @@ interface PluginRecord {
   readonly activation?: PluginActivation;
   readonly revision?: number;
   readonly webRevision?: string;
+  readonly styles?: PluginState["styles"];
 }
 
 const manifestOf = (plugin: DiscoveredPlugin): PluginManifest | undefined =>
@@ -391,6 +392,7 @@ const toState = (
     ...(record.failure === undefined ? {} : { failure: record.failure }),
     ...(record.revision === undefined ? {} : { revision: record.revision }),
     ...(record.webRevision === undefined ? {} : { webRevision: record.webRevision }),
+    ...(record.styles === undefined || record.styles.length === 0 ? {} : { styles: record.styles }),
     ...(installSource === undefined || record.plugin.source !== "installed"
       ? {}
       : {
@@ -743,52 +745,81 @@ const make = Effect.gen(function* () {
     };
   });
 
+  const registerFileRoute = (
+    plugin: DiscoveredPlugin,
+    routePath: string,
+    read: (requestPath: string) => string | undefined,
+    within: string,
+    revisioned = false,
+  ) =>
+    services.httpRoutes
+      .register({
+        pluginId: plugin.id,
+        method: "GET",
+        path: routePath,
+        handler: (request) =>
+          Effect.runPromiseWith(context)(
+            readWebFile(within, read(request.path), revisioned ? request.query.v : undefined),
+          ),
+      })
+      .pipe(Effect.orDie);
+
+  // Serves the plugin's `name` folder below `/<name>/` and resolves with its real path, if it has
+  // one. A symlinked folder outside the plugin would serve whatever it points at.
+  const serveFolder = Effect.fn("PluginHost.serveFolder")(function* (
+    plugin: DiscoveredPlugin,
+    name: "assets" | "styles",
+    revisioned: boolean,
+  ) {
+    const dir = yield* fs.realPath(path.join(plugin.rootDir, name)).pipe(Effect.option);
+    if (Option.isNone(dir) || !dir.value.startsWith(`${plugin.rootDir}${path.sep}`)) return;
+    yield* registerFileRoute(
+      plugin,
+      `/${name}/*`,
+      (requestPath) => {
+        try {
+          return path.join(dir.value, decodeURIComponent(requestPath.slice(`/${name}/`.length)));
+        } catch {
+          // A malformed escape names no file.
+          return undefined;
+        }
+      },
+      dir.value,
+      revisioned,
+    );
+    return dir.value;
+  });
+
   const serveWebFiles = Effect.fn("PluginHost.serveWebFiles")(function* (
     plugin: DiscoveredPlugin,
     entry: string,
   ) {
-    const register = (
-      routePath: string,
-      read: (requestPath: string) => string | undefined,
-      within: string,
-      revisioned = false,
-    ) =>
-      services.httpRoutes
-        .register({
-          pluginId: plugin.id,
-          method: "GET",
-          path: routePath,
-          handler: (request) =>
-            Effect.runPromiseWith(context)(
-              readWebFile(within, read(request.path), revisioned ? request.query.v : undefined),
-            ),
-        })
-        .pipe(Effect.orDie);
     const bundle = path.join(plugin.rootDir, entry);
-    yield* register("/web.js", () => bundle, plugin.rootDir, true);
-    const assetsDir = yield* fs.realPath(path.join(plugin.rootDir, "assets")).pipe(Effect.option);
-    // A symlinked `assets` folder outside the plugin would serve whatever it points at.
-    if (Option.isSome(assetsDir) && assetsDir.value.startsWith(`${plugin.rootDir}${path.sep}`)) {
-      yield* register(
-        "/assets/*",
-        (requestPath) => {
-          try {
-            return path.join(
-              assetsDir.value,
-              decodeURIComponent(requestPath.slice("/assets/".length)),
-            );
-          } catch {
-            // A malformed escape names no file.
-            return undefined;
-          }
-        },
-        assetsDir.value,
-      );
-    }
+    yield* registerFileRoute(plugin, "/web.js", () => bundle, plugin.rootDir, true);
+    yield* serveFolder(plugin, "assets", false);
     // The bundle's contents now, for its URL; one that cannot be read gets no revision.
     return yield* fs
       .readFile(bundle)
       .pipe(Effect.map(contentRevision), Effect.option, Effect.map(Option.getOrUndefined));
+  });
+
+  // The `.css` files directly in `styles/`, in name order, each with the revision for its URL.
+  const serveStyles = Effect.fn("PluginHost.serveStyles")(function* (plugin: DiscoveredPlugin) {
+    const dir = yield* serveFolder(plugin, "styles", true);
+    if (dir === undefined) return [];
+    const names = yield* fs
+      .readDirectory(dir)
+      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+    const styles = yield* Effect.forEach(
+      names.filter((name) => name.endsWith(".css")).toSorted(),
+      (file) =>
+        fs.readFile(path.join(dir, file)).pipe(
+          Effect.map((contents) => [{ file, revision: contentRevision(contents) }]),
+          // Such as a folder named like a stylesheet.
+          Effect.orElseSucceed(() => []),
+        ),
+    );
+    return styles.flat();
   });
 
   // Read when plugins change, so provider lists name each skill without reading files.
@@ -876,6 +907,7 @@ const make = Effect.gen(function* () {
     const started = {
       status: "active" as const,
       ...(webRevision === undefined ? {} : { webRevision }),
+      styles: yield* serveStyles(plugin),
     };
     if (manifest.server === undefined) {
       yield* prepareAgentFolder(plugin, manifest.name);
@@ -953,7 +985,7 @@ const make = Effect.gen(function* () {
       return next;
     });
     yield* removeAgentFolder(pluginId);
-    // Web-only plugins have no activation but still serve their bundle.
+    // Plugins without server code have no activation but may still serve files.
     yield* services.httpRoutes.unregisterPlugin(pluginId);
     const record = yield* findRecord(pluginId);
     if (record?.activation === undefined) return;

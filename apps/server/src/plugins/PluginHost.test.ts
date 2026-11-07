@@ -1448,6 +1448,51 @@ module.exports = { activate(api) {
     }).pipe(Effect.provide(layerConfig())),
   );
 
+  it.effect("serves the stylesheets of a plugin with no code while it is active", () =>
+    Effect.gen(function* () {
+      const stylesPlugin = PluginId.make("styles-plugin");
+      yield* writePluginsConfig({
+        enabled: { [stylesPlugin]: true },
+        devPaths: [`${fixturesDir}styles-plugin`],
+      });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const routes = yield* PluginHttpRoutes.PluginHttpRoutes;
+        yield* waitForStatuses(host, { [stylesPlugin]: "active" });
+        // In name order, which is the order clients apply them in.
+        const styles = stateOf(yield* host.list, stylesPlugin)?.styles ?? [];
+        assert.deepStrictEqual(
+          styles.map(({ file }) => file),
+          ["base.css", "compact.css"],
+        );
+        const request = {
+          method: "GET",
+          path: "/styles/base.css",
+          query: { v: styles[0]?.revision ?? "" },
+          headers: {},
+          body: "",
+        };
+        const response = yield* routes.handle({ pluginId: stylesPlugin, request });
+        assert.strictEqual(response.status, 200);
+        assert.strictEqual(response.headers["content-type"], "text/css; charset=utf-8");
+        assert.strictEqual(
+          response.headers["cache-control"],
+          "private, max-age=31536000, immutable",
+        );
+        const outside = yield* routes.handle({
+          pluginId: stylesPlugin,
+          request: { ...request, path: "/styles/..%2Ft3-plugin.json" },
+        });
+        assert.strictEqual(outside.status, 404);
+
+        yield* host.setEnabled(stylesPlugin, false);
+        assert.isUndefined(stateOf(yield* host.list, stylesPlugin)?.styles);
+        const gone = yield* routes.handle({ pluginId: stylesPlugin, request }).pipe(Effect.flip);
+        assert.strictEqual(gone._tag, "PluginHttpRouteNotFoundError");
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
   it.effect(
     "installs from a folder, keeps the old version when a reinstall fails, and uninstalls",
     () =>

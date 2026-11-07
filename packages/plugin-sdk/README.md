@@ -67,6 +67,12 @@ the `.tgz` file it writes.
   otherwise swaps for a label; the send button stays plain. `"radius"`, such as `"0.625rem"`, sets
   T3's corner radius, and `success`, `successForeground`, `info` and `infoForeground` in a theme's
   `colors` or `variants` set its status colors.
+- A `styles/` folder of `.css` files is added to the page while the plugin is active, in name
+  order, after T3's own styles and the theme. A manifest and `styles/` are a whole plugin, with
+  no `server` or `web`, as in the `styles-plugin` fixture. Like a web half, styles load only from
+  the main environment or the one picked in **Load plugin UI from** in Settings → Plugins.
+  **Reload** picks up edits. The page gets each file's text, so a `url()` can't reach the
+  plugin's folder; use a `data:` URL for an image.
 - A `skills/` folder of `<name>/SKILL.md` skills reaches Claude and Codex agents while the plugin
   is active, and the composer's `$` menu lists them for those agents with the plugin's name. Claude
   invokes one as `<plugin id>:<folder>`, Codex by the `name` in its frontmatter. Nothing else in
@@ -226,9 +232,14 @@ parts of your design to survive that. Build each part on the most stable thing T
 - **Style with theme tokens.** Colors, radii and fonts come from the theme. Set them in a theme
   file in `themes/`, and use `var(--border)`, `var(--radius)` and the other tokens in your own
   components instead of hex or rgb values.
+- **Scope CSS to a region.** T3 keeps the `data-t3-region` names of the window's main areas
+  across releases: `sidebar`, `main` (everything beside the sidebar), `timeline`, `composer`,
+  `thread-details`, `right-panel`, `terminal`, `home`, `pull-requests`, `settings`,
+  `settings-nav`, `plugin-page` and `command-palette`. Start a rule with one, such as
+  `[data-t3-region="composer"]`, and style it with theme tokens.
 - **Reach into T3's markup only as a last resort.** Selectors on `aria-label`, `data-slot`, class
   names such as `[class~="border-border/65"]` or `.lucide-shield-off`, and `:has()` break when T3
-  renames or moves things. Use one only when no theme value, piece or part does the job. Keep each
+  renames or moves things. Use one only when no theme value, region, piece or part does the job. Keep each
   rule small and in one commented place, prefer one that falls back to T3's own look when the
   markup changes, and list it in the plugin's README with the seam that would replace it.
 - **Leave T3's frame to T3.** The title bar row, the room for the window buttons on Windows and

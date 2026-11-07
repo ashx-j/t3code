@@ -135,6 +135,13 @@ export const PluginState = Schema.Struct({
    * server then lets browsers cache for good.
    */
   webRevision: Schema.optionalKey(Schema.String),
+  /**
+   * The `.css` files in its `styles` folder while it runs, in the order clients apply them. Each
+   * `revision` names the file's contents and is sent as its URL's `v`, like `webRevision`.
+   */
+  styles: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ file: Schema.String, revision: Schema.String })),
+  ),
   /** The folder a `dev` plugin loads from, where an agent or plugins.json linked it. */
   linkedFolder: Schema.optionalKey(Schema.String),
   /** Where it was installed from, when installed through `plugins.install`; updates reuse it. */

@@ -15,6 +15,7 @@ if (typeof window !== "undefined") {
 // Module level: React Compiler cannot compile a component that calls import() itself.
 const loadPluginWatch = () => import("./pluginWatch");
 const loadPluginLoader = () => import("./pluginLoader");
+const loadPluginStyles = () => import("./pluginStyles");
 
 const whenIdle = (run: () => void) => {
   if (typeof window.requestIdleCallback === "function") {
@@ -26,9 +27,10 @@ const whenIdle = (run: () => void) => {
 };
 
 /**
- * Once the app is idle, follows the primary environment's plugins if it advertises them, and
- * downloads the web plugin runtime only when an active plugin has a web part. Without a primary
- * environment it does the same for the one the user picked in Settings, and nothing until then.
+ * Once the app is idle, follows the primary environment's plugins if it advertises them. It
+ * downloads the web plugin runtime only when an active plugin has a web part, and the small
+ * stylesheet runtime only when one has a `styles` folder. Without a primary environment it does
+ * the same for the one the user picked in Settings, and nothing until then.
  */
 export function PluginLoaderStarter() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -47,28 +49,34 @@ export function PluginLoaderStarter() {
   useEffect(() => {
     if (!supported || environmentId === null) return;
     let cancelled = false;
-    let stopWatching: (() => void) | undefined;
-    let stopLoader: (() => void) | undefined;
+    const stops: Array<() => void> = [];
     const cancelIdle = whenIdle(() => {
       setFollowed(environmentId);
-      void loadPluginWatch().then(({ watchForWebPlugins }) => {
+      void loadPluginWatch().then(({ watchForPlugins, isLoadableWebPlugin, hasLoadableStyles }) => {
         if (cancelled) return;
-        stopWatching = watchForWebPlugins(environmentId, () => {
-          void loadPluginLoader().then((module) => {
-            if (cancelled) return;
-            stopLoader = module.startPluginLoader(environmentId, (path) =>
-              router.history.push(path),
-            );
-          });
-        });
+        stops.push(
+          watchForPlugins(environmentId, isLoadableWebPlugin, () => {
+            void loadPluginLoader().then((module) => {
+              if (cancelled) return;
+              stops.push(
+                module.startPluginLoader(environmentId, (path) => router.history.push(path)),
+              );
+            });
+          }),
+          watchForPlugins(environmentId, hasLoadableStyles, () => {
+            void loadPluginStyles().then((module) => {
+              if (cancelled) return;
+              stops.push(module.startPluginStyles(environmentId));
+            });
+          }),
+        );
       });
     });
     return () => {
       cancelled = true;
       cancelIdle();
       setFollowed(null);
-      stopWatching?.();
-      stopLoader?.();
+      for (const stop of stops) stop();
     };
   }, [supported, environmentId, router, setFollowed]);
   return null;
