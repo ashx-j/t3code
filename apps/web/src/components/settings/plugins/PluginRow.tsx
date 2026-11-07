@@ -10,7 +10,11 @@ import {
 } from "lucide-react";
 import { useId, useState } from "react";
 
-import { pluginContributionKey, pluginWebFailureAtom } from "../../../plugins/pluginRegistry";
+import {
+  pluginContributionKey,
+  pluginSettingsPanelAtom,
+  pluginWebFailureAtom,
+} from "../../../plugins/pluginRegistry";
 import { pluginEnvironment } from "../../../state/plugins";
 import { useAtomCommand } from "../../../state/use-atom-command";
 import { Button } from "../../ui/button";
@@ -21,7 +25,7 @@ import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "../../ui/po
 import { Switch } from "../../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
 import { SettingsRow } from "../settingsLayout";
-import { PluginSettingsEditor } from "./PluginSettingsRows";
+import { PluginSettingsRows } from "./PluginSettingsRows";
 import type { PluginCopy } from "./pluginTargets";
 
 const FAILURE_STAGES = {
@@ -34,12 +38,14 @@ const FAILURE_STAGES = {
 
 /**
  * Where a plugin that changes the app runs, as the installer decides: with no server code it goes
- * only to the environment plugin styles load from, named by `source`.
+ * only to the environment plugin UI loads from, named by `source`.
  */
 const webReach = (plugin: PluginState, source: string) =>
   !plugin.hasServer
     ? `Changes only this app. It runs from ${source} and isn't installed on other servers.`
-    : null;
+    : plugin.hasWeb
+      ? `Its web part runs in this app from ${source} only. Other servers get just its server side.`
+      : null;
 
 export function PluginRow({
   environmentId,
@@ -58,8 +64,8 @@ export function PluginRow({
   /** Problems name their environment, because several are in view. */
   readonly labelled: boolean;
   /**
-   * How the page names the environment plugin styles load from, set while another server is in
-   * view so the row says where app changes run.
+   * How the page names the environment plugin UI loads from, set while another server is in view
+   * so the row says where app changes run.
    */
   readonly uiSourceName: string | null;
 }) {
@@ -70,11 +76,13 @@ export function PluginRow({
   const uninstall = useAtomCommand(pluginEnvironment.uninstallPlugin, "plugin removal");
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  // Plugin styles load from one environment, which comes first, so their failure does too.
-  const webFailure = useAtomValue(
-    pluginWebFailureAtom(pluginContributionKey(environmentId, plugin.id)),
-  );
-  const hasSettings = pluginSettingsForm(plugin.settingsSchema).kind !== "none";
+  // Plugin UI loads from one environment, which comes first, so its settings panel and web failure
+  // do too.
+  const contributionKey = pluginContributionKey(environmentId, plugin.id);
+  const customSettings = useAtomValue(pluginSettingsPanelAtom(contributionKey));
+  const webFailure = useAtomValue(pluginWebFailureAtom(contributionKey));
+  const hasGeneratedForm = pluginSettingsForm(plugin.settingsSchema).kind !== "none";
+  const hasSettings = customSettings !== undefined || hasGeneratedForm;
   const runOn = async (
     on: ReadonlyArray<PluginCopy>,
     action: (copy: PluginCopy) => Promise<unknown>,
@@ -100,7 +108,7 @@ export function PluginRow({
         ? []
         : [`${labelled ? `${label}: ` : ""}Failed while running: ${serverFailure}`],
     ),
-    ...(webFailure === undefined ? [] : [`Styles failed: ${webFailure}`]),
+    ...(webFailure === undefined ? [] : [`Web part failed: ${webFailure}`]),
   ];
   const reach = uiSourceName === null ? null : webReach(plugin, uiSourceName);
   const row = (
@@ -240,7 +248,13 @@ export function PluginRow({
       <Collapsible open={settingsOpen} onOpenChange={setSettingsOpen} className="contents">
         <CollapsiblePanel>
           <div className="border-t border-border/50 [&>*+*]:border-t [&>*+*]:border-border/50">
-            <PluginSettingsEditor first={first} copies={copies} labelled={labelled} />
+            <PluginSettingsRows
+              first={first}
+              copies={copies}
+              labelled={labelled}
+              customSettings={customSettings}
+              hasGeneratedForm={hasGeneratedForm}
+            />
           </div>
         </CollapsiblePanel>
       </Collapsible>

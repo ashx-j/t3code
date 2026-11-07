@@ -4,6 +4,10 @@ import { AsyncResult } from "effect/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { pluginEnvironment } from "../state/plugins";
 
+/** Whether the web runtime should run this plugin's web part. */
+export const isLoadableWebPlugin = (plugin: PluginState) =>
+  plugin.hasWeb && plugin.enabled && plugin.status === "active";
+
 /** Whether this plugin has stylesheets for the page now. */
 export const hasLoadableStyles = (plugin: PluginState) =>
   plugin.styles !== undefined &&
@@ -13,7 +17,7 @@ export const hasLoadableStyles = (plugin: PluginState) =>
 
 /**
  * Calls `onFound` once the environment has a plugin that `wanted` accepts; returns the function
- * that stops watching. The styles runtime follows the same atom, so it opens no second stream.
+ * that stops watching. The runtimes follow the same atom, so they open no second stream.
  */
 export function watchForPlugins(
   environmentId: EnvironmentId,

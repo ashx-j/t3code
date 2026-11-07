@@ -6,9 +6,8 @@ export interface JsonObject {
 
 /**
  * A plugin's server methods and channels, as in `{ methods: { add: { input: { text: string };
- * output: string } }; channels: {} }`. Pass it to `definePlugin` so the server half checks its
- * handlers and publishes. Use `input: undefined` for no input, and `type`, not `interface`, for
- * values.
+ * output: string } }; channels: {} }`. Pass it to `definePlugin` and `defineWebPlugin` so both halves
+ * check their calls. Use `input: undefined` for no input, and `type`, not `interface`, for values.
  */
 export interface PluginRpcMap {
   readonly methods: {

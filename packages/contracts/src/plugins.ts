@@ -57,6 +57,7 @@ export const PluginManifest = Schema.Struct({
   description: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(500))),
   engines: Schema.Struct({ t3: PluginEngineRange }),
   server: Schema.optionalKey(PluginServerEntryPath),
+  web: Schema.optionalKey(PluginEntryPath),
   /**
    * JSON Schema for the plugin's settings. Top-level string fields with `format: "t3-secret"` are
    * write-only and kept in the secret store; `t3-secret` anywhere else is saved as plain text.
@@ -105,12 +106,16 @@ export const PluginState = Schema.Struct({
   enabled: Schema.Boolean,
   status: PluginStatus,
   failure: Schema.optionalKey(PluginFailure),
-  /** Changes each time the plugin starts. */
+  /** Changes each time the plugin starts, so clients can reload its web half after a restart. */
   revision: Schema.optionalKey(Schema.Number),
   /**
+   * Names the contents of its web bundle while it runs. Sent as the bundle URL's `v`, which the
+   * server then lets browsers cache for good.
+   */
+  webRevision: Schema.optionalKey(Schema.String),
+  /**
    * The `.css` files in its `styles` folder while it runs, in the order clients apply them. Each
-   * `revision` names the file's contents and is sent as its URL's `v`, which the server then lets
-   * browsers cache for good.
+   * `revision` names the file's contents and is sent as its URL's `v`, like `webRevision`.
    */
   styles: Schema.optionalKey(
     Schema.Array(Schema.Struct({ file: Schema.String, revision: Schema.String })),
@@ -118,6 +123,7 @@ export const PluginState = Schema.Struct({
   /** The folder a `dev` plugin loads from, as plugins.json lists it. */
   linkedFolder: Schema.optionalKey(Schema.String),
   hasServer: Schema.Boolean,
+  hasWeb: Schema.Boolean,
   /** Why its server code failed outside a call since it last started, such as in a timer. */
   serverFailure: Schema.optionalKey(Schema.String),
   settingsSchema: Schema.optionalKey(Schema.JsonObject),

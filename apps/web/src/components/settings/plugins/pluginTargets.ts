@@ -1,5 +1,7 @@
+import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, PluginState } from "@t3tools/contracts";
 
+import { chosenPluginUiEnvironmentAtom } from "../../../plugins/pluginFollow";
 import { type EnvironmentPresentation, usePrimaryEnvironmentId } from "../../../state/environments";
 
 export interface PluginTarget {
@@ -16,7 +18,18 @@ export const runsPlugins = (environment: EnvironmentPresentation) =>
   environment.connection.phase === "connected" &&
   environment.serverConfig?.environment.capabilities.plugins === true;
 
-/** The environment this browser loads plugin styles from, and its name in the page's text. */
+/**
+ * The environment this browser loads plugin UI from, and its name in the page's text: the main
+ * environment, else the one picked under "Load plugin UI from".
+ */
 export function usePluginUiSource() {
-  return { environmentId: usePrimaryEnvironmentId(), name: "your main environment" };
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const chosenEnvironmentId = useAtomValue(chosenPluginUiEnvironmentAtom);
+  return {
+    environmentId: primaryEnvironmentId ?? chosenEnvironmentId,
+    name:
+      primaryEnvironmentId === null
+        ? "the environment you load plugin UI from"
+        : "your main environment",
+  };
 }

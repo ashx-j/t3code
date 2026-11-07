@@ -144,28 +144,13 @@ const writeInstalledPlugin = Effect.fn(function* (id: string, serverSource: stri
   return rootDir;
 });
 
-const manifestJson = (
-  id: string,
-  options: { readonly name?: string; readonly version?: string; readonly engines?: string } = {},
-) =>
+const manifestJson = (id: string, options: { readonly version?: string } = {}) =>
   JSON.stringify({
     id,
-    name: options.name ?? id,
+    name: id,
     version: options.version ?? "0.1.0",
-    engines: { t3: options.engines ?? ">=0.1.0" },
+    engines: { t3: ">=0.1.0" },
   });
-
-/** A plugin with no code written for one test, under `<stateDir>/plugins/<id>`, with a stylesheet. */
-const writeStylesPlugin = Effect.fn(function* (
-  id: string,
-  options: Parameters<typeof manifestJson>[1] = {},
-) {
-  const { stateDir } = yield* ServerConfig.ServerConfig;
-  const rootDir = `${stateDir}/plugins/${id}`;
-  yield* writeFile(`${rootDir}/t3-plugin.json`, manifestJson(id, options));
-  yield* writeFile(`${rootDir}/styles/base.css`, `/* ${id} */`);
-  return rootDir;
-});
 
 const stateOf = (states: ReadonlyArray<PluginState>, id: string) =>
   states.find((state) => state.id === id);
@@ -455,6 +440,30 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         yield* writeFile(`${realDir}/server.cjs`, plugin("v2"));
         yield* host.reload(id);
         assert.strictEqual(yield* which, "v2");
+
+        // An `assets` folder linked out of the plugin is not served.
+        yield* writeFile(`${stateDir}/checkout/outside/secret.txt`, "Not the plugin's.");
+        yield* fs.symlink(`${stateDir}/checkout/outside`, `${realDir}/assets`);
+        yield* writeFile(`${realDir}/web.js`, "export default {};");
+        yield* writeFile(
+          `${realDir}/t3-plugin.json`,
+          JSON.stringify({
+            id: "linked",
+            name: "Linked",
+            version: "0.1.0",
+            engines: { t3: ">=0.1.0" },
+            server: "./server.cjs",
+            web: "./web.js",
+          }),
+        );
+        yield* host.reload(id);
+        const routes = yield* PluginHttpRoutes.PluginHttpRoutes;
+        const request = { method: "GET", path: "/web.js", query: {}, headers: {}, body: "" };
+        assert.strictEqual((yield* routes.handle({ pluginId: id, request })).status, 200);
+        const outside = yield* routes
+          .handle({ pluginId: id, request: { ...request, path: "/assets/secret.txt" } })
+          .pipe(Effect.flip);
+        assert.strictEqual(outside._tag, "PluginHttpRouteNotFoundError");
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
@@ -632,34 +641,62 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
     ),
   );
 
-  it.effect("publishes the theme folders of enabled plugins, and keeps them through a reload", () =>
+  it.effect("serves an active plugin's web files and themes, and stops when disabled", () =>
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const themed = yield* writeStylesPlugin("themed");
-      yield* writeStylesPlugin("future", { engines: ">=999.0.0" });
-      yield* writePluginsConfig({ enabled: { themed: true } });
+      const helloWeb = PluginId.make("hello-web");
+      yield* writePluginsConfig({
+        enabled: { [helloWeb]: true },
+        devPaths: [`${fixturesDir}hello-web`],
+      });
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
-        yield* waitForStatuses(host, { themed: "active", future: "disabled" });
-        // A disabled plugin offers no themes, and neither does one that fails to start.
-        const themes = `${yield* fs.realPath(themed)}/themes`;
-        assert.deepStrictEqual(publishedThemeDirectories.at(-1), [themes]);
-        assert.include(yield* host.setEnabled(PluginId.make("future"), true), {
-          status: "failed",
-        });
-        assert.deepStrictEqual(publishedThemeDirectories.at(-1), [themes]);
+        const routes = yield* PluginHttpRoutes.PluginHttpRoutes;
+        yield* waitForStatuses(host, { [helloWeb]: "active" });
+        const request = { method: "GET", path: "/web.js", query: {}, headers: {}, body: "" };
 
+        const response = yield* routes.handle({ pluginId: helloWeb, request });
+        assert.strictEqual(response.status, 200);
+        assert.strictEqual(response.headers["content-type"], "text/javascript; charset=utf-8");
+        // The bundle's revision names its contents, so browsers keep that URL's copy for good.
+        const webRevision = stateOf(yield* host.list, helloWeb)?.webRevision ?? "";
+        assert.match(webRevision, /^[0-9a-f]{16}$/);
+        const revised = yield* routes.handle({
+          pluginId: helloWeb,
+          request: { ...request, query: { v: webRevision } },
+        });
+        assert.strictEqual(
+          revised.headers["cache-control"],
+          "private, max-age=31536000, immutable",
+        );
+        assert.strictEqual(response.headers["cache-control"], "no-store");
+        const themes = `${fixturesDir}hello-web/themes`;
+        assert.deepStrictEqual(publishedThemeDirectories.at(-1), [themes]);
         // A reload publishes its folder again, so its files are read again, without dropping it
         // first: windows would flash T3's colors.
         publishedThemeDirectories.length = 0;
-        yield* host.reload(PluginId.make("themed"));
+        yield* host.reload(helloWeb);
         assert.isNotEmpty(publishedThemeDirectories);
         assert.deepStrictEqual(
           publishedThemeDirectories.filter((directories) => !directories.includes(themes)),
           [],
         );
+        const asset = yield* routes.handle({
+          pluginId: helloWeb,
+          request: { ...request, path: "/assets/hello.txt" },
+        });
+        assert.strictEqual(asset.headers["content-type"], "text/plain; charset=utf-8");
+        // A path out of the assets folder names no asset; it is not the plugin's failure.
+        for (const path of ["/assets/..%2Fserver.cjs", "/assets/%E0%A4%A", "/assets/"]) {
+          const missing = yield* routes.handle({
+            pluginId: helloWeb,
+            request: { ...request, path },
+          });
+          assert.strictEqual(missing.status, 404);
+        }
 
-        yield* host.setEnabled(PluginId.make("themed"), false);
+        yield* host.setEnabled(helloWeb, false);
+        const missing = yield* routes.handle({ pluginId: helloWeb, request }).pipe(Effect.flip);
+        assert.strictEqual(missing._tag, "PluginHttpRouteNotFoundError");
         assert.deepStrictEqual(publishedThemeDirectories.at(-1), []);
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),

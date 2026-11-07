@@ -43,14 +43,14 @@ const isPassingDownloadFailure = (error: unknown) =>
 const DOWNLOAD_RETRY_DELAYS_MS = [1_000, 5_000, 30_000];
 
 /**
- * Fetches a file the plugin's server serves with the connection's credentials. `revision` names
- * the file's contents, so the server lets browsers cache its URL for good.
+ * Fetches a file the plugin's server serves with the connection's credentials. A file whose URL
+ * names its contents, such as the web bundle, is one the server lets browsers cache for good.
  */
 export async function fetchPluginFile(
   environmentId: EnvironmentId,
   plugin: PluginState,
   filePath: string,
-  revision: string,
+  revision = plugin.version ?? "0",
 ): Promise<Response> {
   const connection = readPreparedConnection(environmentId);
   if (connection === null) throw new Error("The environment is not connected.");

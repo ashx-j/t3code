@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - plugins load through Node's CommonJS loader, which
-// the FileSystem service does not wrap, and stylesheet revisions are sha256 digests.
+// the FileSystem service does not wrap, and bundle revisions are sha256 digests.
 import * as NodeCrypto from "node:crypto";
 import * as NodeModule from "node:module";
 
@@ -69,7 +69,17 @@ import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
 
 const WEB_CONTENT_TYPES: Readonly<Record<string, string>> = {
+  ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
+  ".json": "application/json",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".woff2": "font/woff2",
+  ".txt": "text/plain; charset=utf-8",
 };
 // Plugin code that never settles must not keep a plugin loading, or Disable and Reload waiting,
 // forever. The cleanup deadline covers all of a plugin's cleanups together.
@@ -241,6 +251,7 @@ interface PluginRecord {
   readonly failure?: PluginFailure;
   readonly activation?: PluginActivation;
   readonly revision?: number;
+  readonly webRevision?: string;
   readonly styles?: PluginState["styles"];
 }
 
@@ -299,8 +310,10 @@ const toState = (
     status: record.status,
     ...(record.failure === undefined ? {} : { failure: record.failure }),
     ...(record.revision === undefined ? {} : { revision: record.revision }),
+    ...(record.webRevision === undefined ? {} : { webRevision: record.webRevision }),
     ...(record.styles === undefined || record.styles.length === 0 ? {} : { styles: record.styles }),
     hasServer: manifest?.server !== undefined,
+    hasWeb: manifest?.web !== undefined,
     ...(serverFailure === undefined ? {} : { serverFailure }),
   };
 };
@@ -555,7 +568,7 @@ const make = Effect.gen(function* () {
       catch: (cause) => new PluginCodeError({ cause }),
     });
 
-  // Files are served from the plugin's real folder; a path or symlink out of `within` is refused.
+  // Web files are served from the plugin's real folder; a path or symlink out of `within` is refused.
   // A request whose `revision` names the file's contents may be cached for good.
   const readWebFile = Effect.fn("PluginHost.readWebFile")(function* (
     within: string,
@@ -608,7 +621,7 @@ const make = Effect.gen(function* () {
   // one. A symlinked folder outside the plugin would serve whatever it points at.
   const serveFolder = Effect.fn("PluginHost.serveFolder")(function* (
     plugin: DiscoveredPlugin,
-    name: "styles",
+    name: "assets" | "styles",
     revisioned: boolean,
   ) {
     const dir = yield* fs.realPath(path.join(plugin.rootDir, name)).pipe(Effect.option);
@@ -628,6 +641,19 @@ const make = Effect.gen(function* () {
       revisioned,
     );
     return dir.value;
+  });
+
+  const serveWebFiles = Effect.fn("PluginHost.serveWebFiles")(function* (
+    plugin: DiscoveredPlugin,
+    entry: string,
+  ) {
+    const bundle = path.join(plugin.rootDir, entry);
+    yield* registerFileRoute(plugin, "/web.js", () => bundle, plugin.rootDir, true);
+    yield* serveFolder(plugin, "assets", false);
+    // The bundle's contents now, for its URL; one that cannot be read gets no revision.
+    return yield* fs
+      .readFile(bundle)
+      .pipe(Effect.map(contentRevision), Effect.option, Effect.map(Option.getOrUndefined));
   });
 
   // The `.css` files directly in `styles/`, in name order, each with the revision for its URL.
@@ -661,7 +687,13 @@ const make = Effect.gen(function* () {
         },
       });
     }
-    const started = { status: "active" as const, styles: yield* serveStyles(plugin) };
+    const webRevision =
+      manifest.web === undefined ? undefined : yield* serveWebFiles(plugin, manifest.web);
+    const started = {
+      status: "active" as const,
+      ...(webRevision === undefined ? {} : { webRevision }),
+      styles: yield* serveStyles(plugin),
+    };
     if (manifest.server === undefined) {
       return yield* setRecord(plugin.id, { ...started, revision: nextRevision() });
     }

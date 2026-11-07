@@ -6,7 +6,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
-import type { Atom, AtomRegistry } from "effect/reactivity";
+import { Atom, type AtomRegistry } from "effect/reactivity";
 
 import type { PreparedHttpAuthorization } from "../connection/model.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -21,7 +21,7 @@ import {
 
 const NO_PLUGINS: PluginListResult = { plugins: [] };
 
-/** Plugin management. Nothing here runs until something reads it. */
+/** Plugin management and calls into plugins. Nothing here runs until something reads it. */
 export function createPluginEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
@@ -85,7 +85,18 @@ export function createPluginEnvironmentAtoms<R, E>(
       label: "environment-data:plugins:update-settings",
       tag: WS_METHODS.pluginsSettingsUpdate,
     }),
-    // Plugin stylesheets are plain GETs; over T3 Connect each needs its own DPoP proof.
+    // Web plugins call their own server half through these.
+    invokePlugin: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:plugins:invoke",
+      tag: WS_METHODS.pluginsInvoke,
+    }),
+    pluginChannel: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:plugins:channel",
+      tag: WS_METHODS.pluginsSubscribe,
+      // A restart ends the server's stream, so the reloaded web half needs a new one, not this one.
+      idleTtlMs: 0,
+    }),
+    // Plugin bundles and assets are plain GETs; over T3 Connect each needs its own DPoP proof.
     pluginFileHeaders: createRuntimeCommand(runtime, {
       label: "environment-data:plugins:file-headers",
       execute: (input: {

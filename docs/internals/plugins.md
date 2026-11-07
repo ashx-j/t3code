@@ -8,10 +8,10 @@ A plugin is a folder with a `t3-plugin.json` manifest
 
 ## Trust and failure
 
-Plugins are trusted code the user chose to install. Server entries run in the server process, with
-no sandbox. Manifest `permissions` are shown on the plugin's row and not enforced, and
-`settings.get()` and `secrets.request` hand plugins secret values in plain text. Do not shape the
-API around a future sandbox.
+Plugins are trusted code the user chose to install. Server entries run in the server process and
+web bundles run as React code in the page, with no sandbox. Manifest `permissions` are shown on the
+plugin's row and not enforced, and `settings.get()` and `secrets.request` hand plugins secret
+values in plain text. Do not shape the API around a future sandbox.
 
 The host isolates failure instead. A plugin that throws or hangs while starting is marked failed,
 and a throw in a handler fails that call. Node exits on a rejection nobody handles, so every promise
@@ -67,12 +67,19 @@ hand. Nothing watches `plugins/`: the server reads it at startup, on reload and 
 Plugin state has its own stream, `plugins.subscribeStates`, because the server config stream would
 resend the whole config on every plugin change.
 
-Plugin styles load from the main environment, so Settings installs a plugin with no server code on
-that environment alone. Once the app is idle,
+Plugin UI loads from the main environment. With none, as on app.t3.codes or a desktop with its local
+environment off, it loads from the one picked under "Load plugin UI from", which starts as none and
+is kept in that browser. Settings installs a plugin with no server code on that environment alone.
+
+At startup the app loads only a small stub, [`pluginUi.ts`](../../apps/web/src/plugins/pluginUi.ts).
+Once the app is idle,
 [`PluginLoaderStarter`](../../apps/web/src/plugins/PluginLoaderStarter.tsx) follows the state
-stream and downloads a small styles chunk only when an active plugin has a `styles/` folder. The
-server starts plugins after it is listening. The mobile app shows no plugin settings, styles or
-themes.
+stream. It downloads the web loader only when an active plugin has a web part, and a separate small
+styles chunk only when one has a `styles/` folder. The server starts plugins after it is listening.
+
+A bare `import(url)` cannot send credentials, so the loader fetches each bundle with the
+connection's credentials and imports it from a `blob:` URL, which the desktop CSP allows. Mobile
+release builds cannot load code, so the mobile app shows no plugin UI, settings or themes.
 
 Plugin themes arrive over the server config stream after the first paint, so the client saves them
 in localStorage for the boot script in `index.html`. The desktop main process cannot read

@@ -24,6 +24,7 @@ const T3_REGIONS = {
   "pull-requests": "pull-requests",
   settings: "settings",
   "settings-nav": "settings-nav",
+  "plugin-page": "plugin-page",
 } as const;
 
 /** Props that make an element one stop in the F6 cycle; `order` sets its place in the cycle. */

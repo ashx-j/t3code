@@ -87,7 +87,7 @@ export interface PluginLogger {
 
 /**
  * What `activate` receives. Everything is scoped to one activation and released on deactivate.
- * `Rpc` types the methods and channels clients call.
+ * `Rpc` types the methods and channels the web half calls.
  */
 export interface PluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
   readonly version: 1;

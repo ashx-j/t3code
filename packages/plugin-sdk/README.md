@@ -1,11 +1,12 @@
 # @t3tools/plugin-sdk
 
-Types and test fixtures for T3 Code plugins. A plugin is a folder with a `t3-plugin.json`
-manifest and an optional server half that runs inside the T3 Code server. Plugins are trusted
-code: they run with the same access as T3 Code.
+Types and build helpers for T3 Code plugins. A plugin is a folder with a `t3-plugin.json` manifest,
+an optional server half that runs inside the T3 Code server, and an optional web half that runs in
+the web and desktop apps. Plugins are trusted code: they run with the same access as T3 Code.
 
-The plugins in [`fixtures/`](./fixtures) back the tests and are small and working too. They are
-written by hand and need no build.
+[`examples/`](./examples) has plugins to copy from. The plugins in [`fixtures/`](./fixtures) back
+the tests and are small and working too. They are written by hand and need no build. `hello-web`
+uses most of the web API.
 
 ## Manifest
 
@@ -17,6 +18,7 @@ written by hand and need no build.
   "description": "Shown on the Plugins page.",
   "engines": { "t3": ">=0.1.6" },
   "server": "./server.cjs",
+  "web": "./web.js",
   "settingsSchema": {
     "type": "object",
     "properties": { "token": { "type": "string", "format": "t3-secret" } }
@@ -25,12 +27,13 @@ written by hand and need no build.
 ```
 
 - `id` uses lowercase letters, digits and hyphens, starts with a letter and has up to 32
-  characters. It names the plugin's folder and its HTTP routes (`/api/plugins/<id>/…`).
+  characters. It names the plugin's folder, its HTTP routes (`/api/plugins/<id>/…`) and its
+  keybinding commands (`plugin.<id>.<command>`).
 - `engines.t3` is a version range made of `^`, `>=`, `>`, `<=`, `<`, `=` and `||`, such as
   `>=0.1.6`. A server outside it refuses to install the plugin or start it, and says why.
 - `permissions` is an optional list of what the plugin says it uses. Settings → Plugins shows it on
   the plugin's row, and T3 Code doesn't enforce it.
-- `server` must be CommonJS ending in `.cjs`.
+- `server` must be CommonJS ending in `.cjs`. `web` is a single-file ES module.
 - `settingsSchema` is JSON Schema. T3 Code draws a form from it on the Plugins page, and top-level
   string fields with `"format": "t3-secret"` are stored in the server's secret store and never shown
   again. `t3-secret` anywhere else is saved as plain text.
@@ -38,15 +41,17 @@ written by hand and need no build.
   and arrays of strings. One property of any other shape, such as an object or a nullable type,
   turns the whole form into a JSON box. Every save is checked against the schema with the top-level `default`s
   filled in, so a default its own field rejects refuses every save.
-- A `themes/` folder of theme JSON files is published while the plugin is active. T3 Code
-  remembers the published themes, so the boot screen and the desktop window start in the active
-  theme's colors. A theme that sets `"sidebarArtwork": true` keeps the nightly and dev artwork in
-  the sidebar, which T3 otherwise swaps for a label; the send button stays plain. `"radius"`, such
-  as `"0.625rem"`, sets T3's corner radius, and `success`, `successForeground`, `info` and
-  `infoForeground` in a theme's `colors` or `variants` set its status colors.
+- A `themes/` folder of theme JSON files is published while the plugin is active, and an `assets/`
+  folder is served to the web half when the plugin has one. T3 Code remembers the published
+  themes, so the boot screen and the desktop window start in the active theme's colors. A theme
+  that sets `"sidebarArtwork": true` keeps the nightly and dev artwork in the sidebar, which T3
+  otherwise swaps for a label; the send button stays plain. `"radius"`, such as `"0.625rem"`, sets
+  T3's corner radius, and `success`, `successForeground`, `info` and `infoForeground` in a theme's
+  `colors` or `variants` set its status colors.
 - A `styles/` folder of `.css` files is added to the page while the plugin is active, in name
   order, after T3's own styles and the theme. A manifest and `styles/` are a whole plugin, with
-  no `server`, as in the `styles-plugin` fixture. Styles load only from the main environment.
+  no `server` or `web`, as in the `styles-plugin` fixture. Like a web half, styles load only from
+  the main environment or the one picked in **Load plugin UI from** in Settings → Plugins.
   **Reload** picks up edits. The page gets each file's text, so a `url()` can't reach the
   plugin's folder; use a `data:` URL for an image.
 
@@ -63,7 +68,7 @@ module.exports = {
 
 `activate` receives the [`PluginApi`](./src/server.ts):
 
-- settings, storage, and RPC methods and channels for clients;
+- settings, storage, and RPC methods and channels for the web half;
 - stored orchestration events and notes in threads;
 - threads and projects: read, start, archive, snooze, settle and delete threads, add and change
   projects, and list a project's git worktrees;
@@ -84,6 +89,59 @@ server stops.
 HTTP route handlers get the request body as UTF-8 text, so a binary upload arrives corrupted, and a
 query key that appears twice keeps its last value.
 
+## Web half
+
+```tsx
+import { Button } from "@t3tools/plugin-sdk/ui";
+import { defineWebPlugin } from "@t3tools/plugin-sdk/web";
+
+export default defineWebPlugin({
+  activate(api) {
+    api.rightPanel.register({
+      name: "hello",
+      title: "Hello",
+      component: () => <Button onClick={() => api.navigate("/settings/plugins")}>Settings</Button>,
+    });
+    api.commands.register({
+      id: "say-hello",
+      title: "Say hello",
+      run: () => api.toast({ title: "Hello" }),
+    });
+  },
+});
+```
+
+`activate` receives the [`WebPluginApi`](./src/web.ts): calls into the server half, right panels,
+a settings panel, palette commands, styles, assets, navigation and toasts.
+
+`api.rpc.invoke` and `api.rpc.subscribe` reach the methods and channels the server half adds with
+`rpc.register` and `rpc.publish`. Describe them once as a `PluginRpcMap` type from
+`@t3tools/plugin-sdk/shared`, and pass it to both `definePlugin` and `defineWebPlugin`. Then a
+wrong method name, input or value fails to typecheck in either half.
+
+`pages.register` adds a full page at `/plugins/<pluginId>/<name>`, shown beside the sidebar in
+place of the thread; a `t3code://plugins/<pluginId>/<name>` link opens the desktop app on it.
+`sidebar.addSection` adds a titled section under the thread list.
+
+Build it with the Vite preset, which makes the bundle use T3 Code's own React, atoms, atom hooks and
+UI components instead of shipping copies:
+
+```ts
+// vite.config.ts
+import { t3PluginWeb } from "@t3tools/plugin-sdk/vite";
+import { defineConfig } from "vite";
+
+export default defineConfig({ plugins: [t3PluginWeb({ entry: "web.tsx", outDir: "dist" })] });
+```
+
+Point the manifest's `web` at `dist/web.js`. Only the hooks listed in `HOST_ATOM_REACT_EXPORTS`, the
+`Atom` functions in `@t3tools/plugin-sdk/atom` and the components in `@t3tools/plugin-sdk/ui` are
+shared.
+
+Make atoms with `import * as Atom from "@t3tools/plugin-sdk/atom"`, not with `Atom` from `effect`,
+which would bundle a second copy of effect. Build them from values and functions. An atom that runs
+an Effect or a Stream would use your copy of effect inside T3's.
+
 ## Keeping a plugin working across T3 updates
 
 T3 changes its markup, class names, labels and layout in most releases. You don't need to drop
@@ -95,10 +153,10 @@ parts of your design to survive that. Build each part on the most stable thing T
 - **Scope CSS to a region.** T3 keeps the `data-t3-region` names of the window's main areas
   across releases: `sidebar`, `main` (everything beside the sidebar), `timeline`, `composer`,
   `thread-details`, `right-panel`, `terminal`, `home`, `pull-requests`, `settings`,
-  `settings-nav` and `command-palette`. A plain `background` rule recolors most regions, such as
-  `[data-t3-region="composer"] { background: #101820; }`. The surfaces inside `main` and
-  `right-panel` paint over them, so set `--background` on those two instead. For `terminal`, set
-  `--terminal-background`, which a terminal reads when it opens.
+  `settings-nav`, `plugin-page` and `command-palette`. A plain `background` rule recolors most
+  regions, such as `[data-t3-region="composer"] { background: #101820; }`. The surfaces inside
+  `main` and `right-panel` paint over them, so set `--background` on those two instead. For
+  `terminal`, set `--terminal-background`, which a terminal reads when it opens.
 - **Reach into T3's markup only as a last resort.** Selectors on `aria-label`, `data-slot`, class
   names such as `[class~="border-border/65"]` or `.lucide-shield-off`, and `:has()` break when T3
   renames or moves things. Use one only when no theme value or region does the job. Keep each rule

@@ -2,6 +2,8 @@ import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type * as Schema from "effect/Schema";
 
+import { PluginRenderBoundary } from "../../../plugins/PluginRenderBoundary";
+import type { PluginSettingsPanelEntry } from "../../../plugins/pluginRegistry";
 import { pluginEnvironment } from "../../../state/plugins";
 import { useEnvironmentQuery } from "../../../state/query";
 import { useAtomCommand } from "../../../state/use-atom-command";
@@ -9,8 +11,64 @@ import { JsonSchemaSettingsForm } from "../JsonSchemaSettingsForm";
 import { SettingsRow } from "../settingsLayout";
 import type { PluginCopy } from "./pluginTargets";
 
+/** A plugin's settings under its row: the plugin's own panel, or rows from its schema. */
+export function PluginSettingsRows({
+  first,
+  copies,
+  labelled,
+  customSettings,
+  hasGeneratedForm,
+}: {
+  readonly first: PluginCopy;
+  readonly copies: ReadonlyArray<PluginCopy>;
+  readonly labelled: boolean;
+  readonly customSettings: PluginSettingsPanelEntry | undefined;
+  readonly hasGeneratedForm: boolean;
+}) {
+  if (customSettings === undefined) {
+    return <PluginSettingsEditor first={first} copies={copies} labelled={labelled} />;
+  }
+  return (
+    <>
+      <PluginCustomSettings entry={customSettings} />
+      {/* The plugin's own panel talks to the main environment's copy alone. */}
+      {copies.length > 1 ? (
+        <SettingsRow
+          title={`This panel changes ${first.label} only`}
+          description={hasGeneratedForm ? "The rows below change every environment." : undefined}
+        />
+      ) : null}
+      {copies.length > 1 && hasGeneratedForm ? (
+        <PluginSettingsEditor first={first} copies={copies} labelled={labelled} />
+      ) : null}
+    </>
+  );
+}
+
+/** A settings panel the plugin's web bundle drew instead of the generated form. */
+function PluginCustomSettings(props: { readonly entry: PluginSettingsPanelEntry }) {
+  const Panel = props.entry.component;
+  return (
+    // Padded as a settings row, so a panel drawn as one lines up with the rows around it.
+    <div className="px-3 py-3 sm:px-4">
+      <PluginRenderBoundary
+        owner={props.entry.owner}
+        what="Its settings panel"
+        resetKeys={[props.entry]}
+        fallback={
+          <p className="text-xs text-destructive">
+            This plugin's settings panel stopped with an error.
+          </p>
+        }
+      >
+        <Panel />
+      </PluginRenderBoundary>
+    </div>
+  );
+}
+
 /** Shows the first copy's settings. Saving writes the same change to every copy. */
-export function PluginSettingsEditor({
+function PluginSettingsEditor({
   first,
   copies,
   labelled,

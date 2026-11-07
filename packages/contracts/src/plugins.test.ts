@@ -11,6 +11,7 @@ const manifest = {
   version: "0.1.0",
   engines: { t3: ">=0.1.6" },
   server: "./dist/server.cjs",
+  web: "dist/web.js",
   settingsSchema: { type: "object", properties: { greeting: { type: "string" } } },
   permissions: ["Reads thread titles"],
 };
@@ -40,6 +41,7 @@ describe("PluginManifest", () => {
     ["an absolute server entry", { server: "/usr/lib/server.cjs" }],
     ["a Windows server entry", { server: "C:\\plugins\\server.cjs" }],
     ["a server entry that is not CommonJS", { server: "dist/server.js" }],
+    ["a web entry that escapes the plugin directory", { web: "dist/../../web.js" }],
   ])("rejects %s", (_name, override) => {
     expect(() => decodeManifest({ ...manifest, ...override })).toThrow();
   });

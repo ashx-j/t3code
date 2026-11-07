@@ -19,6 +19,7 @@ import {
 } from "./PluginInstallControls";
 import { PluginList } from "./PluginList";
 import { type PluginTarget, runsPlugins, usePluginUiSource } from "./pluginTargets";
+import { PluginUiEnvironmentRow } from "./PluginUiEnvironmentRow";
 
 export function PluginsSettings() {
   const { scope, environment, environments } = useSettingsScope();
@@ -32,7 +33,7 @@ export function PluginsSettings() {
       </SettingsPageContainer>
     );
   }
-  // The environment plugin styles load from comes first: installs start there, see
+  // The environment plugin UI loads from comes first: installs start there, see
   // `usePluginInstaller`.
   const shown =
     scope.kind === "all"
@@ -157,6 +158,7 @@ function PluginsPage({
             >
               <InstallProblems problems={installer.problems} />
             </SettingsRow>
+            <PluginUiEnvironmentRow />
           </PluginList>
         )}
         {main === undefined ? null : (

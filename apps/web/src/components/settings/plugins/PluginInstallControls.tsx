@@ -52,7 +52,7 @@ export function InstallProblems({ problems }: { readonly problems: ReadonlyArray
 }
 
 /**
- * Installs plugins on `targets`, the first one first. The app draws plugin styles only from
+ * Installs plugins on `targets`, the first one first. The app draws plugin UI only from
  * `uiSource`, so a plugin without server code changes nothing on the others and is installed on
  * the first one only.
  */
