@@ -13,6 +13,7 @@ import {
   PluginInstallSource,
   type PluginListResult,
   type PluginState,
+  type PluginStatesEvent,
   type PluginStatus,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -185,10 +186,10 @@ export class PluginHost extends Context.Service<
     readonly listForClient: (
       scopes: ReadonlyArray<AuthEnvironmentScope>,
     ) => Effect.Effect<PluginListResult>;
-    /** `listForClient` now, then again after every change. */
+    /** `listForClient` now, then the rows that differ after every change. */
     readonly streamForClient: (
       scopes: ReadonlyArray<AuthEnvironmentScope>,
-    ) => Stream.Stream<PluginListResult>;
+    ) => Stream.Stream<PluginStatesEvent>;
     /** Turns the `t3_plugins_*` tools on or off for agents, overriding the default. */
     readonly setAgentTools: (enabled: boolean) => Effect.Effect<boolean, PluginConfigError>;
     /** Persists the flag, then waits for activation or deactivation to finish. */
@@ -324,6 +325,27 @@ const withoutServerPaths = (state: PluginState): PluginState => {
 };
 const managesPlugins = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
   scopes.includes(AuthSettingsWriteScope);
+
+interface ClientList {
+  readonly plugins: ReadonlyArray<PluginState>;
+  readonly agentTools: boolean;
+}
+
+// Compared per subscriber, since each one sees its own view of the list.
+const statesEvent = (
+  previous: ClientList | undefined,
+  next: ClientList,
+): PluginStatesEvent | undefined => {
+  if (previous === undefined) return { _tag: "snapshot", ...next };
+  const rows = next.plugins.flatMap((plugin, index) =>
+    Equal.equals(plugin, previous.plugins[index]) ? [] : [{ index, plugin }],
+  );
+  return rows.length === 0 &&
+    next.plugins.length === previous.plugins.length &&
+    next.agentTools === previous.agentTools
+    ? undefined
+    : { _tag: "changed", length: next.plugins.length, rows, agentTools: next.agentTools };
+};
 
 // Git URLs can carry credentials, and plugin state reaches read-only clients and agents.
 const shownSource = (source: PluginInstallSource): PluginInstallSource => {
@@ -1166,7 +1188,7 @@ const make = Effect.gen(function* () {
   const agentTools = SubscriptionRef.changes(agentToolsOffered);
   const forClient =
     (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
-    ([plugins, offered]: readonly [ReadonlyArray<PluginState>, boolean]): PluginListResult => ({
+    ([plugins, offered]: readonly [ReadonlyArray<PluginState>, boolean]): ClientList => ({
       plugins: managesPlugins(scopes) ? plugins : plugins.map(withoutServerPaths),
       agentTools: offered,
     });
@@ -1181,7 +1203,16 @@ const make = Effect.gen(function* () {
       ]);
     }),
     streamForClient: (scopes) =>
-      Stream.zipLatest(streamStates, agentTools).pipe(Stream.map(forClient(scopes))),
+      Stream.zipLatest(streamStates, agentTools).pipe(
+        Stream.map(forClient(scopes)),
+        Stream.mapAccum(
+          (): ClientList | undefined => undefined,
+          (previous, next) => {
+            const event = statesEvent(previous, next);
+            return [next, event === undefined ? [] : [event]];
+          },
+        ),
+      ),
     setEnabled,
     reload,
     rescan: rescan(),

@@ -1,5 +1,11 @@
-import { type EnvironmentId, WS_METHODS } from "@t3tools/contracts";
+import {
+  applyPluginStatesEvent,
+  type EnvironmentId,
+  type PluginListResult,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import { Atom, type AtomRegistry } from "effect/reactivity";
 
 import type { PreparedHttpAuthorization } from "../connection/model.ts";
@@ -12,6 +18,8 @@ import {
   createEnvironmentRpcSubscriptionAtomFamily,
   createRuntimeCommand,
 } from "./runtime.ts";
+
+const NO_PLUGINS: PluginListResult = { plugins: [], agentTools: false };
 
 /** Plugin management and calls into plugins. Nothing here runs until something reads it. */
 export function createPluginEnvironmentAtoms<R, E>(
@@ -34,9 +42,16 @@ export function createPluginEnvironmentAtoms<R, E>(
       tag: WS_METHODS.pluginsDeleteLeftoverData,
       onSuccess: refreshLeftovers,
     }),
+    // The server sends the list once, then the rows that change; readers get the whole list.
     pluginsLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:plugins:live",
       tag: WS_METHODS.pluginsSubscribeStates,
+      // `scan` emits its seed first; skipping it keeps the list loading until the first event.
+      transform: (events) =>
+        events.pipe(
+          Stream.scan(() => NO_PLUGINS, applyPluginStatesEvent),
+          Stream.filter((list) => list !== NO_PLUGINS),
+        ),
     }),
     pluginSettings: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:plugins:settings",

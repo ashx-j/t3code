@@ -5,6 +5,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  applyPluginStatesEvent,
   type AuthEnvironmentScope,
   AuthOrchestrationOperateScope,
   defaultInstanceIdForDriver,
@@ -22,6 +23,7 @@ import {
   type OrchestrationV2ServerCommand,
   type OrchestrationV2DomainEvent,
   type PluginState,
+  type PluginStatesEvent,
   type Project,
   ProviderInstanceId,
   type ServerProvider,
@@ -1842,7 +1844,12 @@ module.exports = { activate(api) {
             handlers[WS_METHODS.pluginsList]({}),
             handlers[WS_METHODS.pluginsSubscribeStates]({}).pipe(
               Stream.runHead,
-              Effect.map(Option.getOrThrow),
+              Effect.map((first) =>
+                applyPluginStatesEvent(
+                  { plugins: [], agentTools: false },
+                  Option.getOrThrow(first),
+                ),
+              ),
             ),
           ]).pipe(Effect.map((results) => results.flatMap((result) => result.plugins)));
         };
@@ -1854,6 +1861,43 @@ module.exports = { activate(api) {
         const managed = yield* listed([AuthOrchestrationReadScope, AuthSettingsWriteScope]);
         assert.include(stateOf(managed, broken), { linkedFolder });
         assert.deepStrictEqual(stateOf(managed, hello)?.installSource, source);
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("sends a client only the plugins that changed after the first list", () =>
+    Effect.gen(function* () {
+      yield* writePluginsConfig({
+        enabled: { [hello]: true },
+        devPaths: [`${fixturesDir}broken-plugin`, `${fixturesDir}hello-plugin`],
+      });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        yield* waitForStatuses(host, { [hello]: "active", [broken]: "disabled" });
+        const disabled = (event: PluginStatesEvent) =>
+          event._tag === "changed" &&
+          event.rows.some(({ plugin }) => plugin.id === hello && plugin.status === "disabled");
+        const events = yield* host
+          .streamForClient(operate)
+          .pipe(
+            Stream.takeUntil(disabled),
+            Stream.runCollect,
+            Effect.forkChild({ startImmediately: true }),
+          );
+        yield* host.setEnabled(hello, false);
+        const [first, ...changes] = yield* Fiber.join(events);
+        assert.strictEqual(first?._tag, "snapshot");
+        for (const change of changes) {
+          assert.deepStrictEqual(
+            change._tag === "changed" ? change.rows.map(({ plugin }) => plugin.id) : [],
+            [hello],
+          );
+        }
+        const folded = [first!, ...changes].reduce(applyPluginStatesEvent, {
+          plugins: [],
+          agentTools: false,
+        });
+        assert.deepStrictEqual(folded, yield* host.listForClient(operate));
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );

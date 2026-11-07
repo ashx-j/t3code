@@ -403,6 +403,7 @@ import {
   PluginSettingsUpdateInput,
   PluginSubscribeInput,
   PluginSubscriptionEvent,
+  PluginStatesEvent,
 } from "./plugins.ts";
 import { SecretRequestAnswerInput, SecretRequestError } from "./secretRequest.ts";
 import {
@@ -2007,10 +2008,10 @@ const WsPluginsListRpc = Rpc.make(WS_METHODS.pluginsList, {
   error: PluginRpcError,
 });
 
-/** The current list, then the whole list again after every change. */
+/** The current list, then the rows that change. */
 const WsPluginsSubscribeStatesRpc = Rpc.make(WS_METHODS.pluginsSubscribeStates, {
   payload: PluginListInput,
-  success: PluginListResult,
+  success: PluginStatesEvent,
   error: PluginRpcError,
   stream: true,
 });
