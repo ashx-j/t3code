@@ -5,9 +5,11 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  type AuthEnvironmentScope,
   AuthOrchestrationOperateScope,
   defaultInstanceIdForDriver,
   AuthOrchestrationReadScope,
+  AuthSettingsWriteScope,
   EnvironmentId,
   PluginId,
   ProjectId,
@@ -23,6 +25,7 @@ import {
   type Project,
   ProviderInstanceId,
   type ServerProvider,
+  WS_METHODS,
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -76,6 +79,7 @@ import * as PluginHost from "./PluginHost.ts";
 import * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
 import * as PluginInstaller from "./PluginInstaller.ts";
 import * as PluginMcpTools from "./PluginMcpTools.ts";
+import { makePluginRpcHandlers } from "./pluginRpcHandlers.ts";
 import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
 import { withPluginTextGeneration } from "./pluginTextGeneration.ts";
@@ -1822,6 +1826,38 @@ module.exports = { activate(api) {
     }).pipe(Effect.provide(layerConfig())),
   );
 
+  it.effect("keeps server folder paths from clients that cannot manage plugins", () =>
+    Effect.gen(function* () {
+      const linkedFolder = `${fixturesDir}broken-plugin`;
+      yield* writePluginsConfig({ devPaths: [linkedFolder] });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const installer = yield* PluginInstaller.PluginInstaller;
+        yield* waitForStatuses(host, { [broken]: "disabled" });
+        const source = { type: "path" as const, path: `${fixturesDir}hello-plugin` };
+        yield* installer.install(source);
+        const listed = (scopes: ReadonlyArray<AuthEnvironmentScope>) => {
+          const handlers = makePluginRpcHandlers(host, installer, scopes);
+          return Effect.all([
+            handlers[WS_METHODS.pluginsList]({}),
+            handlers[WS_METHODS.pluginsSubscribeStates]({}).pipe(
+              Stream.runHead,
+              Effect.map(Option.getOrThrow),
+            ),
+          ]).pipe(Effect.map((results) => results.flatMap((result) => result.plugins)));
+        };
+
+        for (const plugin of yield* listed([AuthOrchestrationReadScope])) {
+          assert.notProperty(plugin, "linkedFolder");
+          assert.notProperty(plugin, "installSource");
+        }
+        const managed = yield* listed([AuthOrchestrationReadScope, AuthSettingsWriteScope]);
+        assert.include(stateOf(managed, broken), { linkedFolder });
+        assert.deepStrictEqual(stateOf(managed, hello)?.installSource, source);
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
   it.effect("lists and deletes the data of plugins removed without it", () =>
     Effect.gen(function* () {
       const host = yield* PluginHost.PluginHost;
@@ -1846,7 +1882,7 @@ module.exports = { activate(api) {
       assert.deepStrictEqual(yield* installer.deleteLeftoverData(hello), []);
       assert.deepStrictEqual(yield* storage.list(hello), []);
       assert.deepStrictEqual(yield* settings.getForClient(hello, undefined), {});
-    }).pipe(Effect.provide(layerHost()), Effect.provide(layerConfig())),
+    }).pipe(Effect.provide(layerHost().pipe(Layer.provide(layerConfig())))),
   );
 
   it.effect("deletes the secrets of settings fields a newer version no longer has", () =>

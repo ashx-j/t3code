@@ -23,7 +23,6 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import { rpcAuthorizationError } from "../auth/RpcAuthorization.ts";
@@ -41,18 +40,9 @@ export const makePluginRpcHandlers = (
   installer: PluginInstaller.PluginInstaller["Service"],
   scopes: ReadonlyArray<AuthEnvironmentScope>,
 ) => ({
-  [WS_METHODS.pluginsList]: (_input: PluginListInput) =>
-    Effect.all({
-      plugins: pluginHost.list,
-      agentTools: pluginHost.agentTools.pipe(
-        Stream.runHead,
-        Effect.map(Option.getOrElse(() => false)),
-      ),
-    }),
+  [WS_METHODS.pluginsList]: (_input: PluginListInput) => pluginHost.listForClient(scopes),
   [WS_METHODS.pluginsSubscribeStates]: (_input: PluginListInput) =>
-    Stream.zipLatest(pluginHost.streamStates, pluginHost.agentTools).pipe(
-      Stream.map(([plugins, agentTools]) => ({ plugins, agentTools })),
-    ),
+    pluginHost.streamForClient(scopes),
   [WS_METHODS.pluginsSetAgentTools]: (input: PluginSetAgentToolsInput) =>
     pluginHost.setAgentTools(input.enabled).pipe(
       Effect.map((agentTools) => ({ agentTools })),

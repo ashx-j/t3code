@@ -6,10 +6,12 @@ import {
   AuthEnvironmentScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthSettingsWriteScope,
   type PluginFailure,
   PluginId,
   type PluginManifest,
   PluginInstallSource,
+  type PluginListResult,
   type PluginState,
   type PluginStatus,
   type ThreadId,
@@ -179,6 +181,14 @@ export class PluginHost extends Context.Service<
     readonly streamStates: Stream.Stream<ReadonlyArray<PluginState>>;
     /** Whether agents get the `t3_plugins_*` tools now, then after every change. */
     readonly agentTools: Stream.Stream<boolean>;
+    /** `list` as a client with `scopes` sees it: server folder paths only if it manages plugins. */
+    readonly listForClient: (
+      scopes: ReadonlyArray<AuthEnvironmentScope>,
+    ) => Effect.Effect<PluginListResult>;
+    /** `listForClient` now, then again after every change. */
+    readonly streamForClient: (
+      scopes: ReadonlyArray<AuthEnvironmentScope>,
+    ) => Stream.Stream<PluginListResult>;
     /** Turns the `t3_plugins_*` tools on or off for agents, overriding the default. */
     readonly setAgentTools: (enabled: boolean) => Effect.Effect<boolean, PluginConfigError>;
     /** Persists the flag, then waits for activation or deactivation to finish. */
@@ -304,6 +314,16 @@ interface PluginRecord {
 
 const manifestOf = (plugin: DiscoveredPlugin): PluginManifest | undefined =>
   "manifest" in plugin ? plugin.manifest : undefined;
+
+// Folders on the server are for clients that manage plugins; read access can be a guest's.
+const withoutServerPaths = (state: PluginState): PluginState => {
+  const { linkedFolder: _folder, installSource, ...shown } = state;
+  return installSource === undefined || installSource.type === "path"
+    ? shown
+    : { ...shown, installSource };
+};
+const managesPlugins = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+  scopes.includes(AuthSettingsWriteScope);
 
 // Git URLs can carry credentials, and plugin state reaches read-only clients and agents.
 const shownSource = (source: PluginInstallSource): PluginInstallSource => {
@@ -1136,19 +1156,36 @@ const make = Effect.gen(function* () {
     ),
   );
 
+  const streamStates = Stream.unwrap(
+    Effect.gen(function* () {
+      const subscription = yield* PubSub.subscribe(changes);
+      const snapshot = yield* currentStates;
+      return Stream.concat(Stream.make(snapshot), Stream.fromSubscription(subscription));
+    }),
+  );
+  const agentTools = SubscriptionRef.changes(agentToolsOffered);
+  const forClient =
+    (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+    ([plugins, offered]: readonly [ReadonlyArray<PluginState>, boolean]): PluginListResult => ({
+      plugins: managesPlugins(scopes) ? plugins : plugins.map(withoutServerPaths),
+      agentTools: offered,
+    });
+
   const service = PluginHost.of({
     list: currentStates,
-    streamStates: Stream.unwrap(
-      Effect.gen(function* () {
-        const subscription = yield* PubSub.subscribe(changes);
-        const snapshot = yield* currentStates;
-        return Stream.concat(Stream.make(snapshot), Stream.fromSubscription(subscription));
-      }),
-    ),
+    streamStates,
+    listForClient: Effect.fn("PluginHost.listForClient")(function* (scopes) {
+      return forClient(scopes)([
+        yield* currentStates,
+        yield* SubscriptionRef.get(agentToolsOffered),
+      ]);
+    }),
+    streamForClient: (scopes) =>
+      Stream.zipLatest(streamStates, agentTools).pipe(Stream.map(forClient(scopes))),
     setEnabled,
     reload,
     rescan: rescan(),
-    agentTools: SubscriptionRef.changes(agentToolsOffered),
+    agentTools,
     setAgentTools: Effect.fn("PluginHost.setAgentTools")(function* (enabled) {
       yield* writeConfig((current) => ({ ...current, agentTools: enabled }));
       yield* publishLock.withPermits(1)(syncAgentTools);
