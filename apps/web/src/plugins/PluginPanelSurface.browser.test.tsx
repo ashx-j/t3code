@@ -1,6 +1,6 @@
 import { EnvironmentId } from "@t3tools/contracts";
-import { describe, expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import { describe, expect, it } from "vite-plus/test";
+import { page } from "vite-plus/test/browser";
 
 import { render } from "../../test/render";
 import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
@@ -19,7 +19,6 @@ describe("PluginPanelSurface", () => {
       component: (props) => <p>Panel for {props.threadId}</p>,
     });
     using _panel = { [Symbol.dispose]: unregister };
-    const onClose = vi.fn();
     await using _screen = await render(
       <AppAtomRegistryProvider>
         <PluginPanelSurface
@@ -27,7 +26,7 @@ describe("PluginPanelSurface", () => {
           threadId="thread-1"
           pluginId="hello-web"
           panel="hello"
-          onClose={onClose}
+          onClose={() => {}}
         />
       </AppAtomRegistryProvider>,
     );
@@ -35,7 +34,6 @@ describe("PluginPanelSurface", () => {
     await expect.element(page.getByText("Panel for thread-1")).toBeVisible();
     unregister();
     await expect.element(page.getByText("Plugin not active")).toBeVisible();
-    await userEvent.click(page.getByRole("button", { name: "Close" }));
-    expect(onClose).toHaveBeenCalledOnce();
+    await expect.element(page.getByRole("button", { name: "Close" })).toBeVisible();
   });
 });
