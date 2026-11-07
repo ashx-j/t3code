@@ -85,8 +85,10 @@ Once the app is idle,
 [`PluginLoaderStarter`](../../apps/web/src/plugins/PluginLoaderStarter.tsx) follows the state
 stream. It downloads the web loader only when an active plugin has a web part, and a separate small
 styles chunk only when one has a `styles/` folder. Until then, rows read nothing from plugins. The
-server starts plugins after it is listening, and one with no plugin from git or npm never checks
-for updates.
+startup chunk holds about 4.8 KB of minified plugin code, and plugin support adds about 36 KB raw
+(12.3 KB gzip) at startup, mostly plugin RPC schemas and the theme cache. With no plugins, a client
+opens 1 subscription on its WebSocket and gets a snapshot of about 60 B. The server starts plugins
+after it is listening, and one with no plugin from git or npm never checks for updates.
 
 A bare `import(url)` cannot send credentials, so the loader fetches each bundle with the
 connection's credentials and imports it from a `blob:` URL, which the desktop CSP allows. Mobile

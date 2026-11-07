@@ -147,3 +147,7 @@ panels and tool views show only in the threads of the environment plugin UI load
 parts of the app, code blocks, pages, sidebar sections and command palette commands show wherever
 you are. The mobile app doesn't show plugin UI, settings or themes, and a plugin page's
 `t3code://plugins/...` link opens only in the desktop and web apps.
+
+In the desktop app on macOS, a plugin can also list its commands in a **Plugins** menu in the menu
+bar. Windows and Linux don't show T3 Code's app menu. Every plugin command is also in the command
+palette.

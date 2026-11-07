@@ -33,6 +33,14 @@ export interface WebPluginCommand {
   readonly title: string;
   /** Extra words the command palette matches. */
   readonly keywords?: ReadonlyArray<string>;
+  /** Desktop app only; ignored in a browser. */
+  readonly desktop?: {
+    /**
+     * Lists the command under Plugins in the macOS menu bar. Windows and Linux show no app menu, so
+     * there the command palette is the way in.
+     */
+    readonly menu?: boolean;
+  };
   readonly run: () => void | Promise<void>;
 }
 

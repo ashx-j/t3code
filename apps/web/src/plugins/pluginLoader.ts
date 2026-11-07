@@ -41,6 +41,7 @@ import { Textarea } from "../components/ui/textarea";
 import { toastManager } from "../components/ui/toast";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { registerCommands, type CommandHandlers } from "../shortcuts/dispatcher";
+import { isDesktopPluginCommand, registerDesktopPluginCommand } from "./desktopPluginCommands";
 import { pluginEnvironment } from "../state/plugins";
 import {
   registerPluginBanner,
@@ -324,6 +325,22 @@ function makeWebPluginApi({
         }
         const keybindingCommand = `plugin.${pluginId}.${command.id}` as const;
         const run = () => runReportingFailure(command.title, command.run);
+        // Checked before anything is registered, so a plugin that catches the error is left with
+        // nothing half added.
+        const desktopCommand =
+          command.desktop === undefined
+            ? undefined
+            : {
+                command: keybindingCommand,
+                title: command.title,
+                pluginName: plugin.name,
+                menu: command.desktop.menu === true,
+              };
+        if (desktopCommand !== undefined && !isDesktopPluginCommand(desktopCommand)) {
+          throw new TypeError(
+            `Command "${command.id}" can't go in the desktop menu: it needs a title of up to 200 characters.`,
+          );
+        }
         track(
           registerPluginCommand({
             environmentId,
@@ -335,6 +352,9 @@ function makeWebPluginApi({
             run,
           }),
         );
+        if (desktopCommand !== undefined) {
+          track(registerDesktopPluginCommand(desktopCommand, run));
+        }
         const handlers = shortcutHandlers();
         handlers[keybindingCommand] = (event) => {
           event.preventDefault();

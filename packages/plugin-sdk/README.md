@@ -188,9 +188,9 @@ export default defineWebPlugin({
 ```
 
 `activate` receives the [`WebPluginApi`](./src/web.ts): calls into the server half, right panels,
-a settings panel, palette commands, composer slash commands and banners, timeline renderers for
-the plugin's agent tools, renderers for fenced code languages, styles, assets, navigation and
-toasts.
+a settings panel, palette commands (which the desktop app can also list in its menu), composer
+slash commands and banners, timeline renderers for the plugin's agent tools, renderers for fenced
+code languages, styles, assets, navigation and toasts.
 
 `api.rpc.invoke` and `api.rpc.subscribe` reach the methods and channels the server half adds with
 `rpc.register` and `rpc.publish`. Describe them once as a `PluginRpcMap` type from

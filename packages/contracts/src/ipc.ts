@@ -14,7 +14,7 @@ import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import { type ClientSettings, type QuitConfirmationMode, SnapShotShortcut } from "./settings.ts";
 import type { EditorId } from "./editor.ts";
-import type { PreviewForwardedShortcut } from "./keybindings.ts";
+import { PLUGIN_COMMAND_PATTERN, type PreviewForwardedShortcut } from "./keybindings.ts";
 
 import type {
   DesktopAppActivationRequest,
@@ -1008,6 +1008,16 @@ export const DesktopPreviewRecordingSaveInputSchema = Schema.Struct({
   data: Schema.Uint8Array,
 });
 
+/** A web plugin's command that the desktop app lists in its Plugins menu. */
+export const DesktopPluginCommandSchema = Schema.Struct({
+  /** Sent back to the renderer as the menu action when the item is picked. */
+  command: PLUGIN_COMMAND_PATTERN,
+  title: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+  pluginName: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+  menu: Schema.Boolean,
+});
+export type DesktopPluginCommand = typeof DesktopPluginCommandSchema.Type;
+
 /** The canvas the page paints in one appearance, as `#rrggbb`; null for plain black or white. */
 export const DesktopWindowCanvasSchema = Schema.Struct({
   appearance: Schema.Literals(["light", "dark"]),
@@ -1118,6 +1128,8 @@ export interface DesktopBridge {
   checkSystemPermission: (pane: SystemSettingsPane) => Promise<boolean>;
   probeRemoteEditors: () => Promise<readonly EditorId[]>;
   pasteAsText: () => Promise<void>;
+  /** Replaces the plugin commands in the app menu. */
+  setPluginCommands: (commands: readonly DesktopPluginCommand[]) => Promise<void>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   onSnapShotEvent: (listener: (event: DesktopSnapShotEvent) => void) => () => void;
   onQuitShortcut: (listener: (event: QuitShortcutHintEvent) => void) => () => void;

@@ -123,9 +123,15 @@ type MenuActionHandler = () => void;
 const menuActionHandlers = new Map<string, MenuActionHandler[]>();
 let menuActionInstalled = false;
 
+// A plugin command picked from the desktop menu with no window open reopens the window and can
+// arrive before its plugin has loaded. It waits here, briefly, for the plugin to register it.
+const PLUGIN_ACTION_WAIT_MS = 30_000;
+const waitingPluginActions = new Map<string, number>();
+
 export function dispatchMenuAction(action: string): void {
-  const handlers = menuActionHandlers.get(action);
-  handlers?.at(-1)?.();
+  const handler = menuActionHandlers.get(action)?.at(-1);
+  if (handler !== undefined) return handler();
+  if (action.startsWith("plugin.")) waitingPluginActions.set(action, Date.now());
 }
 
 function ensureMenuActionListener() {
@@ -142,8 +148,17 @@ export function registerMenuAction(action: string, handler: MenuActionHandler): 
   const handlers = menuActionHandlers.get(action) ?? [];
   handlers.push(handler);
   menuActionHandlers.set(action, handlers);
+  const waitingSince = waitingPluginActions.get(action);
+  if (waitingSince !== undefined) {
+    waitingPluginActions.delete(action);
+    // After the registering plugin's `activate` has moved on, not in the middle of it.
+    if (Date.now() - waitingSince < PLUGIN_ACTION_WAIT_MS) queueMicrotask(handler);
+  }
   return () => {
     const index = handlers.lastIndexOf(handler);
     if (index !== -1) handlers.splice(index, 1);
   };
 }
+
+// Listening from startup, so an action sent as the window finishes loading is not lost.
+ensureMenuActionListener();

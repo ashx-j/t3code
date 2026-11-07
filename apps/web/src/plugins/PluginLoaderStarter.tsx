@@ -6,6 +6,12 @@ import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { primaryServerConfigAtom } from "../state/server";
 import { chosenPluginUiEnvironmentAtom, followedPluginEnvironmentAtom } from "./pluginFollow";
 
+// A new or reloaded window has no plugin commands yet, while the desktop main process still holds
+// the last page's menu items. Plugins that load send theirs again.
+if (typeof window !== "undefined") {
+  void window.desktopBridge?.setPluginCommands([]).catch(() => undefined);
+}
+
 // Module level: React Compiler cannot compile a component that calls import() itself.
 const loadPluginWatch = () => import("./pluginWatch");
 const loadPluginLoader = () => import("./pluginLoader");
