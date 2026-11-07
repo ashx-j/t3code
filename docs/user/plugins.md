@@ -1,31 +1,34 @@
 # Plugins
 
-Plugins add features to T3 Code: panels, commands, themes, agent tools and more. A plugin
+Plugins add features to T3 Code: panels, commands, themes, styles, agent tools and more. A plugin
 belongs to one environment and runs inside that environment's T3 Code server, with the same
-access to your files, threads and credentials as T3 Code itself. Install only plugins you trust.
+access to your files, threads and credentials as T3 Code itself. A plugin's row lists the
+permissions it says it uses, but T3 Code doesn't enforce them. Install only plugins you trust.
 
 ## Add a plugin
 
 Open **Settings → Plugins** and drag a plugin's folder onto the page. **Add plugin** also lets you
 choose the folder in a file window, or install from:
 
-- **Git repository**: a repository URL, with an optional branch or tag.
+- **Git repository**: an https or ssh repository URL, with an optional branch or tag.
 - **npm package**: a package name, with an optional version. T3 Code checks the download against
   the registry's integrity hash before installing it.
 
 T3 Code copies a plugin folder into the environment's `plugins` folder, so later changes to your
 copy do not affect the installed plugin. To update it, add the new version's folder the same way.
 The plugin is enabled and started once it is installed. If installing over an existing version
-fails, the previous version keeps running.
+fails, the previous version keeps running. A plugin that needs a newer version of T3 Code isn't
+installed, and T3 Code says why.
 
 Plugin folders you copy into the `plugins` folder yourself show up, turned off, the next time you
 open **Settings → Plugins**. That folder is `~/.t3/userdata/plugins` on the environment's machine
 by default.
 
 With **All environments** selected, a plugin is installed on every connected environment that can
-run plugins. A plugin with no server code or agent skills only changes the app, so it goes to the
-app's main environment only. The list then shows each plugin once, and turning it on or off,
-changing its settings, updating or removing it applies to every environment that has it.
+run plugins. A plugin with no server code or agent skills only changes the app, so it goes only to
+the environment the app loads plugin UI from (see [Where plugins live](#where-plugins-live)). The
+list then shows each plugin once, and turning it on or off, changing its settings, updating or
+removing it applies to every environment that has it.
 
 With **Plugin tools for agents** on in **Settings → Plugins**, agents can also install, remove,
 turn on and off, call and change the settings of plugins when you ask them to. Only an agent in a
@@ -36,16 +39,20 @@ who started the thread may change Settings. The switch is off until you turn it 
 
 ## Update a plugin
 
-Plugins installed from a git repository or npm, or by an agent from a folder, have **Update** on
-their row. It installs the plugin again from the same place, and keeps the current version running
-if that fails. An npm plugin without a pinned version updates to the package's latest version.
+Plugins installed from a git repository or npm, or by an agent from a folder, have an update
+button on their row. It installs the plugin again from the same place. If the new version fails to
+start, T3 Code puts back the version you had and says why. An npm plugin without a pinned version
+updates to the package's latest version.
 Plugins added by dropping or choosing a folder update the same way they were added.
 
-T3 Code checks plugins added from a git repository or npm once a day and marks the ones with a
-newer version as **Update available**. **Check for updates** on the Plugins page checks now, and
-**Update all** updates every marked plugin. The update button at the bottom of the sidebar also
-updates your main environment's plugins along with T3 Code and your providers. Plugins installed
-before this check existed show updates only after their next update.
+T3 Code checks plugins added from a git repository or npm once a day. It marks a plugin as
+**Update available** only when the newer version runs on your version of T3 Code. **Check for
+updates** on the Plugins page checks now, and **Update all** updates every marked plugin. The
+update button at the bottom of the sidebar also updates the plugins of the environment the app
+loads plugin UI from, along with T3 Code and your providers.
+
+After an update, the plugin's row has a roll back button that puts back the version the update
+replaced. T3 Code keeps only that one earlier version.
 
 ## Turn a plugin on or off
 
@@ -66,8 +73,19 @@ Choose **Remove** on the plugin's row and confirm in the popup. Its settings and
 kept unless you tick **Also delete its settings and stored data**, so reinstalling it later picks
 up where it left off.
 
+**Data from removed plugins** in **Settings → Plugins** lists the settings, secrets and stored data
+that removed plugins left behind. Delete a plugin's data there if you won't reinstall it. This
+can't be undone.
+
 A plugin loaded from its own folder, such as one an agent is writing, shows **Unlink** instead.
 Unlinking stops loading it and leaves the folder where it is.
+
+## Themes and styles
+
+A plugin can change how T3 Code looks without running any code. Theme files in its `themes` folder
+show up as themes while the plugin is on. CSS files in its `styles` folder apply to the app
+while the plugin is on, on top of T3 Code's own styles and your theme. A plugin can be just a
+`styles` folder and its manifest.
 
 ## Plugins in your threads
 
@@ -113,16 +131,22 @@ GitLab's, and it appears under **Settings → Source control** with the name the
 ## Where plugins live
 
 Installed plugins are in the `plugins` folder of the environment's T3 Code data directory, one
-folder per plugin. Their settings are in `plugin-data`, and `plugins.json` records which ones are
-enabled.
+folder per plugin. Their settings are in `plugin-data`, the version an update replaced is in
+`plugin-rollback`, and `plugins.json` records which ones are enabled.
 
-Plugins that draw web UI load in the web and desktop apps, from the app's main environment: the
-desktop app's own server, or the server the web app was opened from. Plugins on other environments
-you connect show in **Settings → Plugins**, but their UI doesn't load. Buttons, menu items, badges,
-slash commands that run in the app, `@` items, banners, right panels and tool views show only in
-the main environment's threads. Replaced parts of the app, code blocks, pages, sidebar sections and
-command palette commands show wherever you are. The mobile app doesn't show plugin UI, settings
-or themes, and a plugin page's `t3code://plugins/...` link opens only in the desktop and web apps.
+Plugin UI and styles load in the web and desktop apps, from the app's main environment: the desktop
+app's own server, or the server the web app was opened from. app.t3.codes and a desktop app with
+its local environment turned off have no main environment. There, choose an environment under
+**Load plugin UI from** in **Settings → Plugins**. It starts at **None** and applies to this
+browser only. The chosen environment's plugins run code in this window, so choose one whose plugins
+you trust.
+
+Plugins on other environments you connect show in **Settings → Plugins**, but their UI doesn't
+load. Buttons, menu items, badges, slash commands that run in the app, `@` items, banners, right
+panels and tool views show only in the threads of the environment plugin UI loads from. Replaced
+parts of the app, code blocks, pages, sidebar sections and command palette commands show wherever
+you are. The mobile app doesn't show plugin UI, settings or themes, and a plugin page's
+`t3code://plugins/...` link opens only in the desktop and web apps.
 
 In the desktop app on macOS, a plugin can also list its commands in a **Plugins** menu in the menu
 bar. Windows and Linux don't show T3 Code's app menu. Every plugin command is also in the command
