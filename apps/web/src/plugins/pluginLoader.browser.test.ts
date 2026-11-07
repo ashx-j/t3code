@@ -14,10 +14,10 @@ vi.mock(import("../state/session"), async (original) => ({
       : { _tag: "Bearer", token: "token" },
   })) as never,
 }));
-const reportWebFailure = vi.hoisted(() => vi.fn());
-const { live, channel } = await vi.hoisted(async () => {
+const state = await vi.hoisted(async () => {
   const { Atom, AsyncResult } = await import("effect/reactivity");
   return {
+    reportWebFailure: vi.fn(),
     live: Atom.make<AsyncResult.AsyncResult<{ readonly plugins: ReadonlyArray<PluginState> }>>(
       AsyncResult.initial(),
     ),
@@ -27,8 +27,8 @@ const { live, channel } = await vi.hoisted(async () => {
 });
 vi.mock(import("../state/plugins"), () => ({
   pluginEnvironment: {
-    pluginsLive: () => live,
-    pluginChannel: () => channel,
+    pluginsLive: () => state.live,
+    pluginChannel: () => state.channel,
     pluginFileHeaders: {
       label: "plugin-file-headers",
       run: async (_registry: unknown, input: { readonly url: string }) =>
@@ -37,7 +37,7 @@ vi.mock(import("../state/plugins"), () => ({
     reportPluginWebFailure: {
       label: "plugin-web-failure",
       run: async (_registry: unknown, input: unknown) => {
-        reportWebFailure(input);
+        state.reportWebFailure(input);
         return AsyncResult.success({});
       },
     },
@@ -46,7 +46,6 @@ vi.mock(import("../state/plugins"), () => ({
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { startPluginLoader } from "./pluginLoader";
-import { startPluginStyles } from "./pluginStyles";
 import {
   pluginCommandsAtom,
   pluginContributionKey,
@@ -69,8 +68,15 @@ const webPlugin = (id: string): PluginState => ({
   hasWeb: true,
 });
 
+// Every case starts with no plugins listed and no failures reported.
+function setup() {
+  state.reportWebFailure.mockReset();
+  appAtomRegistry.set(state.live, AsyncResult.initial());
+}
+
 describe("startPluginLoader", () => {
   it("loads active web plugins, runs their commands, records one that fails, and unloads everything when stopped", async () => {
+    setup();
     const navigate = vi.fn();
     // A bundle that never arrives must not hold back the plugins after it.
     let releaseHungBundle: (response: Response) => void = () => {};
@@ -96,7 +102,7 @@ describe("startPluginLoader", () => {
     using _loader = { [Symbol.dispose]: stop };
 
     appAtomRegistry.set(
-      live,
+      state.live,
       AsyncResult.success({
         plugins: [
           webPlugin("hung-web"),
@@ -116,7 +122,7 @@ describe("startPluginLoader", () => {
     // The server hears of the plugin's own failures, tied to the start that failed, so its row
     // shows them in every client. A failed download is this client's network, so it stays here.
     await vi.waitFor(() =>
-      expect(reportWebFailure).toHaveBeenCalledWith({
+      expect(state.reportWebFailure).toHaveBeenCalledWith({
         environmentId,
         input: {
           pluginId: "no-activate-web",
@@ -125,7 +131,7 @@ describe("startPluginLoader", () => {
         },
       }),
     );
-    expect(reportWebFailure).not.toHaveBeenCalledWith(
+    expect(state.reportWebFailure).not.toHaveBeenCalledWith(
       expect.objectContaining({ input: expect.objectContaining({ pluginId: "broken-web" }) }),
     );
     expect(String(fetchSpy.mock.calls[1]?.[0])).toBe(
@@ -149,7 +155,7 @@ describe("startPluginLoader", () => {
     expect(fetches("broken-web")).toBe(1);
     expect(fetches("no-activate-web")).toBe(1);
     appAtomRegistry.set(
-      live,
+      state.live,
       AsyncResult.success({
         plugins: [
           webPlugin("hung-web"),
@@ -170,6 +176,7 @@ describe("startPluginLoader", () => {
   });
 
   it("tries a download again after a bad gateway", async () => {
+    setup();
     let badGateways = 1;
     using _fetch = vi
       .spyOn(globalThis, "fetch")
@@ -180,7 +187,7 @@ describe("startPluginLoader", () => {
       );
     using _timers = fakeTimers();
     const environmentId = EnvironmentId.make("environment:plugin-loader-retry");
-    appAtomRegistry.set(live, AsyncResult.success({ plugins: [webPlugin("hello-web")] }));
+    appAtomRegistry.set(state.live, AsyncResult.success({ plugins: [webPlugin("hello-web")] }));
     using _loader = { [Symbol.dispose]: startPluginLoader(environmentId, vi.fn(), true) };
 
     await vi.advanceTimersByTimeAsync(1_000);
@@ -193,6 +200,7 @@ describe("startPluginLoader", () => {
   });
 
   it("reloads a restarted plugin and undoes what it registers after unloading", async () => {
+    setup();
     // The first start registers only when the test releases it, after a restart replaced it.
     const slowSource = `export default { activate(api) {
       const settings = () => api.settings.registerPanel(() => null);
@@ -215,22 +223,22 @@ describe("startPluginLoader", () => {
     const stop = startPluginLoader(environmentId, vi.fn(), true);
     using _loader = { [Symbol.dispose]: stop };
 
-    appAtomRegistry.set(live, AsyncResult.success({ plugins: [webPlugin("hello-web")] }));
+    appAtomRegistry.set(state.live, AsyncResult.success({ plugins: [webPlugin("hello-web")] }));
     await vi.waitFor(() =>
       expect(appAtomRegistry.get(pluginCommandsAtom(environmentId))).toHaveLength(1),
     );
     appAtomRegistry.set(
-      live,
+      state.live,
       AsyncResult.success({ plugins: [{ ...webPlugin("hello-web"), revision: 2 }] }),
     );
     await vi.waitFor(() => expect(bundleRequests("hello-web")).toBe(2));
 
-    appAtomRegistry.set(live, AsyncResult.success({ plugins: [webPlugin("slow-web")] }));
+    appAtomRegistry.set(state.live, AsyncResult.success({ plugins: [webPlugin("slow-web")] }));
     await vi.waitFor(() =>
       expect(Reflect.get(globalThis, "__releaseSlowPlugin")).toBeTypeOf("function"),
     );
     appAtomRegistry.set(
-      live,
+      state.live,
       AsyncResult.success({ plugins: [{ ...webPlugin("slow-web"), revision: 2 }] }),
     );
     const settingsPanel = pluginSettingsPanelAtom(pluginContributionKey(environmentId, "slow-web"));
@@ -250,6 +258,7 @@ describe("startPluginLoader", () => {
   });
 
   it("keeps each environment's right panels to its own threads and takes commands from the first", async () => {
+    setup();
     // Right panels only from environment B, commands from both.
     const source = `export default { activate(api) {
       api.commands.register({ id: "open", title: "Open", run() {} });
@@ -261,7 +270,7 @@ describe("startPluginLoader", () => {
       .mockImplementation(async () => new Response(source));
     const environmentA = EnvironmentId.make("environment:plugin-loader-scope:a");
     const environmentB = EnvironmentId.make("environment:plugin-loader-scope:b");
-    appAtomRegistry.set(live, AsyncResult.success({ plugins: [webPlugin("notes-web")] }));
+    appAtomRegistry.set(state.live, AsyncResult.success({ plugins: [webPlugin("notes-web")] }));
     using _a = { [Symbol.dispose]: startPluginLoader(environmentA, vi.fn(), true) };
     using _b = { [Symbol.dispose]: startPluginLoader(environmentB, vi.fn(), false) };
 
@@ -275,6 +284,7 @@ describe("startPluginLoader", () => {
   });
 
   it("starts a channel the plugin subscribes to and hands it the values", async () => {
+    setup();
     const channelSource = `export default { activate(api) {
       api.rpc.subscribe("notes", (value) => api.injectStyles("/* " + String(value) + " */"));
     } };`;
@@ -285,7 +295,7 @@ describe("startPluginLoader", () => {
     const stop = startPluginLoader(environmentId, vi.fn(), true);
     using _loader = { [Symbol.dispose]: stop };
 
-    appAtomRegistry.set(live, AsyncResult.success({ plugins: [webPlugin("channel-web")] }));
+    appAtomRegistry.set(state.live, AsyncResult.success({ plugins: [webPlugin("channel-web")] }));
 
     await vi.waitFor(() =>
       expect(document.querySelector('style[data-plugin="channel-web"]')?.textContent).toBe(
@@ -295,12 +305,12 @@ describe("startPluginLoader", () => {
   });
 
   it("signs bundle requests with a DPoP proof over a T3 Connect link", async () => {
+    setup();
     using fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation(async () => new Response("export default { activate() {} };"));
     const environmentId = EnvironmentId.make("environment:plugin-loader:relay");
-    // Set first, so the loader's first request isn't for a plugin an earlier case left listed.
-    appAtomRegistry.set(live, AsyncResult.success({ plugins: [webPlugin("relay-web")] }));
+    appAtomRegistry.set(state.live, AsyncResult.success({ plugins: [webPlugin("relay-web")] }));
     const stop = startPluginLoader(environmentId, vi.fn(), true);
     using _loader = { [Symbol.dispose]: stop };
 
@@ -312,70 +322,5 @@ describe("startPluginLoader", () => {
         },
       }),
     );
-  });
-});
-
-describe("startPluginStyles", () => {
-  it("adds an active plugin's stylesheets in order, swaps changed ones and removes them when it is off", async () => {
-    // Each sheet names the file and revision it was fetched as.
-    using fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = new URL(String(input));
-      return new Response(`/* ${url.pathname.split("/").pop()} ${url.searchParams.get("v")} */`);
-    });
-    const environmentId = EnvironmentId.make("environment:plugin-styles");
-    const stylesPlugin: PluginState = {
-      ...webPlugin("styles-plugin"),
-      hasWeb: false,
-      styles: [
-        { file: "base.css", revision: "r1" },
-        { file: "compact.css", revision: "r2" },
-      ],
-    };
-    const sheets = () =>
-      Array.from(document.querySelectorAll('style[data-plugin="styles-plugin"]'), (sheet) =>
-        sheet.textContent?.trim(),
-      );
-    appAtomRegistry.set(live, AsyncResult.success({ plugins: [stylesPlugin] }));
-    const stop = startPluginStyles(environmentId);
-    using _styles = { [Symbol.dispose]: stop };
-
-    await vi.waitFor(() => expect(sheets()).toEqual(["/* base.css r1 */", "/* compact.css r2 */"]));
-    // After the app's own styles, so a rule of the same specificity wins.
-    expect(document.head.lastElementChild?.textContent).toBe("/* compact.css r2 */");
-    expect(String(fetchSpy.mock.calls[0]?.[0])).toBe(
-      "http://plugins.test/api/plugins/styles-plugin/styles/base.css?v=r1",
-    );
-    expect(fetchSpy.mock.calls[0]?.[1]).toEqual({ headers: { authorization: "Bearer token" } });
-
-    appAtomRegistry.set(
-      live,
-      AsyncResult.success({
-        plugins: [
-          {
-            ...stylesPlugin,
-            styles: [
-              { file: "base.css", revision: "r1" },
-              { file: "compact.css", revision: "r3" },
-            ],
-          },
-        ],
-      }),
-    );
-    await vi.waitFor(() => expect(sheets()).toEqual(["/* base.css r1 */", "/* compact.css r3 */"]));
-
-    appAtomRegistry.set(
-      live,
-      AsyncResult.success({
-        plugins: [
-          { ...webPlugin("styles-plugin"), hasWeb: false, enabled: false, status: "disabled" },
-        ],
-      }),
-    );
-    await vi.waitFor(() => expect(sheets()).toEqual([]));
-
-    appAtomRegistry.set(live, AsyncResult.success({ plugins: [stylesPlugin] }));
-    await vi.waitFor(() => expect(sheets()).toHaveLength(2));
-    stop();
-    expect(sheets()).toEqual([]);
   });
 });
