@@ -50,8 +50,7 @@ the `.tgz` file it writes.
   characters. It names the plugin's folder, its HTTP routes (`/api/plugins/<id>/…`), its agent
   tools (`plg_<id>_<tool>`) and its keybinding commands (`plugin.<id>.<command>`).
 - `engines.t3` is a version range made of `^`, `>=`, `>`, `<=`, `<`, `=` and `||`, such as
-  `>=0.1.6`. A server outside it refuses to install the plugin, update to it or start it, and says
-  why.
+  `>=0.1.6`. A server outside it refuses to install the plugin or start it, and says why.
 - `permissions` is an optional list of what the plugin says it uses. Settings → Plugins shows it on
   the plugin's row, and T3 Code doesn't enforce it.
 - `server` must be CommonJS ending in `.cjs`. `web` is a single-file ES module.
@@ -108,14 +107,7 @@ module.exports = {
   reach them;
 - answers to agents' approvals and questions, instructions for agents, and MCP tools for agents;
 - secrets the user enters on a card in a thread with a turn in progress;
-- the text T3 Code generates, such as thread titles and commit messages, and free-form text from
-  the text generation model chosen in the settings. Each plugin gets 3 seconds to answer and all of
-  them get 5, then T3 Code writes the text itself;
-- HTTP routes, schedules and server info;
-- ACP agents T3 Code runs by their command (`api.providers.registerAcpAgent`), with no Effect
-  code; the `acp-agent-plugin` fixture is a small one;
-- source control hosts (`api.sourceControl.registerDriver`), which join remote recognition and
-  pull requests; the `source-control-plugin` fixture is a minimal one.
+- HTTP routes, schedules and server info.
 
 Everything a plugin registers is released when it is disabled, reloaded or uninstalled; add your
 own cleanup with `api.onDeactivate`.
@@ -154,34 +146,7 @@ each step to resume:
   `afterRunCompleted` with the status `interrupted`.
 - Set `engines.t3` to the first T3 version that has every call you use, instead of checking
   `api.server.version`. An older T3 refuses to install or start the plugin and says why, where it
-  would otherwise ignore a field it doesn't know, such as `idempotencyKey`. It also doesn't offer or
-  install an update that needs a newer T3.
-
-## Agent providers and source control hosts
-
-An ACP agent needs no Effect code:
-
-```js
-api.providers.registerAcpAgent({
-  kind: "my-agent",
-  label: "My agent",
-  command: "my-agent",
-  args: ["acp"],
-});
-```
-
-T3 Code runs it with its shared ACP adapter and gives each instance a form for the command and
-arguments. The command must be an executable on the server, on its `PATH` or by absolute path. Do
-not use `process.execPath` as the fixture does: in the installed app it is T3 Code itself, not
-Node. `iconUrl` (https or `data:image`) gives the agent an icon. Users put secrets in the
-instance's environment variables.
-
-Source control hosts are Effect code that runs in the server: build them with the modules in
-`api.providers.runtime` (and the helpers in `api.sourceControl.runtime`), never with an `effect`
-you import, because the server bundles its own copy. Types come from one import,
-`@t3tools/plugin-sdk/server/providers`, which carries a copy of T3 Code's internal source control
-types from the version the SDK was built from. They change with every nightly, so use the SDK built
-from the T3 Code version the plugin runs on, and expect to update it often.
+  would otherwise ignore a field it doesn't know, such as `idempotencyKey`.
 
 ## Web half
 
@@ -205,10 +170,9 @@ export default defineWebPlugin({
 });
 ```
 
-`activate` receives the [`WebPluginApi`](./src/web.ts): calls into the server half, right panels,
-a settings panel, palette commands (which the desktop app can also list in its menu), composer
-slash commands and banners, timeline renderers for the plugin's agent tools, renderers for fenced
-code languages, styles, assets, navigation and toasts.
+`activate` receives the [`WebPluginApi`](./src/web.ts): calls into the server half, right panels, a
+settings panel, palette commands, composer slash commands and banners, timeline renderers for the
+plugin's agent tools, renderers for fenced code languages, styles, assets, navigation and toasts.
 
 `api.rpc.invoke` and `api.rpc.subscribe` reach the methods and channels the server half adds with
 `rpc.register` and `rpc.publish`. Describe them once as a `PluginRpcMap` type from
@@ -286,8 +250,8 @@ parts of your design to survive that. Build each part on the most stable thing T
 - **Draw `original` for steps you don't handle.** The `timeline.item` part's `item` describes
   commands, file changes, searches, tool calls and reasoning. Other kinds of step have the type
   `other`, and T3 can add kinds in any release.
-- **Ship what the plugin runs.** Adding a folder leaves out `.git` and `node_modules`, and npm
-  installs don't install dependencies, so build everything into the files the manifest names.
+- **Ship what the plugin runs.** Adding a folder leaves out `.git` and `node_modules`, so build
+  everything into the files the manifest names.
 - **Ask for a seam.** When T3 doesn't hand over what you need, ask for a piece, part or token on
   the T3 Code repository instead of reaching into its markup.
 
@@ -306,5 +270,5 @@ the switch for them in Settings → Plugins. They are off until then. Without an
 folder to `devPaths` in `plugins.json` in the T3 Code data directory, turn the plugin on in
 Settings → Plugins, and use **Reload** after each change.
 
-To install a finished plugin, drag its folder onto Settings → Plugins, or use **Add plugin** with a
-folder, a git repository or an npm package.
+To install a finished plugin, drag its folder onto Settings → Plugins, or use **Add plugin** to
+choose it.

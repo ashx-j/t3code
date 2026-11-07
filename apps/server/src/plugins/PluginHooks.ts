@@ -72,16 +72,6 @@ export interface PluginSlashCommand {
   readonly inputHint?: string;
 }
 
-export type PluginTextGenerationKind =
-  | "threadTitle"
-  | "commitMessage"
-  | "prContent"
-  | "branchName"
-  | "reviewGuide";
-
-/** A plugin's answer for one generation, unchecked, or nothing. The host bounds it. */
-type TextGenerator = (input: Schema.JsonObject) => Effect.Effect<unknown>;
-
 type SkillFolder = { readonly plugin: string; readonly skills: string };
 
 /** A skill an active plugin ships in `skills/<folder>/SKILL.md`. */
@@ -248,12 +238,6 @@ export interface PluginHooksRegistry {
     handler: SlashCommandHandler,
   ) => Effect.Effect<Effect.Effect<void>, PluginSlashCommandTakenError>;
   readonly currentSlashCommands: Effect.Effect<ReadonlyArray<PluginSlashCommand>>;
-  /** Adds a plugin's generator, asked before T3's own, and returns the effect that removes it. */
-  readonly addTextGenerator: (
-    pluginId: string,
-    kind: PluginTextGenerationKind,
-    generator: TextGenerator,
-  ) => Effect.Effect<Effect.Effect<void>>;
   /**
    * Adds instructions for agents and returns the effect that removes them. They are kept in plugin
    * id order, so a plugin's restart changes neither Claude's process key nor Codex's context keys.
@@ -272,10 +256,6 @@ export interface PluginHooksRegistry {
   readonly skills: Stream.Stream<ReadonlyArray<PluginSkill>>;
   /** Nothing while no plugin gives agents anything, so turns stay as they were. */
   readonly agentContext: Effect.Effect<PluginAgentContext | undefined>;
-  /** The generators for `kind`, in plugin id order. */
-  readonly textGenerators: (
-    kind: PluginTextGenerationKind,
-  ) => Effect.Effect<ReadonlyArray<TextGenerator>>;
   /** The current commands, then the list after every change. */
   readonly slashCommands: Stream.Stream<ReadonlyArray<PluginSlashCommand>>;
 }
@@ -291,8 +271,6 @@ export class PluginHooks extends Context.Reference<PluginHooksRegistry>("t3/plug
     setProviderSlashCommands: () => Effect.void,
     addSlashCommand: () => Effect.succeed(Effect.void),
     currentSlashCommands: Effect.succeed([]),
-    addTextGenerator: () => Effect.succeed(Effect.void),
-    textGenerators: () => Effect.succeed([]),
     addAgentInstructions: () => Effect.succeed(Effect.void),
     setSkillFolders: () => Effect.void,
     currentSkills: Effect.succeed([]),
@@ -356,13 +334,6 @@ const make = Effect.gen(function* () {
   >([]);
   const skillFolders = yield* Ref.make<ReadonlyArray<SkillFolder>>([]);
   const skills = yield* SubscriptionRef.make<ReadonlyArray<PluginSkill>>([]);
-  const generators = yield* Ref.make<
-    ReadonlyArray<{
-      readonly pluginId: string;
-      readonly kind: PluginTextGenerationKind;
-      readonly run: TextGenerator;
-    }>
-  >([]);
   const commands = yield* SubscriptionRef.make<ReadonlyArray<SlashCommandEntry>>([]);
   const providerCommands = yield* Ref.make<ProviderSlashCommandNames>(() => Effect.succeed([]));
   // `<instance>/<command>` pairs already logged, so a busy thread logs its collision once.
@@ -532,13 +503,6 @@ const make = Effect.gen(function* () {
           ] as const),
         );
       }),
-    addTextGenerator: (pluginId, kind, generator) =>
-      Effect.sync(() => ({ pluginId, kind, run: generator })).pipe(
-        Effect.tap((entry) => Ref.update(generators, (all) => inPluginOrder(all, entry))),
-        Effect.map((entry) =>
-          Ref.update(generators, (all) => all.filter((other) => other !== entry)),
-        ),
-      ),
     addAgentInstructions: (pluginId, text) =>
       Effect.sync(() => ({ pluginId, text })).pipe(
         Effect.tap((entry) => Ref.update(instructions, (all) => inPluginOrder(all, entry))),
@@ -563,10 +527,6 @@ const make = Effect.gen(function* () {
           : { instructions: texts.map((entry) => entry.text), skillFolders: folders },
       ),
     ),
-    textGenerators: (kind) =>
-      Ref.get(generators).pipe(
-        Effect.map((all) => all.filter((entry) => entry.kind === kind).map((entry) => entry.run)),
-      ),
     currentSlashCommands: SubscriptionRef.get(commands).pipe(
       Effect.map((all) => handling(all).map((entry) => entry.command)),
     ),

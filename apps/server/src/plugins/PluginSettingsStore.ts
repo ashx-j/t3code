@@ -107,13 +107,6 @@ export class PluginSettingsStore extends Context.Service<
       pluginId: PluginId,
       settingsSchema: Schema.JsonObject | undefined,
     ) => Effect.Effect<void, PluginSettingsPersistenceError>;
-    /** Deletes the plugin's secrets for fields `settingsSchema` no longer marks as secrets. */
-    readonly dropRemovedSecrets: (
-      pluginId: PluginId,
-      settingsSchema: Schema.JsonObject | undefined,
-    ) => Effect.Effect<void, PluginSettingsPersistenceError>;
-    /** The plugins that have saved settings, installed or not. */
-    readonly pluginIds: Effect.Effect<ReadonlyArray<PluginId>>;
   }
 >()("t3/plugins/PluginSettingsStore") {}
 
@@ -433,63 +426,48 @@ const make = Effect.gen(function* () {
       Stream.map((change) => change.settings),
     );
 
-  const dataRoot = path.join(stateDir, "plugin-data");
-  const isPluginId = Schema.is(PluginId);
-  const pluginIds = fileSystem.readDirectory(dataRoot).pipe(
-    Effect.map((entries) => entries.filter(isPluginId)),
-    Effect.orElseSucceed((): ReadonlyArray<PluginId> => []),
-    Effect.withSpan("PluginSettingsStore.pluginIds"),
-  );
-
-  // Every secret stored for the plugin, also those of fields it has since renamed. A longer id can
-  // share the prefix (`foo-bar` for `foo`), and every id with secrets has a settings folder, so
-  // those are left out. Inside `clear` and `dropRemovedSecrets`, which have their spans.
-  const storedSecretNames = Effect.fnUntraced(function* (pluginId: PluginId) {
-    if (secretStore.directory === undefined) return new Set<string>();
-    const prefix = `plugin-${pluginId}-`;
-    const longerIds = (yield* pluginIds).filter((id) => id.startsWith(`${pluginId}-`));
-    const files = yield* fileSystem
-      .readDirectory(secretStore.directory)
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new PluginSettingsPersistenceError({ pluginId, operation: "readSecret", cause }),
-        ),
+  const clear: PluginSettingsStore["Service"]["clear"] = Effect.fn("PluginSettingsStore.clear")(
+    function* (pluginId, settingsSchema) {
+      const names = new Set(
+        Array.from(secretFields(settingsSchema), (field) => secretName(pluginId, field)),
       );
-    return new Set(
-      files.flatMap((file) => {
-        const name = file.endsWith(".bin") ? file.slice(0, -".bin".length) : "";
-        return name.startsWith(prefix) && !longerIds.some((id) => name.startsWith(`plugin-${id}-`))
-          ? [name]
-          : [];
-      }),
-    );
-  });
-
-  const removeSecrets = (pluginId: PluginId, names: Iterable<string>) =>
-    Effect.forEach(
-      names,
-      (name) =>
-        secretStore
+      // Also secrets of fields the plugin has since renamed. A longer id can share the prefix
+      // (`foo-bar` for `foo`), and every id with secrets has a settings folder, so those are kept.
+      const prefix = `plugin-${pluginId}-`;
+      if (secretStore.directory !== undefined) {
+        const longerIds = (yield* fileSystem
+          .readDirectory(path.dirname(path.dirname(settingsPath(pluginId))))
+          .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))).filter((id) =>
+          id.startsWith(`${pluginId}-`),
+        );
+        const files = yield* fileSystem
+          .readDirectory(secretStore.directory)
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new PluginSettingsPersistenceError({ pluginId, operation: "readSecret", cause }),
+            ),
+          );
+        for (const file of files) {
+          const name = file.endsWith(".bin") ? file.slice(0, -".bin".length) : "";
+          if (
+            name.startsWith(prefix) &&
+            !longerIds.some((id) => name.startsWith(`plugin-${id}-`))
+          ) {
+            names.add(name);
+          }
+        }
+      }
+      for (const name of names) {
+        yield* secretStore
           .remove(name)
           .pipe(
             Effect.mapError(
               (cause) =>
                 new PluginSettingsPersistenceError({ pluginId, operation: "writeSecret", cause }),
             ),
-          ),
-      { discard: true },
-    );
-
-  const secretNamesOf = (pluginId: PluginId, settingsSchema: Schema.JsonObject | undefined) =>
-    new Set(Array.from(secretFields(settingsSchema), (field) => secretName(pluginId, field)));
-
-  const clear: PluginSettingsStore["Service"]["clear"] = Effect.fn("PluginSettingsStore.clear")(
-    function* (pluginId, settingsSchema) {
-      yield* removeSecrets(pluginId, [
-        ...secretNamesOf(pluginId, settingsSchema),
-        ...(yield* storedSecretNames(pluginId)),
-      ]);
+          );
+      }
       yield* fileSystem
         .remove(path.dirname(settingsPath(pluginId)), { recursive: true, force: true })
         .pipe(
@@ -500,31 +478,7 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const dropRemovedSecrets: PluginSettingsStore["Service"]["dropRemovedSecrets"] = Effect.fn(
-    "PluginSettingsStore.dropRemovedSecrets",
-  )(function* (pluginId, settingsSchema) {
-    const kept = secretNamesOf(pluginId, settingsSchema);
-    yield* writeSemaphore.withPermits(1)(
-      storedSecretNames(pluginId).pipe(
-        Effect.flatMap((stored) =>
-          removeSecrets(
-            pluginId,
-            [...stored].filter((name) => !kept.has(name)),
-          ),
-        ),
-      ),
-    );
-  });
-
-  return PluginSettingsStore.of({
-    get,
-    getForClient,
-    update,
-    changes,
-    clear,
-    dropRemovedSecrets,
-    pluginIds,
-  });
+  return PluginSettingsStore.of({ get, getForClient, update, changes, clear });
 });
 
 export const layer = Layer.effect(PluginSettingsStore, make);

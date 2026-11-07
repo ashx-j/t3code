@@ -38,21 +38,6 @@ module.exports = {
       text: "Report the deploy status.",
     }));
 
-    api.textGeneration.register("threadTitle", ({ message }) =>
-      message.startsWith("#titled ") ? { title: `Workbench: ${message.slice(8)}` } : undefined,
-    );
-
-    api.rpc.register(
-      "summarize",
-      (input) => {
-        const { log } = /** @type {{ log: string }} */ (input);
-        return api.textGeneration.generate({
-          prompt: `Summarize these commits in one sentence:\n${log}`,
-        });
-      },
-      { access: "read" },
-    );
-
     api.schedule.every(1000, async () => {
       const ticks = await api.storage.get("ticks");
       const next = (typeof ticks === "number" ? ticks : 0) + 1;

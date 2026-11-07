@@ -485,8 +485,7 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
         enabled: true,
         snapshot: { getSnapshot: Effect.succeed(snapshot) } as ProviderInstance["snapshot"],
         orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
-        // No free-form text, like the ACP agents.
-        textGeneration: {
+        textGeneration: TextGeneration.TextGeneration.of({
           generateCommitMessage: () => Effect.die("unused"),
           generatePrContent: () => Effect.die("unused"),
           generateBranchName: () => Effect.die("unused"),
@@ -496,7 +495,7 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
               calls.push(input.modelSelection);
               return { title: "Generated title" };
             }),
-        },
+        }),
       };
     });
     const service = yield* TextGeneration.make.pipe(
@@ -535,15 +534,5 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
           }
         : selection,
     ]);
-    // The fallback cannot run a prompt either, so a free-form prompt never moves to it.
-    const unsupported = yield* service.generateText!({
-      cwd: "/tmp",
-      prompt: "hello",
-      modelSelection: selection,
-    }).pipe(Effect.flip);
-    expect(unsupported).toMatchObject({
-      _tag: "TextGenerationUnsupportedError",
-      instanceId: primary,
-    });
   }),
 );

@@ -21,16 +21,13 @@ const MAX_VALUE_BYTES = 1024 * 1024;
 export class PluginStoragePersistenceError extends Schema.TaggedError<PluginStoragePersistenceError>()(
   "PluginStoragePersistenceError",
   {
-    /** Absent for an operation over every plugin's keys. */
-    pluginId: Schema.optionalKey(PluginId),
-    operation: Schema.Literals(["open", "get", "set", "remove", "list", "count"]),
+    pluginId: PluginId,
+    operation: Schema.Literals(["open", "get", "set", "remove", "list"]),
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return this.pluginId === undefined
-      ? `Plugin storage ${this.operation} failed.`
-      : `Plugin storage ${this.operation} failed for plugin ${this.pluginId}.`;
+    return `Plugin storage ${this.operation} failed for plugin ${this.pluginId}.`;
   }
 }
 
@@ -102,8 +99,6 @@ export class PluginStorage extends Context.Service<
     ) => Effect.Effect<ReadonlyArray<string>, PluginStoragePersistenceError>;
     /** Deletes every key of the plugin, without creating the database when there is none. */
     readonly clear: (pluginId: PluginId) => Effect.Effect<void, PluginStoragePersistenceError>;
-    /** How many keys each plugin with any has, installed or not, without creating the database. */
-    readonly keyCounts: Effect.Effect<ReadonlyMap<PluginId, number>, PluginStoragePersistenceError>;
   }
 >()("t3/plugins/PluginStorage") {}
 
@@ -264,28 +259,7 @@ const make = Effect.gen(function* () {
       ),
   );
 
-  const isPluginId = Schema.is(PluginId);
-  const keyCounts = Effect.gen(function* () {
-    const exists = yield* fileSystem
-      .exists(filename)
-      .pipe(
-        Effect.mapError((cause) => new PluginStoragePersistenceError({ operation: "open", cause })),
-      );
-    if (!exists) return new Map<PluginId, number>();
-    const sql = yield* sqlClient.pipe(
-      Effect.mapError((cause) => new PluginStoragePersistenceError({ operation: "open", cause })),
-    );
-    const rows = yield* sql<{ readonly plugin_id: string; readonly keys: number }>`
-      SELECT plugin_id, count(*) AS keys FROM plugin_storage GROUP BY plugin_id
-    `.pipe(
-      Effect.mapError((cause) => new PluginStoragePersistenceError({ operation: "count", cause })),
-    );
-    return new Map(
-      rows.flatMap((row) => (isPluginId(row.plugin_id) ? [[row.plugin_id, row.keys]] : [])),
-    );
-  }).pipe(Effect.withSpan("PluginStorage.keyCounts"));
-
-  return PluginStorage.of({ get, set, remove, list, clear, keyCounts });
+  return PluginStorage.of({ get, set, remove, list, clear });
 });
 
 export const layer = Layer.effect(PluginStorage, make);

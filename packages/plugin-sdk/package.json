@@ -15,10 +15,6 @@
       "types": "./src/server.ts",
       "import": "./src/server.ts"
     },
-    "./server/providers": {
-      "types": "./src/providers.ts",
-      "import": "./src/providers.ts"
-    },
     "./web": {
       "types": "./src/web.ts",
       "import": "./src/web.ts"
@@ -47,8 +43,6 @@
   },
   "devDependencies": {
     "@effect/atom-react": "catalog:",
-    "@t3tools/contracts": "workspace:*",
-    "@t3tools/source-control-core": "workspace:*",
     "@types/node": "catalog:",
     "@types/react": "catalog:",
     "effect": "catalog:",

@@ -7,10 +7,8 @@ import { type ReactNode, useContext, useEffect, useState } from "react";
 import { pluginEnvironment } from "../../../state/plugins";
 import { formatEnvironmentQueryError } from "../../../state/query";
 import { useAtomCommand } from "../../../state/use-atom-command";
-import { Button } from "../../ui/button";
 import { Switch } from "../../ui/switch";
 import { SettingsRow, SettingsSection } from "../settingsLayout";
-import { LeftoverPluginData } from "./LeftoverPluginData";
 import { PluginRow } from "./PluginRow";
 import { type PluginCopy, type PluginTarget, usePluginUiSource } from "./pluginTargets";
 
@@ -54,9 +52,6 @@ function pluginRows(copies: ReadonlyArray<PluginCopy>) {
   return Array.from(rows, ([key, row]) => ({ key, ...row }));
 }
 
-const fromGitOrNpm = (copy: PluginCopy) =>
-  copy.plugin.installSource !== undefined && copy.plugin.installSource.type !== "path";
-
 /**
  * The page's own settings, with `children` first, then each plugin once, however many of `targets`
  * have it. Actions on a row apply to every copy. `main` comes first in `targets` and decides which
@@ -92,7 +87,6 @@ export function PluginList({
   const errors = loaded.flatMap(({ target, error }) =>
     error === null ? [] : [several ? `${target.label}: ${error}` : error],
   );
-  const updatable = copies.filter(fromGitOrNpm);
   const agentTools = loaded.flatMap(({ target }, index) => {
     const value = AsyncResult.getOrElse(
       lists[index] ?? AsyncResult.initial(true),
@@ -107,9 +101,6 @@ export function PluginList({
         {children}
         {agentTools.length === 0 ? null : (
           <AgentToolsRow environmentId={main.environmentId} environments={agentTools} />
-        )}
-        {updatable.length === 0 ? null : (
-          <CheckPluginUpdates environmentId={main.environmentId} copies={updatable} />
         )}
       </SettingsSection>
       {targets.map((target) => (
@@ -140,7 +131,6 @@ export function PluginList({
           ))
         )}
       </SettingsSection>
-      <LeftoverPluginData targets={targets} installed={copies} labelled={several} />
     </>
   );
 }
@@ -160,78 +150,6 @@ function ScanPluginsFolder({ environmentId }: { readonly environmentId: Environm
     );
   }, [registry, environmentId, canRescan]);
   return null;
-}
-
-/** Checks plugins installed from git or npm now; the server also checks once a day. */
-function CheckPluginUpdates({
-  environmentId,
-  copies,
-}: {
-  readonly environmentId: EnvironmentId;
-  /** Plugins installed from git or npm. */
-  readonly copies: ReadonlyArray<PluginCopy>;
-}) {
-  const canCheck = useAtomValue(pluginEnvironment.checkPluginUpdates.permissionAtom(environmentId));
-  const canUpdate = useAtomValue(pluginEnvironment.updatePlugin.permissionAtom(environmentId));
-  const check = useAtomCommand(pluginEnvironment.checkPluginUpdates, "plugin update check");
-  const update = useAtomCommand(pluginEnvironment.updatePlugin, "plugin update");
-  const [busy, setBusy] = useState<"checking" | "updating" | null>(null);
-  const [checked, setChecked] = useState(false);
-  const outdated = copies.filter((copy) => copy.plugin.availableUpdate !== undefined);
-  const updates = new Set(outdated.map((copy) => copy.plugin.id)).size;
-  return (
-    <SettingsRow
-      title="Updates"
-      description={
-        updates > 0
-          ? `${updates === 1 ? "1 plugin has" : `${updates} plugins have`} an update.`
-          : checked
-            ? "Plugins from git or npm are up to date."
-            : "Plugins from git or npm are checked once a day."
-      }
-      control={
-        <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={busy !== null || !canCheck}
-            onClick={async () => {
-              setBusy("checking");
-              const results = await Promise.all(
-                [...new Set(copies.map((copy) => copy.environmentId))].map((target) =>
-                  check({ environmentId: target, input: {} }),
-                ),
-              );
-              setBusy(null);
-              setChecked(results.every((result) => result._tag === "Success"));
-            }}
-          >
-            {busy === "checking" ? "Checking…" : "Check for updates"}
-          </Button>
-          {updates > 0 ? (
-            <Button
-              size="sm"
-              disabled={busy !== null || !canUpdate}
-              onClick={async () => {
-                setBusy("updating");
-                await Promise.all(
-                  outdated.map((copy) =>
-                    update({
-                      environmentId: copy.environmentId,
-                      input: { pluginId: copy.plugin.id },
-                    }),
-                  ),
-                );
-                setBusy(null);
-              }}
-            >
-              {busy === "updating" ? "Updating…" : "Update all"}
-            </Button>
-          ) : null}
-        </div>
-      }
-    />
-  );
 }
 
 /** Whether agents get the tools that list, install, check and change plugins. Off by default. */

@@ -1,9 +1,3 @@
-import type {
-  PluginAcpAgent,
-  PluginProviderRuntime,
-  PluginSourceControlDriver,
-  PluginSourceControlRuntime,
-} from "./providers.ts";
 import type { JsonObject, JsonValue, PluginRpcMap } from "./shared.ts";
 
 /** `read` methods need the caller's `orchestration:read` scope, `write` methods `orchestration:operate`. */
@@ -183,81 +177,6 @@ export type PluginSlashCommandResult =
   | void
   | { readonly text: string }
   | { readonly block: string };
-
-/** What each kind of generated text receives and returns. */
-export interface PluginTextGenerationTasks {
-  readonly threadTitle: {
-    readonly input: {
-      readonly cwd: string;
-      /** The message the title is for. */
-      readonly message: string;
-      readonly previousTitle?: string;
-      readonly instructions?: string;
-    };
-    readonly output: { readonly title: string };
-  };
-  readonly commitMessage: {
-    readonly input: {
-      readonly cwd: string;
-      readonly branch: string | null;
-      readonly stagedSummary: string;
-      readonly stagedPatch: string;
-      /** Whether T3 also wants a branch name for the commit. */
-      readonly includeBranch: boolean;
-      /** The commit style the user picked in Settings, with the repository's examples. */
-      readonly instructions?: string;
-      /** How the user wants branches named, sent with `includeBranch`. */
-      readonly branchInstructions?: string;
-    };
-    readonly output: { readonly subject: string; readonly body: string; readonly branch?: string };
-  };
-  readonly prContent: {
-    readonly input: {
-      readonly cwd: string;
-      readonly baseBranch: string;
-      readonly headBranch: string;
-      readonly commitSummary: string;
-      readonly diffSummary: string;
-      readonly diffPatch: string;
-      /** The repository's pull request template, if it has one. */
-      readonly template?: string;
-      readonly threadContext?: string;
-      /** The pull request style the user picked in Settings, with the repository's examples. */
-      readonly instructions?: string;
-    };
-    readonly output: { readonly title: string; readonly body: string };
-  };
-  readonly branchName: {
-    readonly input: {
-      readonly cwd: string;
-      readonly message: string;
-      /**
-       * How the user wants branches named in Settings. In `custom` mode the answer is the whole
-       * branch name, following `instructions`; otherwise T3 lowercases it, and in `static` mode
-       * adds `prefix`.
-       */
-      readonly naming?: {
-        readonly mode: "static" | "semantic" | "custom";
-        readonly prefix: string;
-        readonly instructions: string;
-      };
-    };
-    readonly output: { readonly branch: string };
-  };
-  readonly reviewGuide: {
-    readonly input: {
-      readonly cwd: string;
-      readonly number: number;
-      readonly title: string;
-      readonly description: string;
-      readonly baseBranch: string;
-      readonly baseCommit: string;
-      readonly instructions?: string;
-    };
-    /** Each stop as the review guide's contract defines it. */
-    readonly output: { readonly stops: ReadonlyArray<JsonObject> };
-  };
-}
 
 /** One option a model takes, such as reasoning effort, by the id a thread's model sets it with. */
 export interface PluginModelOption {
@@ -546,33 +465,6 @@ export interface PluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
       ) => PluginSlashCommandResult | Promise<PluginSlashCommandResult>,
     ) => void;
   };
-  readonly textGeneration: {
-    /**
-     * Runs `prompt` on the text generation model chosen in T3 Code's settings and resolves with
-     * its answer. Claude, Codex, OpenCode, Cursor, Grok, Pi and Antigravity models can answer; any
-     * other rejects with code `TextGenerationUnsupportedError`. `signal` stops the wait.
-     */
-    readonly generate: (input: {
-      readonly prompt: string;
-      readonly signal?: AbortSignal;
-    }) => Promise<string>;
-    /**
-     * Supplies `kind` of text before T3 Code generates it, until the plugin deactivates. T3 cleans
-     * up the answer as it does model output. Plugins are asked in id order. Nothing, a wrong
-     * shape, an error or 3 seconds without an answer leaves it to the next plugin. After 5 seconds
-     * for all plugins, or when none answers, T3 Code's own generator writes it.
-     */
-    readonly register: <K extends keyof PluginTextGenerationTasks>(
-      kind: K,
-      generate: (
-        input: PluginTextGenerationTasks[K]["input"],
-        context: { readonly signal: AbortSignal },
-      ) =>
-        | PluginTextGenerationTasks[K]["output"]
-        | void
-        | Promise<PluginTextGenerationTasks[K]["output"] | void>,
-    ) => void;
-  };
   readonly agents: {
     /**
      * Adds `text` (up to 4,000 bytes) to the instructions T3 Code gives Claude and Codex agents,
@@ -587,24 +479,6 @@ export interface PluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
      * for the ids and values `threads.create` accepts, since they differ per provider.
      */
     readonly list: () => Promise<ReadonlyArray<PluginProviderInstance>>;
-    /** T3 Code's own Effect modules, which a source control driver must build with. */
-    readonly runtime: PluginProviderRuntime;
-    /**
-     * Adds an ACP agent T3 Code runs by its command, with no Effect code, until the plugin
-     * deactivates: the shared ACP adapter with the base capabilities, a settings form for the
-     * command and arguments, and no text generation. Its saved instances start, and a default
-     * instance is added, off. Rejects a kind T3 Code or another plugin already provides.
-     */
-    readonly registerAcpAgent: (agent: PluginAcpAgent) => Promise<void>;
-  };
-  readonly sourceControl: {
-    readonly runtime: PluginSourceControlRuntime;
-    /**
-     * Adds a source control host until the plugin deactivates: its definition joins remote
-     * recognition after the built-in hosts, and its driver is built once. Clients show it with the
-     * generic host presentation. Rejects a kind T3 Code or another plugin already provides.
-     */
-    readonly registerDriver: (driver: PluginSourceControlDriver) => Promise<void>;
   };
   readonly mcp: {
     /**

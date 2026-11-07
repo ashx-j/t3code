@@ -69,23 +69,7 @@ export const decodeJsonReply = <S extends Schema.Top>(
   );
 };
 
-// Every runner returns JSON, so free-form text travels in one field.
-const GeneratedText = Schema.Struct({ text: Schema.String });
-
-export function fromRunner(name: string, run: Runner) {
-  const generateText: NonNullable<ProviderTextGeneration["generateText"]> = Effect.fn(
-    `${name}.generateText`,
-  )(function* (input) {
-    const generated = yield* run({
-      operation: "generateText",
-      cwd: input.cwd,
-      modelSelection: input.modelSelection,
-      prompt: `${input.prompt}\n\nReturn JSON with one key, text, holding your whole answer.`,
-      outputSchema: GeneratedText,
-    });
-    return { text: generated.text.trim() };
-  });
-
+export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
   const generateCommitMessage: ProviderTextGeneration["generateCommitMessage"] = Effect.fn(
     `${name}.generateCommitMessage`,
   )(function* (input) {
@@ -184,7 +168,6 @@ export function fromRunner(name: string, run: Runner) {
   });
 
   return {
-    generateText,
     generateCommitMessage,
     generatePrContent,
     generateBranchName,

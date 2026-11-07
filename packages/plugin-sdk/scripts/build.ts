@@ -13,7 +13,7 @@ import { build } from "vite-plus/pack";
 const packageRoot = NodePath.resolve(import.meta.dirname, "..");
 const repoRoot = NodePath.resolve(packageRoot, "../..");
 const outDir = NodePath.join(packageRoot, "dist");
-const entries = ["atom", "providers", "server", "shared", "ui", "vite", "web"];
+const entries = ["atom", "server", "shared", "ui", "vite", "web"];
 // What the published declarations may import; everything else must be inlined.
 const PEER_IMPORT = /^(effect|react)(\/|$)/;
 const tsc = NodePath.join(repoRoot, "node_modules/.bin/tsc");
@@ -44,7 +44,7 @@ await build({
 });
 
 // The compiler writes declarations only for this package's own files and the folders the build
-// tsconfig lists. It refuses a few of contracts' largest schemas (TS7056); none of them is used.
+// tsconfig lists.
 const declarations = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-plugin-sdk-types-"));
 try {
   const emitted = NodeChildProcess.spawnSync(
@@ -52,7 +52,7 @@ try {
     ["-p", "tsconfig.build.json", "--outDir", declarations, "--noCheck"],
     { cwd: packageRoot, encoding: "utf8" },
   );
-  const errors = emitted.stdout.split("\n").filter((line) => / error TS(?!7056)/.test(line));
+  const errors = emitted.stdout.split("\n").filter((line) => / error TS/.test(line));
   if (emitted.error !== undefined || errors.length > 0) {
     throw new Error(`Writing declarations failed:\n${errors.join("\n") || emitted.error}`);
   }
@@ -141,9 +141,6 @@ const checked = NodeChildProcess.spawnSync(
     "es2023",
     "--lib",
     "esnext,dom",
-    // Source control types name Node's `NodeJS.ProcessEnv`.
-    "--types",
-    "node",
     ...declarationFiles.map((file) => NodePath.join(outDir, file)),
   ],
   { cwd: packageRoot, encoding: "utf8" },

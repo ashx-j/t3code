@@ -1,6 +1,6 @@
 import {
   PluginId,
-  PluginInstallSource,
+  type PluginInstallSource,
   type PluginState,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
@@ -83,7 +83,6 @@ export interface PluginMcpHostActions {
   ) => Effect.Effect<PluginState, { readonly message: string }>;
   readonly uninstall: (
     pluginId: PluginId,
-    removeData: boolean,
     linkedFolder?: string,
   ) => Effect.Effect<void, { readonly message: string }>;
   readonly check: (
@@ -120,20 +119,11 @@ const decodeSettingsInput = Schema.decodeUnknownEffect(
   Schema.Struct({ pluginId: PluginId, values: Schema.optional(Schema.JsonObject) }),
 );
 const decodeInstallInput = Schema.decodeUnknownEffect(
-  Schema.Struct({
-    path: Schema.optional(Schema.String),
-    link: Schema.optional(Schema.Boolean),
-    gitUrl: Schema.optional(Schema.String),
-    gitRef: Schema.optional(Schema.String),
-    npmPackage: Schema.optional(Schema.String),
-    npmVersion: Schema.optional(Schema.String),
-  }),
+  Schema.Struct({ path: TrimmedNonEmptyString, link: Schema.optional(Schema.Boolean) }),
 );
-const decodeInstallSource = Schema.decodeUnknownEffect(PluginInstallSource);
 const decodeUninstallInput = Schema.decodeUnknownEffect(
   Schema.Struct({
     pluginId: PluginId,
-    removeData: Schema.optional(Schema.Boolean),
     linkedFolder: Schema.optional(Schema.String),
   }),
 );
@@ -246,42 +236,6 @@ const make = () => {
         );
   const invalidInput = (cause: { readonly message: string }) =>
     new PluginMcpManagementError({ reason: `Invalid input: ${cause.message}` });
-  // The tool takes flat fields, which agents fill in more reliably than a tagged union.
-  const installSourceOf = (input: {
-    readonly path?: string | undefined;
-    readonly link?: boolean | undefined;
-    readonly gitUrl?: string | undefined;
-    readonly gitRef?: string | undefined;
-    readonly npmPackage?: string | undefined;
-    readonly npmVersion?: string | undefined;
-  }) => {
-    const given = [input.path, input.gitUrl, input.npmPackage].filter(
-      (value) => value !== undefined,
-    );
-    if (given.length !== 1) {
-      return Effect.fail(invalidInput({ message: "Give one of path, gitUrl or npmPackage." }));
-    }
-    return decodeInstallSource(
-      input.path !== undefined
-        ? {
-            type: "path",
-            path: input.path,
-            ...(input.link === undefined ? {} : { link: input.link }),
-          }
-        : input.gitUrl !== undefined
-          ? {
-              type: "git",
-              url: input.gitUrl,
-              ...(input.gitRef === undefined ? {} : { ref: input.gitRef }),
-            }
-          : {
-              type: "npm",
-              name: input.npmPackage,
-              ...(input.npmVersion === undefined ? {} : { version: input.npmVersion }),
-            },
-    ).pipe(Effect.mapError(invalidInput));
-  };
-
   // Inside `register`, `unregisterPlugin` or `offerManagementTools`, which have their spans.
   const publish = Effect.fnUntraced(function* (entry: PluginMcpToolEntry) {
     tools.set(entry.name, entry);
@@ -362,28 +316,28 @@ const make = () => {
     name: PLUGINS_INSTALL_TOOL,
     title: "Install a plugin",
     description:
-      "Install and enable a plugin from a folder `path`, git or npm. Plugins run with T3 Code's access, so install only what the user asked for. While writing one, install its folder with `link: true`, then edit it and call `t3_plugins_reload`.",
+      "Install and enable a plugin from a folder `path` on the server. Plugins run with T3 Code's access, so install only what the user asked for. While writing one, install its folder with `link: true`, then edit it and call `t3_plugins_reload`.",
     inputSchema: {
       type: "object",
       properties: {
         path: { type: "string" },
         link: { type: "boolean" },
-        gitUrl: { type: "string" },
-        gitRef: { type: "string" },
-        npmPackage: { type: "string" },
-        npmVersion: { type: "string" },
       },
+      required: ["path"],
       additionalProperties: false,
     },
     access: "write",
     call: (input) =>
       decodeInstallInput(input).pipe(
         Effect.mapError(invalidInput),
-        Effect.flatMap((request) =>
-          installSourceOf(request).pipe(
-            Effect.flatMap((source) => withHost((actions) => actions.install(source))),
-          ),
-        ),
+        Effect.flatMap(({ path, link }) => {
+          const source: PluginInstallSource = {
+            type: "path",
+            path,
+            ...(link === undefined ? {} : { link }),
+          };
+          return withHost((actions) => actions.install(source));
+        }),
         Effect.map(lifecycleResult),
       ),
   };
@@ -392,12 +346,11 @@ const make = () => {
     name: PLUGINS_UNINSTALL_TOOL,
     title: "Remove a plugin",
     description:
-      "Remove a plugin. A linked one is only unlinked; its folder stays. `removeData` also deletes its settings and storage.",
+      "Remove a plugin and delete its settings and storage. A linked one is only unlinked; its folder stays.",
     inputSchema: {
       type: "object",
       properties: {
         pluginId: { type: "string" },
-        removeData: { type: "boolean" },
         linkedFolder: { type: "string", description: "Unlink only the copy from this folder." },
       },
       required: ["pluginId"],
@@ -408,9 +361,7 @@ const make = () => {
       decodeUninstallInput(input).pipe(
         Effect.mapError(invalidInput),
         Effect.flatMap((request) =>
-          withHost((actions) =>
-            actions.uninstall(request.pluginId, request.removeData === true, request.linkedFolder),
-          ),
+          withHost((actions) => actions.uninstall(request.pluginId, request.linkedFolder)),
         ),
         Effect.as({ removed: true }),
       ),

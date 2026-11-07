@@ -256,9 +256,9 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
           installedFrom.push(source);
           return installed;
         }),
-      uninstall: (pluginId, removeData, linkedFolder) =>
+      uninstall: (pluginId, linkedFolder) =>
         Effect.sync(() => {
-          uninstalled.push({ pluginId, removeData, linkedFolder });
+          uninstalled.push({ pluginId, linkedFolder });
         }),
       reload: (pluginId) =>
         Effect.succeed({
@@ -332,17 +332,11 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
         next: "Run t3_plugins_check for the cause and a fix.",
       }),
     });
-    // Flat fields, mapped to one install source; exactly one of them names it.
+    // Flat fields, mapped to a folder install source.
     yield* call("t3_plugins_install", fullAccessClient, { path: "/home/user/plugin", link: true });
     assert.deepStrictEqual(installedFrom, [
       { type: "path", path: "/home/user/plugin", link: true },
     ]);
-    const ambiguous = yield* call("t3_plugins_install", fullAccessClient, {
-      path: "/home/user/plugin",
-      npmPackage: "acme-plugin",
-    });
-    assert.isTrue(ambiguous.isError);
-    assert.include(ambiguous.text, "Give one of path, gitUrl or npmPackage.");
     const ping = { pluginId: "mcp-plugin", method: "ping", input: { n: 1 } };
     assert.isTrue((yield* call("t3_plugins_invoke", readOnlyClient, ping)).isError);
     assert.deepStrictEqual(yield* call("t3_plugins_invoke", fullAccessClient, ping), {
@@ -411,7 +405,7 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
       linkedFolder: "/home/user/plugin",
     });
     assert.deepStrictEqual(uninstalled, [
-      { pluginId: "mcp-plugin", removeData: false, linkedFolder: "/home/user/plugin" },
+      { pluginId: "mcp-plugin", linkedFolder: "/home/user/plugin" },
     ]);
   }).pipe(Effect.provide(layerTest)),
 );

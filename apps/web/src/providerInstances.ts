@@ -12,7 +12,6 @@ import {
   type ServerSettings,
   type ServerProviderState,
 } from "@t3tools/contracts";
-import { getProviderClient } from "@t3tools/client-runtime/provider-clients";
 import {
   normalizeProviderAccentColor,
   resolveProviderInstanceDisplayName,
@@ -66,9 +65,7 @@ export function deriveProviderInstanceEntries(
       driverKind,
       displayName: resolveProviderInstanceDisplayName(snapshot),
       accentColor: normalizeProviderAccentColor(snapshot.accentColor),
-      // Registry agents and plugin drivers bring their icon; built-ins draw their package icon.
-      ...((driverKind === "acpRegistry" || getProviderClient(driverKind) === undefined) &&
-      snapshot.iconUrl
+      ...(driverKind === "acpRegistry" && snapshot.iconUrl
         ? { acpRegistryIconUrl: snapshot.iconUrl }
         : {}),
       continuationGroupKey: snapshot.continuation?.groupKey,

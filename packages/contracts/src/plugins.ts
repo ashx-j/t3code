@@ -95,25 +95,13 @@ export const PluginFailure = Schema.Struct({
 });
 export type PluginFailure = typeof PluginFailure.Type;
 
-/** Where `plugins.install` gets a plugin: a folder on the server, a git repository or npm. */
-export const PluginInstallSource = Schema.Union([
-  Schema.Struct({
-    type: Schema.Literal("path"),
-    path: TrimmedNonEmptyString,
-    /** Loads the folder where it is instead of copying it; removing the plugin only unlinks it. */
-    link: Schema.optionalKey(Schema.Boolean),
-  }),
-  Schema.Struct({
-    type: Schema.Literal("git"),
-    url: TrimmedNonEmptyString,
-    ref: Schema.optionalKey(TrimmedNonEmptyString),
-  }),
-  Schema.Struct({
-    type: Schema.Literal("npm"),
-    name: TrimmedNonEmptyString.check(Schema.isMaxLength(214)),
-    version: Schema.optionalKey(TrimmedNonEmptyString),
-  }),
-]);
+/** Where `plugins.install` gets a plugin: a folder on the server. */
+export const PluginInstallSource = Schema.Struct({
+  type: Schema.Literal("path"),
+  path: TrimmedNonEmptyString,
+  /** Loads the folder where it is instead of copying it; removing the plugin only unlinks it. */
+  link: Schema.optionalKey(Schema.Boolean),
+});
 export type PluginInstallSource = typeof PluginInstallSource.Type;
 
 /** What the server knows about one discovered plugin, including ones whose manifest failed. */
@@ -144,12 +132,6 @@ export const PluginState = Schema.Struct({
   ),
   /** The folder a `dev` plugin loads from, where an agent or plugins.json linked it. */
   linkedFolder: Schema.optionalKey(Schema.String),
-  /** Where it was installed from, when installed through `plugins.install`; updates reuse it. */
-  installSource: Schema.optionalKey(PluginInstallSource),
-  /** A newer npm version or git commit at its install source, found by the last update check. */
-  availableUpdate: Schema.optionalKey(Schema.Struct({ version: Schema.String })),
-  /** The version its last update replaced, which `plugins.rollback` puts back. */
-  rollbackVersion: Schema.optionalKey(Schema.String),
   hasServer: Schema.Boolean,
   hasWeb: Schema.Boolean,
   /** Has a `skills` folder, whose skills agents on this environment get while it runs. */
@@ -257,15 +239,6 @@ export type PluginInstallFilesInput = typeof PluginInstallFilesInput.Type;
 export const PluginRescanInput = Schema.Struct({});
 export type PluginRescanInput = typeof PluginRescanInput.Type;
 
-export const PluginUpdateInput = Schema.Struct({ pluginId: PluginId });
-export type PluginUpdateInput = typeof PluginUpdateInput.Type;
-
-export const PluginRollbackInput = Schema.Struct({ pluginId: PluginId });
-export type PluginRollbackInput = typeof PluginRollbackInput.Type;
-
-export const PluginCheckUpdatesInput = Schema.Struct({});
-export type PluginCheckUpdatesInput = typeof PluginCheckUpdatesInput.Type;
-
 /**
  * A client's report that a plugin's web half failed. `revision` is the start the client loaded,
  * so a report about an earlier start is ignored.
@@ -279,8 +252,6 @@ export type PluginReportWebFailureInput = typeof PluginReportWebFailureInput.Typ
 
 export const PluginUninstallInput = Schema.Struct({
   pluginId: PluginId,
-  /** Also delete the plugin's settings, secrets and storage. */
-  removeData: Schema.optionalKey(Schema.Boolean),
   /**
    * A `dev` row's `linkedFolder`: unlinks exactly that folder, even when another copy with the
    * same id is in use. Unlinking a copy that is not in use keeps the id's data.
@@ -292,33 +263,7 @@ export type PluginUninstallInput = typeof PluginUninstallInput.Type;
 export const PluginUninstallResult = Schema.Struct({ pluginId: PluginId });
 export type PluginUninstallResult = typeof PluginUninstallResult.Type;
 
-/** Data a plugin that is no longer installed left behind, because it was removed without it. */
-export const PluginLeftoverData = Schema.Struct({
-  pluginId: PluginId,
-  /** Has saved settings, which come with its secrets. */
-  settings: Schema.Boolean,
-  /** How many keys it has in plugin storage. */
-  storageKeys: Schema.Number,
-});
-export type PluginLeftoverData = typeof PluginLeftoverData.Type;
-
-export const PluginListLeftoverDataInput = Schema.Struct({});
-export type PluginListLeftoverDataInput = typeof PluginListLeftoverDataInput.Type;
-
-/** Deletes the settings, secrets and storage of a plugin that is no longer installed. */
-export const PluginDeleteLeftoverDataInput = Schema.Struct({ pluginId: PluginId });
-export type PluginDeleteLeftoverDataInput = typeof PluginDeleteLeftoverDataInput.Type;
-
-/** Result of `plugins.listLeftoverData` and of `plugins.deleteLeftoverData`, which lists the rest. */
-export const PluginLeftoverDataResult = Schema.Struct({
-  leftovers: Schema.Array(PluginLeftoverData),
-});
-export type PluginLeftoverDataResult = typeof PluginLeftoverDataResult.Type;
-
-/**
- * Result of `plugins.setEnabled`, `plugins.reload`, `plugins.install`, `plugins.update` and
- * `plugins.rollback`.
- */
+/** Result of `plugins.setEnabled`, `plugins.reload` and `plugins.install`. */
 export const PluginMutationResult = Schema.Struct({
   plugin: PluginState,
 });

@@ -383,13 +383,7 @@ import {
   PluginInvokeResult,
   PluginUninstallInput,
   PluginUninstallResult,
-  PluginListLeftoverDataInput,
-  PluginDeleteLeftoverDataInput,
-  PluginLeftoverDataResult,
-  PluginUpdateInput,
-  PluginRollbackInput,
   PluginListInput,
-  PluginCheckUpdatesInput,
   PluginListResult,
   PluginRescanInput,
   PluginReportWebFailureInput,
@@ -587,11 +581,6 @@ export const WS_METHODS = {
   pluginsInstallFiles: "plugins.installFiles",
   pluginsRescan: "plugins.rescan",
   pluginsUninstall: "plugins.uninstall",
-  pluginsListLeftoverData: "plugins.listLeftoverData",
-  pluginsDeleteLeftoverData: "plugins.deleteLeftoverData",
-  pluginsUpdate: "plugins.update",
-  pluginsRollback: "plugins.rollback",
-  pluginsCheckUpdates: "plugins.checkUpdates",
   pluginsReportWebFailure: "plugins.reportWebFailure",
   pluginsSettingsGet: "plugins.settings.get",
   pluginsSettingsUpdate: "plugins.settings.update",
@@ -2054,26 +2043,6 @@ const WsPluginsRescanRpc = Rpc.make(WS_METHODS.pluginsRescan, {
   error: PluginRpcError,
 });
 
-const WsPluginsUpdateRpc = Rpc.make(WS_METHODS.pluginsUpdate, {
-  payload: PluginUpdateInput,
-  success: PluginMutationResult,
-  error: PluginRpcError,
-});
-
-/** Puts back the version a plugin's last update replaced. */
-const WsPluginsRollbackRpc = Rpc.make(WS_METHODS.pluginsRollback, {
-  payload: PluginRollbackInput,
-  success: PluginMutationResult,
-  error: PluginRpcError,
-});
-
-/** Checks every plugin installed from git or npm for a newer version now. */
-const WsPluginsCheckUpdatesRpc = Rpc.make(WS_METHODS.pluginsCheckUpdates, {
-  payload: PluginCheckUpdatesInput,
-  success: PluginListResult,
-  error: PluginRpcError,
-});
-
 /** Tells the server why a plugin's web half failed, so agents can read it. */
 const WsPluginsReportWebFailureRpc = Rpc.make(WS_METHODS.pluginsReportWebFailure, {
   payload: PluginReportWebFailureInput,
@@ -2084,19 +2053,6 @@ const WsPluginsReportWebFailureRpc = Rpc.make(WS_METHODS.pluginsReportWebFailure
 const WsPluginsUninstallRpc = Rpc.make(WS_METHODS.pluginsUninstall, {
   payload: PluginUninstallInput,
   success: PluginUninstallResult,
-  error: PluginRpcError,
-});
-
-/** Plugins removed without their data, and what each left. */
-const WsPluginsListLeftoverDataRpc = Rpc.make(WS_METHODS.pluginsListLeftoverData, {
-  payload: PluginListLeftoverDataInput,
-  success: PluginLeftoverDataResult,
-  error: PluginRpcError,
-});
-
-const WsPluginsDeleteLeftoverDataRpc = Rpc.make(WS_METHODS.pluginsDeleteLeftoverData, {
-  payload: PluginDeleteLeftoverDataInput,
-  success: PluginLeftoverDataResult,
   error: PluginRpcError,
 });
 
@@ -2219,11 +2175,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsPluginsInstallFilesRpc,
   WsPluginsRescanRpc,
   WsPluginsUninstallRpc,
-  WsPluginsListLeftoverDataRpc,
-  WsPluginsDeleteLeftoverDataRpc,
-  WsPluginsUpdateRpc,
-  WsPluginsRollbackRpc,
-  WsPluginsCheckUpdatesRpc,
   WsPluginsReportWebFailureRpc,
   WsPluginsSettingsGetRpc,
   WsPluginsSettingsUpdateRpc,

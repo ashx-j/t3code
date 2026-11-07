@@ -274,9 +274,9 @@ describe("runUpdateEverything", () => {
 });
 
 describe("describeUpdateEverything", () => {
-  it("gives each machine one row with its T3 Code, provider and plugin updates", () => {
+  it("gives each machine one row with its T3 Code and provider updates", () => {
     const id = EnvironmentId.make;
-    const { rows, summary } = describeUpdateEverything({
+    const { rows } = describeUpdateEverything({
       localVersion: "1.1.0",
       localMachines: [
         { environmentId: id("local"), label: "Mainbook" },
@@ -295,7 +295,6 @@ describe("describeUpdateEverything", () => {
         { environmentId: id("local"), label: "Mainbook", providers: ["Codex"] },
         { environmentId: id("manual"), label: "alvin", providers: ["Claude"] },
       ],
-      pluginMachines: [{ environmentId: id("local"), label: "Mainbook", plugins: ["Surface"] }],
       skipped: [
         { environmentId: id("manual"), label: "alvin", reason: "needs a manual update" },
         { environmentId: id("offline"), label: "TheoRoom", reason: "not connected" },
@@ -303,21 +302,14 @@ describe("describeUpdateEverything", () => {
     });
 
     expect(
-      rows.map(({ label, app, skipped, providers, plugins }) => [
-        label,
-        app,
-        skipped,
-        providers,
-        plugins,
-      ]),
+      rows.map(({ label, app, skipped, providers }) => [label, app, skipped, providers]),
     ).toEqual([
-      ["Mainbook", "this-app", null, ["Codex"], ["Surface"]],
-      ["Mainbook WSL", "this-app", null, [], []],
-      ["bb-1", "server", null, ["Codex", "Claude"], []],
-      ["alvin", null, "needs a manual update", ["Claude"], []],
-      ["TheoRoom", null, "not connected", [], []],
+      ["Mainbook", "this-app", null, ["Codex"]],
+      ["Mainbook WSL", "this-app", null, []],
+      ["bb-1", "server", null, ["Codex", "Claude"]],
+      ["alvin", null, "needs a manual update", ["Claude"]],
+      ["TheoRoom", null, "not connected", []],
     ]);
-    expect(summary).toBe("Update this app, 1 server, 4 providers, and 1 plugin");
   });
 });
 

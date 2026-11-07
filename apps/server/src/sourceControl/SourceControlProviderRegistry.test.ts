@@ -91,7 +91,6 @@ function makeRegistry(input: {
   readonly discovery?: ReadonlyArray<SourceControlProviderDiscoverySpec>;
   readonly run?: SourceControlHost.SourceControlHost["Service"]["process"]["run"];
   readonly settings?: Partial<ServerSettings.ServerSettingsService["Service"]>;
-  readonly plugins?: () => ReadonlyArray<SourceControlProviderRegistry.SourceControlProviderRegistration>;
 }) {
   const driver = {
     listRemotes: () =>
@@ -127,7 +126,6 @@ function makeRegistry(input: {
         }),
       },
     })),
-    input.plugins,
   ).pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -445,30 +443,6 @@ it.effect("asks again once Settings change", () =>
     yield* PubSub.publish(changes, DEFAULT_SERVER_SETTINGS);
     yield* Deferred.await(handled);
     assert.strictEqual((yield* resolveUnknown(registry, "c")).provider.kind, "github");
-  }),
-);
-
-it.effect("asks again once a plugin adds a host", () =>
-  Effect.gen(function* () {
-    let plugins: ReadonlyArray<SourceControlProviderRegistry.SourceControlProviderRegistration> =
-      [];
-    const registry = yield* makeRegistry({ remotes: [], plugins: () => plugins });
-    assert.strictEqual((yield* resolveUnknown(registry, "a")).provider.kind, "unknown");
-
-    plugins = [
-      {
-        kind: kind("plugin-host"),
-        provider: fakeSourceControlProvider("plugin-host"),
-        discovery: managedCli("plugin-host", ({ context }) =>
-          Effect.succeed({
-            kind: kind("plugin-host"),
-            name: "Plugin host",
-            baseUrl: context.provider.baseUrl,
-          }),
-        ),
-      },
-    ];
-    assert.strictEqual((yield* resolveUnknown(registry, "b")).provider.kind, "plugin-host");
   }),
 );
 

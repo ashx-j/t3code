@@ -17,7 +17,6 @@ import * as PluginHooks from "../PluginHooks.ts";
 import { makeFacadeContext } from "./facade.ts";
 import type { RuntimeRequestHook } from "./runtimeRequests.ts";
 import { makeSlashCommandsApi } from "./slashCommands.ts";
-import { makeTextGenerationApi } from "./textGeneration.ts";
 import { makeTurnsApi } from "./turns.ts";
 
 // None of these messages replays an accepted command.
@@ -249,16 +248,13 @@ it.effect("drops what a plugin answers after it is turned off", () =>
     const allStarted = Promise.withResolvers<void>();
     const later = <A>(answer: A) => {
       started += 1;
-      if (started === 4) allStarted.resolve();
+      if (started === 3) allStarted.resolve();
       return turnedOff.promise.then(() => answer);
     };
     turns.onRuntimeRequest(() => later({ decision: "accept" as const }));
     turns.beforeDispatch(() => later({ text: "Changed after the plugin stopped." }));
     makeSlashCommandsApi(facade, { hooks }, "Late").register({ name: "late" }, () =>
       later({ text: "Sent after the plugin stopped." }),
-    );
-    makeTextGenerationApi(facade, { hooks }).register("threadTitle", () =>
-      later({ title: "Titled after the plugin stopped." }),
     );
     const message = (text: string) => ({
       threadId: ThreadId.make("thread:late"),
@@ -268,7 +264,6 @@ it.effect("drops what a plugin answers after it is turned off", () =>
       creationSource: "web" as const,
       attachments: [],
     });
-    const [generate] = yield* hooks.textGenerators("threadTitle");
     const answering = yield* Effect.promise(() =>
       runtimeRequestHook!.answer({} as PluginRuntimeRequest, new AbortController().signal),
     ).pipe(Effect.forkChild({ startImmediately: true }));
@@ -278,9 +273,6 @@ it.effect("drops what a plugin answers after it is turned off", () =>
     const commanding = yield* hooks
       .beforeDispatch(message("/late now"), notAccepted)
       .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
-    const titling = yield* generate!({ message: "Ship it" }).pipe(
-      Effect.forkChild({ startImmediately: true }),
-    );
     yield* Effect.promise(() => allStarted.promise);
     activation.controller.abort();
     turnedOff.resolve();
@@ -296,6 +288,5 @@ it.effect("drops what a plugin answers after it is turned off", () =>
         }),
       ),
     );
-    assert.isUndefined(yield* Fiber.join(titling));
   }).pipe(Effect.provide(PluginHooks.layer)),
 );

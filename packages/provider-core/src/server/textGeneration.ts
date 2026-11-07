@@ -97,22 +97,7 @@ export type ReviewGuideGenerationResult = Omit<
   "headSha" | "generatedAt" | "modelSelection"
 >;
 
-export interface TextGenerationInput {
-  readonly cwd: string;
-  readonly prompt: string;
-  readonly modelSelection: ModelSelection;
-}
-
-export interface TextGenerationResult {
-  readonly text: string;
-}
-
 export interface ProviderTextGeneration {
-  /** Answers a free-form prompt. Absent when the provider cannot run one. */
-  readonly generateText?: (
-    input: TextGenerationInput,
-  ) => Effect.Effect<TextGenerationResult, TextGenerationError>;
-
   readonly generateCommitMessage: (
     input: CommitMessageGenerationInput,
   ) => Effect.Effect<CommitMessageGenerationResult, TextGenerationError>;

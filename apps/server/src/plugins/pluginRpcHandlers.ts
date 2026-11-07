@@ -1,6 +1,5 @@
 import {
   type AuthEnvironmentScope,
-  type PluginCheckUpdatesInput,
   PluginError,
   type PluginId,
   type PluginInstallFilesInput,
@@ -16,10 +15,6 @@ import {
   type PluginSettingsUpdateInput,
   type PluginSubscribeInput,
   type PluginUninstallInput,
-  type PluginListLeftoverDataInput,
-  type PluginDeleteLeftoverDataInput,
-  type PluginUpdateInput,
-  type PluginRollbackInput,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -70,37 +65,12 @@ export const makePluginRpcHandlers = (
     ),
   [WS_METHODS.pluginsRescan]: (_input: PluginRescanInput) =>
     pluginHost.rescan.pipe(Effect.mapError((error) => new PluginError({ message: error.message }))),
-  [WS_METHODS.pluginsUpdate]: (input: PluginUpdateInput) =>
-    installer.update(input.pluginId).pipe(
-      Effect.map((plugin) => ({ plugin })),
-      Effect.mapError(toRpcError(input.pluginId)),
-    ),
-  [WS_METHODS.pluginsRollback]: (input: PluginRollbackInput) =>
-    installer.rollback(input.pluginId).pipe(
-      Effect.map((plugin) => ({ plugin })),
-      Effect.mapError(toRpcError(input.pluginId)),
-    ),
-  [WS_METHODS.pluginsCheckUpdates]: (_input: PluginCheckUpdatesInput) =>
-    installer.checkUpdates.pipe(
-      Effect.map((plugins) => ({ plugins })),
-      Effect.mapError((error) => new PluginError({ message: error.message })),
-    ),
   [WS_METHODS.pluginsReportWebFailure]: (input: PluginReportWebFailureInput) =>
     pluginHost.reportWebFailure(input).pipe(Effect.mapError(toRpcError(input.pluginId))),
   [WS_METHODS.pluginsUninstall]: (input: PluginUninstallInput) =>
     installer
-      .uninstall(input.pluginId, input.removeData === true, input.linkedFolder)
+      .uninstall(input.pluginId, input.linkedFolder)
       .pipe(Effect.as({ pluginId: input.pluginId }), Effect.mapError(toRpcError(input.pluginId))),
-  [WS_METHODS.pluginsListLeftoverData]: (_input: PluginListLeftoverDataInput) =>
-    installer.leftoverData.pipe(
-      Effect.map((leftovers) => ({ leftovers })),
-      Effect.mapError((error) => new PluginError({ message: error.message })),
-    ),
-  [WS_METHODS.pluginsDeleteLeftoverData]: (input: PluginDeleteLeftoverDataInput) =>
-    installer.deleteLeftoverData(input.pluginId).pipe(
-      Effect.map((leftovers) => ({ leftovers })),
-      Effect.mapError(toRpcError(input.pluginId)),
-    ),
   [WS_METHODS.pluginsSettingsGet]: (input: PluginSettingsGetInput) =>
     pluginHost.getSettings(input.pluginId).pipe(
       Effect.map((settings) => ({ pluginId: input.pluginId, settings })),

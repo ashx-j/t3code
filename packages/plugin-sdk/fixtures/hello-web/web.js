@@ -75,7 +75,6 @@ export default {
       id: "open-settings",
       title: "Open hello-web settings",
       keywords: ["hello"],
-      desktop: { menu: true },
       run: () => api.navigate("/settings/plugins"),
     });
     api.settings.registerPanel(() =>

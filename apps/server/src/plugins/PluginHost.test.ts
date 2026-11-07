@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
-import * as NodeCrypto from "node:crypto";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -8,15 +7,11 @@ import {
   applyPluginStatesEvent,
   type AuthEnvironmentScope,
   AuthOrchestrationOperateScope,
-  defaultInstanceIdForDriver,
   AuthOrchestrationReadScope,
   AuthSettingsWriteScope,
   EnvironmentId,
   PluginId,
   ProjectId,
-  ProviderDriverKind,
-  ProviderSessionId,
-  SourceControlProviderKind,
   ThreadId,
   type TurnItemId,
   type PluginState,
@@ -26,14 +21,6 @@ import {
   type ServerProvider,
   WS_METHODS,
 } from "@t3tools/contracts";
-import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
-import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
-import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
-import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
-import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -49,8 +36,6 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as EnvironmentTheme from "../environmentTheme.ts";
-import { HttpClient, HttpClientResponse } from "effect/http";
-import * as ProcessRunner from "../processRunner.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -58,21 +43,12 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
-import * as ProviderDriverRegistration from "../provider/ProviderDriverRegistration.ts";
-import { makeTurnInput } from "../orchestration-v2/Adapters/AcpAdapterV2.testkit.ts";
-import { makeProviderInstanceRegistry } from "../provider/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import * as PullRequestProviderRegistry from "../pullRequest/PullRequestProviderRegistry.ts";
-import * as SourceControlDrivers from "../sourceControl/builtInDrivers.ts";
-import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
-import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import packageJson from "../../package.json" with { type: "json" };
-import { gzipTarball, tarEntry } from "./testTarball.ts";
-import type { AcpAgentDriverEnv } from "./acpAgentDriver.ts";
 import * as PluginHooks from "./PluginHooks.ts";
 import * as PluginHost from "./PluginHost.ts";
 import * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
@@ -81,7 +57,6 @@ import * as PluginMcpTools from "./PluginMcpTools.ts";
 import { makePluginRpcHandlers } from "./pluginRpcHandlers.ts";
 import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
-import { withPluginTextGeneration } from "./pluginTextGeneration.ts";
 
 // None of these messages replays an accepted command.
 const notAccepted = Effect.succeed(false);
@@ -98,11 +73,8 @@ const layerUnusedLaunchServices = Layer.mergeAll(
   Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
   Layer.mock(ProjectService.ProjectService)({}),
   Layer.mock(ProviderRegistry.ProviderRegistry)({}),
-  Layer.mock(ProviderDriverRegistration.ProviderDriverRegistration)({}),
-  Layer.mock(SourceControlDrivers.SourceControlPluginDrivers)({ current: () => [] }),
   Layer.mock(GitVcsDriver.GitVcsDriver)({}),
   Layer.mock(SecretRequests.SecretRequests)({}),
-  Layer.mock(TextGeneration.TextGeneration)({}),
 );
 
 // Orchestration services the lifecycle tests never reach.
@@ -125,64 +97,6 @@ const layerThemes = Layer.mock(EnvironmentTheme.EnvironmentThemeService)({
     }),
 });
 
-// A registry with one good package and one whose integrity hash does not match its tarball.
-const npmTarball = gzipTarball(
-  tarEntry(
-    "package/t3-plugin.json",
-    JSON.stringify({
-      id: "npm-hello",
-      name: "npm hello",
-      version: "1.0.0",
-      engines: { t3: ">=0.1.0" },
-      server: "./server.cjs",
-    }),
-  ),
-  tarEntry("package/server.cjs", "module.exports = { activate() {} };"),
-);
-const npmIntegrity = `sha512-${NodeCrypto.createHash("sha512").update(npmTarball).digest("base64")}`;
-// A package whose releases all need a T3 Code that does not exist yet.
-const npmFutureTarball = gzipTarball(
-  tarEntry(
-    "package/t3-plugin.json",
-    JSON.stringify({
-      id: "npm-future",
-      name: "npm future",
-      version: "1.1.0",
-      engines: { t3: ">=999.0.0" },
-    }),
-  ),
-);
-const npmFutureIntegrity = `sha512-${NodeCrypto.createHash("sha512").update(npmFutureTarball).digest("base64")}`;
-// The registry's `latest` tag, which update checks compare with what was installed.
-let npmLatest = "1.0.0";
-let npmMetadataRequests = 0;
-const npmDocument = (name: string, integrity: string) => {
-  const release = { dist: { tarball: `https://registry.test/${name}.tgz`, integrity } };
-  return {
-    "dist-tags": { latest: npmLatest },
-    versions: { "1.0.0": release, "1.1.0": release },
-  };
-};
-const layerNpmRegistry = Layer.succeed(
-  HttpClient.HttpClient,
-  HttpClient.make((request) => {
-    const url = request.url;
-    if (!url.endsWith(".tgz")) npmMetadataRequests += 1;
-    const body = url.endsWith("/npm-future.tgz")
-      ? new Response(npmFutureTarball)
-      : url.endsWith(".tgz")
-        ? new Response(npmTarball)
-        : url.endsWith("/npm-hello")
-          ? Response.json(npmDocument("npm-hello", npmIntegrity))
-          : url.endsWith("/npm-tampered")
-            ? Response.json(npmDocument("npm-tampered", "sha512-AAAA"))
-            : url.endsWith("/npm-future")
-              ? Response.json(npmDocument("npm-future", npmFutureIntegrity))
-              : new Response("not found", { status: 404 });
-    return Effect.succeed(HttpClientResponse.fromWeb(request, body));
-  }),
-);
-
 const layerHost = (services: typeof layerUnusedServices = layerUnusedServices) =>
   Layer.fresh(
     PluginHost.layer.pipe(
@@ -190,8 +104,6 @@ const layerHost = (services: typeof layerUnusedServices = layerUnusedServices) =
       Layer.provide(ServerSecretStore.layer),
       Layer.provide(services),
       Layer.provide(layerThemes),
-      Layer.provide(ProcessRunner.layer),
-      Layer.provide(layerNpmRegistry),
       Layer.provideMerge(
         Layer.mergeAll(PluginHooks.layer, PluginMcpTools.layer, PluginHttpRoutes.layer),
       ),
@@ -248,7 +160,6 @@ const writeUpgradeVersion = Effect.fn(function* (
   options: {
     readonly activate?: string;
     readonly engines?: string;
-    readonly settingsSchema?: Schema.JsonObject;
   } = {},
 ) {
   yield* writeFile(
@@ -259,7 +170,6 @@ const writeUpgradeVersion = Effect.fn(function* (
       version,
       engines: { t3: options.engines ?? ">=0.1.0" },
       server: "./server.cjs",
-      ...(options.settingsSchema === undefined ? {} : { settingsSchema: options.settingsSchema }),
     }),
   );
   yield* writeFile(
@@ -288,10 +198,6 @@ const workbench = PluginId.make("workbench-plugin");
 const workbenchThread = ThreadId.make("thread:plugin-workbench");
 const workbenchProject = ProjectId.make("project:plugin-workbench");
 const workbenchModel = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.5" };
-const workbenchTextModel = {
-  instanceId: ProviderInstanceId.make("claudeAgent"),
-  model: "haiku",
-};
 
 interface Workbench {
   readonly host: PluginHost.PluginHost["Service"];
@@ -307,17 +213,15 @@ interface Workbench {
   ) => Effect.Effect<string, PluginHooks.PluginMessageBlockedError>;
   /** What the providers list, empty unless a test sets them. */
   readonly setProviders: (providers: ReadonlyArray<ServerProvider>) => void;
-  readonly prompted: ReadonlyArray<TextGeneration.TextGenerationInput>;
 }
 
 /**
- * Runs `body` with the workbench fixture plugin active, over a project, a thread and a text
- * generation model, and services that record what the plugin asks of them.
+ * Runs `body` with the workbench fixture plugin active, over a project and a thread, and services
+ * that record what the plugin asks of them.
  */
 const withWorkbench = Effect.fn(function* <A, E>(
   body: (workbench: Workbench) => Effect.Effect<A, E>,
 ) {
-  const prompted: Array<TextGeneration.TextGenerationInput> = [];
   let providers: ReadonlyArray<ServerProvider> = [];
   const project: Project = {
     id: workbenchProject,
@@ -335,17 +239,8 @@ const withWorkbench = Effect.fn(function* <A, E>(
     Layer.mock(ProviderRegistry.ProviderRegistry)({
       getProviders: Effect.sync(() => providers),
     }),
-    Layer.mock(ProviderDriverRegistration.ProviderDriverRegistration)({}),
-    Layer.mock(SourceControlDrivers.SourceControlPluginDrivers)({ current: () => [] }),
     Layer.mock(GitVcsDriver.GitVcsDriver)({}),
     Layer.mock(SecretRequests.SecretRequests)({}),
-    Layer.mock(TextGeneration.TextGeneration)({
-      generateText: (input) =>
-        Effect.sync(() => {
-          prompted.push(input);
-          return { text: "Two commits since the last deploy." };
-        }),
-    }),
     Layer.mock(Orchestrator.OrchestratorV2)({
       streamStoredEventsFrom: () => Stream.never,
       streamDomainEvents: Stream.never,
@@ -374,9 +269,7 @@ const withWorkbench = Effect.fn(function* <A, E>(
         capabilities: { repositoryIdentity: false, plugins: true },
       }),
     }),
-    ServerSettings.layerTest({ textGenerationModelSelection: workbenchTextModel }).pipe(
-      Layer.orDie,
-    ),
+    ServerSettings.layerTest().pipe(Layer.orDie),
   );
   yield* writePluginsConfig({
     enabled: { [workbench]: true },
@@ -406,7 +299,6 @@ const withWorkbench = Effect.fn(function* <A, E>(
       setProviders: (next) => {
         providers = next;
       },
-      prompted,
     });
   }).pipe(Effect.provide(layerHost(services)));
 }, Effect.provide(layerConfig()));
@@ -630,69 +522,6 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
     }).pipe(Effect.provide(layerConfig())),
   );
 
-  it.effect("adds a plugin's source control host to remote recognition and pull requests", () =>
-    Effect.gen(function* () {
-      const sourceControlPlugin = PluginId.make("source-control-plugin");
-      yield* writePluginsConfig({
-        enabled: { [sourceControlPlugin]: true },
-        devPaths: [`${fixturesDir}source-control-plugin`],
-      });
-      const pluginDrivers = yield* SourceControlDrivers.makePluginDrivers.pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            TestSourceControlHost.layer(),
-            SourceControlRateLimit.layer,
-            layerNpmRegistry,
-          ),
-        ),
-      );
-      // A driver that fails to start, as plugin code can whatever its type says, closes what it
-      // opened.
-      let closed = false;
-      const failing = yield* pluginDrivers
-        .add({
-          kind: "failinggit",
-          make: Effect.addFinalizer(() =>
-            Effect.sync(() => {
-              closed = true;
-            }),
-          ).pipe(Effect.andThen(Effect.fail("no credentials"))),
-        } as unknown as Parameters<typeof pluginDrivers.add>[0])
-        .pipe(Effect.match({ onFailure: (error) => error.message, onSuccess: () => "added" }));
-      assert.strictEqual(
-        failing,
-        "Cannot add the source control host 'failinggit': its driver failed to start: no credentials",
-      );
-      assert.isTrue(closed);
-      const services = Layer.mergeAll(
-        layerUnusedServices,
-        Layer.succeed(SourceControlDrivers.SourceControlPluginDrivers, pluginDrivers),
-      );
-      yield* Effect.gen(function* () {
-        const host = yield* PluginHost.PluginHost;
-        yield* waitForStatuses(host, { [sourceControlPlugin]: "active" });
-        // The pull request lookup recognizes the remote, then asks that host's provider.
-        const remote = "git@git.example.test:team/app.git";
-        const kind = sourceControlDefinitions.recognizeRemote(remote)?.kind;
-        assert.strictEqual(kind, "examplegit");
-        const pullRequests = yield* PullRequestProviderRegistry.make.pipe(
-          Effect.provideService(SourceControlDrivers.SourceControlDrivers, []),
-          Effect.provideService(SourceControlDrivers.SourceControlPluginDrivers, pluginDrivers),
-        );
-        assert.deepStrictEqual(pullRequests.kinds, [SourceControlProviderKind.make("examplegit")]);
-        const provider = pullRequests.get(SourceControlProviderKind.make("examplegit"));
-        assert.strictEqual(
-          yield* provider!.getViewer({ cwd: process.cwd(), host: "git.example.test" }),
-          "example-bot",
-        );
-
-        yield* host.setEnabled(sourceControlPlugin, false);
-        assert.strictEqual(sourceControlDefinitions.recognizeRemote(remote)?.kind, "unknown");
-        assert.isNull(pullRequests.get(SourceControlProviderKind.make("examplegit")));
-      }).pipe(Effect.provide(layerHost(services)));
-    }).pipe(Effect.provide(layerConfig()), Effect.scoped),
-  );
-
   it.effect("reload picks up a changed manifest and changed code", () =>
     Effect.gen(function* () {
       const rootDir = yield* writeInstalledPlugin(
@@ -904,7 +733,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         assert.include(inside.message, "is already in the plugins folder");
         yield* fs.remove(unlisted, { recursive: true });
 
-        yield* installer.uninstall(id, false);
+        yield* installer.uninstall(id);
         assert.isTrue(yield* fs.exists(`${folder}/server.cjs`));
         // Forgotten, not only stopped: a rescan does not find it again.
         assert.isUndefined(stateOf((yield* host.rescan).plugins, "in-place"));
@@ -916,9 +745,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         yield* writeInstalledPlugin("in-place", plugin("installed"));
         yield* host.reload(id);
         yield* storage.set(id, "kept", true);
-        const keepsData = yield* installer.uninstall(id, true, folder).pipe(Effect.flip);
-        assert.include(keepsData.message, "Unlink it without removing data.");
-        yield* installer.uninstall(id, false, folder);
+        yield* installer.uninstall(id, folder);
         const copies = (yield* host.rescan).plugins.filter((state) => state.id === "in-place");
         assert.deepStrictEqual(
           copies.map((state) => state.source),
@@ -930,11 +757,11 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
 
         // The other way round: removing the installed copy lists the link afresh, turned off like
         // any newly found copy, not stuck as the shadowed copy it was.
-        yield* installer.uninstall(id, false);
+        yield* installer.uninstall(id);
         yield* installer.install({ type: "path", path: folder, link: true });
         yield* writeInstalledPlugin("in-place", plugin("installed"));
         yield* host.reload(id);
-        yield* installer.uninstall(id, false);
+        yield* installer.uninstall(id);
         const left = (yield* host.list).filter((state) => state.id === "in-place");
         assert.deepStrictEqual(
           left.map((state) => [state.source, state.status, state.failure]),
@@ -943,9 +770,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         yield* host.setEnabled(id, true);
         assert.strictEqual(yield* which, "v2");
 
-        const notLinked = yield* installer
-          .uninstall(id, false, `${stateDir}/elsewhere`)
-          .pipe(Effect.flip);
+        const notLinked = yield* installer.uninstall(id, `${stateDir}/elsewhere`).pipe(Effect.flip);
         assert.strictEqual(
           notLinked.message,
           `No copy of in-place is linked from ${stateDir}/elsewhere.`,
@@ -961,7 +786,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           );
         }
         yield* host.rescan;
-        yield* installer.uninstall(threeCopies, false);
+        yield* installer.uninstall(threeCopies);
         assert.deepStrictEqual(
           (yield* host.list)
             .filter((state) => state.id === threeCopies)
@@ -983,12 +808,12 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
     Effect.gen(function* () {
       yield* writeInstalledPlugin(
         "leaky",
-        `let titles = 0;
+        `let sends = 0;
 module.exports = { activate(api) {
   api.rpc.register("throwLater", () => { setTimeout(() => { throw new Error("thrown in a timer"); }, 0); }, { access: "read" });
   api.rpc.register("awaitLater", () => { setTimeout(async () => { await api.threads.read("thread:gone"); }, 0); }, { access: "read" });
   api.rpc.register("spawnMissing", () => { require("node:child_process").spawn("t3-plugin-test-missing-command"); }, { access: "read" });
-  api.textGeneration.register("threadTitle", () => { titles += 1; throw new Error("no title " + titles); });
+  api.turns.beforeDispatch(() => { sends += 1; throw new Error("send hook failed " + sends); });
 } };`,
       );
       // A timer it sets while starting fails, then it fails to start.
@@ -1032,21 +857,34 @@ module.exports = { activate(api) {
         // A callback only T3 waits on fails onto the row too. Of failures closer together than
         // 5 seconds, clients get the first at once and the latest when the 5 seconds are up.
         yield* TestClock.adjust("5 seconds");
-        const [generateTitle] = yield* hooks.textGenerators("threadTitle");
-        assert.isDefined(generateTitle);
+        const send = hooks.beforeDispatch(
+          {
+            threadId: ThreadId.make("thread:leaky"),
+            messageId: "message:leaky",
+            text: "Fix it",
+            createdBy: "user",
+            creationSource: "web",
+            attachments: [],
+          },
+          notAccepted,
+        );
         const failures = yield* host.streamStates.pipe(
           Stream.map((states) => stateOf(states, id)?.serverFailure),
           Stream.changes,
-          Stream.takeUntil((failure) => failure === "no title 3"),
+          Stream.takeUntil((failure) => failure === "send hook failed 3"),
           Stream.runCollect,
           Effect.forkChild({ startImmediately: true }),
         );
-        yield* generateTitle({ message: "Fix it" });
+        yield* send;
         yield* nextFailure(spawned);
-        yield* generateTitle({ message: "Fix it" });
-        yield* generateTitle({ message: "Fix it" });
+        yield* send;
+        yield* send;
         yield* TestClock.adjust("5 seconds");
-        assert.deepStrictEqual(yield* Fiber.join(failures), [spawned, "no title 1", "no title 3"]);
+        assert.deepStrictEqual(yield* Fiber.join(failures), [
+          spawned,
+          "send hook failed 1",
+          "send hook failed 3",
+        ]);
 
         // A failure while starting belongs to that start, so Disable clears it.
         const starting = PluginId.make("leaky-start");
@@ -1343,38 +1181,6 @@ module.exports = { activate(api) {
     ),
   );
 
-  it.effect("titles the threads a plugin recognises and leaves the rest to T3", () =>
-    withWorkbench(({ hooks }) =>
-      Effect.gen(function* () {
-        const titles = withPluginTextGeneration(hooks, {
-          generateThreadTitle: () => Effect.succeed({ title: "T3 title" }),
-        } as unknown as ProviderTextGeneration);
-        const title = (message: string) =>
-          titles.generateThreadTitle({ cwd: "/repo", message, modelSelection: workbenchModel });
-        assert.deepStrictEqual(yield* title("#titled Release prep"), {
-          title: "Workbench: Release prep",
-        });
-        assert.deepStrictEqual(yield* title("Release prep"), { title: "T3 title" });
-      }),
-    ),
-  );
-
-  it.effect("runs a plugin's own prompt on the text generation model from the settings", () =>
-    withWorkbench(({ call, prompted }) =>
-      Effect.gen(function* () {
-        assert.strictEqual(
-          yield* call("summarize", { log: "abc123 fix\ndef456 feat" }),
-          "Two commits since the last deploy.",
-        );
-        assert.deepInclude(prompted[0], {
-          cwd: `${fixturesDir}workbench-plugin`,
-          prompt: "Summarize these commits in one sentence:\nabc123 fix\ndef456 feat",
-        });
-        assert.deepInclude(prompted[0]?.modelSelection, workbenchTextModel);
-      }),
-    ),
-  );
-
   it.effect("runs a plugin's work on an interval", () =>
     withWorkbench(({ host }) =>
       Effect.gen(function* () {
@@ -1513,6 +1319,8 @@ module.exports = { activate(api) {
         yield* Effect.gen(function* () {
           const host = yield* PluginHost.PluginHost;
           const installer = yield* PluginInstaller.PluginInstaller;
+          const settings = yield* PluginSettingsStore.PluginSettingsStore;
+          const storage = yield* PluginStorage.PluginStorage;
           yield* waitForStatuses(host, {});
           // Agents get the plugin tools only once the user turns them on, plugins or not.
           const agentTools = Stream.runHead(host.agentTools).pipe(Effect.map(Option.getOrThrow));
@@ -1527,19 +1335,15 @@ module.exports = { activate(api) {
 
           const source = { type: "path" as const, path: `${fixturesDir}hello-plugin` };
           const installed = yield* installer.install(source);
-          assert.deepStrictEqual(installed.installSource, source);
           assert.isFalse(yield* agentTools);
           yield* host.setAgentTools(true);
           assert.isTrue(yield* agentTools);
           yield* host.setAgentTools(false);
           assert.isFalse(yield* agentTools);
-          const updated = yield* installer.update(hello);
-          assert.include(updated, { status: "active" });
-          assert.notStrictEqual(updated.revision, installed.revision);
-          // The same folder written another way is the same source.
-          assert.include(yield* installer.install({ ...source, path: `${source.path}/` }), {
-            status: "active",
-          });
+          // Installing the folder again, written another way, replaces it.
+          const reinstalled = yield* installer.install({ ...source, path: `${source.path}/` });
+          assert.include(reinstalled, { status: "active" });
+          assert.notStrictEqual(reinstalled.revision, installed.revision);
           assert.include(installed, {
             id: hello,
             status: "active",
@@ -1553,14 +1357,19 @@ module.exports = { activate(api) {
           assert.include(stateOf(yield* host.list, hello), { status: "active" });
           assert.isTrue(yield* fs.exists(`${stateDir}/plugins/hello-plugin/server.cjs`));
 
-          yield* installer.uninstall(hello, true);
+          // Removing a plugin deletes its settings, secrets and storage with it.
+          yield* host.updateSettings(hello, { greeting: "hey", token: "secret" });
+          yield* storage.set(hello, "visits", 2);
+          yield* installer.uninstall(hello);
           assert.isUndefined(stateOf(yield* host.list, hello));
           assert.isFalse(yield* fs.exists(`${stateDir}/plugins/hello-plugin`));
+          assert.deepStrictEqual(yield* storage.list(hello), []);
+          assert.deepStrictEqual(yield* settings.get(hello, installed.settingsSchema), {});
 
           // A plugin linked into the plugins folder: removing it removes the link, not its source.
           yield* fs.symlink(`${fixturesDir}hello-plugin`, `${stateDir}/plugins/hello-plugin`);
           yield* host.reload(hello).pipe(Effect.ignore);
-          yield* installer.uninstall(hello, false);
+          yield* installer.uninstall(hello);
           assert.isFalse(yield* fs.exists(`${stateDir}/plugins/hello-plugin`));
           assert.isTrue(yield* fs.exists(`${fixturesDir}hello-plugin/server.cjs`));
 
@@ -1581,57 +1390,12 @@ module.exports = { activate(api) {
             "The plugins folder already has a hello-plugin folder holding hand-copied. Move it, then install again.",
           );
           assert.include(stateOf(yield* host.list, "hand-copied"), { status: "disabled" });
-          yield* installer.uninstall(PluginId.make("hand-copied"), false);
+          yield* installer.uninstall(PluginId.make("hand-copied"));
 
-          npmLatest = "1.0.0";
-          const fromNpm = yield* installer.install({ type: "npm", name: "npm-hello" });
-          assert.include(fromNpm, { id: PluginId.make("npm-hello"), status: "active" });
-          assert.isUndefined(stateOf(yield* installer.checkUpdates, "npm-hello")?.availableUpdate);
-          const ranged = yield* installer
-            .install({ type: "npm", name: "npm-hello", version: "^1.0.0" })
-            .pipe(Effect.flip);
-          assert.match(ranged.message, /not an exact version\. Use one such as 1\.2\.3/);
-          npmLatest = "1.1.0";
-          assert.deepStrictEqual(
-            stateOf(yield* installer.checkUpdates, "npm-hello")?.availableUpdate,
-            {
-              version: "1.1.0",
-            },
-          );
-          // Another source claiming an installed id is refused before anything moves.
-          const impostor = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-plugin-impostor-" });
-          const impostorManifest = JSON.stringify({
-            id: "npm-hello",
-            name: "Impostor",
-            version: "9.0.0",
-            engines: { t3: ">=0.1.0" },
-          });
-          yield* writeFile(`${impostor}/t3-plugin.json`, impostorManifest);
-          const takeover = yield* installer
-            .install({ type: "path", path: impostor })
-            .pipe(Effect.flip);
-          assert.match(takeover.message, /already installed from somewhere else/);
-          const dropped = yield* installer
-            .installFiles([
-              { path: "t3-plugin.json", contents: new TextEncoder().encode(impostorManifest) },
-            ])
-            .pipe(Effect.flip);
-          assert.match(dropped.message, /already installed from somewhere else/);
-          // Updating a disabled plugin keeps it disabled.
-          yield* host.setEnabled(PluginId.make("npm-hello"), false);
-          const npmUpdated = yield* installer.update(PluginId.make("npm-hello"));
-          assert.include(npmUpdated, { enabled: false });
-          assert.isUndefined(npmUpdated.availableUpdate);
-          // So is the same package with a version pinned.
-          const pinned = { type: "npm" as const, name: "npm-hello", version: "1.0.0" };
-          assert.deepStrictEqual((yield* installer.install(pinned)).installSource, pinned);
-          const tampered = yield* installer
-            .install({ type: "npm", name: "npm-tampered" })
-            .pipe(Effect.flip);
-          assert.match(tampered.message, /integrity/);
-          assert.deepStrictEqual((yield* fs.readDirectory(`${stateDir}/plugins`)).toSorted(), [
-            "npm-hello",
-          ]);
+          // Installing over a disabled plugin keeps it disabled.
+          yield* installer.install(source);
+          yield* host.setEnabled(hello, false);
+          assert.include(yield* installer.install(source), { status: "disabled", enabled: false });
         }).pipe(Effect.provide(layerHost().pipe(Layer.provide(layerCopies))));
       }).pipe(Effect.provide(layerConfig())),
   );
@@ -1657,7 +1421,6 @@ module.exports = { activate(api) {
 
         const installed = yield* installer.installFiles(helloFiles);
         assert.include(installed, { id: hello, status: "active", enabled: true });
-        assert.isUndefined(installed.installSource);
         // The same folder dropped again replaces it.
         const replaced = yield* installer.installFiles(helloFiles);
         assert.notStrictEqual(replaced.revision, installed.revision);
@@ -1684,13 +1447,13 @@ module.exports = { activate(api) {
           "My Notes",
           "hello-plugin",
         ]);
-        yield* installer.uninstall(PluginId.make("notes"), false);
+        yield* installer.uninstall(PluginId.make("notes"));
         assert.isFalse(yield* fs.exists(`${stateDir}/plugins/My Notes`));
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
 
-  it.effect("puts the working version back when its update fails to start", () =>
+  it.effect("puts the working version back when a new version fails to start", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const { stateDir } = yield* ServerConfig.ServerConfig;
@@ -1704,7 +1467,7 @@ module.exports = { activate(api) {
         yield* writeUpgradeVersion(folder, "2.0.0", {
           activate: `throw new Error("2.0.0 refuses to start");`,
         });
-        const failed = yield* installer.update(upgrade).pipe(Effect.flip);
+        const failed = yield* installer.install({ type: "path", path: folder }).pipe(Effect.flip);
         assert.strictEqual(
           failed.message,
           "Upgrade 2.0.0 failed to start, so 1.0.0 is back. It failed with: 2.0.0 refuses to start",
@@ -1714,42 +1477,6 @@ module.exports = { activate(api) {
           yield* fs.readFileString(`${stateDir}/plugins/upgrade/server.cjs`),
           "refuses to start",
         );
-      }).pipe(Effect.provide(layerHost()));
-    }).pipe(Effect.provide(layerConfig())),
-  );
-
-  it.effect("keeps the version an update replaced, so the user can roll back to it", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const { stateDir } = yield* ServerConfig.ServerConfig;
-      const folder = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-plugin-upgrade-" });
-      const kept = `${stateDir}/plugin-rollback/upgrade`;
-      yield* writeUpgradeVersion(folder, "1.0.0");
-      yield* Effect.gen(function* () {
-        const host = yield* PluginHost.PluginHost;
-        const installer = yield* PluginInstaller.PluginInstaller;
-        yield* waitForStatuses(host, {});
-        assert.isUndefined(
-          (yield* installer.install({ type: "path", path: folder })).rollbackVersion,
-        );
-        yield* writeUpgradeVersion(folder, "2.0.0");
-        assert.include(yield* installer.update(upgrade), {
-          version: "2.0.0",
-          rollbackVersion: "1.0.0",
-        });
-
-        const rolledBack = yield* installer.rollback(upgrade);
-        assert.include(rolledBack, { version: "1.0.0", status: "active" });
-        assert.isUndefined(rolledBack.rollbackVersion);
-        assert.isFalse(yield* fs.exists(kept));
-        const again = yield* installer.rollback(upgrade).pipe(Effect.flip);
-        assert.strictEqual(again.message, "upgrade has no earlier version to roll back to.");
-
-        // Removing the plugin removes the version it kept.
-        yield* installer.update(upgrade);
-        assert.isTrue(yield* fs.exists(kept));
-        yield* installer.uninstall(upgrade, false);
-        assert.isFalse(yield* fs.exists(kept));
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
@@ -1782,11 +1509,9 @@ module.exports = { activate(api) {
 
         for (const plugin of yield* listed([AuthOrchestrationReadScope])) {
           assert.notProperty(plugin, "linkedFolder");
-          assert.notProperty(plugin, "installSource");
         }
         const managed = yield* listed([AuthOrchestrationReadScope, AuthSettingsWriteScope]);
         assert.include(stateOf(managed, broken), { linkedFolder });
-        assert.deepStrictEqual(stateOf(managed, hello)?.installSource, source);
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
@@ -1828,61 +1553,7 @@ module.exports = { activate(api) {
     }).pipe(Effect.provide(layerConfig())),
   );
 
-  it.effect("lists and deletes the data of plugins removed without it", () =>
-    Effect.gen(function* () {
-      const host = yield* PluginHost.PluginHost;
-      const installer = yield* PluginInstaller.PluginInstaller;
-      const storage = yield* PluginStorage.PluginStorage;
-      const settings = yield* PluginSettingsStore.PluginSettingsStore;
-      yield* waitForStatuses(host, {});
-      yield* installer.install({ type: "path", path: `${fixturesDir}hello-plugin` });
-      yield* host.updateSettings(hello, { greeting: "hey" });
-      yield* storage.set(hello, "visits", 2);
-      assert.deepStrictEqual(yield* installer.leftoverData, []);
-      const refused = yield* installer.deleteLeftoverData(hello).pipe(Effect.flip);
-      assert.strictEqual(
-        refused.message,
-        "hello-plugin is installed. Remove it with its data to delete its data.",
-      );
-
-      yield* installer.uninstall(hello, false);
-      assert.deepStrictEqual(yield* installer.leftoverData, [
-        { pluginId: hello, settings: true, storageKeys: (yield* storage.list(hello)).length },
-      ]);
-      assert.deepStrictEqual(yield* installer.deleteLeftoverData(hello), []);
-      assert.deepStrictEqual(yield* storage.list(hello), []);
-      assert.deepStrictEqual(yield* settings.getForClient(hello, undefined), {});
-    }).pipe(Effect.provide(layerHost().pipe(Layer.provide(layerConfig())))),
-  );
-
-  it.effect("deletes the secrets of settings fields a newer version no longer has", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const folder = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-plugin-upgrade-" });
-      const secret = { type: "string", format: "t3-secret" };
-      const withToken = {
-        type: "object",
-        properties: { token: secret, key: secret },
-      } satisfies Schema.JsonObject;
-      yield* writeUpgradeVersion(folder, "1.0.0", { settingsSchema: withToken });
-      yield* Effect.gen(function* () {
-        const host = yield* PluginHost.PluginHost;
-        const installer = yield* PluginInstaller.PluginInstaller;
-        const settings = yield* PluginSettingsStore.PluginSettingsStore;
-        yield* waitForStatuses(host, {});
-        yield* installer.install({ type: "path", path: folder });
-        yield* host.updateSettings(upgrade, { token: "old-token", key: "kept-key" });
-        yield* writeUpgradeVersion(folder, "2.0.0", {
-          settingsSchema: { type: "object", properties: { key: secret } },
-        });
-        yield* installer.update(upgrade);
-        // Read with the old schema, which still names both fields.
-        assert.deepStrictEqual(yield* settings.get(upgrade, withToken), { key: "kept-key" });
-      }).pipe(Effect.provide(layerHost()));
-    }).pipe(Effect.provide(layerConfig())),
-  );
-
-  it.effect("refuses an update that needs a newer T3 Code before stopping the version in use", () =>
+  it.effect("refuses a version that needs a newer T3 Code before stopping the one in use", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const folder = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-plugin-upgrade-" });
@@ -1893,7 +1564,7 @@ module.exports = { activate(api) {
         yield* waitForStatuses(host, {});
         const installed = yield* installer.install({ type: "path", path: folder });
         yield* writeUpgradeVersion(folder, "2.0.0", { engines: ">=999.0.0" });
-        const refused = yield* installer.update(upgrade).pipe(Effect.flip);
+        const refused = yield* installer.install({ type: "path", path: folder }).pipe(Effect.flip);
         assert.strictEqual(
           refused.message,
           `Upgrade 2.0.0 needs T3 Code >=999.0.0, and this server is ${packageJson.version}.`,
@@ -1902,63 +1573,6 @@ module.exports = { activate(api) {
         assert.include(kept, { version: "1.0.0", status: "active" });
         // Never stopped: the same start keeps running.
         assert.strictEqual(kept?.revision, installed.revision);
-      }).pipe(Effect.provide(layerHost()));
-    }).pipe(Effect.provide(layerConfig())),
-  );
-
-  it.effect("does not offer an update that needs a newer T3 Code", () =>
-    Effect.gen(function* () {
-      const { stateDir } = yield* ServerConfig.ServerConfig;
-      yield* writeInstalledPlugin("npm-future", "module.exports = { activate() {} };");
-      yield* writeFile(
-        `${stateDir}/plugins.json`,
-        JSON.stringify({
-          sources: { "npm-future": { type: "npm", name: "npm-future" } },
-          installed: { "npm-future": "1.0.0" },
-        }),
-      );
-      npmLatest = "1.1.0";
-      yield* Effect.gen(function* () {
-        const host = yield* PluginHost.PluginHost;
-        const installer = yield* PluginInstaller.PluginInstaller;
-        yield* waitForStatuses(host, { "npm-future": "disabled" });
-        assert.isUndefined(stateOf(yield* installer.checkUpdates, "npm-future")?.availableUpdate);
-      }).pipe(Effect.provide(layerHost()));
-    }).pipe(Effect.provide(layerConfig())),
-  );
-
-  it.effect("checks installed plugins for updates once a day, not at startup", () =>
-    Effect.gen(function* () {
-      const { stateDir } = yield* ServerConfig.ServerConfig;
-      yield* writeInstalledPlugin("npm-hello", "module.exports = { activate() {} };");
-      yield* writeFile(
-        `${stateDir}/plugins.json`,
-        JSON.stringify({
-          enabled: { "npm-hello": true },
-          sources: { "npm-hello": { type: "npm", name: "npm-hello" } },
-          installed: { "npm-hello": "1.0.0" },
-          updates: { checkedAt: 0, available: {} },
-        }),
-      );
-      npmLatest = "1.1.0";
-      npmMetadataRequests = 0;
-      yield* Effect.gen(function* () {
-        const host = yield* PluginHost.PluginHost;
-        yield* waitForStatuses(host, { "npm-hello": "active" });
-        assert.strictEqual(npmMetadataRequests, 0);
-
-        const found = yield* host.streamStates.pipe(
-          Stream.filter((states) => stateOf(states, "npm-hello")?.availableUpdate !== undefined),
-          Stream.runHead,
-          Effect.forkChild({ startImmediately: true }),
-        );
-        yield* TestClock.adjust("24 hours");
-        assert.deepStrictEqual(
-          stateOf(Option.getOrThrow(yield* Fiber.join(found)), "npm-hello")?.availableUpdate,
-          { version: "1.1.0" },
-        );
-        // Once for the latest version, once more to download it and read its engines.
-        assert.strictEqual(npmMetadataRequests, 2);
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
@@ -2282,131 +1896,6 @@ it.live("lists a project's git worktrees for a plugin", () =>
           scopes: operate,
         }),
         ["main", null, "feature"],
-      );
-    }).pipe(Effect.provide(layerHost(services)));
-  }).pipe(Effect.provide(layerConfig()), Effect.scoped, Effect.provide(NodeServices.layer)),
-);
-
-it.live("refuses git URLs that fetch code unencrypted", () =>
-  Effect.gen(function* () {
-    const installer = yield* PluginInstaller.PluginInstaller;
-    for (const [url, scheme] of [
-      ["http://127.0.0.1:1/plugin.git", "http"],
-      ["GIT://127.0.0.1:1/plugin.git", "git"],
-    ] as const) {
-      const failed = yield* installer.install({ type: "git", url }).pipe(Effect.flip);
-      assert.strictEqual(
-        failed.message,
-        `${scheme}:// URLs are not encrypted, so anyone on the network could change the plugin's code. Use an https or ssh URL.`,
-      );
-    }
-  }).pipe(
-    Effect.provide(
-      layerHost().pipe(Layer.provideMerge(layerConfig()), Layer.provideMerge(NodeServices.layer)),
-    ),
-  ),
-);
-
-it.live("keeps a git URL's credentials out of a failed install's reason", () =>
-  Effect.gen(function* () {
-    const installer = yield* PluginInstaller.PluginInstaller;
-    // Older git versions print `user:token@host` for a URL they cannot reach.
-    const failed = yield* installer
-      .install({ type: "git", url: "https://ash:secret-token@127.0.0.1:1/plugin.git" })
-      .pipe(Effect.flip);
-    assert.match(failed.message, /^git clone failed: /);
-    assert.notInclude(failed.message, "secret-token");
-  }).pipe(
-    Effect.provide(
-      layerHost().pipe(Layer.provideMerge(layerConfig()), Layer.provideMerge(NodeServices.layer)),
-    ),
-  ),
-);
-
-it.live("runs a turn with the ACP agent a plugin registers by its command", () =>
-  Effect.gen(function* () {
-    const acpPlugin = PluginId.make("acp-agent-plugin");
-    yield* writePluginsConfig({
-      enabled: { [acpPlugin]: true },
-      devPaths: [`${fixturesDir}acp-agent-plugin`],
-    });
-    const echoAcp = ProviderDriverKind.make("echoAcp");
-    const { registry, addDriver } = yield* makeProviderInstanceRegistry<AcpAgentDriverEnv>({
-      drivers: [],
-      configMap: { [defaultInstanceIdForDriver(echoAcp)]: { driver: echoAcp, enabled: true } },
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          TestProviderHost.layer(),
-          IdAllocator.layer,
-          McpProviderSessions.layer,
-          Layer.succeed(SecretResolver.SecretResolver, {
-            read: () => Effect.succeed([]),
-            invalidate: () => Effect.void,
-          }),
-        ),
-      ),
-    );
-    const services = Layer.mergeAll(
-      layerUnusedServices,
-      Layer.succeed(ProviderDriverRegistration.ProviderDriverRegistration, {
-        // This registry provides what the ACP agent driver uses.
-        add: addDriver as ProviderDriverRegistration.ProviderDriverRegistration["Service"]["add"],
-      }),
-    );
-    yield* Effect.gen(function* () {
-      const host = yield* PluginHost.PluginHost;
-      yield* waitForStatuses(host, { [acpPlugin]: "active" });
-      const instanceId = defaultInstanceIdForDriver(echoAcp);
-      const instance = yield* registry.getInstance(instanceId);
-      assert.include(yield* instance!.snapshot.getSnapshot, {
-        displayName: "Echo ACP",
-        status: "ready",
-        supportsTextGeneration: false,
-      });
-
-      const threadId = ThreadId.make("thread:echo-acp");
-      const modelSelection = { instanceId, model: "default" };
-      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        cwd: process.cwd(),
-      });
-      const session = yield* instance!.orchestrationAdapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make("provider-session:echo-acp"),
-        modelSelection,
-        runtimePolicy,
-      });
-      const providerThread = yield* session.ensureThread({
-        threadId,
-        modelSelection,
-        runtimePolicy,
-      });
-      const replies = yield* session.events.pipe(
-        Stream.takeUntil((event) => event.type === "turn.terminal"),
-        Stream.runCollect,
-        Effect.forkChild({ startImmediately: true }),
-      );
-      yield* session.startTurn(
-        makeTurnInput({
-          threadId,
-          providerThread,
-          instanceId,
-          runtimePolicy,
-          now: yield* DateTime.now,
-          messageText: "Hello there",
-        }),
-      );
-      const events = Array.from(yield* Fiber.join(replies));
-      assert.include(events.at(-1), { type: "turn.terminal", status: "completed" });
-      assert.isTrue(
-        events.some(
-          (event) =>
-            event.type === "turn_item.updated" &&
-            event.turnItem.type === "assistant_message" &&
-            event.turnItem.text.includes("Echo: Hello there"),
-        ),
       );
     }).pipe(Effect.provide(layerHost(services)));
   }).pipe(Effect.provide(layerConfig()), Effect.scoped, Effect.provide(NodeServices.layer)),

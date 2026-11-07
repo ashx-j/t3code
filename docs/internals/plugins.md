@@ -38,37 +38,32 @@ with only Node's frames then stops the server. The server still allows Node 22.1
 ## The API and manifests
 
 The server bundle inlines `effect`, so plugins never share the host's Effect runtime or `Schema`
-instances. They get Promises, `AsyncIterable` streams and `AbortSignal`. Source control hosts are
-the one exception (below).
+instances. They get Promises, `AsyncIterable` streams and `AbortSignal`.
 
 Manifests ignore keys they don't know, so a newer manifest key is lost silently on an older T3.
-`engines.t3` is how a plugin asks for a newer T3: the server refuses to install, update to or start
-a version outside it.
+`engines.t3` is how a plugin asks for a newer T3: the server refuses to install or start a version
+outside it.
 
 ## State lives beside T3's
 
-`<stateDir>/plugins.json` holds enabled flags, dev paths, install sources, update check results and
-the version each plugin can roll back to. Settings go in `plugin-data/<id>/`, storage in
-`plugins.sqlite` and the version an update replaced in `plugin-rollback/<id>`. They stay out of
-`settings.json`, whose writer drops keys it doesn't know, and out of `statev2.sqlite`, whose
-numbered migrations refuse to start when a fork's id collides with an upstream one. Settings stay
-out of `plugins/<id>/`, so replacing a plugin's files keeps them.
+`<stateDir>/plugins.json` holds enabled flags and dev paths. Settings go in `plugin-data/<id>/` and
+storage in `plugins.sqlite`. They stay out of `settings.json`, whose writer drops keys it doesn't
+know, and out of `statev2.sqlite`, whose numbered migrations refuse to start when a fork's id
+collides with an upstream one. Settings stay out of `plugins/<id>/`, so replacing a plugin's files
+keeps them. Removing a plugin deletes its settings, secrets and storage, so nothing is left that no
+plugin can reach.
 
 ## Installing
 
-Installs fetch into `plugin-staging/`, outside `plugins/`, so discovery never sees a half-written
-plugin. Only the swap takes the lifecycle lock, so a slow clone does not block other plugins. The
-old version waits in staging until the new one starts, goes back if it fails, and otherwise moves
-to `plugin-rollback/<id>`. Git may use only https, ssh and file: plain http and git let the network
-change the code, and others such as `ext::` run commands. Update checks download a newer version to
-read its `engines.t3`, so they offer only versions this server runs.
+Installs copy into `plugin-staging/`, outside `plugins/`, so discovery never sees a half-written
+plugin. Only the swap takes the lifecycle lock, so a slow copy does not block other plugins. The
+old version waits in staging until the new one starts and goes back if it fails.
 
 An agent writing a plugin installs its folder with `link`, which adds it to `devPaths`. Symlinks
 into `plugins/` would do the same but need extra rights on Windows. Clients send the files of a
-dropped folder, never its path, which would mean nothing on a remote environment. Sent files record
-no source, so dropping a folder cannot take over a git or npm plugin. Discovery takes the id from
-the manifest, because people copy plugin folders in by hand. Nothing watches `plugins/`: the server
-reads it at startup, on reload and when Settings asks.
+dropped folder, never its path, which would mean nothing on a remote environment. Discovery takes
+the id from the manifest, because people copy plugin folders in by hand. Nothing watches
+`plugins/`: the server reads it at startup, on reload and when Settings asks.
 
 ## Clients
 
@@ -88,7 +83,7 @@ styles chunk only when one has a `styles/` folder. Until then, rows read nothing
 startup chunk holds about 4.8 KB of minified plugin code, and plugin support adds about 36 KB raw
 (12.3 KB gzip) at startup, mostly plugin RPC schemas and the theme cache. With no plugins, a client
 opens 1 subscription on its WebSocket and gets a snapshot of about 60 B. The server starts plugins
-after it is listening, and one with no plugin from git or npm never checks for updates.
+after it is listening.
 
 A bare `import(url)` cannot send credentials, so the loader fetches each bundle with the
 connection's credentials and imports it from a `blob:` URL, which the desktop CSP allows. Mobile
@@ -126,11 +121,6 @@ Server plugins' slash commands are provider slash commands, added where the serv
 `/usage-limits`, so every client lists them with no plugin code. `threads.notify` is its own
 internal command in `Orchestrator.ts`, because every `message.dispatch` starts a run.
 
-Text generation hooks wrap the `TextGeneration` router, which every caller goes through. Each plugin
-gets 3 seconds and all of them share 5 per text, then T3 generates the text itself. Drivers that
-pick a runtime per call, such as OpenCode's, must forward the optional `generateText`, or
-`textGeneration.generate` sees it missing.
-
 Instructions and skill folders ride on each adapter turn input, so adapters never look up plugins.
 Claude loads a `--plugin-dir` folder whole, hooks and MCP servers included, so the host generates
 `<stateDir>/plugin-agents/<id>` with only a manifest and `skills/`. Claude reads it only when its
@@ -141,17 +131,3 @@ MCP has no tool removal, so a stopped plugin's tools stay listed and answer that
 disabled. The `t3_plugins_*` tools start off, because every agent turn pays for the advertised tool
 list. The loader reports a web half's failure with `plugins.reportWebFailure`, which needs the
 settings write scope because agents read the text.
-
-## ACP agents and source control hosts
-
-`registerAcpAgent` builds a driver from plain data on the shared ACP adapter, like `fx`, not on the
-ACP Registry driver, whose instances carry the registry's kind and whose status check opens a
-session. So an ACP agent shows "ready" with unknown sign-in until a turn runs. It sets
-`supportsTextGeneration: false` to stay out of the text generation pickers: the router switches
-providers only on a usage limit, so a selected provider that can't write text fails every title.
-
-Source control drivers are Effect code in the server's runtime. A plugin's own `effect` would work
-only while it matched the server's, so drivers build with `api.providers.runtime`. The published SDK
-carries a copy of T3's source control types from its build, and those change with every nightly, so
-such a plugin tracks one T3 version. A plugin host joins remote recognition after the built-ins, so
-it cannot take a built-in host's remotes.

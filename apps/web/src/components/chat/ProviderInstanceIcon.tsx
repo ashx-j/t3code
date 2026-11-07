@@ -57,15 +57,6 @@ export function resolveProviderInstanceAcpRegistryIconUrl(input: {
   );
 }
 
-/** A driver clients have no definition for, such as a plugin's, brings its icon in its snapshot. */
-export function resolvePluginProviderIconUrl(input: {
-  readonly driverKind: ProviderDriverKind;
-  readonly iconUrl?: string | undefined;
-}): string | null {
-  if (input.driverKind === "acpRegistry" || providerClients.get(input.driverKind)) return null;
-  return input.iconUrl ?? null;
-}
-
 export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   driverKind: ProviderDriverKind;
   displayName: string;
@@ -98,10 +89,6 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
     agentId: props.acpRegistryAgentId,
     iconUrl: props.acpRegistryIconUrl,
   });
-  const pluginIconUrl = resolvePluginProviderIconUrl({
-    driverKind: props.driverKind,
-    iconUrl: props.acpRegistryIconUrl,
-  });
 
   return (
     <span
@@ -126,13 +113,6 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
         />
       ) : Icon ? (
         <Icon className={cn("size-5 shrink-0", iconClassName)} aria-hidden />
-      ) : pluginIconUrl ? (
-        <img
-          src={pluginIconUrl}
-          alt=""
-          aria-hidden
-          className={cn("size-5 shrink-0 object-contain", iconClassName)}
-        />
       ) : (
         <span className={cn("text-3xs font-semibold leading-none", iconClassName)}>
           {providerInstanceInitials(props.displayName)}

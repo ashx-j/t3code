@@ -27,20 +27,7 @@ export function fromProviders(
 /** @public */
 export const make = Effect.gen(function* () {
   const drivers = yield* BuiltInDrivers.SourceControlDrivers;
-  const plugins = yield* BuiltInDrivers.SourceControlPluginDrivers;
-  const builtIn = fromProviders(drivers.flatMap(({ instance }) => instance.pullRequests ?? []));
-  const pluginProviders = () =>
-    plugins.current().flatMap(({ instance }) => instance.pullRequests ?? []);
-  return {
-    get: (kind) =>
-      builtIn.get(kind) ?? pluginProviders().find((provider) => provider.kind === kind) ?? null,
-    get kinds() {
-      const added = pluginProviders();
-      return added.length === 0
-        ? builtIn.kinds
-        : [...builtIn.kinds, ...added.map((provider) => provider.kind)];
-    },
-  } satisfies PullRequestProviderRegistry["Service"];
+  return fromProviders(drivers.flatMap(({ instance }) => instance.pullRequests ?? []));
 });
 
 export const layer = Layer.effect(PullRequestProviderRegistry, make).pipe(
