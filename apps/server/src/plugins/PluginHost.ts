@@ -62,9 +62,10 @@ import { makePluginWebFiles } from "./pluginWebFiles.ts";
 
 // Clients send web failures, so they are bounded like plugin errors.
 const MAX_WEB_FAILURE_CHARS = 1_000;
-// Plugin code that never settles must not keep a plugin loading, or Disable and Reload waiting,
-// forever. The cleanup deadline covers all of a plugin's cleanups together.
+// Plugin code that never settles must not keep a plugin loading, a client's call open, or Disable
+// and Reload waiting, forever. The cleanup deadline covers all of a plugin's cleanups together.
 const ACTIVATE_DEADLINE = Duration.seconds(30);
+const INVOKE_DEADLINE = Duration.seconds(30);
 const CLEANUP_DEADLINE = Duration.seconds(5);
 // A plugin's failures outside a call reach clients at most this often, the latest one last, so a
 // timer failing every few milliseconds with new text does not resend the list each time.
@@ -129,6 +130,15 @@ export class PluginHandlerError extends Schema.TaggedError<PluginHandlerError>()
   }
 }
 
+export class PluginHandlerTimeoutError extends Schema.TaggedError<PluginHandlerTimeoutError>()(
+  "PluginHandlerTimeoutError",
+  { pluginId: PluginId, method: Schema.String },
+) {
+  override get message(): string {
+    return `Plugin ${this.pluginId} did not answer ${this.method} within ${Duration.toSeconds(INVOKE_DEADLINE)} seconds.`;
+  }
+}
+
 export class PluginHost extends Context.Service<
   PluginHost,
   {
@@ -182,7 +192,10 @@ export class PluginHost extends Context.Service<
       readonly revision: number;
       readonly message: string;
     }) => Effect.Effect<void, PluginNotFoundError>;
-    /** `scopes` are the caller's; methods the plugin registered as writes need the operate scope. */
+    /**
+     * `scopes` are the caller's; methods the plugin registered as writes need the operate scope. A
+     * handler that has not answered within 30 seconds is aborted.
+     */
     readonly invoke: (input: {
       readonly pluginId: PluginId;
       readonly method: string;
@@ -196,6 +209,7 @@ export class PluginHost extends Context.Service<
       | PluginMethodNotFoundError
       | PluginAccessDeniedError
       | PluginHandlerError
+      | PluginHandlerTimeoutError
     >;
     /** Values the plugin publishes on `channel` until it deactivates. */
     readonly subscribe: (input: {
@@ -909,7 +923,8 @@ const make = Effect.gen(function* () {
           cause,
         });
       const deactivated = activation.controller.signal;
-      const output = yield* Effect.raceFirst(
+      const answered = yield* Effect.raceFirst(
+        // The deadline interrupts the call, which aborts the handler's signal.
         Effect.tryPromise({
           try: (signal) =>
             pluginCodeScope.run(request.pluginId, () =>
@@ -920,7 +935,7 @@ const make = Effect.gen(function* () {
               ),
             ),
           catch: handlerError,
-        }),
+        }).pipe(Effect.timeoutOption(INVOKE_DEADLINE)),
         // A handler that ignores its abort signal must not hold the call open after disable.
         Effect.callback<never, PluginNotActiveError>((resume) => {
           const onAbort = () =>
@@ -934,6 +949,13 @@ const make = Effect.gen(function* () {
           return Effect.sync(() => deactivated.removeEventListener("abort", onAbort));
         }),
       );
+      if (Option.isNone(answered)) {
+        return yield* new PluginHandlerTimeoutError({
+          pluginId: request.pluginId,
+          method: request.method,
+        });
+      }
+      const output = answered.value;
       if (output === undefined) return null;
       if (!isJson(output)) {
         return yield* handlerError(new TypeError("The method returned a value that is not JSON."));

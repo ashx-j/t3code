@@ -530,6 +530,43 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
     }).pipe(Effect.provide(layerConfig())),
   );
 
+  it.effect("gives up on a method that does not answer within 30 seconds, and aborts it", () =>
+    Effect.gen(function* () {
+      const started = Promise.withResolvers<void>();
+      const aborted = Promise.withResolvers<void>();
+      Reflect.set(globalThis, "__t3PluginHostInvokeStarted", started.resolve);
+      Reflect.set(globalThis, "__t3PluginHostInvokeAborted", aborted.resolve);
+      yield* writeInstalledPlugin(
+        "hangs",
+        `module.exports = { activate(api) {
+  api.rpc.register("wait", (_input, { signal }) => new Promise(() => {
+    signal.addEventListener("abort", () => globalThis.__t3PluginHostInvokeAborted());
+    globalThis.__t3PluginHostInvokeStarted();
+  }), { access: "read" });
+} };`,
+      );
+      yield* writePluginsConfig({ enabled: { hangs: true } });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const id = PluginId.make("hangs");
+        yield* waitForStatuses(host, { hangs: "active" });
+        const call = yield* host
+          .invoke({ pluginId: id, method: "wait", input: undefined, scopes: operate })
+          .pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+        yield* Effect.promise(() => started.promise);
+        yield* TestClock.adjust("30 seconds");
+        assert.strictEqual(
+          (yield* Fiber.join(call)).message,
+          "Plugin hangs did not answer wait within 30 seconds.",
+        );
+        yield* Effect.promise(() => aborted.promise);
+        assert.include(stateOf(yield* host.list, id), { status: "active" });
+      }).pipe(Effect.provide(layerHost()));
+      Reflect.deleteProperty(globalThis, "__t3PluginHostInvokeStarted");
+      Reflect.deleteProperty(globalThis, "__t3PluginHostInvokeAborted");
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
   it.effect("finishes disabling a plugin when the caller gives up during its cleanup", () =>
     Effect.gen(function* () {
       const started = Promise.withResolvers<void>();

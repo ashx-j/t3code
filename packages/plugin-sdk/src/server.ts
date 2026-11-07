@@ -4,7 +4,10 @@ import type { JsonObject, JsonValue, PluginRpcMap } from "./shared.ts";
 export type PluginRpcAccess = "read" | "write";
 
 export interface PluginRpcContext {
-  /** Aborts when the caller goes away or the plugin deactivates. */
+  /**
+   * Aborts when the caller goes away, the plugin deactivates, or the handler has not answered
+   * within 30 seconds, when the call fails.
+   */
   readonly signal: AbortSignal;
 }
 
