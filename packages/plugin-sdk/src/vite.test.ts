@@ -4,9 +4,12 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { build } from "vite-plus";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, expectTypeOf, it } from "vite-plus/test";
 
+import type * as AtomModule from "./atom.ts";
+import type * as AtomReactModule from "./atom-react.ts";
 import { t3PluginWeb } from "./vite.ts";
+import { HOST_ATOM_EXPORTS, HOST_ATOM_REACT_EXPORTS } from "./web.ts";
 
 const exampleRoot = NodePath.join(import.meta.dirname, "../examples/quick-notes");
 
@@ -73,5 +76,15 @@ describe("t3PluginWeb", () => {
         build: { write: false, minify: false },
       }),
     ).rejects.toThrow("which T3 never loads");
+  });
+});
+
+describe("shared atom modules", () => {
+  // T3 hands a plugin only the listed names, so a name the SDK declares but T3 doesn't list breaks.
+  it("lists exactly the values the SDK's atom modules declare", () => {
+    expectTypeOf<keyof typeof AtomModule>().toEqualTypeOf<(typeof HOST_ATOM_EXPORTS)[number]>();
+    expectTypeOf<keyof typeof AtomReactModule>().toEqualTypeOf<
+      (typeof HOST_ATOM_REACT_EXPORTS)[number]
+    >();
   });
 });
