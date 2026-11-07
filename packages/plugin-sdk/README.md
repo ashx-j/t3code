@@ -123,6 +123,34 @@ from your plugin.
 HTTP route handlers get the request body as UTF-8 text, so a binary upload arrives corrupted, and a
 query key that appears twice keeps its last value.
 
+## Work that runs over many turns
+
+A plugin can run work in steps, such as asking several models for an answer and then having each
+one review the others. Start each model's thread with `threads.create`, with the model and options
+`providers.list` names. T3 Code can restart between any 2 steps, and the plugin with it, so build
+each step to resume:
+
+- Keep each job's state in `storage`, such as `job:<id>` with its threads and the step it reached.
+  Storage outlives restarts and updates.
+- Move to the next step from `turns.afterRunCompleted`. Runs that end while the plugin is off
+  arrive when it starts again. Each handler picks up where the one registered in its place last
+  stopped, so register them in the same order at every start. Runs of every thread arrive, so look
+  up `run.threadId` in your state. T3 waits for your handler before it sends the next run, and
+  counts a run as handled once the handler resolves or throws, so a run whose handler a restart
+  cut short arrives again.
+- Pass an `idempotencyKey` to `threads.create` and `threads.sendMessage`, made from the job and the
+  step, such as `review-42:answer:codex`. A call T3 already accepted with that key starts no new
+  turn, so repeating a step after a restart costs nothing.
+- Write back to a thread that may be busy with `sendMessage` and `mode: "queue"`, which waits for
+  the running turn to end. The default, `auto`, steers the message into a running turn.
+- To cancel a job, `interrupt` each of its threads, which resolves even when nothing is running,
+  then `archive` or `delete` the ones you no longer need. An interrupted run arrives at
+  `afterRunCompleted` with the status `interrupted`.
+- Set `engines.t3` to the first T3 version that has every call you use, instead of checking
+  `api.server.version`. An older T3 refuses to start the plugin and says why, where it would
+  otherwise ignore a field it doesn't know, such as `idempotencyKey`. It also doesn't offer an
+  update that needs a newer T3.
+
 ## Agent providers and source control hosts
 
 An ACP agent needs no Effect code:
@@ -241,9 +269,9 @@ parts of your design to survive that. Build each part on the most stable thing T
   `[data-t3-region="composer"]`, and style it with theme tokens.
 - **Reach into T3's markup only as a last resort.** Selectors on `aria-label`, `data-slot`, class
   names such as `[class~="border-border/65"]` or `.lucide-shield-off`, and `:has()` break when T3
-  renames or moves things. Use one only when no theme value, region, piece or part does the job. Keep each
-  rule small and in one commented place, prefer one that falls back to T3's own look when the
-  markup changes, and list it in the plugin's README with the seam that would replace it.
+  renames or moves things. Use one only when no theme value, region, piece or part does the job.
+  Keep each rule small and in one commented place, prefer one that falls back to T3's own look
+  when the markup changes, and list it in the plugin's README with the seam that would replace it.
 - **Leave T3's frame to T3.** The title bar row, the room for the window buttons on Windows and
   Linux, drag areas, phone safe areas and breakpoints are T3's, so don't resize or pad them.
 - **Draw `original` for steps you don't handle.** The `timeline.item` part's `item` describes
