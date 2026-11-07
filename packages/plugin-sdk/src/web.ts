@@ -257,7 +257,7 @@ export interface WebPluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
   readonly settings: {
     /**
      * Shows on the Plugins page in place of the generated settings form. On a plugin installed in
-     * several environments it changes the main environment's copy, and the generated form, when
+     * several environments it changes the copy plugin UI loads from, and the generated form, when
      * the schema has fields, stays below it for every copy.
      */
     readonly registerPanel: (component: WebPluginComponent) => void;

@@ -515,10 +515,10 @@ export interface PluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
       ) => PluginRuntimeRequestAnswer | Promise<PluginRuntimeRequestAnswer>,
     ) => void;
     /**
-     * Sees each message, edited queued message and delegated task prompt before it is sent, after
-     * earlier hooks' changes, plugins in id order. A block stops the rest; a hook slower than 2
-     * seconds or one that throws is skipped. Slash commands, names T3, the agent or a plugin lists,
-     * never reach it. A task prompt's `threadId` is the task's new thread.
+     * Sees each message, queued edit and delegated task prompt, with earlier hooks' changes, before
+     * it is sent, plugins in id order. A block stops the rest. A message's hooks share 2 seconds, a
+     * late one gets 100ms, and one out of time or that throws is skipped. Slash commands from T3's,
+     * the agent's or a plugin's list never reach it. A task prompt's `threadId` is its new thread.
      */
     readonly beforeDispatch: (
       hook: (
@@ -528,8 +528,8 @@ export interface PluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
   };
   readonly slashCommands: {
     /**
-     * Lists `/name` with every provider's commands; messages starting with it run `handler` instead
-     * of being sent, without passing send hooks, and throwing or 10 seconds blocks the message.
+     * Lists `/name` with every provider's commands; messages starting with it run `handler` before
+     * they are sent, without passing send hooks, and throwing or 10 seconds blocks the message.
      * Names are lowercase letters, digits and `-`, not T3 Code's; a provider's own command of the
      * name wins, and of plugins sharing one, the id that sorts first.
      */
@@ -559,8 +559,8 @@ export interface PluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
     /**
      * Supplies `kind` of text before T3 Code generates it, until the plugin deactivates. T3 cleans
      * up the answer as it does model output. Plugins are asked in id order. Nothing, a wrong
-     * shape, an error or 30 seconds without an answer leaves it to the next plugin, then to T3
-     * Code's own generator.
+     * shape, an error or 3 seconds without an answer leaves it to the next plugin. After 5 seconds
+     * for all plugins, or when none answers, T3 Code's own generator writes it.
      */
     readonly register: <K extends keyof PluginTextGenerationTasks>(
       kind: K,

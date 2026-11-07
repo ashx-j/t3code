@@ -46,10 +46,14 @@ the `.tgz` file it writes.
 }
 ```
 
-- `id` uses lowercase letters, digits and hyphens. It names the plugin's folder, its HTTP routes
-  (`/api/plugins/<id>/…`), its agent tools (`plg_<id>_<tool>`) and its keybinding commands
-  (`plugin.<id>.<command>`).
-- `engines.t3` is a semver range. A server outside it refuses to start the plugin and says why.
+- `id` uses lowercase letters, digits and hyphens, starts with a letter and has up to 32
+  characters. It names the plugin's folder, its HTTP routes (`/api/plugins/<id>/…`), its agent
+  tools (`plg_<id>_<tool>`) and its keybinding commands (`plugin.<id>.<command>`).
+- `engines.t3` is a version range made of `^`, `>=`, `>`, `<=`, `<`, `=` and `||`, such as
+  `>=0.1.6`. A server outside it refuses to install the plugin, update to it or start it, and says
+  why.
+- `permissions` is an optional list of what the plugin says it uses. Settings → Plugins shows it on
+  the plugin's row, and T3 Code doesn't enforce it.
 - `server` must be CommonJS ending in `.cjs`. `web` is a single-file ES module.
 - `settingsSchema` is JSON Schema. T3 Code draws a form from it on the Plugins page, and top-level
   string fields with `"format": "t3-secret"` are stored in the server's secret store and never shown
@@ -99,12 +103,14 @@ module.exports = {
   projects, and list a project's git worktrees;
 - provider instances and their models, with the options each model takes, such as reasoning
   effort (`api.providers.list`), so a new thread can set them in `threads.create`;
-- send hooks that add to, replace or block a message (slash commands never reach them), and
-  slash commands that run on the server and may replace or block the message;
+- send hooks that add to, replace or block a message, and slash commands that run on the server
+  and may replace or block the message. A message's hooks share 2 seconds, and slash commands never
+  reach them;
 - answers to agents' approvals and questions, instructions for agents, and MCP tools for agents;
 - secrets the user enters on a card in a thread with a turn in progress;
 - the text T3 Code generates, such as thread titles and commit messages, and free-form text from
-  the text generation model chosen in the settings;
+  the text generation model chosen in the settings. Each plugin gets 3 seconds to answer and all of
+  them get 5, then T3 Code writes the text itself;
 - HTTP routes, schedules and server info;
 - ACP agents T3 Code runs by their command (`api.providers.registerAcpAgent`), with no Effect
   code; the `acp-agent-plugin` fixture is a small one;
@@ -116,9 +122,9 @@ own cleanup with `api.onDeactivate`.
 
 A failure in plugin code that nothing awaits, such as a throw in a timer, a schedule or a hook,
 doesn't stop T3 Code. It shows on the plugin's row in Settings → Plugins and in
-`t3_plugins_check`. Give every child process, socket and stream you create an `'error'` listener
-anyway: Node reports an unhandled `'error'` event as a crash, and T3 Code can't always tell it came
-from your plugin.
+`t3_plugins_check`, and the plugin keeps running. Give every child process, socket and stream you
+create an `'error'` listener anyway: Node reports an unhandled `'error'` event as a crash, and when
+T3 Code can't tell it came from your plugin, the server stops.
 
 HTTP route handlers get the request body as UTF-8 text, so a binary upload arrives corrupted, and a
 query key that appears twice keeps its last value.
@@ -147,9 +153,9 @@ each step to resume:
   then `archive` or `delete` the ones you no longer need. An interrupted run arrives at
   `afterRunCompleted` with the status `interrupted`.
 - Set `engines.t3` to the first T3 version that has every call you use, instead of checking
-  `api.server.version`. An older T3 refuses to start the plugin and says why, where it would
-  otherwise ignore a field it doesn't know, such as `idempotencyKey`. It also doesn't offer an
-  update that needs a newer T3.
+  `api.server.version`. An older T3 refuses to install or start the plugin and says why, where it
+  would otherwise ignore a field it doesn't know, such as `idempotencyKey`. It also doesn't offer or
+  install an update that needs a newer T3.
 
 ## Agent providers and source control hosts
 
@@ -218,8 +224,9 @@ attach button (`composer.addButton`) and in the thread actions menu (`threads.ad
 offers items in the composer's `@` menu; a picked item shows as a chip, and the agent gets its text
 with the message. [`examples/quick-notes`](./examples/quick-notes) offers its notes that way.
 
-`pages.register` adds a full page at `/plugins/<pluginId>/<name>`, shown beside the sidebar in place
-of the thread; a `t3code://plugins/<pluginId>/<name>` link opens the desktop app on it, and `sidebar.addSection` adds a titled section under the thread list.
+`pages.register` adds a full page at `/plugins/<pluginId>/<name>`, shown beside the sidebar in
+place of the thread; a `t3code://plugins/<pluginId>/<name>` link opens the desktop app on it.
+`sidebar.addSection` adds a titled section under the thread list.
 [`examples/quick-notes`](./examples/quick-notes) keeps notes in its server half's storage and shows
 them in both.
 
