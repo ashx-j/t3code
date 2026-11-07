@@ -6,6 +6,8 @@ import type * as Context from "effect/Context";
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
+import "~/index.css";
+
 import { AppRoot } from "~/AppRoot";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
@@ -88,4 +90,12 @@ it("marks the window's main areas with the region names plugin styles target", a
   for (const region of ["main", "timeline", "composer"]) {
     expect(document.querySelector(`[data-t3-region="${region}"]`), region).not.toBeNull();
   }
+
+  // A region sits on the element that paints its area, so a plugin's plain rule recolors it.
+  const pluginSheet = document.createElement("style");
+  pluginSheet.textContent = '[data-t3-region="composer"] { background: rgb(1, 2, 3); }';
+  document.head.append(pluginSheet);
+  using _pluginSheet = { [Symbol.dispose]: () => pluginSheet.remove() };
+  const composerBox = document.querySelector("[data-chat-composer-main-surface]");
+  expect(composerBox && getComputedStyle(composerBox).backgroundColor).toBe("rgb(1, 2, 3)");
 });

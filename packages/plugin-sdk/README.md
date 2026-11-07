@@ -272,8 +272,10 @@ parts of your design to survive that. Build each part on the most stable thing T
 - **Scope CSS to a region.** T3 keeps the `data-t3-region` names of the window's main areas
   across releases: `sidebar`, `main` (everything beside the sidebar), `timeline`, `composer`,
   `thread-details`, `right-panel`, `terminal`, `home`, `pull-requests`, `settings`,
-  `settings-nav`, `plugin-page` and `command-palette`. Start a rule with one, such as
-  `[data-t3-region="composer"]`, and style it with theme tokens.
+  `settings-nav`, `plugin-page` and `command-palette`. A plain `background` rule recolors most
+  regions, such as `[data-t3-region="composer"] { background: #101820; }`. The surfaces inside
+  `main` and `right-panel` paint over them, so set `--background` on those two instead. For
+  `terminal`, set `--terminal-background`, which a terminal reads when it opens.
 - **Reach into T3's markup only as a last resort.** Selectors on `aria-label`, `data-slot`, class
   names such as `[class~="border-border/65"]` or `.lucide-shield-off`, and `:has()` break when T3
   renames or moves things. Use one only when no theme value, region, piece or part does the job.
