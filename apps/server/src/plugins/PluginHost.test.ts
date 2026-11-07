@@ -14,7 +14,6 @@ import {
   ProjectId,
   ThreadId,
   type TurnItemId,
-  type PluginState,
   type PluginStatesEvent,
   type Project,
   ProviderInstanceId,
@@ -28,14 +27,12 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import type * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import * as EnvironmentTheme from "../environmentTheme.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -51,106 +48,29 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import packageJson from "../../package.json" with { type: "json" };
 import * as PluginHooks from "./PluginHooks.ts";
 import * as PluginHost from "./PluginHost.ts";
+import {
+  fixturesDir,
+  layerConfig,
+  layerFileSystemWith,
+  layerHost,
+  layerUnusedServices,
+  stateOf,
+  waitForStatuses,
+  writeFile,
+  writeInstalledPlugin,
+  writePluginsConfig,
+} from "./pluginHostTestHarness.ts";
 import * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
 import * as PluginInstaller from "./PluginInstaller.ts";
-import * as PluginMcpTools from "./PluginMcpTools.ts";
 import { makePluginRpcHandlers } from "./pluginRpcHandlers.ts";
 import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
 
 // None of these messages replays an accepted command.
 const notAccepted = Effect.succeed(false);
-const fixturesDir = new URL("../../../../packages/plugin-sdk/fixtures/", import.meta.url).pathname;
 const hello = PluginId.make("hello-plugin");
 const broken = PluginId.make("broken-plugin");
 const operate = [AuthOrchestrationReadScope, AuthOrchestrationOperateScope] as const;
-
-const layerConfig = () =>
-  Layer.fresh(ServerConfig.layerTest(process.cwd(), { prefix: "t3code-plugin-host-test-" }));
-
-// Services the plugins in these tests never reach.
-const layerUnusedLaunchServices = Layer.mergeAll(
-  Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
-  Layer.mock(ProjectService.ProjectService)({}),
-  Layer.mock(ProviderRegistry.ProviderRegistry)({}),
-  Layer.mock(GitVcsDriver.GitVcsDriver)({}),
-  Layer.mock(SecretRequests.SecretRequests)({}),
-);
-
-// Orchestration services the lifecycle tests never reach.
-const layerUnusedServices = Layer.mergeAll(
-  layerUnusedLaunchServices,
-  Layer.mock(Orchestrator.OrchestratorV2)({}),
-  Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({}),
-  Layer.mock(ThreadManagementService.ThreadManagementService)({}),
-  Layer.mock(ProjectStore.ProjectStoreV2)({}),
-  Layer.mock(ServerEnvironment.ServerEnvironment)({}),
-  Layer.mock(ServerSettings.ServerSettingsService)({}),
-);
-
-// Every list of theme folders the host published, for the web files case.
-const publishedThemeDirectories: Array<ReadonlyArray<string>> = [];
-const layerThemes = Layer.mock(EnvironmentTheme.EnvironmentThemeService)({
-  setPluginThemeDirectories: (directories) =>
-    Effect.sync(() => {
-      publishedThemeDirectories.push(directories);
-    }),
-});
-
-const layerHost = (services: typeof layerUnusedServices = layerUnusedServices) =>
-  Layer.fresh(
-    PluginHost.layer.pipe(
-      Layer.provideMerge(Layer.mergeAll(PluginSettingsStore.layer, PluginStorage.layer)),
-      Layer.provide(ServerSecretStore.layer),
-      Layer.provide(services),
-      Layer.provide(layerThemes),
-      Layer.provideMerge(
-        Layer.mergeAll(PluginHooks.layer, PluginMcpTools.layer, PluginHttpRoutes.layer),
-      ),
-    ),
-  );
-
-/** The real file system with some of its methods replaced, for the host's layer. */
-const layerFileSystemWith = (
-  replace: (fs: FileSystem.FileSystem) => Partial<FileSystem.FileSystem>,
-) =>
-  Layer.effect(
-    FileSystem.FileSystem,
-    FileSystem.FileSystem.use((fs) => Effect.succeed({ ...fs, ...replace(fs) })),
-  );
-
-const writeFile = Effect.fn(function* (filePath: string, contents: string) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
-  yield* fs.writeFileString(filePath, contents);
-});
-
-const writePluginsConfig = Effect.fn(function* (config: {
-  readonly enabled?: Record<string, boolean>;
-  readonly devPaths?: ReadonlyArray<string>;
-}) {
-  const { stateDir } = yield* ServerConfig.ServerConfig;
-  yield* writeFile(`${stateDir}/plugins.json`, JSON.stringify(config));
-});
-
-/** A plugin written for one test, under `<stateDir>/plugins/<id>`. */
-const writeInstalledPlugin = Effect.fn(function* (id: string, serverSource: string) {
-  const { stateDir } = yield* ServerConfig.ServerConfig;
-  const rootDir = `${stateDir}/plugins/${id}`;
-  yield* writeFile(
-    `${rootDir}/t3-plugin.json`,
-    JSON.stringify({
-      id,
-      name: id,
-      version: "0.1.0",
-      engines: { t3: ">=0.1.0" },
-      server: "./server.cjs",
-    }),
-  );
-  yield* writeFile(`${rootDir}/server.cjs`, serverSource);
-  return rootDir;
-});
 
 const upgrade = PluginId.make("upgrade");
 /** Version `version` of the `upgrade` plugin in `folder`, whose `activate` runs `activate`. */
@@ -177,22 +97,6 @@ const writeUpgradeVersion = Effect.fn(function* (
     `module.exports = { activate() { ${options.activate ?? ""} } };`,
   );
 });
-
-const stateOf = (states: ReadonlyArray<PluginState>, id: string) =>
-  states.find((state) => state.id === id);
-
-/** Resolves with the first list where every listed plugin has its expected status. */
-const waitForStatuses = (
-  host: PluginHost.PluginHost["Service"],
-  expected: Readonly<Record<string, PluginState["status"]>>,
-) =>
-  host.streamStates.pipe(
-    Stream.filter((states) =>
-      Object.entries(expected).every(([id, status]) => stateOf(states, id)?.status === status),
-    ),
-    Stream.runHead,
-    Effect.map(Option.getOrThrow),
-  );
 
 const workbench = PluginId.make("workbench-plugin");
 const workbenchThread = ThreadId.make("thread:plugin-workbench");
@@ -428,99 +332,6 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
           yield* storage.get(id, cursorKey),
           Option.some({ sequence: 3, runIds: [] }),
         );
-      }).pipe(Effect.provide(layerHost()));
-    }).pipe(Effect.provide(layerConfig())),
-  );
-
-  it.effect("gives agents a plugin's skills and instructions until it is disabled", () =>
-    Effect.gen(function* () {
-      const skills = PluginId.make("skills-plugin");
-      const rootDir = `${fixturesDir}skills-plugin`;
-      yield* writePluginsConfig({ enabled: { [skills]: true }, devPaths: [rootDir] });
-      yield* Effect.gen(function* () {
-        const host = yield* PluginHost.PluginHost;
-        const hooks = yield* PluginHooks.PluginHooks;
-        yield* waitForStatuses(host, { [skills]: "active" });
-        const fs = yield* FileSystem.FileSystem;
-        const { stateDir } = yield* ServerConfig.ServerConfig;
-        // Claude loads a whole folder as a plugin, so it gets one holding only the skills.
-        const agentFolder = `${stateDir}/plugin-agents/skills-plugin`;
-        assert.deepStrictEqual(yield* hooks.agentContext, {
-          instructions: [
-            {
-              pluginId: skills,
-              text: '<t3_code_plugin name="Release helper">\nWrite release notes in the past tense.\n</t3_code_plugin>',
-            },
-          ],
-          skillFolders: [{ plugin: agentFolder, skills: `${agentFolder}/skills` }],
-        });
-        // In plugin id order, so a new Claude process gets the same text whatever the start order.
-        const removeEarlier = yield* hooks.addAgentInstructions("aaa-plugin", "Earlier.");
-        assert.strictEqual((yield* hooks.agentContext)?.instructions[0]?.text, "Earlier.");
-        yield* removeEarlier;
-        assert.deepStrictEqual((yield* fs.readDirectory(agentFolder)).toSorted(), [
-          ".claude-plugin",
-          "skills",
-        ]);
-        assert.include(
-          JSON.parse(yield* fs.readFileString(`${agentFolder}/.claude-plugin/plugin.json`)),
-          { name: "skills-plugin" },
-        );
-        assert.isTrue(yield* fs.exists(`${agentFolder}/skills/release-notes/SKILL.md`));
-
-        // The `$` picker lists the skill for the providers that receive it, by each one's name.
-        // A provider's own skill of that name stays.
-        const ownSkill = {
-          name: "release-notes",
-          path: "/home/user/.codex/skills/release-notes",
-          enabled: true,
-        };
-        const listed = PluginHooks.withPluginSkills(
-          [
-            {
-              driver: "claudeAgent",
-              skills: [],
-              workspaceSnapshots: [{ cwd: "/repo", skills: [] }],
-            },
-            { driver: "codex", skills: [] },
-            { driver: "cursor", skills: [] },
-            { driver: "codex", skills: [ownSkill] },
-          ] as unknown as ReadonlyArray<ServerProvider>,
-          yield* hooks.currentSkills,
-        );
-        const skill = {
-          path: `${agentFolder}/skills/release-notes/SKILL.md`,
-          enabled: true,
-          scope: "plugin",
-          displayName: "Release helper: release-notes",
-          description: "Drafts release notes from the commits since the last tag.",
-        };
-        const claudeSkill = { name: "skills-plugin:release-notes", ...skill };
-        assert.deepStrictEqual(
-          listed.map((provider) => provider.skills),
-          [[claudeSkill], [{ name: "release-notes", ...skill }], [], [ownSkill]],
-        );
-        assert.deepStrictEqual(listed[0]?.workspaceSnapshots?.[0]?.skills, [claudeSkill]);
-
-        // A rescan that finds nothing new publishes nothing, so provider lists are not rebuilt.
-        const skillLists = yield* hooks.skills.pipe(
-          Stream.take(2),
-          Stream.runCollect,
-          Effect.forkChild({ startImmediately: true }),
-        );
-        yield* host.rescan;
-        // Neither does a change elsewhere on the plugin's row.
-        const revision = stateOf(yield* host.list, skills)?.revision;
-        assert.isDefined(revision);
-        yield* host.reportWebFailure({ pluginId: skills, revision, message: "load threw" });
-        yield* host.setEnabled(skills, false);
-        assert.deepStrictEqual(
-          (yield* Fiber.join(skillLists)).map((list) => list.length),
-          [1, 0],
-        );
-        assert.isUndefined(yield* hooks.agentContext);
-        assert.deepStrictEqual(yield* hooks.currentSkills, []);
-        assert.isFalse(yield* fs.exists(agentFolder));
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
@@ -1019,48 +830,6 @@ module.exports = { activate(api) {
     }).pipe(Effect.provide(layerConfig())),
   );
 
-  it.effect("tears down a plugin turned off while its skills are copied for agents", () =>
-    Effect.gen(function* () {
-      const id = PluginId.make("held");
-      const rootDir = yield* writeInstalledPlugin(
-        id,
-        `module.exports = { activate(api) { api.slashCommands.register({ name: "held" }, () => undefined); } };`,
-      );
-      yield* writeFile(`${rootDir}/skills/notes/SKILL.md`, "---\nname: notes\n---\nTake notes.\n");
-      yield* writePluginsConfig({ enabled: { [id]: true } });
-      const copying = yield* Deferred.make<void>();
-      const released = yield* Deferred.make<void>();
-      // Holds the skills copy until the disable has saved plugins.json (its temporary folder is
-      // removed last). The release is scheduled, so the disable asks the activation to stop first.
-      const layerHeldCopy = layerFileSystemWith((fs) => ({
-        copy: (from, to, options) =>
-          (from.endsWith("skills")
-            ? Deferred.succeed(copying, undefined).pipe(Effect.andThen(Deferred.await(released)))
-            : Effect.void
-          ).pipe(Effect.andThen(fs.copy(from, to, options))),
-        remove: (target, options) =>
-          fs
-            .remove(target, options)
-            .pipe(
-              Effect.tap(() =>
-                target.includes("plugins.json.")
-                  ? Effect.forkDetach(Deferred.succeed(released, undefined))
-                  : Effect.void,
-              ),
-            ),
-      }));
-      yield* Effect.gen(function* () {
-        const host = yield* PluginHost.PluginHost;
-        const hooks = yield* PluginHooks.PluginHooks;
-        yield* Deferred.await(copying);
-
-        yield* host.setEnabled(id, false);
-        assert.deepStrictEqual(yield* hooks.currentSlashCommands, []);
-        assert.include(yield* host.setEnabled(id, true), { status: "active" });
-      }).pipe(Effect.provide(layerHost().pipe(Layer.provide(layerHeldCopy))));
-    }).pipe(Effect.provide(layerConfig())),
-  );
-
   it.effect("gives a plugin the server's version and environment, its threads and projects", () =>
     withWorkbench(({ call }) =>
       Effect.gen(function* () {
@@ -1194,112 +963,6 @@ module.exports = { activate(api) {
         assert.deepStrictEqual(yield* Fiber.join(tick), Option.some(1));
       }),
     ),
-  );
-
-  it.effect("serves an active plugin's web files and themes, and stops when disabled", () =>
-    Effect.gen(function* () {
-      const helloWeb = PluginId.make("hello-web");
-      yield* writePluginsConfig({
-        enabled: { [helloWeb]: true },
-        devPaths: [`${fixturesDir}hello-web`],
-      });
-      yield* Effect.gen(function* () {
-        const host = yield* PluginHost.PluginHost;
-        const routes = yield* PluginHttpRoutes.PluginHttpRoutes;
-        yield* waitForStatuses(host, { [helloWeb]: "active" });
-        const request = { method: "GET", path: "/web.js", query: {}, headers: {}, body: "" };
-
-        const response = yield* routes.handle({ pluginId: helloWeb, request });
-        assert.strictEqual(response.status, 200);
-        assert.strictEqual(response.headers["content-type"], "text/javascript; charset=utf-8");
-        // The bundle's revision names its contents, so browsers keep that URL's copy for good.
-        const webRevision = stateOf(yield* host.list, helloWeb)?.webRevision ?? "";
-        assert.match(webRevision, /^[0-9a-f]{16}$/);
-        const revised = yield* routes.handle({
-          pluginId: helloWeb,
-          request: { ...request, query: { v: webRevision } },
-        });
-        assert.strictEqual(
-          revised.headers["cache-control"],
-          "private, max-age=31536000, immutable",
-        );
-        assert.strictEqual(response.headers["cache-control"], "no-store");
-        const themes = `${fixturesDir}hello-web/themes`;
-        assert.deepStrictEqual(publishedThemeDirectories.at(-1), [themes]);
-        // A reload publishes its folder again, so its files are read again, without dropping it
-        // first: windows would flash T3's colors.
-        publishedThemeDirectories.length = 0;
-        yield* host.reload(helloWeb);
-        assert.isNotEmpty(publishedThemeDirectories);
-        assert.deepStrictEqual(
-          publishedThemeDirectories.filter((directories) => !directories.includes(themes)),
-          [],
-        );
-        const asset = yield* routes.handle({
-          pluginId: helloWeb,
-          request: { ...request, path: "/assets/hello.txt" },
-        });
-        assert.strictEqual(asset.headers["content-type"], "text/plain; charset=utf-8");
-        // A path out of the assets folder names no asset; it is not the plugin's failure.
-        for (const path of ["/assets/..%2Fserver.cjs", "/assets/%E0%A4%A", "/assets/"]) {
-          const missing = yield* routes.handle({
-            pluginId: helloWeb,
-            request: { ...request, path },
-          });
-          assert.strictEqual(missing.status, 404);
-        }
-
-        yield* host.setEnabled(helloWeb, false);
-        const missing = yield* routes.handle({ pluginId: helloWeb, request }).pipe(Effect.flip);
-        assert.strictEqual(missing._tag, "PluginHttpRouteNotFoundError");
-        assert.deepStrictEqual(publishedThemeDirectories.at(-1), []);
-      }).pipe(Effect.provide(layerHost()));
-    }).pipe(Effect.provide(layerConfig())),
-  );
-
-  it.effect("serves the stylesheets of a plugin with no code while it is active", () =>
-    Effect.gen(function* () {
-      const stylesPlugin = PluginId.make("styles-plugin");
-      yield* writePluginsConfig({
-        enabled: { [stylesPlugin]: true },
-        devPaths: [`${fixturesDir}styles-plugin`],
-      });
-      yield* Effect.gen(function* () {
-        const host = yield* PluginHost.PluginHost;
-        const routes = yield* PluginHttpRoutes.PluginHttpRoutes;
-        yield* waitForStatuses(host, { [stylesPlugin]: "active" });
-        // In name order, which is the order clients apply them in.
-        const styles = stateOf(yield* host.list, stylesPlugin)?.styles ?? [];
-        assert.deepStrictEqual(
-          styles.map(({ file }) => file),
-          ["base.css", "compact.css"],
-        );
-        const request = {
-          method: "GET",
-          path: "/styles/base.css",
-          query: { v: styles[0]?.revision ?? "" },
-          headers: {},
-          body: "",
-        };
-        const response = yield* routes.handle({ pluginId: stylesPlugin, request });
-        assert.strictEqual(response.status, 200);
-        assert.strictEqual(response.headers["content-type"], "text/css; charset=utf-8");
-        assert.strictEqual(
-          response.headers["cache-control"],
-          "private, max-age=31536000, immutable",
-        );
-        const outside = yield* routes.handle({
-          pluginId: stylesPlugin,
-          request: { ...request, path: "/styles/..%2Ft3-plugin.json" },
-        });
-        assert.strictEqual(outside.status, 404);
-
-        yield* host.setEnabled(stylesPlugin, false);
-        assert.isUndefined(stateOf(yield* host.list, stylesPlugin)?.styles);
-        const gone = yield* routes.handle({ pluginId: stylesPlugin, request }).pipe(Effect.flip);
-        assert.strictEqual(gone._tag, "PluginHttpRouteNotFoundError");
-      }).pipe(Effect.provide(layerHost()));
-    }).pipe(Effect.provide(layerConfig())),
   );
 
   it.effect(

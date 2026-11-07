@@ -1,4 +1,4 @@
-import { PluginManifest } from "@t3tools/contracts";
+import { PluginManifest, type PluginState } from "@t3tools/contracts";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -386,3 +386,40 @@ export const checkPluginFolder = Effect.fn("PluginCheck.check")(function* (
 
   return report(decoded._tag === "Success" ? decoded.value.id : null);
 });
+
+/** What an installed plugin's folder cannot show: how its last start, web half and timers failed. */
+export const failureFindings = (state: PluginState): ReadonlyArray<PluginCheckFinding> => [
+  ...(state.failure === undefined
+    ? []
+    : [
+        {
+          code: "last-start-failed",
+          severity: "error" as const,
+          file: null,
+          problem: `Its last start failed at ${state.failure.stage}: ${state.failure.message}`,
+          fix: "Fix it, then reload the plugin.",
+        },
+      ]),
+  ...(state.webFailure === undefined
+    ? []
+    : [
+        {
+          code: "web-failed",
+          severity: "error" as const,
+          file: null,
+          problem: `Its web half failed in the browser: ${state.webFailure}`,
+          fix: "Fix it, rebuild the web bundle, then reload the plugin.",
+        },
+      ]),
+  ...(state.serverFailure === undefined
+    ? []
+    : [
+        {
+          code: "server-failed",
+          severity: "error" as const,
+          file: null,
+          problem: `Its server code failed outside a call, such as in a timer or a hook: ${state.serverFailure}`,
+          fix: "Catch errors in its timers and callbacks, and stop its timers in onDeactivate, then reload the plugin.",
+        },
+      ]),
+];

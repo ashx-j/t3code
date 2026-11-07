@@ -18,7 +18,8 @@ import * as Schema from "effect/Schema";
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import type { DiscoveredPlugin } from "./pluginDiscovery.ts";
-import type { PluginConfigError, PluginNotFoundError, PluginsConfigFile } from "./PluginHost.ts";
+import type { PluginNotFoundError } from "./PluginHost.ts";
+import type { PluginConfigError, PluginsConfigFile } from "./pluginsConfig.ts";
 import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
 

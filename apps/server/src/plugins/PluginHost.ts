@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - plugins load through Node's CommonJS loader, which
-// the FileSystem service does not wrap, and bundle revisions are sha256 digests.
-import * as NodeCrypto from "node:crypto";
+// the FileSystem service does not wrap.
 import * as NodeModule from "node:module";
 
 import {
@@ -18,8 +17,6 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import type { PluginDefinition } from "@t3tools/plugin-sdk/server";
-import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
-import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -50,7 +47,6 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
-import { parseSkillFrontmatter } from "../provider/Drivers/ClaudeSkills.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -66,35 +62,25 @@ import {
 } from "./PluginApi.ts";
 import { errorText, PluginCodeError, pluginCodeScope } from "./api/facade.ts";
 import { makeRuntimeRequestHooks } from "./api/runtimeRequests.ts";
+import { makePluginAgentFolders } from "./pluginAgentFolders.ts";
 import { makePluginFailureGuard } from "./pluginFailureGuard.ts";
 import { discoverPlugins, type DiscoveredPlugin } from "./pluginDiscovery.ts";
-import {
-  checkPluginFolder,
-  type PluginCheckFinding,
-  type PluginCheckReport,
-} from "./pluginCheck.ts";
+import { checkPluginFolder, failureFindings, type PluginCheckReport } from "./pluginCheck.ts";
 import * as PluginHooks from "./PluginHooks.ts";
 import * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
 import * as PluginInstaller from "./PluginInstaller.ts";
 import * as PluginMcpTools from "./PluginMcpTools.ts";
+import {
+  makePluginsConfig,
+  type PluginConfigError,
+  type PluginsConfigFile,
+} from "./pluginsConfig.ts";
 import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
+import { makePluginWebFiles } from "./pluginWebFiles.ts";
 
 // Clients send web failures and agents read them, so they are bounded like plugin errors.
 const MAX_WEB_FAILURE_CHARS = 1_000;
-const WEB_CONTENT_TYPES: Readonly<Record<string, string>> = {
-  ".js": "text/javascript; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".json": "application/json",
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".webp": "image/webp",
-  ".woff2": "font/woff2",
-  ".txt": "text/plain; charset=utf-8",
-};
 // Plugin code that never settles must not keep a plugin loading, or Disable and Reload waiting,
 // forever. The cleanup deadline covers all of a plugin's cleanups together.
 const ACTIVATE_DEADLINE = Duration.seconds(30);
@@ -159,15 +145,6 @@ export class PluginHandlerError extends Schema.TaggedError<PluginHandlerError>()
 ) {
   override get message(): string {
     return `Plugin ${this.pluginId} failed in ${this.method}: ${this.reason}`;
-  }
-}
-
-export class PluginConfigError extends Schema.TaggedError<PluginConfigError>()(
-  "PluginConfigError",
-  { path: Schema.String, cause: Schema.Defect() },
-) {
-  override get message(): string {
-    return `Could not update ${this.path}. If it was edited by hand, fix or delete it.`;
   }
 }
 
@@ -266,22 +243,6 @@ type PluginSettingsError =
   | PluginSettingsStore.PluginSettingsSchemaError
   | PluginSettingsStore.PluginSettingsValidationError;
 
-// Unknown keys survive a rewrite, so a newer build's additions outlive a toggle by an older one.
-const PluginsConfigFile = Schema.StructWithRest(
-  Schema.Struct({
-    enabled: Schema.optionalKey(Schema.Record(Schema.String, Schema.Boolean)),
-    /** Whether agents get the `t3_plugins_*` tools; off until the user turns them on. */
-    agentTools: Schema.optionalKey(Schema.Boolean),
-    devPaths: Schema.optionalKey(Schema.Array(Schema.String)),
-  }),
-  [Schema.Record(Schema.String, Schema.Json)],
-);
-export type PluginsConfigFile = typeof PluginsConfigFile.Type;
-const decodeConfig = Schema.decodeUnknownEffect(Schema.fromJsonString(PluginsConfigFile));
-const encodeClaudePluginManifest = Schema.encodeEffect(
-  fromJsonStringPretty(Schema.Struct({ name: Schema.String, description: Schema.String })),
-);
-const encodeConfig = Schema.encodeEffect(fromJsonStringPretty(PluginsConfigFile));
 const isJson = Schema.is(Schema.Json);
 
 interface PluginRecord {
@@ -367,9 +328,6 @@ const toState = (
 // absolute path loads files from disk in both, and plugin code resolves its own imports.
 const requireFromDisk = NodeModule.createRequire(process.execPath);
 
-const contentRevision = (contents: Uint8Array) =>
-  NodeCrypto.createHash("sha256").update(contents).digest("hex").slice(0, 16);
-
 const isPluginDefinition = (value: unknown): value is PluginDefinition =>
   typeof value === "object" &&
   value !== null &&
@@ -410,19 +368,15 @@ const make = Effect.gen(function* () {
   const environmentThemes = yield* EnvironmentTheme.EnvironmentThemeService;
 
   const pluginsDir = path.join(config.stateDir, "plugins");
-  // Claude loads a plugin folder whole, with its commands, agents, hooks and MCP servers, so
-  // agents get a generated folder holding only the plugin's skills. Copied, not linked: linking
-  // a folder needs extra rights on Windows.
-  const agentFoldersRoot = path.join(config.stateDir, "plugin-agents");
-  const agentFolderOf = (pluginId: PluginId) => path.join(agentFoldersRoot, pluginId);
-  const configPath = path.join(config.stateDir, "plugins.json");
+  const pluginsConfig = yield* makePluginsConfig;
+  const agentFolders = yield* makePluginAgentFolders;
+  const webFiles = yield* makePluginWebFiles;
 
   const records = yield* Ref.make<ReadonlyArray<PluginRecord>>([]);
   // Changes on every start, so a client can tell a restarted plugin from one that kept running.
   // Seeded with the clock so a restarted server never repeats a revision a client already saw.
   let revision = yield* Clock.currentTimeMillis;
   const nextRevision = () => ++revision;
-  const pluginsConfig = yield* Ref.make<PluginsConfigFile>({});
   // By plugin id, for the start it was reported for: a new start's revision hides the old one.
   const webFailures = yield* Ref.make<
     ReadonlyMap<PluginId, { readonly revision: number; readonly message: string }>
@@ -435,14 +389,11 @@ const make = Effect.gen(function* () {
   const lifecycle = yield* Semaphore.make(1);
   const publishLock = yield* Semaphore.make(1);
   const agentToolsOffered = yield* SubscriptionRef.make(false);
-  // `setAgentTools` writes plugins.json outside the lifecycle lock, so every read that is written
-  // back, or kept as the current config, holds this one.
-  const configLock = yield* Semaphore.make(1);
   const activations = yield* FiberMap.make<PluginId>();
   const hostScope = yield* Effect.scope;
 
   const statesOf = Effect.fn("PluginHost.statesOf")(function* (all: ReadonlyArray<PluginRecord>) {
-    const config = yield* Ref.get(pluginsConfig);
+    const config = yield* pluginsConfig.current;
     const failures = yield* Ref.get(webFailures);
     const serverFailed = yield* Ref.get(serverFailures);
     return all.map((record) => {
@@ -468,7 +419,7 @@ const make = Effect.gen(function* () {
   // Agents get the management tools only once the user turns them on, so no turn pays for them
   // unasked.
   const syncAgentTools = Effect.gen(function* () {
-    const offered = (yield* Ref.get(pluginsConfig)).agentTools ?? false;
+    const offered = (yield* pluginsConfig.current).agentTools ?? false;
     yield* services.mcpTools.offerManagementTools(offered);
     if ((yield* SubscriptionRef.get(agentToolsOffered)) !== offered) {
       yield* SubscriptionRef.set(agentToolsOffered, offered);
@@ -495,19 +446,7 @@ const make = Effect.gen(function* () {
             : [];
         }),
       );
-      const withSkills = yield* Effect.filter(
-        active.map((plugin) => {
-          const folder = agentFolderOf(plugin.id);
-          return { plugin, folder: { plugin: folder, skills: path.join(folder, "skills") } };
-        }),
-        ({ folder }) => fs.exists(folder.skills).pipe(Effect.orElseSucceed(() => false)),
-      );
-      yield* services.hooks.setSkillFolders(
-        withSkills.map(({ folder }) => folder),
-        (yield* Effect.forEach(withSkills, ({ plugin, folder }) =>
-          skillsIn(plugin, folder.skills),
-        )).flat(),
-      );
+      yield* agentFolders.publish(active);
       yield* PubSub.publish(changes, states);
       published = states;
       yield* syncAgentTools;
@@ -582,37 +521,6 @@ const make = Effect.gen(function* () {
   // Added before the teardown finalizer, so it runs after plugin cleanups.
   yield* Effect.addFinalizer(() => Effect.sync(failureGuard.uninstall));
 
-  const readConfig = Effect.gen(function* () {
-    const exists = yield* fs.exists(configPath);
-    if (!exists) {
-      const emptyConfig: PluginsConfigFile = {};
-      return emptyConfig;
-    }
-    const raw = yield* fs.readFileString(configPath);
-    return yield* decodeConfig(raw);
-  }).pipe(Effect.mapError((cause) => new PluginConfigError({ path: configPath, cause })));
-
-  const writeConfig = Effect.fn("PluginHost.writeConfig")(function* (
-    update: (current: PluginsConfigFile) => PluginsConfigFile,
-  ) {
-    const next = update(yield* readConfig);
-    const contents = yield* encodeConfig(next).pipe(
-      Effect.mapError((cause) => new PluginConfigError({ path: configPath, cause })),
-    );
-    yield* writeFileStringAtomically({ filePath: configPath, contents: `${contents}\n` }).pipe(
-      Effect.provideService(FileSystem.FileSystem, fs),
-      Effect.provideService(Path.Path, path),
-      Effect.mapError((cause) => new PluginConfigError({ path: configPath, cause })),
-    );
-    yield* Ref.set(pluginsConfig, next);
-  }, configLock.withPermits(1));
-
-  const writeEnabled = (pluginId: PluginId, enabled: boolean) =>
-    writeConfig((current) => ({
-      ...current,
-      enabled: { ...current.enabled, [pluginId]: enabled },
-    }));
-
   const runCleanup = (pluginId: PluginId, cleanup: () => void | Promise<void>) =>
     Effect.tryPromise({
       try: () => pluginCodeScope.run(pluginId, () => Promise.resolve().then(cleanup)),
@@ -665,181 +573,6 @@ const make = Effect.gen(function* () {
       catch: (cause) => new PluginCodeError({ cause }),
     });
 
-  // Web files are served from the plugin's real folder; a path or symlink out of `within` is refused.
-  // A request whose `revision` names the file's contents may be cached for good.
-  const readWebFile = Effect.fn("PluginHost.readWebFile")(function* (
-    within: string,
-    file: string | undefined,
-    revision?: string,
-  ) {
-    const notFound = { status: 404, body: "Not found." };
-    if (file === undefined) return notFound;
-    const resolved = yield* fs.realPath(file).pipe(Effect.option);
-    if (Option.isNone(resolved)) return notFound;
-    const real = resolved.value;
-    if (real !== within && !real.startsWith(`${within}${path.sep}`)) return notFound;
-    const info = yield* fs.stat(real).pipe(Effect.option);
-    if (Option.isNone(info) || info.value.type !== "File") return notFound;
-    const body = yield* fs.readFile(real);
-    return {
-      status: 200,
-      headers: {
-        "content-type":
-          WEB_CONTENT_TYPES[path.extname(real).toLowerCase()] ?? "application/octet-stream",
-        "cache-control":
-          revision !== undefined && revision === contentRevision(body)
-            ? "private, max-age=31536000, immutable"
-            : "no-store",
-      },
-      body,
-    };
-  });
-
-  const registerFileRoute = (
-    plugin: DiscoveredPlugin,
-    routePath: string,
-    read: (requestPath: string) => string | undefined,
-    within: string,
-    revisioned = false,
-  ) =>
-    services.httpRoutes
-      .register({
-        pluginId: plugin.id,
-        method: "GET",
-        path: routePath,
-        handler: (request) =>
-          Effect.runPromiseWith(context)(
-            readWebFile(within, read(request.path), revisioned ? request.query.v : undefined),
-          ),
-      })
-      .pipe(Effect.orDie);
-
-  // Serves the plugin's `name` folder below `/<name>/` and resolves with its real path, if it has
-  // one. A symlinked folder outside the plugin would serve whatever it points at.
-  const serveFolder = Effect.fn("PluginHost.serveFolder")(function* (
-    plugin: DiscoveredPlugin,
-    name: "assets" | "styles",
-    revisioned: boolean,
-  ) {
-    const dir = yield* fs.realPath(path.join(plugin.rootDir, name)).pipe(Effect.option);
-    if (Option.isNone(dir) || !dir.value.startsWith(`${plugin.rootDir}${path.sep}`)) return;
-    yield* registerFileRoute(
-      plugin,
-      `/${name}/*`,
-      (requestPath) => {
-        try {
-          return path.join(dir.value, decodeURIComponent(requestPath.slice(`/${name}/`.length)));
-        } catch {
-          // A malformed escape names no file.
-          return undefined;
-        }
-      },
-      dir.value,
-      revisioned,
-    );
-    return dir.value;
-  });
-
-  const serveWebFiles = Effect.fn("PluginHost.serveWebFiles")(function* (
-    plugin: DiscoveredPlugin,
-    entry: string,
-  ) {
-    const bundle = path.join(plugin.rootDir, entry);
-    yield* registerFileRoute(plugin, "/web.js", () => bundle, plugin.rootDir, true);
-    yield* serveFolder(plugin, "assets", false);
-    // The bundle's contents now, for its URL; one that cannot be read gets no revision.
-    return yield* fs
-      .readFile(bundle)
-      .pipe(Effect.map(contentRevision), Effect.option, Effect.map(Option.getOrUndefined));
-  });
-
-  // The `.css` files directly in `styles/`, in name order, each with the revision for its URL.
-  const serveStyles = Effect.fn("PluginHost.serveStyles")(function* (plugin: DiscoveredPlugin) {
-    const dir = yield* serveFolder(plugin, "styles", true);
-    if (dir === undefined) return [];
-    const names = yield* fs
-      .readDirectory(dir)
-      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
-    const styles = yield* Effect.forEach(
-      names.filter((name) => name.endsWith(".css")).toSorted(),
-      (file) =>
-        fs.readFile(path.join(dir, file)).pipe(
-          Effect.map((contents) => [{ file, revision: contentRevision(contents) }]),
-          // Such as a folder named like a stylesheet.
-          Effect.orElseSucceed(() => []),
-        ),
-    );
-    return styles.flat();
-  });
-
-  // Read when plugins change, so provider lists name each skill without reading files.
-  const skillsIn = (plugin: DiscoveredPlugin, skillsDir: string) =>
-    fs.readDirectory(skillsDir).pipe(
-      Effect.orElseSucceed((): ReadonlyArray<string> => []),
-      Effect.flatMap((folders) =>
-        Effect.forEach(folders.toSorted(), (folder) => {
-          const skillPath = path.join(skillsDir, folder, "SKILL.md");
-          return fs.readFileString(skillPath).pipe(
-            Effect.map((contents): ReadonlyArray<PluginHooks.PluginSkill> => {
-              const frontmatter = parseSkillFrontmatter(contents);
-              // Agents cannot load a skill they cannot parse, and agent-only skills stay unlisted.
-              if (
-                frontmatter.kind === "malformed" ||
-                (frontmatter.kind === "parsed" && frontmatter.userInvocable === false)
-              ) {
-                return [];
-              }
-              return [
-                {
-                  pluginId: plugin.id,
-                  pluginName: manifestOf(plugin)?.name ?? plugin.id,
-                  folder,
-                  path: skillPath,
-                  ...(frontmatter.kind === "parsed" && frontmatter.name !== undefined
-                    ? { name: frontmatter.name }
-                    : {}),
-                  ...(frontmatter.kind === "parsed" && frontmatter.description !== undefined
-                    ? { description: frontmatter.description }
-                    : {}),
-                },
-              ];
-            }),
-            Effect.orElseSucceed((): ReadonlyArray<PluginHooks.PluginSkill> => []),
-          );
-        }),
-      ),
-      Effect.map((lists) => lists.flat()),
-    );
-  const removeAgentFolder = (pluginId: PluginId) =>
-    fs.remove(agentFolderOf(pluginId), { recursive: true, force: true }).pipe(Effect.ignore);
-  const prepareAgentFolder = Effect.fn("PluginHost.prepareAgentFolder")(
-    function* (plugin: DiscoveredPlugin, name: string) {
-      yield* removeAgentFolder(plugin.id);
-      const skills = path.join(plugin.rootDir, "skills");
-      if (!(yield* fs.exists(skills))) return;
-      const target = agentFolderOf(plugin.id);
-      yield* fs.makeDirectory(path.join(target, ".claude-plugin"), { recursive: true });
-      const manifest = yield* encodeClaudePluginManifest({
-        name: plugin.id,
-        description: `Skills from the T3 Code plugin ${name}.`,
-      });
-      yield* fs.writeFileString(
-        path.join(target, ".claude-plugin", "plugin.json"),
-        `${manifest}\n`,
-      );
-      yield* fs.copy(skills, path.join(target, "skills"));
-    },
-    (effect, plugin) =>
-      effect.pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("could not prepare a plugin's skills for agents", {
-            pluginId: plugin.id,
-            cause: Cause.pretty(cause).slice(0, 500),
-          }).pipe(Effect.andThen(removeAgentFolder(plugin.id))),
-        ),
-      ),
-  );
-
   const activatePlugin = Effect.fn("PluginHost.activate")(function* (plugin: DiscoveredPlugin) {
     const manifest = manifestOf(plugin);
     if (manifest === undefined) return;
@@ -853,14 +586,14 @@ const make = Effect.gen(function* () {
       });
     }
     const webRevision =
-      manifest.web === undefined ? undefined : yield* serveWebFiles(plugin, manifest.web);
+      manifest.web === undefined ? undefined : yield* webFiles.serveWebFiles(plugin, manifest.web);
     const started = {
       status: "active" as const,
       ...(webRevision === undefined ? {} : { webRevision }),
-      styles: yield* serveStyles(plugin),
+      styles: yield* webFiles.serveStyles(plugin),
     };
     if (manifest.server === undefined) {
-      yield* prepareAgentFolder(plugin, manifest.name);
+      yield* agentFolders.prepare(plugin, manifest.name);
       return yield* setRecord(plugin.id, { ...started, revision: nextRevision() });
     }
     yield* setRecord(plugin.id, { status: "loading" });
@@ -900,7 +633,7 @@ const make = Effect.gen(function* () {
           }).pipe(Effect.timeoutOption(ACTIVATE_DEADLINE)),
         ).pipe(Effect.exit);
         if (activated._tag === "Success" && Option.isSome(activated.value)) {
-          yield* prepareAgentFolder(plugin, manifest.name);
+          yield* agentFolders.prepare(plugin, manifest.name);
           yield* setRecord(plugin.id, { ...started, activation, revision: nextRevision() });
           return yield* Effect.logInfo("plugin activated", { pluginId: plugin.id });
         }
@@ -934,7 +667,7 @@ const make = Effect.gen(function* () {
       next.delete(pluginId);
       return next;
     });
-    yield* removeAgentFolder(pluginId);
+    yield* agentFolders.remove(pluginId);
     // Plugins without server code have no activation but may still serve files.
     yield* services.httpRoutes.unregisterPlugin(pluginId);
     const record = yield* findRecord(pluginId);
@@ -959,22 +692,7 @@ const make = Effect.gen(function* () {
 
   // Startup tolerates an unreadable plugins.json; an explicit reload reports it instead.
   const discover = Effect.fn("PluginHost.discover")(function* (lenient: boolean) {
-    const emptyConfig: PluginsConfigFile = {};
-    const current = yield* (
-      lenient
-        ? readConfig.pipe(
-            Effect.catchTags({
-              PluginConfigError: (error) =>
-                Effect.logWarning("ignoring unreadable plugins.json", { path: error.path }).pipe(
-                  Effect.as(emptyConfig),
-                ),
-            }),
-          )
-        : readConfig
-    ).pipe(
-      Effect.tap((config) => Ref.set(pluginsConfig, config)),
-      configLock.withPermits(1),
-    );
+    const current = yield* pluginsConfig.reread(lenient);
     const plugins = yield* discoverPlugins({ pluginsDir, devPaths: current.devPaths ?? [] }).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
@@ -1003,7 +721,7 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const record = yield* findRecord(pluginId);
           if (record === undefined) return yield* new PluginNotFoundError({ pluginId });
-          yield* writeEnabled(pluginId, enabled);
+          yield* pluginsConfig.writeEnabled(pluginId, enabled);
           if ("failure" in record.plugin) return yield* publishStates;
           // Enabling a plugin that is running or starting keeps it; a failed one is retried.
           if (enabled && (record.status === "active" || record.status === "loading")) {
@@ -1142,8 +860,8 @@ const make = Effect.gen(function* () {
       }
     }),
     reload,
-    config: Ref.get(pluginsConfig),
-    writeConfig,
+    config: pluginsConfig.current,
+    writeConfig: pluginsConfig.write,
   });
 
   const startup = lifecycle
@@ -1151,7 +869,7 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* recoverStaging;
         // Folders of plugins the last run left active; activation writes them again.
-        yield* fs.remove(agentFoldersRoot, { recursive: true, force: true }).pipe(Effect.ignore);
+        yield* agentFolders.removeAll;
         const { plugins, enabled } = yield* discover(true);
         yield* Ref.set(
           records,
@@ -1222,7 +940,7 @@ const make = Effect.gen(function* () {
     rescan: rescan(),
     agentTools,
     setAgentTools: Effect.fn("PluginHost.setAgentTools")(function* (enabled) {
-      yield* writeConfig((current) => ({ ...current, agentTools: enabled }));
+      yield* pluginsConfig.write((current) => ({ ...current, agentTools: enabled }));
       yield* publishLock.withPermits(1)(syncAgentTools);
       return enabled;
     }),
@@ -1243,42 +961,10 @@ const make = Effect.gen(function* () {
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
       );
-      const failures: ReadonlyArray<PluginCheckFinding> = [
-        ...(state?.failure === undefined
-          ? []
-          : [
-              {
-                code: "last-start-failed",
-                severity: "error" as const,
-                file: null,
-                problem: `Its last start failed at ${state.failure.stage}: ${state.failure.message}`,
-                fix: "Fix it, then reload the plugin.",
-              },
-            ]),
-        ...(state?.webFailure === undefined
-          ? []
-          : [
-              {
-                code: "web-failed",
-                severity: "error" as const,
-                file: null,
-                problem: `Its web half failed in the browser: ${state.webFailure}`,
-                fix: "Fix it, rebuild the web bundle, then reload the plugin.",
-              },
-            ]),
-        ...(state?.serverFailure === undefined
-          ? []
-          : [
-              {
-                code: "server-failed",
-                severity: "error" as const,
-                file: null,
-                problem: `Its server code failed outside a call, such as in a timer or a hook: ${state.serverFailure}`,
-                fix: "Catch errors in its timers and callbacks, and stop its timers in onDeactivate, then reload the plugin.",
-              },
-            ]),
-      ];
-      return { ...report, findings: [...failures, ...report.findings] };
+      return {
+        ...report,
+        findings: [...(state === undefined ? [] : failureFindings(state)), ...report.findings],
+      };
     }),
     reportWebFailure: Effect.fn("PluginHost.reportWebFailure")(function* (report) {
       const record = yield* findRecord(report.pluginId);
