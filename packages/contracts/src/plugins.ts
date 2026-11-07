@@ -251,6 +251,29 @@ export type PluginUninstallInput = typeof PluginUninstallInput.Type;
 export const PluginUninstallResult = Schema.Struct({ pluginId: PluginId });
 export type PluginUninstallResult = typeof PluginUninstallResult.Type;
 
+/** Data a plugin that is no longer installed left behind, because it was removed without it. */
+export const PluginLeftoverData = Schema.Struct({
+  pluginId: PluginId,
+  /** Has saved settings, which come with its secrets. */
+  settings: Schema.Boolean,
+  /** How many keys it has in plugin storage. */
+  storageKeys: Schema.Number,
+});
+export type PluginLeftoverData = typeof PluginLeftoverData.Type;
+
+export const PluginListLeftoverDataInput = Schema.Struct({});
+export type PluginListLeftoverDataInput = typeof PluginListLeftoverDataInput.Type;
+
+/** Deletes the settings, secrets and storage of a plugin that is no longer installed. */
+export const PluginDeleteLeftoverDataInput = Schema.Struct({ pluginId: PluginId });
+export type PluginDeleteLeftoverDataInput = typeof PluginDeleteLeftoverDataInput.Type;
+
+/** Result of `plugins.listLeftoverData` and of `plugins.deleteLeftoverData`, which lists the rest. */
+export const PluginLeftoverDataResult = Schema.Struct({
+  leftovers: Schema.Array(PluginLeftoverData),
+});
+export type PluginLeftoverDataResult = typeof PluginLeftoverDataResult.Type;
+
 /**
  * Result of `plugins.setEnabled`, `plugins.reload`, `plugins.install`, `plugins.update` and
  * `plugins.rollback`.

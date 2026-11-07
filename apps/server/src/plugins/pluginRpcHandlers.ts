@@ -16,6 +16,8 @@ import {
   type PluginSettingsUpdateInput,
   type PluginSubscribeInput,
   type PluginUninstallInput,
+  type PluginListLeftoverDataInput,
+  type PluginDeleteLeftoverDataInput,
   type PluginUpdateInput,
   type PluginRollbackInput,
   WS_METHODS,
@@ -99,6 +101,16 @@ export const makePluginRpcHandlers = (
     installer
       .uninstall(input.pluginId, input.removeData === true, input.linkedFolder)
       .pipe(Effect.as({ pluginId: input.pluginId }), Effect.mapError(toRpcError(input.pluginId))),
+  [WS_METHODS.pluginsListLeftoverData]: (_input: PluginListLeftoverDataInput) =>
+    installer.leftoverData.pipe(
+      Effect.map((leftovers) => ({ leftovers })),
+      Effect.mapError((error) => new PluginError({ message: error.message })),
+    ),
+  [WS_METHODS.pluginsDeleteLeftoverData]: (input: PluginDeleteLeftoverDataInput) =>
+    installer.deleteLeftoverData(input.pluginId).pipe(
+      Effect.map((leftovers) => ({ leftovers })),
+      Effect.mapError(toRpcError(input.pluginId)),
+    ),
   [WS_METHODS.pluginsSettingsGet]: (input: PluginSettingsGetInput) =>
     pluginHost.getSettings(input.pluginId).pipe(
       Effect.map((settings) => ({ pluginId: input.pluginId, settings })),

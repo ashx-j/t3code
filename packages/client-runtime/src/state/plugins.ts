@@ -1,6 +1,6 @@
-import { WS_METHODS } from "@t3tools/contracts";
+import { type EnvironmentId, WS_METHODS } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { Atom } from "effect/reactivity";
+import { Atom, type AtomRegistry } from "effect/reactivity";
 
 import type { PreparedHttpAuthorization } from "../connection/model.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -17,7 +17,23 @@ import {
 export function createPluginEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
+  // Plugins removed without their data, and what each left.
+  const leftoverPluginData = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:plugins:leftover-data",
+    tag: WS_METHODS.pluginsListLeftoverData,
+    idleTtlMs: 0,
+  });
+  const refreshLeftovers = (
+    { environmentId }: { readonly environmentId: EnvironmentId },
+    registry: AtomRegistry.AtomRegistry,
+  ) => Effect.sync(() => registry.refresh(leftoverPluginData({ environmentId, input: {} })));
   return {
+    leftoverPluginData,
+    deleteLeftoverPluginData: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:plugins:delete-leftover-data",
+      tag: WS_METHODS.pluginsDeleteLeftoverData,
+      onSuccess: refreshLeftovers,
+    }),
     pluginsLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:plugins:live",
       tag: WS_METHODS.pluginsSubscribeStates,
@@ -67,6 +83,8 @@ export function createPluginEnvironmentAtoms<R, E>(
     uninstallPlugin: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:plugins:uninstall",
       tag: WS_METHODS.pluginsUninstall,
+      // Removing without the data adds to what is left.
+      onSuccess: refreshLeftovers,
     }),
     // The web loader reports why a plugin's web half failed, so agents can read it.
     reportPluginWebFailure: createEnvironmentRpcCommand(runtime, {

@@ -242,7 +242,11 @@ const upgrade = PluginId.make("upgrade");
 const writeUpgradeVersion = Effect.fn(function* (
   folder: string,
   version: string,
-  options: { readonly activate?: string; readonly engines?: string } = {},
+  options: {
+    readonly activate?: string;
+    readonly engines?: string;
+    readonly settingsSchema?: Schema.JsonObject;
+  } = {},
 ) {
   yield* writeFile(
     `${folder}/t3-plugin.json`,
@@ -252,6 +256,7 @@ const writeUpgradeVersion = Effect.fn(function* (
       version,
       engines: { t3: options.engines ?? ">=0.1.0" },
       server: "./server.cjs",
+      ...(options.settingsSchema === undefined ? {} : { settingsSchema: options.settingsSchema }),
     }),
   );
   yield* writeFile(
@@ -1813,6 +1818,60 @@ module.exports = { activate(api) {
         assert.isTrue(yield* fs.exists(kept));
         yield* installer.uninstall(upgrade, false);
         assert.isFalse(yield* fs.exists(kept));
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("lists and deletes the data of plugins removed without it", () =>
+    Effect.gen(function* () {
+      const host = yield* PluginHost.PluginHost;
+      const installer = yield* PluginInstaller.PluginInstaller;
+      const storage = yield* PluginStorage.PluginStorage;
+      const settings = yield* PluginSettingsStore.PluginSettingsStore;
+      yield* waitForStatuses(host, {});
+      yield* installer.install({ type: "path", path: `${fixturesDir}hello-plugin` });
+      yield* host.updateSettings(hello, { greeting: "hey" });
+      yield* storage.set(hello, "visits", 2);
+      assert.deepStrictEqual(yield* installer.leftoverData, []);
+      const refused = yield* installer.deleteLeftoverData(hello).pipe(Effect.flip);
+      assert.strictEqual(
+        refused.message,
+        "hello-plugin is installed. Remove it with its data to delete its data.",
+      );
+
+      yield* installer.uninstall(hello, false);
+      assert.deepStrictEqual(yield* installer.leftoverData, [
+        { pluginId: hello, settings: true, storageKeys: (yield* storage.list(hello)).length },
+      ]);
+      assert.deepStrictEqual(yield* installer.deleteLeftoverData(hello), []);
+      assert.deepStrictEqual(yield* storage.list(hello), []);
+      assert.deepStrictEqual(yield* settings.getForClient(hello, undefined), {});
+    }).pipe(Effect.provide(layerHost()), Effect.provide(layerConfig())),
+  );
+
+  it.effect("deletes the secrets of settings fields a newer version no longer has", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const folder = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-plugin-upgrade-" });
+      const secret = { type: "string", format: "t3-secret" };
+      const withToken = {
+        type: "object",
+        properties: { token: secret, key: secret },
+      } satisfies Schema.JsonObject;
+      yield* writeUpgradeVersion(folder, "1.0.0", { settingsSchema: withToken });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const installer = yield* PluginInstaller.PluginInstaller;
+        const settings = yield* PluginSettingsStore.PluginSettingsStore;
+        yield* waitForStatuses(host, {});
+        yield* installer.install({ type: "path", path: folder });
+        yield* host.updateSettings(upgrade, { token: "old-token", key: "kept-key" });
+        yield* writeUpgradeVersion(folder, "2.0.0", {
+          settingsSchema: { type: "object", properties: { key: secret } },
+        });
+        yield* installer.update(upgrade);
+        // Read with the old schema, which still names both fields.
+        assert.deepStrictEqual(yield* settings.get(upgrade, withToken), { key: "kept-key" });
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );

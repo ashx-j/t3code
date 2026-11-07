@@ -1,5 +1,6 @@
 import {
   type PluginId,
+  type PluginLeftoverData,
   PluginManifest,
   type PluginInstallSource,
   type PluginState,
@@ -93,6 +94,15 @@ export class PluginInstaller extends Context.Service<
       removeData: boolean,
       linkedFolder?: string,
     ) => Effect.Effect<void, PluginInstallError | PluginNotFoundError | PluginConfigError>;
+    /** Settings and storage of plugins that are no longer installed, by plugin id. */
+    readonly leftoverData: Effect.Effect<ReadonlyArray<PluginLeftoverData>, PluginInstallError>;
+    /**
+     * Deletes the settings, secrets and storage a removed plugin left, and lists what is left.
+     * An installed plugin's data is refused: removing it with its data deletes that.
+     */
+    readonly deleteLeftoverData: (
+      pluginId: PluginId,
+    ) => Effect.Effect<ReadonlyArray<PluginLeftoverData>, PluginInstallError>;
   }
 >()("t3/plugins/PluginInstaller") {}
 
@@ -487,6 +497,14 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
     const { replaced } = swapped;
     if (replaced === undefined) return started;
     if (started.status !== "failed") {
+      yield* settingsStore.dropRemovedSecrets(manifest.id, manifest.settingsSchema).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("could not delete the secrets a plugin update dropped", {
+            pluginId: manifest.id,
+            cause: Cause.pretty(cause).slice(0, 500),
+          }),
+        ),
+      );
       const { version } = replaced;
       if (!input.keepReplaced || version === undefined) return started;
       // The update already succeeded, so a copy that cannot be kept only loses the rollback.
@@ -888,6 +906,48 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
     },
   );
 
+  // Read and deleted under the lifecycle lock, so an install cannot start between them.
+  const listLeftovers = Effect.gen(function* () {
+    const installed = new Set((yield* host.copies).map((copy) => copy.id));
+    const withSettings = yield* settingsStore.pluginIds;
+    const storageKeys = yield* storage.keyCounts.pipe(
+      Effect.mapError(installFailed("Could not read plugin storage.")),
+    );
+    return [...new Set([...withSettings, ...storageKeys.keys()])]
+      .filter((pluginId) => !installed.has(pluginId))
+      .toSorted()
+      .map((pluginId): PluginLeftoverData => ({
+        pluginId,
+        settings: withSettings.includes(pluginId),
+        storageKeys: storageKeys.get(pluginId) ?? 0,
+      }));
+  });
+
+  const leftoverData = host
+    .lifecycle(listLeftovers)
+    .pipe(Effect.withSpan("PluginInstaller.leftoverData"));
+
+  const deleteLeftoverData: PluginInstaller["Service"]["deleteLeftoverData"] = Effect.fn(
+    "PluginInstaller.deleteLeftoverData",
+  )((pluginId) =>
+    host.lifecycle(
+      Effect.gen(function* () {
+        if ((yield* host.copies).some((copy) => copy.id === pluginId)) {
+          return yield* new PluginInstallError({
+            reason: `${pluginId} is installed. Remove it with its data to delete its data.`,
+          });
+        }
+        yield* settingsStore
+          .clear(pluginId, undefined)
+          .pipe(Effect.mapError(installFailed(`Could not delete the settings of ${pluginId}.`)));
+        yield* storage
+          .clear(pluginId)
+          .pipe(Effect.mapError(installFailed(`Could not delete the storage of ${pluginId}.`)));
+        return yield* listLeftovers;
+      }),
+    ),
+  );
+
   return {
     installer: PluginInstaller.of({
       install,
@@ -896,6 +956,8 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
       rollback,
       checkUpdates: checkUpdates(),
       uninstall,
+      leftoverData,
+      deleteLeftoverData,
     }),
     recoverStaging,
     updateChecks,

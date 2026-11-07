@@ -210,6 +210,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.pluginsList]: AuthOrchestrationReadScope,
   [WS_METHODS.pluginsSubscribeStates]: AuthOrchestrationReadScope,
   [WS_METHODS.pluginsSettingsGet]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginsListLeftoverData]: AuthOrchestrationReadScope,
   [WS_METHODS.pluginsInvoke]: AuthOrchestrationReadScope,
   [WS_METHODS.pluginsSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeServerConfig]: AuthOrchestrationReadScope,

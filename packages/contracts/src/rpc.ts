@@ -383,6 +383,9 @@ import {
   PluginInvokeResult,
   PluginUninstallInput,
   PluginUninstallResult,
+  PluginListLeftoverDataInput,
+  PluginDeleteLeftoverDataInput,
+  PluginLeftoverDataResult,
   PluginUpdateInput,
   PluginRollbackInput,
   PluginListInput,
@@ -583,6 +586,8 @@ export const WS_METHODS = {
   pluginsInstallFiles: "plugins.installFiles",
   pluginsRescan: "plugins.rescan",
   pluginsUninstall: "plugins.uninstall",
+  pluginsListLeftoverData: "plugins.listLeftoverData",
+  pluginsDeleteLeftoverData: "plugins.deleteLeftoverData",
   pluginsUpdate: "plugins.update",
   pluginsRollback: "plugins.rollback",
   pluginsCheckUpdates: "plugins.checkUpdates",
@@ -2081,6 +2086,19 @@ const WsPluginsUninstallRpc = Rpc.make(WS_METHODS.pluginsUninstall, {
   error: PluginRpcError,
 });
 
+/** Plugins removed without their data, and what each left. */
+const WsPluginsListLeftoverDataRpc = Rpc.make(WS_METHODS.pluginsListLeftoverData, {
+  payload: PluginListLeftoverDataInput,
+  success: PluginLeftoverDataResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsDeleteLeftoverDataRpc = Rpc.make(WS_METHODS.pluginsDeleteLeftoverData, {
+  payload: PluginDeleteLeftoverDataInput,
+  success: PluginLeftoverDataResult,
+  error: PluginRpcError,
+});
+
 const WsPluginsSettingsGetRpc = Rpc.make(WS_METHODS.pluginsSettingsGet, {
   payload: PluginSettingsGetInput,
   success: PluginSettingsResult,
@@ -2200,6 +2218,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsPluginsInstallFilesRpc,
   WsPluginsRescanRpc,
   WsPluginsUninstallRpc,
+  WsPluginsListLeftoverDataRpc,
+  WsPluginsDeleteLeftoverDataRpc,
   WsPluginsUpdateRpc,
   WsPluginsRollbackRpc,
   WsPluginsCheckUpdatesRpc,
