@@ -1,5 +1,4 @@
-// Declarations for `scripts/build.ts`. A type imported from another workspace package needs that
-// package's `src` listed here, so its declarations are written too and the build can bundle them.
+// Declarations for `scripts/build.ts`, which bundles them per entry.
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
@@ -8,7 +7,7 @@
     "emitDeclarationOnly": true,
     "allowJs": false,
     "checkJs": false,
-    "rootDir": "../.."
+    "rootDir": "src"
   },
   "include": ["src"],
   "exclude": ["**/*.test.ts", "**/*.test.tsx", "**/testing/**"]

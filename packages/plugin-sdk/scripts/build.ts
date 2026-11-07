@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
-// Builds the publishable package into dist: JavaScript from src, declarations that inline every
-// type they use from T3's unpublished workspace packages, and a package.json whose exports point
-// at them. Publish or pack dist itself, never this folder, whose manifest exports the sources.
+// Builds the publishable package into dist: JavaScript and bundled declarations from src, and a
+// package.json whose exports point at them. Publish or pack dist itself, never this folder, whose
+// manifest exports the sources.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeModule from "node:module";
@@ -14,7 +14,7 @@ const packageRoot = NodePath.resolve(import.meta.dirname, "..");
 const repoRoot = NodePath.resolve(packageRoot, "../..");
 const outDir = NodePath.join(packageRoot, "dist");
 const entries = ["atom", "server", "shared", "ui", "vite", "web"];
-// What the published declarations may import; everything else must be inlined.
+// What the published declarations may import besides each other.
 const PEER_IMPORT = /^(effect|react)(\/|$)/;
 const tsc = NodePath.join(repoRoot, "node_modules/.bin/tsc");
 
@@ -24,7 +24,7 @@ interface PackageManifest {
   readonly description?: string;
   readonly license?: string;
   readonly repository?: object;
-  readonly exports?: Readonly<Record<string, string | { readonly types: string }>>;
+  readonly exports?: Readonly<Record<string, { readonly types: string }>>;
   readonly peerDependencies?: Readonly<Record<string, string>>;
   readonly peerDependenciesMeta?: object;
 }
@@ -43,8 +43,6 @@ await build({
   dts: false,
 });
 
-// The compiler writes declarations only for this package's own files and the folders the build
-// tsconfig lists.
 const declarations = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-plugin-sdk-types-"));
 try {
   const emitted = NodeChildProcess.spawnSync(
@@ -57,56 +55,31 @@ try {
     throw new Error(`Writing declarations failed:\n${errors.join("\n") || emitted.error}`);
   }
 
-  const declarationOf = (file: string) =>
-    NodePath.join(declarations, NodePath.relative(repoRoot, file)).replace(/\.tsx?$/, ".d.ts");
-  // `@t3tools/<package>/<subpath>` to the declaration of the source file its exports name.
-  const workspaceDeclaration = (specifier: string) => {
-    const [, name, subpath = ""] = /^@t3tools\/([^/]+)(\/.*)?$/.exec(specifier) ?? [];
-    if (name === undefined) return undefined;
-    const root = NodePath.join(repoRoot, "packages", name);
-    const target = readManifest(NodePath.join(root, "package.json")).exports?.[`.${subpath}`];
-    const source = typeof target === "string" ? target : target?.types;
-    if (source === undefined) throw new Error(`${specifier} names no workspace file.`);
-    return declarationOf(NodePath.join(root, source));
-  };
-  const MISSING = "\0missing-declaration:";
-
   await build({
     cwd: packageRoot,
     config: false,
     logLevel: "warn",
     entry: Object.fromEntries(
-      entries.map((name) => [name, declarationOf(NodePath.join(packageRoot, "src", `${name}.ts`))]),
+      entries.map((name) => [name, NodePath.join(declarations, `${name}.d.ts`)]),
     ),
     outDir,
     clean: false,
     fixedExtension: false,
     hash: false,
     dts: { dtsInput: true },
-    deps: { alwaysBundle: [/^@t3tools\//], neverBundle: PEER_IMPORT },
-    // Imports from a refused declaration resolve to nothing; the check below fails if one is used.
-    inputOptions: {
-      shimMissingExports: true,
-      checks: { pluginTimings: false },
-      onLog: (level, log, handler) => {
-        if (log.code !== "SHIMMED_EXPORT") handler(level, log);
-      },
-    },
+    deps: { neverBundle: PEER_IMPORT },
+    inputOptions: { checks: { pluginTimings: false } },
     outputOptions: { chunkFileNames: "chunks/[name].d.ts" },
     plugins: [
       {
-        name: "t3-workspace-declarations",
+        // The sources import each other as `./name.ts`.
+        name: "t3-sibling-declarations",
         resolveId(source: string, importer: string | undefined) {
-          if (importer === undefined) return undefined;
-          if (source.startsWith("@t3tools/")) return workspaceDeclaration(source);
-          if (!source.startsWith(".") || !/\.tsx?$/.test(source)) return undefined;
-          const file = NodePath.resolve(NodePath.dirname(importer), source).replace(
-            /\.tsx?$/,
-            ".d.ts",
-          );
-          return NodeFS.existsSync(file) ? file : MISSING + file;
+          if (importer === undefined || !source.startsWith(".") || !/\.tsx?$/.test(source)) {
+            return undefined;
+          }
+          return NodePath.resolve(NodePath.dirname(importer), source).replace(/\.tsx?$/, ".d.ts");
         },
-        load: (id: string) => (id.startsWith(MISSING) ? "export {};" : undefined),
       },
     ],
   });
@@ -162,7 +135,7 @@ const published = {
   files: ["*.js", "*.d.ts", "chunks"],
   exports: Object.fromEntries(
     Object.entries(sources.exports ?? {}).map(([subpath, target]) => {
-      const name = NodePath.basename(typeof target === "string" ? target : target.types, ".ts");
+      const name = NodePath.basename(target.types, ".ts");
       return [subpath, { types: `./${name}.d.ts`, default: `./${name}.js` }];
     }),
   ),
