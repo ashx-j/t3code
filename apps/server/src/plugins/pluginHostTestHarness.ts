@@ -33,12 +33,13 @@ const layerThemes = Layer.mock(EnvironmentTheme.EnvironmentThemeService)({
     }),
 });
 
-export const layerHost = () =>
+/** `themes` replaces the recording theme service, such as to hold a publish where it calls it. */
+export const layerHost = (themes = layerThemes) =>
   Layer.fresh(
     PluginHost.layer.pipe(
       Layer.provideMerge(Layer.mergeAll(PluginSettingsStore.layer, PluginStorage.layer)),
       Layer.provide(ServerSecretStore.layer),
-      Layer.provide(layerThemes),
+      Layer.provide(themes),
       Layer.provideMerge(Layer.mergeAll(PluginMcpTools.layer, PluginHttpRoutes.layer)),
     ),
   );

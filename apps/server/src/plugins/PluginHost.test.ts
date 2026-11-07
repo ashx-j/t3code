@@ -21,6 +21,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
+import * as EnvironmentTheme from "../environmentTheme.ts";
 import * as PluginHost from "./PluginHost.ts";
 import {
   fixturesDir,
@@ -465,6 +466,19 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
       );
       yield* writeFile(`${stateDir}/plugins/web-only/web.js`, "export default {};");
       yield* writePluginsConfig({ enabled: { "web-only": true } });
+      // Holds a publish where it hands over the theme folders, which every publish that changes
+      // the list does.
+      let held:
+        | { readonly reached: Deferred.Deferred<void>; readonly release: Deferred.Deferred<void> }
+        | undefined;
+      const layerHeldPublish = Layer.mock(EnvironmentTheme.EnvironmentThemeService)({
+        setPluginThemeDirectories: () =>
+          held === undefined
+            ? Effect.void
+            : Deferred.succeed(held.reached, undefined).pipe(
+                Effect.andThen(Deferred.await(held.release)),
+              ),
+      });
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
         const id = PluginId.make("web-only");
@@ -473,6 +487,25 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         const webFailure = Effect.map(host.list, (states) => stateOf(states, id)?.webFailure);
         const report = (message: string, at = revision) =>
           host.reportWebFailure({ pluginId: id, revision: at, message });
+
+        // A client that disconnects mid-publish still gets its report to the others.
+        const sent = yield* host.streamStates.pipe(
+          Stream.filter((states) => stateOf(states, id)?.webFailure === "load threw"),
+          Stream.runHead,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        held = { reached: yield* Deferred.make<void>(), release: yield* Deferred.make<void>() };
+        const reporting = yield* report("load threw").pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Deferred.await(held.reached);
+        const interrupting = yield* Fiber.interrupt(reporting).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Deferred.succeed(held.release, undefined);
+        held = undefined;
+        yield* Fiber.join(interrupting);
+        assert.isTrue(Option.isSome(yield* Fiber.join(sent)));
 
         const call = yield* host
           .invoke({ pluginId: id, method: "ping", input: undefined, scopes: operate })
@@ -492,7 +525,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         assert.isUndefined(yield* webFailure);
         yield* report("fresh", reloaded.revision);
         assert.strictEqual(yield* webFailure, "fresh");
-      }).pipe(Effect.provide(layerHost()));
+      }).pipe(Effect.provide(layerHost(layerHeldPublish)));
     }).pipe(Effect.provide(layerConfig())),
   );
 
