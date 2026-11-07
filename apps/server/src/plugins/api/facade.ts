@@ -86,6 +86,9 @@ export const newCommandId = (pluginId: string, crypto: Crypto.Crypto) =>
 export const keyedCommandId = (pluginId: string, operation: string, key: string) =>
   CommandId.make(`${PLUGIN_COMMAND_PREFIX}${pluginId}:${operation}:${encodeURIComponent(key)}`);
 
+export const isPluginCommand = (commandId: CommandId) =>
+  commandId.startsWith(PLUGIN_COMMAND_PREFIX);
+
 /**
  * Hands a plugin a promise whose failure only the plugin sees: one it never awaits must not be an
  * unhandled rejection, which stops the server.

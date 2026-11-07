@@ -51,6 +51,185 @@ export type PluginHttpHandler = (
   context: { readonly signal: AbortSignal },
 ) => PluginHttpResponse | Promise<PluginHttpResponse>;
 
+export interface PluginOutgoingMessage {
+  readonly threadId: string;
+  readonly messageId: string;
+  readonly text: string;
+  readonly createdBy: "user" | "agent";
+  /**
+   * Where the message came from. `server` is text T3 or a plugin wrote, such as "Continue where
+   * you left off." after a usage limit, a delegated task's report or a plugin's `sendMessage`.
+   */
+  readonly creationSource: "web" | "mobile" | "mcp" | "provider" | "server";
+  /** What is attached; the files themselves stay with the server. */
+  readonly attachments: ReadonlyArray<{
+    readonly type: string;
+    readonly name: string;
+    readonly mimeType: string;
+    readonly sizeBytes: number;
+  }>;
+  /** The model the message asked for; absent when the thread keeps its current one. */
+  readonly model?: { readonly instanceId: string; readonly model: string };
+}
+
+export interface PluginCompletedRun {
+  readonly runId: string;
+  readonly threadId: string;
+  /** `completed`, `interrupted`, `failed`, `cancelled` or `rolled_back`. */
+  readonly status: string;
+  /** The run as the server encodes it on the wire. */
+  readonly run: JsonObject;
+}
+
+/**
+ * Nothing leaves the message as it is. `appendText` adds a paragraph after it, `text` replaces it,
+ * and `block` stops it: the sender gets the reason, after the plugin's name, and keeps their draft.
+ */
+export type PluginBeforeDispatchResult =
+  | void
+  | { readonly appendText: string }
+  | { readonly text: string }
+  | { readonly block: string };
+
+export type PluginApprovalDecision =
+  | "accept"
+  | "acceptForSession"
+  | "acceptAlways"
+  | "decline"
+  | "cancel";
+
+/** An approval or a question an agent is waiting on. */
+export interface PluginRuntimeRequest {
+  readonly threadId: string;
+  readonly requestId: string;
+  readonly runId: string | null;
+  /** `command`, `file-read`, `file-change`, `mcp-elicitation` and `permission` are approvals; `user_input` is a question. */
+  readonly kind: string;
+  /** Approvals: what the agent wants to do, such as the command line. */
+  readonly prompt?: string;
+  readonly reason?: string;
+  /** Approvals for an MCP server: its name. */
+  readonly appName?: string;
+  /** Approvals: the decisions this request offers. Empty for questions. */
+  readonly decisions: ReadonlyArray<PluginApprovalDecision>;
+  /** Approvals: whether a `decline` can carry `feedback` for the agent. */
+  readonly canDeclineWithFeedback: boolean;
+  /** Questions: answer each by its `id`. Empty for approvals. */
+  readonly questions: ReadonlyArray<{
+    readonly id: string;
+    readonly header: string;
+    readonly question: string;
+    readonly options: ReadonlyArray<{ readonly label: string; readonly description: string }>;
+    readonly multiSelect: boolean;
+    readonly allowCustomAnswer: boolean;
+  }>;
+}
+
+/**
+ * Nothing leaves the request to the user. An approval takes one of the request's `decisions`;
+ * `feedback` is sent only with `decline` where `canDeclineWithFeedback`. A question takes
+ * `answers` keyed by question id: an option's label, custom text, or several labels.
+ */
+export type PluginRuntimeRequestAnswer =
+  | void
+  | { readonly decision: PluginApprovalDecision; readonly feedback?: string }
+  | { readonly answers: Readonly<Record<string, string | ReadonlyArray<string>>> };
+
+export interface PluginSlashCommandInvocation {
+  readonly threadId: string;
+  readonly messageId: string;
+  readonly name: string;
+  /** The text after `/name`, trimmed. */
+  readonly args: string;
+  readonly createdBy: "user" | "agent";
+  readonly creationSource: PluginOutgoingMessage["creationSource"];
+  readonly attachments: PluginOutgoingMessage["attachments"];
+}
+
+/**
+ * `text` is sent to the agent in place of the command, `block` stops the message with a reason the
+ * sender sees, and nothing sends the command as typed.
+ */
+export type PluginSlashCommandResult =
+  | void
+  | { readonly text: string }
+  | { readonly block: string };
+
+/** What each kind of generated text receives and returns. */
+export interface PluginTextGenerationTasks {
+  readonly threadTitle: {
+    readonly input: {
+      readonly cwd: string;
+      /** The message the title is for. */
+      readonly message: string;
+      readonly previousTitle?: string;
+      readonly instructions?: string;
+    };
+    readonly output: { readonly title: string };
+  };
+  readonly commitMessage: {
+    readonly input: {
+      readonly cwd: string;
+      readonly branch: string | null;
+      readonly stagedSummary: string;
+      readonly stagedPatch: string;
+      /** Whether T3 also wants a branch name for the commit. */
+      readonly includeBranch: boolean;
+      /** The commit style the user picked in Settings, with the repository's examples. */
+      readonly instructions?: string;
+      /** How the user wants branches named, sent with `includeBranch`. */
+      readonly branchInstructions?: string;
+    };
+    readonly output: { readonly subject: string; readonly body: string; readonly branch?: string };
+  };
+  readonly prContent: {
+    readonly input: {
+      readonly cwd: string;
+      readonly baseBranch: string;
+      readonly headBranch: string;
+      readonly commitSummary: string;
+      readonly diffSummary: string;
+      readonly diffPatch: string;
+      /** The repository's pull request template, if it has one. */
+      readonly template?: string;
+      readonly threadContext?: string;
+      /** The pull request style the user picked in Settings, with the repository's examples. */
+      readonly instructions?: string;
+    };
+    readonly output: { readonly title: string; readonly body: string };
+  };
+  readonly branchName: {
+    readonly input: {
+      readonly cwd: string;
+      readonly message: string;
+      /**
+       * How the user wants branches named in Settings. In `custom` mode the answer is the whole
+       * branch name, following `instructions`; otherwise T3 lowercases it, and in `static` mode
+       * adds `prefix`.
+       */
+      readonly naming?: {
+        readonly mode: "static" | "semantic" | "custom";
+        readonly prefix: string;
+        readonly instructions: string;
+      };
+    };
+    readonly output: { readonly branch: string };
+  };
+  readonly reviewGuide: {
+    readonly input: {
+      readonly cwd: string;
+      readonly number: number;
+      readonly title: string;
+      readonly description: string;
+      readonly baseBranch: string;
+      readonly baseCommit: string;
+      readonly instructions?: string;
+    };
+    /** Each stop as the review guide's contract defines it. */
+    readonly output: { readonly stops: ReadonlyArray<JsonObject> };
+  };
+}
+
 /** One option a model takes, such as reasoning effort, by the id a thread's model sets it with. */
 export interface PluginModelOption {
   readonly id: string;
@@ -103,6 +282,7 @@ export interface PluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
     /** Yields the settings as `get` reads them after each change, until deactivation. */
     readonly changes: () => AsyncIterable<JsonObject>;
   };
+  /** Keys starting with `t3.` are T3's own: `list` leaves them out, and `set` and `delete` refuse them. */
   readonly storage: {
     readonly get: (key: string) => Promise<JsonValue | undefined>;
     readonly set: (key: string, value: JsonValue) => Promise<void>;
@@ -151,8 +331,8 @@ export interface PluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
     }) => Promise<ReadonlyArray<JsonObject>>;
     readonly read: (threadId: string) => Promise<JsonObject>;
     /**
-     * Sends `text` to the thread's agent as a message from an agent, not the user. Resolves once
-     * accepted.
+     * Sends `text` to the thread's agent as a message from an agent, not the user, so send hooks
+     * see `createdBy: "agent"`. Resolves once accepted.
      */
     readonly sendMessage: (input: {
       readonly threadId: string;
@@ -282,6 +462,86 @@ export interface PluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
       when: { readonly time: string; readonly weekdays?: ReadonlyArray<number> },
       handler: () => void | Promise<void>,
     ) => () => void;
+  };
+  readonly turns: {
+    /**
+     * Runs each time a run ends, in order; a failed run the user retries arrives again. Runs that
+     * end while the plugin is off arrive when it starts; the first registration starts from now.
+     * Register handlers in the same order on every activation.
+     */
+    readonly afterRunCompleted: (
+      handler: (run: PluginCompletedRun) => void | Promise<void>,
+    ) => void;
+    /**
+     * Asked about each approval or question an agent raises until a hook answers, plugins in id
+     * order. The user may answer first, which aborts `signal`. A hook slower than 10 seconds, one
+     * that throws, or one whose answer does not fit or the server refuses is skipped; with no
+     * answer the user decides.
+     */
+    readonly onRuntimeRequest: (
+      handler: (
+        request: PluginRuntimeRequest,
+        context: { readonly signal: AbortSignal },
+      ) => PluginRuntimeRequestAnswer | Promise<PluginRuntimeRequestAnswer>,
+    ) => void;
+    /**
+     * Sees each message, queued edit and delegated task prompt, with earlier hooks' changes, before
+     * it is sent, plugins in id order. A block stops the rest. A message's hooks share 2 seconds, a
+     * late one gets 100ms, and one out of time or that throws is skipped. Slash commands from T3's,
+     * the agent's or a plugin's list never reach it. A task prompt's `threadId` is its new thread.
+     */
+    readonly beforeDispatch: (
+      hook: (
+        message: PluginOutgoingMessage,
+      ) => PluginBeforeDispatchResult | Promise<PluginBeforeDispatchResult>,
+    ) => void;
+  };
+  readonly slashCommands: {
+    /**
+     * Lists `/name` with every provider's commands; messages starting with it run `handler` before
+     * they are sent, without passing send hooks, and throwing or 10 seconds blocks the message.
+     * Names are lowercase letters, digits and `-`, not T3 Code's; a provider's own command of the
+     * name wins, and of plugins sharing one, the id that sorts first.
+     */
+    readonly register: (
+      command: {
+        readonly name: string;
+        readonly description?: string;
+        /** Shown after the name while the user types arguments. */
+        readonly inputHint?: string;
+      },
+      handler: (
+        invocation: PluginSlashCommandInvocation,
+        context: { readonly signal: AbortSignal },
+      ) => PluginSlashCommandResult | Promise<PluginSlashCommandResult>,
+    ) => void;
+  };
+  readonly textGeneration: {
+    /**
+     * Runs `prompt` on the text generation model chosen in T3 Code's settings and resolves with
+     * its answer. Claude, Codex, OpenCode, Cursor, Grok, Pi and Antigravity models can answer; any
+     * other rejects with code `TextGenerationUnsupportedError`. `signal` stops the wait.
+     */
+    readonly generate: (input: {
+      readonly prompt: string;
+      readonly signal?: AbortSignal;
+    }) => Promise<string>;
+    /**
+     * Supplies `kind` of text before T3 Code generates it, until the plugin deactivates. T3 cleans
+     * up the answer as it does model output. Plugins are asked in id order. Nothing, a wrong
+     * shape, an error or 3 seconds without an answer leaves it to the next plugin. After 5 seconds
+     * for all plugins, or when none answers, T3 Code's own generator writes it.
+     */
+    readonly register: <K extends keyof PluginTextGenerationTasks>(
+      kind: K,
+      generate: (
+        input: PluginTextGenerationTasks[K]["input"],
+        context: { readonly signal: AbortSignal },
+      ) =>
+        | PluginTextGenerationTasks[K]["output"]
+        | void
+        | Promise<PluginTextGenerationTasks[K]["output"] | void>,
+    ) => void;
   };
   readonly providers: {
     /**

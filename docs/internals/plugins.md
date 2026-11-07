@@ -91,5 +91,25 @@ Thread menus are built and dispatched in two places, the header hook and the sid
 
 ## Reaching into orchestration
 
-`threads.notify` is its own internal command in `Orchestrator.ts`, because every `message.dispatch`
-starts a run.
+The orchestrator stays pure. Send hooks run in `ThreadManagementService.dispatch` before the
+command reaches it, behind one call into
+[`pluginSendHooks.ts`](../../apps/server/src/plugins/pluginSendHooks.ts), because that service is
+one of upstream's busiest files. All of a message's hooks share a 2-second budget, and a hook that
+starts late still gets 100ms. Hooks run as soon as a message arrives. While any hook or plugin
+command is registered, only the dispatch waits for the thread's previous message, so messages keep
+their order and slow hooks never add up. Queued edits and delegated task prompts run the hooks
+too, or editing a queued message would bypass a redaction plugin.
+
+`turns.onRuntimeRequest` answers through the same `runtime-request.respond` command a client sends,
+so it covers every adapter. Plugins choose only from the decisions a request offers, because
+adapters map the rest differently: Claude treats `acceptAlways` as a deny. The user sees the request
+while plugins decide, because holding it back would need a change in every adapter.
+
+Server plugins' slash commands are provider slash commands, added where the server adds
+`/usage-limits`, so every client lists them with no plugin code. `threads.notify` is its own
+internal command in `Orchestrator.ts`, because every `message.dispatch` starts a run.
+
+Text generation hooks wrap the `TextGeneration` router, which every caller goes through. Each plugin
+gets 3 seconds and all of them share 5 per text, then T3 generates the text itself. Drivers that
+pick a runtime per call, such as OpenCode's, must forward the optional `generateText`, or
+`textGeneration.generate` sees it missing.

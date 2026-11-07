@@ -88,6 +88,7 @@ import * as PreviewBrowser from "./preview/PreviewBrowser.ts";
 import * as ProcessRunner from "./processRunner.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
+import * as PluginHooks from "./plugins/PluginHooks.ts";
 import * as PluginHost from "./plugins/PluginHost.ts";
 import * as PluginHttpRoutes from "./plugins/PluginHttpRoutes.ts";
 import * as PluginSettingsStore from "./plugins/PluginSettingsStore.ts";
@@ -685,8 +686,8 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(Layer.mergeAll(NativeAppIconResolver.layer, layerProjectFaviconResolver)),
   Layer.provideMerge(layerRepositoryIdentityResolver),
   Layer.provideMerge(CodexManagedTokenBroker.layer),
-  // One registry for the HTTP route below and the plugin host above.
-  Layer.provideMerge(PluginHttpRoutes.layer),
+  // One registry each for the dispatch path and HTTP below and the plugin host above.
+  Layer.provideMerge(Layer.mergeAll(PluginHooks.layer, PluginHttpRoutes.layer)),
   Layer.provideMerge(layerServerEnvironment),
   Layer.provideMerge(layerAuth),
   Layer.provideMerge(ServerSecretStore.layer),

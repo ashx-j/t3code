@@ -62,9 +62,24 @@ while the plugin is on, on top of T3 Code's own styles and your theme. A plugin 
 
 ## Plugins in your threads
 
+A plugin can answer an agent's approval requests and questions for you, for example to allow
+commands you always allow. The request still appears in the thread, and you can answer it yourself
+while the plugin decides. If no plugin answers within a few seconds, it waits for you as usual.
+
+A plugin can also change a message before it is sent, or stop it and say why. A stopped message
+stays in the composer, so you can edit it and send it again. Slash commands are never changed or
+stopped by plugins.
+
 Plugins can add slash commands. They appear in the composer's `/` menu with the agent's own
-commands, in the web and desktop apps. The agent's own command wins over a plugin's with the same
-name, and between plugins, the one whose id comes first alphabetically gets it.
+commands. A command that runs on the server shows in every app, and one that runs in the app shows
+in the web and desktop apps. A command can send the agent a message the plugin prepares, or stop
+with a reason. The agent's own command wins over a plugin's with the same name. Between plugins, a
+command that runs on the server wins over one that runs in the app, and otherwise the plugin whose
+id comes first alphabetically gets it.
+
+A plugin can also write the text T3 Code usually generates with a model: thread titles, commit
+messages, pull request titles and descriptions, branch names and review guides. When it has
+nothing to offer, T3 Code generates the text as usual.
 
 ## Where plugins live
 
@@ -80,7 +95,8 @@ browser only. The chosen environment's plugins run code in this window, so choos
 you trust.
 
 Plugins on other environments you connect show in **Settings → Plugins**, but their UI doesn't
-load. Buttons, menu items, badges, slash commands, `@` items, banners and right panels show only
-in the threads of the environment plugin UI loads from. Code blocks, pages, sidebar sections and
-command palette commands show wherever you are. The mobile app doesn't show plugin UI, settings or
-themes, and a plugin page's `t3code://plugins/...` link opens only in the desktop and web apps.
+load. Buttons, menu items, badges, slash commands that run in the app, `@` items, banners and right
+panels show only in the threads of the environment plugin UI loads from. Code blocks, pages,
+sidebar sections and command palette commands show wherever you are. The mobile app doesn't show
+plugin UI, settings or themes, and a plugin page's `t3code://plugins/...` link opens only in the
+desktop and web apps.

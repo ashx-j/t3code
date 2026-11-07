@@ -398,6 +398,16 @@ export class TextGenerationError extends Schema.TaggedError<TextGenerationError>
   }
 }
 
+/** The selected model's provider cannot run a free-form prompt. */
+export class TextGenerationUnsupportedError extends Schema.TaggedError<TextGenerationUnsupportedError>()(
+  "TextGenerationUnsupportedError",
+  { instanceId: Schema.String },
+) {
+  override get message(): string {
+    return `The provider of ${this.instanceId} cannot generate free-form text. Choose another text generation model.`;
+  }
+}
+
 export class GitManagerError extends Schema.TaggedError<GitManagerError>()("GitManagerError", {
   operation: Schema.String,
   cwd: Schema.String,

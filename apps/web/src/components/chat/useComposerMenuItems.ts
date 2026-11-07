@@ -299,7 +299,7 @@ export function useComposerMenuItems({
       const visibleProviderSlashCommandItems = providerSlashCommandItems.filter(
         (item) => item.command.name !== "compact" || compactSlashCommandAvailable,
       );
-      // A provider's command of the same name wins.
+      // A provider's command of the same name wins; that list already has server plugins' commands.
       const providerCommandNames = new Set(
         visibleProviderSlashCommandItems.map((item) => item.command.name),
       );

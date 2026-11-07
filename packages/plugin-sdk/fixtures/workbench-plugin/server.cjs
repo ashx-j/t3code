@@ -1,6 +1,58 @@
 /** @type {import("@t3tools/plugin-sdk/server").PluginDefinition} */
 module.exports = {
   activate(api) {
+    api.turns.beforeDispatch((message) => {
+      if (message.text.includes("#secret")) return { block: "Remove the secret first." };
+      if (message.text.startsWith("#shout ")) return { text: message.text.slice(7).toUpperCase() };
+      if (message.text.includes("#context"))
+        return { appendText: "Context from workbench-plugin." };
+      return undefined;
+    });
+
+    // Allows `git status`, turns down `rm` with a reason, takes each question's first option, and
+    // leaves everything else to the user.
+    api.turns.onRuntimeRequest((request) => {
+      if (request.kind === "user_input") {
+        return {
+          answers: Object.fromEntries(
+            request.questions.map((question) => [question.id, question.options[0]?.label ?? "yes"]),
+          ),
+        };
+      }
+      if (request.kind !== "command") return undefined;
+      if (request.prompt?.startsWith("git status")) return { decision: "accept" };
+      if (request.prompt?.startsWith("rm ")) {
+        return { decision: "decline", feedback: "Workbench does not allow rm." };
+      }
+      return undefined;
+    });
+
+    api.slashCommands.register(
+      { name: "deploy", description: "Deploy to an environment", inputHint: "environment" },
+      ({ args }) =>
+        args === ""
+          ? { block: "Name an environment, for example /deploy staging." }
+          : { text: `Deploy to ${args} and report back.` },
+    );
+    api.slashCommands.register({ name: "status", description: "Show the deploy status" }, () => ({
+      text: "Report the deploy status.",
+    }));
+
+    api.textGeneration.register("threadTitle", ({ message }) =>
+      message.startsWith("#titled ") ? { title: `Workbench: ${message.slice(8)}` } : undefined,
+    );
+
+    api.rpc.register(
+      "summarize",
+      (input) => {
+        const { log } = /** @type {{ log: string }} */ (input);
+        return api.textGeneration.generate({
+          prompt: `Summarize these commits in one sentence:\n${log}`,
+        });
+      },
+      { access: "read" },
+    );
+
     api.schedule.every(1000, async () => {
       const ticks = await api.storage.get("ticks");
       const next = (typeof ticks === "number" ? ticks : 0) + 1;

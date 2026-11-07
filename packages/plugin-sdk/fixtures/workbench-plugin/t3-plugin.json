@@ -2,7 +2,7 @@
   "id": "workbench-plugin",
   "name": "Workbench",
   "version": "0.1.0",
-  "description": "Test fixture that uses the threads, thread management, projects, events, schedule and server APIs.",
+  "description": "Test fixture that uses the threads, thread management, projects, events, schedule, turns, runtime request, slash command, text generation and server APIs.",
   "engines": { "t3": ">=0.1.0" },
   "server": "./server.cjs"
 }

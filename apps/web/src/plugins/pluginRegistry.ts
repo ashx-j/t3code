@@ -198,7 +198,7 @@ export const pluginCommandsAtom = Atom.family((environmentId: string) => {
 
 /**
  * When plugins claim the same slash command or code block language, the one whose id sorts first
- * gets it whatever order they started in; the others go without.
+ * gets it whatever order they started in, as on the server; the others go without.
  */
 const firstById = <Claim>(claims: ReadonlyArray<Claim>, pluginIdOf: (claim: Claim) => string) =>
   claims.reduce((first, claim) => (pluginIdOf(claim) < pluginIdOf(first) ? claim : first));

@@ -64,6 +64,7 @@ and need no build. `hello-web` uses most of the web API.
 module.exports = {
   activate(api) {
     api.rpc.register("greeting", () => "Hello", { access: "read" });
+    api.turns.afterRunCompleted((run) => api.log.info("run ended", { status: run.status }));
   },
 };
 ```
@@ -71,25 +72,59 @@ module.exports = {
 `activate` receives the [`PluginApi`](./src/server.ts):
 
 - settings, storage, and RPC methods and channels for the web half;
-- stored orchestration events and notes in threads;
+- stored orchestration events, run-completed hooks and notes in threads;
 - threads and projects: read, start, archive, snooze, settle and delete threads, add and change
   projects, and list a project's git worktrees;
 - provider instances and their models, with the options each model takes, such as reasoning
   effort (`api.providers.list`), so a new thread can set them in `threads.create`;
+- send hooks that add to, replace or block a message, and slash commands that run on the server
+  and may replace or block the message. A message's hooks share 2 seconds, and slash commands never
+  reach them;
+- answers to agents' approvals and questions;
 - secrets the user enters on a card in a thread with a turn in progress;
+- the text T3 Code generates, such as thread titles and commit messages, and free-form text from
+  the text generation model chosen in the settings. Each plugin gets 3 seconds to answer and all of
+  them get 5, then T3 Code writes the text itself;
 - HTTP routes, schedules and server info.
 
 Everything a plugin registers is released when it is disabled, reloaded or uninstalled; add your
 own cleanup with `api.onDeactivate`.
 
-A failure in plugin code that nothing awaits, such as a throw in a timer or a schedule, doesn't
-stop T3 Code. It shows on the plugin's row in Settings → Plugins, and the plugin keeps running.
-Give every child process, socket and stream you create an `'error'` listener anyway: Node reports
-an unhandled `'error'` event as a crash, and when T3 Code can't tell it came from your plugin, the
-server stops.
+A failure in plugin code that nothing awaits, such as a throw in a timer, a schedule or a hook,
+doesn't stop T3 Code. It shows on the plugin's row in Settings → Plugins, and the plugin keeps
+running. Give every child process, socket and stream you create an `'error'` listener anyway: Node
+reports an unhandled `'error'` event as a crash, and when T3 Code can't tell it came from your
+plugin, the server stops.
 
 HTTP route handlers get the request body as UTF-8 text, so a binary upload arrives corrupted, and a
 query key that appears twice keeps its last value.
+
+## Work that runs over many turns
+
+A plugin can run work in steps, such as asking several models for an answer and then having each
+one review the others. Start each model's thread with `threads.create`, with the model and options
+`providers.list` names. T3 Code can restart between any 2 steps, and the plugin with it, so build
+each step to resume:
+
+- Keep each job's state in `storage`, such as `job:<id>` with its threads and the step it reached.
+  Storage outlives restarts and updates.
+- Move to the next step from `turns.afterRunCompleted`. Runs that end while the plugin is off
+  arrive when it starts again. Each handler picks up where the one registered in its place last
+  stopped, so register them in the same order at every start. Runs of every thread arrive, so look
+  up `run.threadId` in your state. T3 waits for your handler before it sends the next run, and
+  counts a run as handled once the handler resolves or throws, so a run whose handler a restart
+  cut short arrives again.
+- Pass an `idempotencyKey` to `threads.create` and `threads.sendMessage`, made from the job and the
+  step, such as `review-42:answer:codex`. A call T3 already accepted with that key starts no new
+  turn, so repeating a step after a restart costs nothing.
+- Write back to a thread that may be busy with `sendMessage` and `mode: "queue"`, which waits for
+  the running turn to end. The default, `auto`, steers the message into a running turn.
+- To cancel a job, `interrupt` each of its threads, which resolves even when nothing is running,
+  then `archive` or `delete` the ones you no longer need. An interrupted run arrives at
+  `afterRunCompleted` with the status `interrupted`.
+- Set `engines.t3` to the first T3 version that has every call you use, instead of checking
+  `api.server.version`. An older T3 refuses to install or start the plugin and says why, where it
+  would otherwise ignore a field it doesn't know, such as `idempotencyKey`.
 
 ## Web half
 

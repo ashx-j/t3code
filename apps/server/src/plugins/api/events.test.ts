@@ -14,7 +14,7 @@ import * as Stream from "effect/Stream";
 import type * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import type * as OrchestrationEventStore from "../../persistence/OrchestrationEventStore.ts";
 import { makePluginActivation, type PluginPublication } from "../PluginApi.ts";
-import { makeEventsApi } from "./events.ts";
+import { storedEvents } from "./events.ts";
 import { makeFacadeContext } from "./facade.ts";
 
 it.effect("gives a plugin resuming from an old sequence every event stored since", () =>
@@ -61,10 +61,12 @@ it.effect("gives a plugin resuming from an old sequence every event stored since
 
     const sequences = yield* Effect.promise(() =>
       Array.fromAsync(
-        makeEventsApi(facade, services).stored({
-          types: ["run.background-work-cancelled"],
-          afterSequence: 0,
-        }),
+        storedEvents(
+          facade,
+          services,
+          { types: ["run.background-work-cancelled"], afterSequence: 0 },
+          "sliding",
+        ),
         (event) => event.sequence,
       ),
     );

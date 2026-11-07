@@ -4,7 +4,9 @@ import {
   EnvironmentId,
   MessageId,
   type OrchestrationV2Command,
+  type OrchestrationV2Notification,
   type OrchestrationV2Run,
+  type OrchestrationV2ServerCommand,
   type OrchestrationV2ProviderThread,
   ProviderThreadId,
   ProviderDriverKind,
@@ -13,6 +15,7 @@ import {
   type OrchestrationV2ThreadProjection,
   ProjectId,
   ProviderInstanceId,
+  NodeId,
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -29,6 +32,8 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { AgentScope } from "@t3tools/shared/AgentScope";
 
+import * as PluginHooks from "../plugins/PluginHooks.ts";
+import { userFacingDispatchErrorMessage } from "./UserFacingErrors.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -81,7 +86,8 @@ const layerReceiptsTest = CommandReceiptStore.layer.pipe(
 );
 
 const layerDispatchChokepointTest =
-  (settingsLayer: ReturnType<typeof ServerSettings.layerTest>) => (dispatched: Array<string>) =>
+  (settingsLayer: ReturnType<typeof ServerSettings.layerTest>) =>
+  (dispatched: Array<string>, texts: Array<string> = []) =>
     ThreadManagementService.layer.pipe(
       Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
       Layer.provide(
@@ -97,10 +103,32 @@ const layerDispatchChokepointTest =
                   model: "test",
                 },
               },
+              // A message already sent, whose run is queued.
+              messages: [
+                {
+                  id: MessageId.make("message:thread-management:hooks-sent"),
+                  text: "Fix the build.\n\nProject uses pnpm.",
+                  createdBy: "user",
+                  attachments: [],
+                },
+              ],
+              runs: [
+                {
+                  id: RunId.make("run:thread-management:hooks-queued"),
+                  userMessageId: MessageId.make("message:thread-management:hooks-sent"),
+                  modelSelection: {
+                    instanceId: ProviderInstanceId.make("codex_work"),
+                    model: "test",
+                  },
+                },
+              ],
             } as unknown as OrchestrationV2ThreadProjection),
           dispatch: (command) =>
             Effect.sync(() => {
               dispatched.push(command.type);
+              if (command.type === "message.dispatch") texts.push(command.text);
+              if (command.type === "queued-run.edit") texts.push(`edited ${command.text}`);
+              if (command.type === "delegated_task.request") texts.push(`task ${command.task}`);
               return { sequence: 1, storedEvents: [] } as never;
             }),
         }),
@@ -147,6 +175,233 @@ it.effect(
       );
       expect(error).toMatchObject({ projectId, instanceId });
       expect(dispatched).toEqual([]);
+    }).pipe(Effect.provide(layerTest));
+  },
+);
+
+it.effect(
+  "plugins change, block or handle user messages, leave slash commands alone, and skip notifications",
+  () => {
+    const threadId = ThreadId.make("thread:thread-management:chokepoint");
+    const dispatched: Array<string> = [];
+    const texts: Array<string> = [];
+    const instanceId = ProviderInstanceId.make("codex_work");
+    const layerTest = layerDispatchChokepointTest(
+      ServerSettings.layerTest({
+        providerInstances: { [instanceId]: { driver: "codex", enabled: true } },
+      }),
+    )(dispatched, texts).pipe(Layer.provideMerge(PluginHooks.layer));
+    const message = (
+      id: string,
+      notification?: OrchestrationV2Notification,
+      text = "Fix the build.",
+    ): Extract<OrchestrationV2ServerCommand, { readonly type: "message.dispatch" }> => ({
+      type: "message.dispatch",
+      commandId: CommandId.make(`command:thread-management:hooks-${id}`),
+      threadId,
+      messageId: MessageId.make(`message:thread-management:hooks-${id}`),
+      text,
+      attachments: [],
+      dispatchMode: { type: "queue_after_active" },
+      createdBy: "user",
+      creationSource: "web",
+      ...(notification === undefined ? {} : { notification }),
+    });
+
+    return Effect.gen(function* () {
+      const hooks = yield* PluginHooks.PluginHooks;
+      yield* hooks
+        .addBeforeDispatch("guard", (outgoing) =>
+          Effect.succeed(
+            outgoing.text.includes("token")
+              ? { block: "Remove the token first.", pluginName: "Guard" }
+              : // Text the server wrote, here a delegated task's prompt, is left as it is.
+                outgoing.creationSource === "server"
+                ? undefined
+                : { text: `${outgoing.text}\n\nProject uses pnpm.` },
+          ),
+        )
+        .pipe(Effect.asVoid);
+      let deploys = 0;
+      yield* hooks
+        .addSlashCommand(
+          { pluginId: "deployer", pluginName: "Deployer", name: "deploy" },
+          (outgoing) =>
+            Effect.sync(() => {
+              deploys += 1;
+              return { text: `Deploy ${outgoing.args} now.` };
+            }),
+        )
+        .pipe(Effect.asVoid);
+      const threads = yield* ThreadManagementService.ThreadManagementService;
+      yield* threads.dispatch(message("user"));
+      yield* threads.dispatch(message("plugin-command", undefined, "/deploy staging"));
+      // A retry of an accepted command id replays it; plugins already saw it once.
+      const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+      const replayed = message("replayed", undefined, "/deploy staging");
+      yield* receipts.insertIfAbsent({
+        commandId: replayed.commandId,
+        threadId,
+        commandType: "message.dispatch",
+        acceptedAt: yield* DateTime.now,
+        resultSequence: 1,
+        status: "accepted",
+        error: null,
+      });
+      yield* threads.dispatch(replayed);
+      expect(deploys).toBe(1);
+      const blocked = yield* Effect.flip(
+        threads.dispatch(message("blocked", undefined, "Use token abc.")),
+      );
+      expect(blocked._tag).toBe("OrchestratorCommandRejectedError");
+      expect(userFacingDispatchErrorMessage(blocked)).toBe("Guard: Remove the token first.");
+      yield* threads.dispatch(
+        message("notification", {
+          source: { kind: "system" },
+          outcome: "updated",
+          summary: "Restarted",
+        }),
+      );
+
+      yield* threads.dispatch(message("command", undefined, "/goal clear"));
+      // Only starts with a slash: not a command, so hooks see it.
+      yield* threads.dispatch(message("path", undefined, "/etc/hosts is broken"));
+      // A name in no command list is text too.
+      yield* threads.dispatch(message("unlisted", undefined, "/please fix the build"));
+      // Commands skip the hooks: their text stays as sent, and no hook can block them.
+      // Claude plugin commands and MCP prompts are named with ":" and "_".
+      yield* hooks.setProviderSlashCommands(() =>
+        Effect.succeed(["review", "acme:ship", "mcp__docs__search"]),
+      );
+      yield* threads.dispatch(message("provider-command", undefined, "/review now"));
+      yield* threads.dispatch(message("namespaced-command", undefined, "/acme:ship now"));
+      yield* threads.dispatch(message("mcp-prompt", undefined, "/mcp__docs__search hooks"));
+      for (const [index, text] of ["/goal token", "/review token", "/deploy token"].entries()) {
+        yield* threads.dispatch(message(`command-${index}`, undefined, text));
+      }
+      expect(deploys).toBe(2);
+      // A steer that missed its turn sends the recorded message again under a new command id.
+      yield* threads.dispatch({
+        ...message("steer-again", undefined, "Fix the build.\n\nProject uses pnpm."),
+        messageId: MessageId.make("message:thread-management:hooks-sent"),
+      });
+      // A queued message's edit and a delegated task's prompt pass the hooks too.
+      const edit = (id: string, text: string): OrchestrationV2ServerCommand => ({
+        type: "queued-run.edit",
+        commandId: CommandId.make(`command:thread-management:hooks-${id}`),
+        threadId,
+        runId: RunId.make("run:thread-management:hooks-queued"),
+        text,
+      });
+      yield* threads.dispatch(edit("edit", "Fix the tests."));
+      const editBlocked = yield* Effect.flip(
+        threads.dispatch(edit("edit-blocked", "Use token abc.")),
+      );
+      expect(userFacingDispatchErrorMessage(editBlocked)).toBe("Guard: Remove the token first.");
+      yield* threads.dispatch({
+        type: "delegated_task.request",
+        commandId: CommandId.make("command:thread-management:hooks-delegated"),
+        parentThreadId: threadId,
+        parentRunId: RunId.make("run:thread-management:hooks-queued"),
+        parentNodeId: NodeId.make("node:thread-management:hooks-parent"),
+        task: "Check the tests.",
+        modelSelection: { instanceId, model: "test" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy: "agent",
+        creationSource: "server",
+      });
+
+      expect(texts).toEqual([
+        "Fix the build.\n\nProject uses pnpm.",
+        "Deploy staging now.",
+        "/deploy staging",
+        "Fix the build.",
+        "/goal clear",
+        "/etc/hosts is broken\n\nProject uses pnpm.",
+        "/please fix the build\n\nProject uses pnpm.",
+        "/review now",
+        "/acme:ship now",
+        "/mcp__docs__search hooks",
+        "/goal token",
+        "/review token",
+        "Deploy token now.",
+        "Fix the build.\n\nProject uses pnpm.",
+        "edited Fix the tests.\n\nProject uses pnpm.",
+        "task Check the tests.",
+      ]);
+    }).pipe(Effect.provide(layerTest));
+  },
+);
+
+it.effect(
+  "a slow plugin command keeps the thread's next message behind it, not its hooks or other threads",
+  () => {
+    const threadId = ThreadId.make("thread:thread-management:chokepoint");
+    const texts: Array<string> = [];
+    const instanceId = ProviderInstanceId.make("codex_work");
+    const layerTest = layerDispatchChokepointTest(
+      ServerSettings.layerTest({
+        providerInstances: { [instanceId]: { driver: "codex", enabled: true } },
+      }),
+    )([], texts).pipe(Layer.provideMerge(PluginHooks.layer));
+    const message = (
+      id: string,
+      text: string,
+      to = threadId,
+    ): Extract<OrchestrationV2ServerCommand, { readonly type: "message.dispatch" }> => ({
+      type: "message.dispatch",
+      commandId: CommandId.make(`command:thread-management:order-${id}`),
+      threadId: to,
+      messageId: MessageId.make(`message:thread-management:order-${id}`),
+      text,
+      attachments: [],
+      dispatchMode: { type: "queue_after_active" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+
+    return Effect.gen(function* () {
+      const hooks = yield* PluginHooks.PluginHooks;
+      const removeDeploy = yield* hooks.addSlashCommand(
+        { pluginId: "deployer", pluginName: "Deployer", name: "deploy" },
+        (outgoing) =>
+          Effect.sleep(Duration.seconds(4)).pipe(
+            Effect.as({ text: `Deploy ${outgoing.args} now.` }),
+          ),
+      );
+      const removeCheck = yield* hooks.addBeforeDispatch("checker", (outgoing) =>
+        Effect.sleep(Duration.seconds(1)).pipe(Effect.as({ text: `${outgoing.text} Checked.` })),
+      );
+      const threads = yield* ThreadManagementService.ThreadManagementService;
+      const deploying = yield* threads
+        .dispatch(message("deploy", "/deploy staging"))
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      // The next message passes the hooks while the command runs, then waits for it.
+      const testing = yield* threads
+        .dispatch(message("tests", "And run the tests."))
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* TestClock.adjust(Duration.seconds(1));
+      // The plugins turn off mid-command; the thread's next message still waits its turn.
+      yield* removeDeploy;
+      yield* removeCheck;
+      const shipping = yield* threads
+        .dispatch(message("ship", "Then ship it."))
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* threads.dispatch(
+        message("elsewhere", "Unrelated.", ThreadId.make("thread:thread-management:elsewhere")),
+      );
+      yield* TestClock.adjust(Duration.seconds(3));
+      yield* Fiber.join(deploying);
+      yield* Fiber.join(testing);
+      yield* Fiber.join(shipping);
+
+      expect(texts).toEqual([
+        "Unrelated.",
+        "Deploy staging now.",
+        "And run the tests. Checked.",
+        "Then ship it.",
+      ]);
     }).pipe(Effect.provide(layerTest));
   },
 );

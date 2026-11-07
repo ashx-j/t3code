@@ -32,13 +32,15 @@ interface EventServices {
 
 /**
  * Stored events for a plugin. Events already stored are read from the database as the plugin asks
- * for them, so a plugin resuming from an old sequence gets every one. Once it has caught up, the
- * oldest are dropped when the plugin falls behind, so it can never hold the server back.
+ * for them, so a plugin resuming from an old sequence gets every one. Once it has caught up,
+ * `sliding` drops the oldest when the plugin falls behind, so it can never hold the server back;
+ * `suspend` waits instead, for host features that must see every event.
  */
-const storedEvents = (
+export const storedEvents = (
   facade: FacadeContext,
   services: EventServices,
   options: Parameters<PluginApi["events"]["stored"]>[0],
+  strategy: "sliding" | "suspend",
 ) => {
   if (
     options.afterSequence !== undefined &&
@@ -61,7 +63,7 @@ const storedEvents = (
   const live = (afterSequence: number) =>
     matching(services.orchestrator.streamStoredEventsFrom({ afterSequence, ...filter })).pipe(
       Stream.map(toPluginEvent),
-      Stream.buffer({ capacity: PLUGIN_EVENT_BUFFER, strategy: "sliding" }),
+      Stream.buffer({ capacity: PLUGIN_EVENT_BUFFER, strategy }),
     );
   // Reads up to the newest event, then again from there, until nothing new was stored meanwhile.
   const from = (
@@ -103,5 +105,5 @@ export const makeEventsApi = (
   facade: FacadeContext,
   services: EventServices,
 ): PluginApi["events"] => ({
-  stored: (options) => storedEvents(facade, services, options),
+  stored: (options) => storedEvents(facade, services, options, "sliding"),
 });

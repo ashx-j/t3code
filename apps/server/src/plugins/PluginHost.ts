@@ -14,6 +14,7 @@ import {
   type PluginState,
   type PluginStatesEvent,
   type PluginStatus,
+  type ThreadId,
 } from "@t3tools/contracts";
 import type { PluginDefinition } from "@t3tools/plugin-sdk/server";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
@@ -51,6 +52,7 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { forkParked } from "../serverActivation.ts";
 import {
@@ -61,8 +63,10 @@ import {
   type PluginPublication,
 } from "./PluginApi.ts";
 import { errorText, PluginCodeError, pluginCodeScope } from "./api/facade.ts";
+import { makeRuntimeRequestHooks } from "./api/runtimeRequests.ts";
 import { makePluginFailureGuard } from "./pluginFailureGuard.ts";
 import { discoverPlugins, type DiscoveredPlugin } from "./pluginDiscovery.ts";
+import * as PluginHooks from "./PluginHooks.ts";
 import * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
 import * as PluginInstaller from "./PluginInstaller.ts";
 import * as PluginSettingsStore from "./PluginSettingsStore.ts";
@@ -336,23 +340,30 @@ const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const context = yield* Effect.context<never>();
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const eventStore = yield* OrchestrationEventStore.OrchestrationEventStore;
+  const threads = yield* ThreadManagementService.ThreadManagementService;
+  const crypto = yield* Crypto.Crypto;
   const services: PluginApiServices = {
     version: packageJson.version,
     settings: yield* PluginSettingsStore.PluginSettingsStore,
     storage: yield* PluginStorage.PluginStorage,
-    orchestrator: yield* Orchestrator.OrchestratorV2,
-    eventStore: yield* OrchestrationEventStore.OrchestrationEventStore,
-    threads: yield* ThreadManagementService.ThreadManagementService,
+    orchestrator,
+    eventStore,
+    threads,
     projects: yield* ProjectStore.ProjectStoreV2,
     launches: yield* ThreadLaunchService.ThreadLaunchService,
     projectService: yield* ProjectService.ProjectService,
     git: yield* GitVcsDriver.GitVcsDriver,
     secretRequests: yield* SecretRequests.SecretRequests,
+    textGeneration: yield* TextGeneration.TextGeneration,
     providers: yield* ProviderRegistry.ProviderRegistry,
+    hooks: yield* PluginHooks.PluginHooks,
+    runtimeRequests: makeRuntimeRequestHooks({ context, orchestrator, threads, crypto }),
     httpRoutes: yield* PluginHttpRoutes.PluginHttpRoutes,
     environment: yield* ServerEnvironment.ServerEnvironment,
     serverSettings: yield* ServerSettings.ServerSettingsService,
-    crypto: yield* Crypto.Crypto,
+    crypto,
   };
   const settingsStore = services.settings;
   const environmentThemes = yield* EnvironmentTheme.EnvironmentThemeService;
@@ -1125,6 +1136,28 @@ const make = Effect.gen(function* () {
         ),
       ),
   });
+  // The composer lists the commands of the thread's folder, where a repository adds its own.
+  // Untraced: it runs for every message sent while a plugin has slash commands.
+  const workspaceOf = Effect.fnUntraced(function* (threadId: ThreadId) {
+    const shell = yield* threads.getThreadShell(threadId);
+    if (shell === null) return undefined;
+    if (shell.worktreePath !== null) return shell.worktreePath;
+    const project = yield* services.projectService.getById(shell.projectId);
+    return Option.isSome(project) ? project.value.workspaceRoot : undefined;
+  });
+  yield* services.hooks.setProviderSlashCommands((instanceId, threadId) =>
+    Effect.gen(function* () {
+      const provider = (yield* services.providers.getProviders).find(
+        (candidate) => candidate.instanceId === instanceId,
+      );
+      if (provider === undefined) return [];
+      const cwd = yield* workspaceOf(threadId).pipe(Effect.orElseSucceed(() => undefined));
+      const workspace = provider.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd);
+      return [...provider.slashCommands, ...(workspace?.slashCommands ?? [])].map(
+        (command) => command.name,
+      );
+    }),
+  );
   return Context.make(PluginHost, service).pipe(
     Context.add(PluginInstaller.PluginInstaller, installer),
   );

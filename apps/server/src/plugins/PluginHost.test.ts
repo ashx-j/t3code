@@ -17,8 +17,11 @@ import {
   type PluginState,
   type PluginStatesEvent,
   type Project,
+  ProviderInstanceId,
+  type ServerProvider,
   WS_METHODS,
 } from "@t3tools/contracts";
+import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -45,15 +48,20 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import packageJson from "../../package.json" with { type: "json" };
+import * as PluginHooks from "./PluginHooks.ts";
 import * as PluginHost from "./PluginHost.ts";
 import * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
 import * as PluginInstaller from "./PluginInstaller.ts";
 import { makePluginRpcHandlers } from "./pluginRpcHandlers.ts";
 import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
+import { withPluginTextGeneration } from "./pluginTextGeneration.ts";
 
+// None of these messages replays an accepted command.
+const notAccepted = Effect.succeed(false);
 const fixturesDir = new URL("../../../../packages/plugin-sdk/fixtures/", import.meta.url).pathname;
 const hello = PluginId.make("hello-plugin");
 const broken = PluginId.make("broken-plugin");
@@ -69,6 +77,7 @@ const layerUnusedLaunchServices = Layer.mergeAll(
   Layer.mock(ProviderRegistry.ProviderRegistry)({}),
   Layer.mock(GitVcsDriver.GitVcsDriver)({}),
   Layer.mock(SecretRequests.SecretRequests)({}),
+  Layer.mock(TextGeneration.TextGeneration)({}),
 );
 
 // Orchestration services the lifecycle tests never reach.
@@ -82,7 +91,7 @@ const layerUnusedServices = Layer.mergeAll(
   Layer.mock(ServerSettings.ServerSettingsService)({}),
 );
 
-// Every list of theme folders the host published, for the theme cases.
+// Every list of theme folders the host published, for the web files case.
 const publishedThemeDirectories: Array<ReadonlyArray<string>> = [];
 const layerThemes = Layer.mock(EnvironmentTheme.EnvironmentThemeService)({
   setPluginThemeDirectories: (directories) =>
@@ -98,7 +107,7 @@ const layerHost = (services: typeof layerUnusedServices = layerUnusedServices) =
       Layer.provide(ServerSecretStore.layer),
       Layer.provide(services),
       Layer.provide(layerThemes),
-      Layer.provideMerge(PluginHttpRoutes.layer),
+      Layer.provideMerge(Layer.mergeAll(PluginHooks.layer, PluginHttpRoutes.layer)),
     ),
   );
 
@@ -169,27 +178,82 @@ const waitForStatuses = (
   );
 
 const workbench = PluginId.make("workbench-plugin");
+const workbenchThread = ThreadId.make("thread:plugin-workbench");
+const workbenchProject = ProjectId.make("project:plugin-workbench");
+const workbenchModel = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.5" };
+const workbenchTextModel = {
+  instanceId: ProviderInstanceId.make("claudeAgent"),
+  model: "haiku",
+};
 
 interface Workbench {
   readonly host: PluginHost.PluginHost["Service"];
+  readonly hooks: PluginHooks.PluginHooksRegistry;
   readonly call: (
     method: string,
     input?: Schema.Json,
   ) => ReturnType<PluginHost.PluginHost["Service"]["invoke"]>;
+  /** Sends `text` to the workbench thread, through its provider `instanceId` when given. */
+  readonly send: (
+    text: string,
+    instanceId?: string,
+  ) => Effect.Effect<string, PluginHooks.PluginMessageBlockedError>;
+  /** What the providers list, empty unless a test sets them. */
+  readonly setProviders: (providers: ReadonlyArray<ServerProvider>) => void;
+  readonly prompted: ReadonlyArray<TextGeneration.TextGenerationInput>;
 }
 
-/** Runs `body` with the workbench fixture plugin active, in an environment with no threads or projects. */
+/**
+ * Runs `body` with the workbench fixture plugin active, over a project, a thread and a text
+ * generation model, and services that record what the plugin asks of them.
+ */
 const withWorkbench = Effect.fn(function* <A, E>(
   body: (workbench: Workbench) => Effect.Effect<A, E>,
 ) {
+  const prompted: Array<TextGeneration.TextGenerationInput> = [];
+  let providers: ReadonlyArray<ServerProvider> = [];
+  const project: Project = {
+    id: workbenchProject,
+    title: "Workbench project",
+    workspaceRoot: "/repo",
+    defaultModelSelection: workbenchModel,
+    scripts: [],
+    createdAt: "2026-10-31T00:00:00.000Z",
+    updatedAt: "2026-10-31T00:00:00.000Z",
+    deletedAt: null,
+  };
   const services = Layer.mergeAll(
-    layerUnusedLaunchServices,
-    Layer.mock(Orchestrator.OrchestratorV2)({ streamStoredEventsFrom: () => Stream.never }),
+    Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+    Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedSome(project) }),
+    Layer.mock(ProviderRegistry.ProviderRegistry)({
+      getProviders: Effect.sync(() => providers),
+    }),
+    Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+    Layer.mock(SecretRequests.SecretRequests)({}),
+    Layer.mock(TextGeneration.TextGeneration)({
+      generateText: (input) =>
+        Effect.sync(() => {
+          prompted.push(input);
+          return { text: "Two commits since the last deploy." };
+        }),
+    }),
+    Layer.mock(Orchestrator.OrchestratorV2)({
+      streamStoredEventsFrom: () => Stream.never,
+      streamDomainEvents: Stream.never,
+      listActiveShellIndex: () => Effect.succeed([]),
+    }),
     Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({
       latestAgentSequence: () => Effect.succeed(0),
     }),
     Layer.mock(ThreadManagementService.ThreadManagementService)({
       listProjectThreads: () => Effect.succeed([]),
+      getThreadShell: () =>
+        Effect.succeed({
+          id: workbenchThread,
+          projectId: workbenchProject,
+          worktreePath: null,
+          deletedAt: null,
+        } as never),
     }),
     Layer.mock(ProjectStore.ProjectStoreV2)({ listShells: () => Effect.succeed([]) }),
     Layer.mock(ServerEnvironment.ServerEnvironment)({
@@ -201,7 +265,9 @@ const withWorkbench = Effect.fn(function* <A, E>(
         capabilities: { repositoryIdentity: false, plugins: true },
       }),
     }),
-    Layer.mock(ServerSettings.ServerSettingsService)({}),
+    ServerSettings.layerTest({ textGenerationModelSelection: workbenchTextModel }).pipe(
+      Layer.orDie,
+    ),
   );
   yield* writePluginsConfig({
     enabled: { [workbench]: true },
@@ -209,10 +275,29 @@ const withWorkbench = Effect.fn(function* <A, E>(
   });
   return yield* Effect.gen(function* () {
     const host = yield* PluginHost.PluginHost;
+    const hooks = yield* PluginHooks.PluginHooks;
     yield* waitForStatuses(host, { [workbench]: "active" });
     return yield* body({
       host,
+      hooks,
       call: (method, input) => host.invoke({ pluginId: workbench, method, input, scopes: operate }),
+      send: (text, instanceId) =>
+        hooks.beforeDispatch(
+          {
+            threadId: workbenchThread,
+            messageId: "message:workbench",
+            text,
+            createdBy: "user",
+            creationSource: "web",
+            attachments: [],
+          },
+          notAccepted,
+          ...(instanceId === undefined ? [] : [Effect.succeed(instanceId)]),
+        ),
+      setProviders: (next) => {
+        providers = next;
+      },
+      prompted,
     });
   }).pipe(Effect.provide(layerHost(services)));
 }, Effect.provide(layerConfig()));
@@ -311,6 +396,37 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
           fs.readFileString(`${stateDir}/plugins.json`),
         );
         assert.deepStrictEqual(JSON.parse(saved).enabled, { [hello]: false });
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("keeps the keys T3 saves in a plugin's storage out of the plugin's reach", () =>
+    Effect.gen(function* () {
+      const id = PluginId.make("keeper");
+      const cursorKey = "t3.turns.afterRunCompleted.1";
+      yield* writeInstalledPlugin(
+        id,
+        `module.exports = { activate(api) {
+  api.rpc.register("keys", async () => { await api.storage.set("mine", 1); return api.storage.list(); }, { access: "write" });
+  api.rpc.register("overwrite", () => api.storage.set("${cursorKey}", 0), { access: "write" });
+} };`,
+      );
+      yield* writePluginsConfig({ enabled: { [id]: true } });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const storage = yield* PluginStorage.PluginStorage;
+        yield* waitForStatuses(host, { [id]: "active" });
+        yield* storage.set(id, cursorKey, { sequence: 3, runIds: [] });
+        const call = (method: string) =>
+          host.invoke({ pluginId: id, method, input: undefined, scopes: operate });
+
+        assert.deepStrictEqual(yield* call("keys"), ["mine"]);
+        const refused = yield* call("overwrite").pipe(Effect.flip);
+        assert.include(refused.message, 'Storage keys starting with "t3." belong to T3.');
+        assert.deepStrictEqual(
+          yield* storage.get(id, cursorKey),
+          Option.some({ sequence: 3, runIds: [] }),
+        );
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
@@ -525,10 +641,12 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
     Effect.gen(function* () {
       yield* writeInstalledPlugin(
         "leaky",
-        `module.exports = { activate(api) {
+        `let titles = 0;
+module.exports = { activate(api) {
   api.rpc.register("throwLater", () => { setTimeout(() => { throw new Error("thrown in a timer"); }, 0); }, { access: "read" });
   api.rpc.register("awaitLater", () => { setTimeout(async () => { await api.threads.read("thread:gone"); }, 0); }, { access: "read" });
   api.rpc.register("spawnMissing", () => { require("node:child_process").spawn("t3-plugin-test-missing-command"); }, { access: "read" });
+  api.textGeneration.register("threadTitle", () => { titles += 1; throw new Error("no title " + titles); });
 } };`,
       );
       // A timer it sets while starting fails, then it fails to start.
@@ -542,6 +660,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
       yield* writePluginsConfig({ enabled: { leaky: true, "leaky-start": true } });
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
+        const hooks = yield* PluginHooks.PluginHooks;
         const id = PluginId.make("leaky");
         yield* waitForStatuses(host, { leaky: "active", "leaky-start": "failed" });
         const nextFailure = (previous: string | undefined) =>
@@ -567,6 +686,25 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         const spawned = yield* failureAfter("spawnMissing", awaited);
         assert.include(spawned, "ENOENT");
         assert.include(stateOf(yield* host.list, id), { status: "active" });
+
+        // A callback only T3 waits on fails onto the row too. Of failures closer together than
+        // 5 seconds, clients get the first at once and the latest when the 5 seconds are up.
+        yield* TestClock.adjust("5 seconds");
+        const [generateTitle] = yield* hooks.textGenerators("threadTitle");
+        assert.isDefined(generateTitle);
+        const failures = yield* host.streamStates.pipe(
+          Stream.map((states) => stateOf(states, id)?.serverFailure),
+          Stream.changes,
+          Stream.takeUntil((failure) => failure === "no title 3"),
+          Stream.runCollect,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* generateTitle({ message: "Fix it" });
+        yield* nextFailure(spawned);
+        yield* generateTitle({ message: "Fix it" });
+        yield* generateTitle({ message: "Fix it" });
+        yield* TestClock.adjust("5 seconds");
+        assert.deepStrictEqual(yield* Fiber.join(failures), [spawned, "no title 1", "no title 3"]);
 
         // A failure while starting belongs to that start, so Disable clears it.
         const starting = PluginId.make("leaky-start");
@@ -625,6 +763,147 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           projects: 0,
           firstThreadId: null,
         });
+      }),
+    ),
+  );
+
+  it.effect("runs a plugin's send hooks on the messages users send", () =>
+    withWorkbench(({ send }) =>
+      Effect.gen(function* () {
+        assert.strictEqual(
+          yield* send("Ship it #context"),
+          "Ship it #context\n\nContext from workbench-plugin.",
+        );
+        assert.strictEqual(yield* send("#shout ship it"), "SHIP IT");
+        assert.strictEqual(
+          (yield* Effect.flip(send("Deploy with #secret"))).message,
+          "Workbench: Remove the secret first.",
+        );
+      }),
+    ),
+  );
+
+  it.effect("runs a plugin's slash command instead of the send hooks, and lists it", () =>
+    withWorkbench(({ hooks, send }) =>
+      Effect.gen(function* () {
+        assert.strictEqual(yield* send("/deploy staging"), "Deploy to staging and report back.");
+        assert.strictEqual(
+          (yield* Effect.flip(send("/deploy"))).message,
+          "Workbench: Name an environment, for example /deploy staging.",
+        );
+        const [provider] = PluginHooks.withPluginSlashCommands(
+          [
+            {
+              slashCommands: [
+                { name: "deploy", description: "Provider deploy" },
+                { name: "review" },
+              ],
+              workspaceSnapshots: [{ cwd: "/repo", slashCommands: [] }],
+            } as unknown as ServerProvider,
+          ],
+          yield* hooks.currentSlashCommands,
+        );
+        const status = { name: "status", description: "Show the deploy status" };
+        // A provider's own command of the same name stays in its list.
+        assert.deepStrictEqual(provider?.slashCommands, [
+          { name: "deploy", description: "Provider deploy" },
+          { name: "review" },
+          status,
+        ]);
+        assert.deepStrictEqual(provider?.workspaceSnapshots?.[0]?.slashCommands, [
+          {
+            name: "deploy",
+            description: "Deploy to an environment",
+            input: { hint: "environment" },
+          },
+          status,
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("lets a provider's own command of the same name win when a message goes to it", () =>
+    withWorkbench(({ send, setProviders }) =>
+      Effect.gen(function* () {
+        // Whether every folder has it or the repository of the thread's project adds it.
+        setProviders([
+          { instanceId: "claudeAgent", slashCommands: [{ name: "deploy" }] },
+          {
+            instanceId: "cursor",
+            slashCommands: [],
+            workspaceSnapshots: [{ cwd: "/repo", slashCommands: [{ name: "deploy" }] }],
+          },
+          {
+            instanceId: "codex",
+            slashCommands: [],
+            workspaceSnapshots: [{ cwd: "/elsewhere", slashCommands: [{ name: "deploy" }] }],
+          },
+        ] as unknown as ReadonlyArray<ServerProvider>);
+        assert.strictEqual(yield* send("/deploy staging", "claudeAgent"), "/deploy staging");
+        assert.strictEqual(yield* send("/deploy staging", "cursor"), "/deploy staging");
+        assert.strictEqual(
+          yield* send("/deploy staging", "codex"),
+          "Deploy to staging and report back.",
+        );
+      }),
+    ),
+  );
+
+  it.effect("gives a shared slash command name to the plugin whose id sorts first", () =>
+    withWorkbench(({ hooks, send }) =>
+      Effect.gen(function* () {
+        // Whichever started first, and the other plugin keeps the rest of its commands.
+        const removeEarlier = yield* hooks.addSlashCommand(
+          { pluginId: "aaa-plugin", pluginName: "Earlier", name: "deploy" },
+          () => Effect.succeed({ text: "Deployed by the earlier plugin." }),
+        );
+        const removeLater = yield* hooks.addSlashCommand(
+          { pluginId: "zzz-plugin", pluginName: "Later", name: "status" },
+          () => Effect.succeed({ text: "Status from the later plugin." }),
+        );
+        assert.strictEqual(yield* send("/deploy staging"), "Deployed by the earlier plugin.");
+        assert.strictEqual(yield* send("/status"), "Report the deploy status.");
+        assert.deepStrictEqual(
+          (yield* hooks.currentSlashCommands).map(
+            (command) => `${command.pluginId}/${command.name}`,
+          ),
+          ["workbench-plugin/status", "aaa-plugin/deploy"],
+        );
+        yield* removeEarlier;
+        yield* removeLater;
+        assert.strictEqual(yield* send("/deploy staging"), "Deploy to staging and report back.");
+      }),
+    ),
+  );
+
+  it.effect("titles the threads a plugin recognises and leaves the rest to T3", () =>
+    withWorkbench(({ hooks }) =>
+      Effect.gen(function* () {
+        const titles = withPluginTextGeneration(hooks, {
+          generateThreadTitle: () => Effect.succeed({ title: "T3 title" }),
+        } as unknown as ProviderTextGeneration);
+        const title = (message: string) =>
+          titles.generateThreadTitle({ cwd: "/repo", message, modelSelection: workbenchModel });
+        assert.deepStrictEqual(yield* title("#titled Release prep"), {
+          title: "Workbench: Release prep",
+        });
+        assert.deepStrictEqual(yield* title("Release prep"), { title: "T3 title" });
+      }),
+    ),
+  );
+
+  it.effect("runs a plugin's own prompt on the text generation model from the settings", () =>
+    withWorkbench(({ call, prompted }) =>
+      Effect.gen(function* () {
+        assert.strictEqual(
+          yield* call("summarize", { log: "abc123 fix\ndef456 feat" }),
+          "Two commits since the last deploy.",
+        );
+        assert.deepInclude(prompted[0], {
+          cwd: `${fixturesDir}workbench-plugin`,
+          prompt: "Summarize these commits in one sentence:\nabc123 fix\ndef456 feat",
+        });
+        assert.deepInclude(prompted[0]?.modelSelection, workbenchTextModel);
       }),
     ),
   );
