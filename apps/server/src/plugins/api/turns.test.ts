@@ -14,7 +14,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { makePluginActivation, type PluginPublication } from "../PluginApi.ts";
 import * as PluginHooks from "../PluginHooks.ts";
-import { makeFacadeContext } from "./facade.ts";
+import { errorText, makeFacadeContext } from "./facade.ts";
 import type { RuntimeRequestHook } from "./runtimeRequests.ts";
 import { makeSlashCommandsApi } from "./slashCommands.ts";
 import { makeTurnsApi } from "./turns.ts";
@@ -139,6 +139,7 @@ const activateRuns = (input: {
   readonly saved: Map<string, JsonValue>;
   readonly stored: ReadonlyArray<PluginStoredEvent>;
   readonly register: (turns: PluginApi["turns"]) => void;
+  readonly onFailure?: (error: unknown) => void;
   readonly handlers?: number;
   /** The newest stored sequence, where a handler with no saved place starts. */
   readonly latest?: number;
@@ -152,6 +153,7 @@ const activateRuns = (input: {
       pluginId: PluginId.make("runs"),
       activation,
       context: yield* Effect.context<never>(),
+      ...(input.onFailure === undefined ? {} : { onFailure: input.onFailure }),
     });
     let reading = input.handlers ?? 1;
     const drained = Promise.withResolvers<void>();
@@ -280,6 +282,35 @@ it.effect("keeps each run handler's place by its name, whatever order they regis
         );
       },
     });
+  }).pipe(Effect.provide(PluginHooks.layer)),
+);
+
+it.effect("moves past a run whose handler hangs, and shows that on the plugin's row", () =>
+  Effect.gen(function* () {
+    const failures: Array<string> = [];
+    const seen: Array<string> = [];
+    const hung = Promise.withResolvers<AbortSignal>();
+    const activating = yield* activateRuns({
+      saved: new Map(),
+      stored: [runUpdate(10, "run:10", "completed"), runUpdate(11, "run:11", "completed")],
+      onFailure: (error) => failures.push(errorText(error)),
+      register: (turns) =>
+        turns.afterRunCompleted("review", (run, { signal }) => {
+          seen.push(run.runId);
+          if (run.runId !== "run:10") return;
+          hung.resolve(signal);
+          return new Promise<never>(() => undefined);
+        }),
+    }).pipe(Effect.forkChild({ startImmediately: true }));
+    const signal = yield* Effect.promise(() => hung.promise);
+    yield* TestClock.adjust("30 seconds");
+    yield* Fiber.join(activating);
+
+    assert.deepStrictEqual(seen, ["run:10", "run:11"]);
+    assert.isTrue(signal.aborted);
+    assert.deepStrictEqual(failures, [
+      'afterRunCompleted "review" did not finish within 30 seconds.',
+    ]);
   }).pipe(Effect.provide(PluginHooks.layer)),
 );
 

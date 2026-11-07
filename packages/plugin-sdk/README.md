@@ -136,7 +136,9 @@ each step to resume:
   keep a handler's name when you update the plugin, and give a new handler a new name. Runs of
   every thread arrive, so look up `run.threadId` in your state. T3 waits for your handler before
   it sends the next run, and counts a run as handled once the handler resolves or throws, so a
-  run whose handler a restart cut short arrives again.
+  run whose handler a restart cut short arrives again. A handler gets 30 seconds per run. After
+  that its `signal` aborts, T3 moves on to the next run and shows the timeout on the plugin's row,
+  so start long work, such as a model's turn, with a call that returns once T3 accepts it.
 - Pass an `idempotencyKey` to `threads.create` and `threads.sendMessage`, made from the job and the
   step, such as `review-42:answer:codex`. A call T3 already accepted with that key starts no new
   turn, so repeating a step after a restart costs nothing.

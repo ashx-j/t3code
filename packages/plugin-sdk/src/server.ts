@@ -414,14 +414,17 @@ export interface PluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
   };
   readonly turns: {
     /**
-     * Runs `handler` each time a run ends, in order; a failed run the user retries arrives again.
-     * T3 saves how far it got under `name`, so runs that end while the plugin is off arrive when it
-     * starts, and a new name starts from now. Names are unique within the plugin: up to 64
-     * letters, digits, `.`, `_` and `-`, starting with a letter.
+     * Runs `handler` as each run ends, in order, and a retried run again. T3 saves its place under
+     * `name`, unique within the plugin, so runs that end while it's off arrive at the next start; a
+     * new name starts from now. A run counts as handled once the handler settles, or after 30
+     * seconds, when `signal` aborts, the plugin's row shows the timeout and T3 moves on.
      */
     readonly afterRunCompleted: (
       name: string,
-      handler: (run: PluginCompletedRun) => void | Promise<void>,
+      handler: (
+        run: PluginCompletedRun,
+        context: { readonly signal: AbortSignal },
+      ) => void | Promise<void>,
     ) => void;
     /**
      * Asked about each approval or question an agent raises until a hook answers, plugins in id

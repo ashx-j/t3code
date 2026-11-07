@@ -5,7 +5,9 @@ import type {
   PluginStoredEvent,
 } from "@t3tools/plugin-sdk/server";
 import * as Cause from "effect/Cause";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import type * as PluginHooks from "../PluginHooks.ts";
 import { type FacadeContext, PluginCodeError } from "./facade.ts";
@@ -59,6 +61,7 @@ const ROLLED_BACK_SUFFIX = "#rolled_back";
 const RESUME_DELAY_MS = 1000;
 // A run handler's name is part of the storage key its place is saved under.
 const RUN_HANDLER_NAME = /^[a-zA-Z][\w.-]{0,63}$/;
+const RUN_HANDLER_DEADLINE = Duration.seconds(30);
 
 interface RunCursor {
   readonly sequence: number;
@@ -137,16 +140,40 @@ export const makeTurnsApi = (
               }
               const key = run.status === "rolled_back" ? `${runId}${ROLLED_BACK_SUFFIX}` : runId;
               if (handled.has(key)) continue;
-              try {
-                await handler({
-                  runId,
-                  threadId: String(run.threadId),
-                  status: run.status,
-                  run: stored.event.payload as PluginCompletedRun["run"],
-                });
-              } catch (error) {
-                facade.reportFailure(error);
-              }
+              const completed: PluginCompletedRun = {
+                runId,
+                threadId: String(run.threadId),
+                status: run.status,
+                run: stored.event.payload as PluginCompletedRun["run"],
+              };
+              // A handler out of time counts as done, so one hung run can't stall every later one.
+              await Effect.runPromiseWith(facade.context)(
+                Effect.tryPromise({
+                  try: (signal) =>
+                    facade.asPlugin(() =>
+                      Promise.resolve().then(() =>
+                        handler(completed, {
+                          signal: AbortSignal.any([signal, activation.controller.signal]),
+                        }),
+                      ),
+                    ),
+                  catch: (cause) => new PluginCodeError({ cause }),
+                }).pipe(
+                  Effect.timeoutOption(RUN_HANDLER_DEADLINE),
+                  Effect.match({
+                    onFailure: (error) => facade.reportFailure(error.cause),
+                    onSuccess: Option.match({
+                      onNone: () =>
+                        facade.reportFailure(
+                          new Error(
+                            `afterRunCompleted "${name}" did not finish within ${Duration.toSeconds(RUN_HANDLER_DEADLINE)} seconds.`,
+                          ),
+                        ),
+                      onSome: () => undefined,
+                    }),
+                  }),
+                ),
+              );
               handled.add(key);
               const [oldest] = handled;
               if (handled.size > REMEMBERED_RUNS && oldest !== undefined) handled.delete(oldest);
