@@ -404,7 +404,7 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
   it.effect("keeps the keys T3 saves in a plugin's storage out of the plugin's reach", () =>
     Effect.gen(function* () {
       const id = PluginId.make("keeper");
-      const cursorKey = "t3.turns.afterRunCompleted.1";
+      const cursorKey = "t3.turns.afterRunCompleted.steps";
       yield* writeInstalledPlugin(
         id,
         `module.exports = { activate(api) {

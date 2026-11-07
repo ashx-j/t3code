@@ -1,7 +1,7 @@
 /** @type {import("@t3tools/plugin-sdk/server").PluginDefinition} */
 module.exports = {
   activate(api) {
-    api.turns.afterRunCompleted(async ({ threadId, status, run }) => {
+    api.turns.afterRunCompleted("digest", async ({ threadId, status, run }) => {
       // A rolled back run is hidden from the thread, so a note under it would be too. A queued
       // message cancelled before it ran never started a turn.
       if (status === "rolled_back" || run.startedAt == null) return;

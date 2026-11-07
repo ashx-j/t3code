@@ -90,7 +90,7 @@ the `.tgz` file it writes.
 module.exports = {
   activate(api) {
     api.rpc.register("greeting", () => "Hello", { access: "read" });
-    api.turns.afterRunCompleted((run) => api.log.info("run ended", { status: run.status }));
+    api.turns.afterRunCompleted("log", (run) => api.log.info("run ended", { status: run.status }));
   },
 };
 ```
@@ -132,11 +132,11 @@ each step to resume:
 - Keep each job's state in `storage`, such as `job:<id>` with its threads and the step it reached.
   Storage outlives restarts and updates.
 - Move to the next step from `turns.afterRunCompleted`. Runs that end while the plugin is off
-  arrive when it starts again. Each handler picks up where the one registered in its place last
-  stopped, so register them in the same order at every start. Runs of every thread arrive, so look
-  up `run.threadId` in your state. T3 waits for your handler before it sends the next run, and
-  counts a run as handled once the handler resolves or throws, so a run whose handler a restart
-  cut short arrives again.
+  arrive when it starts again. T3 saves how far each handler got under the name you give it, so
+  keep a handler's name when you update the plugin, and give a new handler a new name. Runs of
+  every thread arrive, so look up `run.threadId` in your state. T3 waits for your handler before
+  it sends the next run, and counts a run as handled once the handler resolves or throws, so a
+  run whose handler a restart cut short arrives again.
 - Pass an `idempotencyKey` to `threads.create` and `threads.sendMessage`, made from the job and the
   step, such as `review-42:answer:codex`. A call T3 already accepted with that key starts no new
   turn, so repeating a step after a restart costs nothing.

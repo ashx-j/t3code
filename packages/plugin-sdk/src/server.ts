@@ -414,11 +414,13 @@ export interface PluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
   };
   readonly turns: {
     /**
-     * Runs each time a run ends, in order; a failed run the user retries arrives again. Runs that
-     * end while the plugin is off arrive when it starts; the first registration starts from now.
-     * Register handlers in the same order on every activation.
+     * Runs `handler` each time a run ends, in order; a failed run the user retries arrives again.
+     * T3 saves how far it got under `name`, so runs that end while the plugin is off arrive when it
+     * starts, and a new name starts from now. Names are unique within the plugin: up to 64
+     * letters, digits, `.`, `_` and `-`, starting with a letter.
      */
     readonly afterRunCompleted: (
+      name: string,
       handler: (run: PluginCompletedRun) => void | Promise<void>,
     ) => void;
     /**

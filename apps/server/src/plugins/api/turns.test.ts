@@ -125,56 +125,84 @@ it.effect(
     }).pipe(Effect.provide(PluginHooks.layer)),
 );
 
+const runUpdate = (sequence: number, runId: string, status: string): PluginStoredEvent => ({
+  sequence,
+  type: "run.updated",
+  event: { type: "run.updated", payload: { id: runId, threadId: "t", status } },
+});
+
+/**
+ * Activates a plugin whose `register` adds run handlers, over the `stored` run updates after each
+ * handler's saved place, and resolves once `handlers` of them have read every one.
+ */
+const activateRuns = (input: {
+  readonly saved: Map<string, JsonValue>;
+  readonly stored: ReadonlyArray<PluginStoredEvent>;
+  readonly register: (turns: PluginApi["turns"]) => void;
+  readonly handlers?: number;
+  /** The newest stored sequence, where a handler with no saved place starts. */
+  readonly latest?: number;
+  /** Every place a handler starts reading from. */
+  readonly requests?: Array<number>;
+}) =>
+  Effect.gen(function* () {
+    const hooks = yield* PluginHooks.PluginHooks;
+    const activation = makePluginActivation(yield* PubSub.sliding<PluginPublication>(1));
+    const facade = makeFacadeContext({
+      pluginId: PluginId.make("runs"),
+      activation,
+      context: yield* Effect.context<never>(),
+    });
+    let reading = input.handlers ?? 1;
+    const drained = Promise.withResolvers<void>();
+    const storage = {
+      get: async (key: string) => input.saved.get(key),
+      set: async (key: string, value: JsonValue) => {
+        input.saved.set(key, value);
+      },
+    } as PluginApi["storage"];
+    const runEvents = (afterSequence: number) => {
+      input.requests?.push(afterSequence);
+      return (async function* () {
+        try {
+          yield* input.stored.filter((stored) => stored.sequence > afterSequence);
+        } finally {
+          reading -= 1;
+          if (reading === 0) drained.resolve();
+        }
+      })();
+    };
+    input.register(
+      makeTurnsApi(
+        facade,
+        { hooks, runtimeRequests: unusedRuntimeRequests },
+        {
+          storage,
+          runEvents,
+          latestSequence: async () => input.latest ?? 9,
+          pluginName: "Runs",
+        },
+      ),
+    );
+    yield* Effect.promise(() => drained.promise);
+  });
+
 it.effect("delivers each ended run once and resumes after the last one it handled", () =>
   Effect.gen(function* () {
     const saved = new Map<string, JsonValue>();
     const requests: Array<number> = [];
-    const runUpdate = (sequence: number, status: string): PluginStoredEvent => ({
-      sequence,
-      type: "run.updated",
-      event: { type: "run.updated", payload: { id: `run:${sequence}`, threadId: "t", status } },
-    });
-    const runUpdateOf = (sequence: number, runId: string, status: string): PluginStoredEvent => ({
-      sequence,
-      type: "run.updated",
-      event: { type: "run.updated", payload: { id: runId, threadId: "t", status } },
-    });
-    // Activates a plugin over `stored` and resolves once it has handled every event.
     const activate = (stored: ReadonlyArray<PluginStoredEvent>) =>
       Effect.gen(function* () {
-        const hooks = yield* PluginHooks.PluginHooks;
-        const activation = makePluginActivation(yield* PubSub.sliding<PluginPublication>(1));
-        const facade = makeFacadeContext({
-          pluginId: PluginId.make("runs"),
-          activation,
-          context: yield* Effect.context<never>(),
-        });
-        const drained = Promise.withResolvers<void>();
-        const storage = {
-          get: async (key: string) => saved.get(key),
-          set: async (key: string, value: JsonValue) => {
-            saved.set(key, value);
-          },
-        } as PluginApi["storage"];
-        const runEvents = (afterSequence: number) => {
-          requests.push(afterSequence);
-          return (async function* () {
-            try {
-              yield* stored;
-            } finally {
-              drained.resolve();
-            }
-          })();
-        };
         const seen: Array<string> = [];
-        makeTurnsApi(
-          facade,
-          { hooks, runtimeRequests: unusedRuntimeRequests },
-          { storage, runEvents, latestSequence: async () => 9, pluginName: "Runs" },
-        ).afterRunCompleted((run) => {
-          seen.push(`${run.runId}:${run.status}`);
+        yield* activateRuns({
+          saved,
+          stored,
+          requests,
+          register: (turns) =>
+            turns.afterRunCompleted("steps", (run) => {
+              seen.push(`${run.runId}:${run.status}`);
+            }),
         });
-        yield* Effect.promise(() => drained.promise);
         return seen;
       });
 
@@ -182,35 +210,76 @@ it.effect("delivers each ended run once and resumes after the last one it handle
     assert.deepStrictEqual(yield* activate([]), []);
     assert.deepStrictEqual(
       yield* activate([
-        runUpdate(10, "completed"),
-        runUpdate(11, "running"),
-        runUpdate(12, "failed"),
+        runUpdate(10, "run:10", "completed"),
+        runUpdate(11, "run:11", "running"),
+        runUpdate(12, "run:12", "failed"),
       ]),
       ["run:10:completed", "run:12:failed"],
     );
     // A checkpoint landing on an ended run updates it again, after a restart too.
     assert.deepStrictEqual(
-      yield* activate([runUpdate(13, "interrupted"), runUpdateOf(14, "run:13", "interrupted")]),
+      yield* activate([
+        runUpdate(13, "run:13", "interrupted"),
+        runUpdate(14, "run:13", "interrupted"),
+      ]),
       ["run:13:interrupted"],
     );
-    assert.deepStrictEqual(yield* activate([runUpdateOf(15, "run:12", "failed")]), []);
+    assert.deepStrictEqual(yield* activate([runUpdate(15, "run:12", "failed")]), []);
     // A retry starts the failed run again, and it ends a second time.
     assert.deepStrictEqual(
-      yield* activate([
-        runUpdateOf(16, "run:12", "preparing"),
-        runUpdateOf(17, "run:12", "completed"),
-      ]),
+      yield* activate([runUpdate(16, "run:12", "preparing"), runUpdate(17, "run:12", "completed")]),
       ["run:12:completed"],
     );
     // A revert rolls back a run that already ended, which is delivered once more.
     assert.deepStrictEqual(
       yield* activate([
-        runUpdateOf(18, "run:12", "rolled_back"),
-        runUpdateOf(19, "run:12", "rolled_back"),
+        runUpdate(18, "run:12", "rolled_back"),
+        runUpdate(19, "run:12", "rolled_back"),
       ]),
       ["run:12:rolled_back"],
     );
     assert.deepStrictEqual(requests, [9, 9, 12, 13, 13, 17]);
+  }).pipe(Effect.provide(PluginHooks.layer)),
+);
+
+it.effect("keeps each run handler's place by its name, whatever order they register in", () =>
+  Effect.gen(function* () {
+    const saved = new Map<string, JsonValue>();
+    const seen: Array<string> = [];
+    const handle = (name: string) => (run: { readonly runId: string }) => {
+      seen.push(`${name}:${run.runId}`);
+    };
+    yield* activateRuns({
+      saved,
+      stored: [runUpdate(10, "run:10", "completed")],
+      register: (turns) => turns.afterRunCompleted("digest", handle("digest")),
+    });
+    // Run 11 ends while an update that adds a handler before "digest" installs. "digest" still
+    // gets it, and "review" starts from now.
+    yield* activateRuns({
+      saved,
+      stored: [runUpdate(10, "run:10", "completed"), runUpdate(11, "run:11", "completed")],
+      handlers: 2,
+      latest: 11,
+      register: (turns) => {
+        turns.afterRunCompleted("review", handle("review"));
+        turns.afterRunCompleted("digest", handle("digest"));
+      },
+    });
+    assert.deepStrictEqual(seen, ["digest:run:10", "digest:run:11"]);
+
+    // Two handlers of one name would share a place, so the second fails the activation.
+    yield* activateRuns({
+      saved,
+      stored: [],
+      register: (turns) => {
+        turns.afterRunCompleted("digest", handle("digest"));
+        assert.throws(
+          () => turns.afterRunCompleted("digest", handle("digest")),
+          'afterRunCompleted "digest" is already registered.',
+        );
+      },
+    });
   }).pipe(Effect.provide(PluginHooks.layer)),
 );
 

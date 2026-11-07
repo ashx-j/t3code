@@ -57,6 +57,8 @@ const REMEMBERED_RUNS = 256;
 // heard end, and they hear of it once more.
 const ROLLED_BACK_SUFFIX = "#rolled_back";
 const RESUME_DELAY_MS = 1000;
+// A run handler's name is part of the storage key its place is saved under.
+const RUN_HANDLER_NAME = /^[a-zA-Z][\w.-]{0,63}$/;
 
 interface RunCursor {
   readonly sequence: number;
@@ -88,15 +90,23 @@ export const makeTurnsApi = (
     readonly pluginName: string;
   },
 ): PluginApi["turns"] => {
-  let runHandlers = 0;
+  const runHandlerNames = new Set<string>();
   return {
-    afterRunCompleted: (handler) => {
+    afterRunCompleted: (name, handler) => {
       const { activation, pluginId } = facade;
       if (activation.controller.signal.aborted) {
         throw new Error("This plugin activation has ended.");
       }
-      runHandlers += 1;
-      const cursorKey = `${T3_STORAGE_PREFIX}turns.afterRunCompleted.${runHandlers}`;
+      if (typeof name !== "string" || !RUN_HANDLER_NAME.test(name)) {
+        throw new TypeError(
+          'afterRunCompleted needs a name of up to 64 letters, digits, ".", "_" and "-", starting with a letter.',
+        );
+      }
+      if (runHandlerNames.has(name)) {
+        throw new Error(`afterRunCompleted "${name}" is already registered.`);
+      }
+      runHandlerNames.add(name);
+      const cursorKey = `${T3_STORAGE_PREFIX}turns.afterRunCompleted.${name}`;
       void (async () => {
         let sequence: number | undefined;
         let handled: Set<string> | undefined;
