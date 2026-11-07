@@ -249,13 +249,17 @@ export interface WebPluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
   readonly settings: {
     /**
      * Shows on the Plugins page in place of the generated settings form. On a plugin installed in
-     * several environments it changes the copy plugin UI loads from, and the generated form, when
-     * the schema has fields, stays below it for every copy.
+     * several environments, the page shows the panel from the first one plugin UI loads from, which
+     * changes that copy alone, and the generated form, when the schema has fields, stays below it
+     * for every copy.
      */
     readonly registerPanel: (component: WebPluginComponent) => void;
   };
   readonly commands: {
-    /** Adds a command to the command palette that users can also bind to a key. */
+    /**
+     * Adds a command to the command palette that users can also bind to a key. Only the first
+     * environment the app loads plugin UI from adds its plugins' commands.
+     */
     readonly register: (command: WebPluginCommand) => void;
   };
   readonly composer: {
@@ -308,12 +312,16 @@ export interface WebPluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
     /**
      * Adds a full page beside the sidebar, in place of the thread, until the plugin unloads.
      * Open it with `navigate("/plugins/<pluginId>/<name>")`, or from outside the app with a
-     * `t3code://plugins/<pluginId>/<name>` link, which opens the desktop app on it.
+     * `t3code://plugins/<pluginId>/<name>` link, which opens the desktop app on it. Like commands,
+     * pages come only from the first environment the app loads plugin UI from.
      */
     readonly register: (page: WebPluginPage) => void;
   };
   readonly sidebar: {
-    /** Adds a titled section to the sidebar, under the thread list. */
+    /**
+     * Adds a titled section to the sidebar, under the thread list. Like commands, sections come
+     * only from the first environment the app loads plugin UI from.
+     */
     readonly addSection: (section: WebPluginSidebarSection) => void;
   };
   readonly messages: {
@@ -334,8 +342,9 @@ export interface WebPluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
   };
   readonly ui: {
     /**
-     * Draws one of T3's parts until the plugin unloads. When several plugins replace the same
-     * part, the one whose id sorts first wins. If the component throws, T3 draws its own part.
+     * Draws one of T3's parts in this environment's threads until the plugin unloads. When several
+     * plugins replace the same part, the one whose id sorts first wins. If the component throws,
+     * T3 draws its own part.
      */
     readonly replace: <Part extends keyof WebPluginParts>(
       part: Part,

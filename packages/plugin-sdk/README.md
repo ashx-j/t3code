@@ -4,17 +4,18 @@ Types and build helpers for T3 Code plugins. A plugin is a folder with a `t3-plu
 an optional server half that runs inside the T3 Code server, and an optional web half that runs in
 the web and desktop apps. Plugins are trusted code: they run with the same access as T3 Code.
 
-[`examples/`](./examples) has plugins to copy from. Their web halves are built, not committed: run
-`vp run build:examples` in `packages/plugin-sdk` before adding an example to T3 Code. Each one
-builds to its own `dist/web.js` with the Vite preset below. The plugins in
-[`fixtures/`](./fixtures) back the tests and are small and working too. They are written by hand
+[`examples/`](./examples) has plugins to copy from. Those with a `vite.config.ts` build their web
+halves instead of committing them: run `vp run build:examples` in `packages/plugin-sdk` before
+adding one to T3 Code. Each builds to its own `dist/web.js` with the Vite preset below. The plugins
+in [`fixtures/`](./fixtures) back the tests and are small and working too. They are written by hand
 and need no build. `hello-web` uses most of the web API.
 
 ## Install
 
-```sh
-npm install --save-dev @t3tools/plugin-sdk
-```
+The SDK isn't on npm yet. Build it from a T3 Code checkout: run `vp run build` in
+`packages/plugin-sdk`, then `npm pack` in its `dist` folder. Install the `.tgz` file it writes in
+your plugin with `npm install --save-dev <path to the .tgz>`. `dist` holds the whole package as it
+will be published.
 
 The SDK has no dependencies of its own. What else a plugin needs depends on its parts:
 
@@ -23,10 +24,6 @@ The SDK has no dependencies of its own. What else a plugin needs depends on its 
   reads React's exports.
 - Atoms from `@t3tools/plugin-sdk/atom` need `effect`. So does typechecking a server half, which
   also needs `@types/node`. Use the `effect` version the SDK lists as a peer dependency.
-
-To use an SDK that isn't on npm, such as one from a fork, run `vp run build` in
-`packages/plugin-sdk` of a T3 Code checkout. Then run `npm pack` in its `dist` folder and install
-the `.tgz` file it writes.
 
 ## Manifest
 
@@ -77,12 +74,13 @@ the `.tgz` file it writes.
   starts with just the main environment.
   **Reload** picks up edits. The page gets each file's text, so a `url()` can't reach the
   plugin's folder; use a `data:` URL for an image.
-- A `skills/` folder of `<name>/SKILL.md` skills reaches Claude and Codex agents while the plugin
-  is active, and the composer's `$` menu lists them for those agents with the plugin's name. Claude
-  invokes one as `<plugin id>:<folder>`, Codex by the `name` in its frontmatter. Nothing else in
-  the plugin's folder reaches agents. The skills are copied when the plugin starts, so **Reload**
-  picks up changes. A running Claude thread keeps the skills and instructions its process started
-  with, and gets changes when that process next starts.
+- A `skills/` folder of `<name>/SKILL.md` skills reaches Claude and Codex agents while the plugin is
+  active, and the composer's `$` menu lists them for those agents with the plugin's name. Claude
+  invokes one as `<plugin id>:<folder>`, Codex by the `name` in its frontmatter. Nothing else in the
+  plugin's folder reaches agents. The skills are copied when the plugin starts, so **Reload** picks
+  up changes. A running Claude thread keeps the skills and instructions its process started with
+  until that process restarts. A message that picks a skill from a plugin the process started
+  without restarts it.
 
 ## Server half
 
@@ -104,9 +102,9 @@ module.exports = {
   projects, and list a project's git worktrees;
 - provider instances and their models, with the options each model takes, such as reasoning
   effort (`api.providers.list`), so a new thread can set them in `threads.create`;
-- send hooks that add to, replace or block a message, and slash commands that run on the server
-  and may replace or block the message. A message's hooks share 2 seconds, and slash commands never
-  reach them;
+- send hooks that add to, replace or block a message, and slash commands that run on the server and
+  may replace or block the message. A message's hooks share 2 seconds, and slash commands never
+  reach them. A slash command that takes over 10 seconds blocks its message;
 - answers to agents' approvals and questions, instructions for agents, and MCP tools for agents;
 - secrets the user enters on a card in a thread with a turn in progress;
 - HTTP routes, schedules and server info.
@@ -120,8 +118,15 @@ doesn't stop T3 Code. It shows on the plugin's row in Settings → Plugins and i
 create an `'error'` listener anyway: Node reports an unhandled `'error'` event as a crash, and when
 T3 Code can't tell it came from your plugin, the server stops.
 
-HTTP route handlers get the request body as UTF-8 text, so a binary upload arrives corrupted, and a
-query key that appears twice keeps its last value.
+HTTP routes need a signed-in T3 Code session, so a route can't take webhooks from other services. A
+`GET` needs `orchestration:read`, which read-only sessions have, so never change anything in one.
+Other methods need `orchestration:operate`. Handlers get the request body as UTF-8 text, so a binary
+upload arrives corrupted, and a query key that appears twice keeps its last value.
+
+Runs that `turns.afterRunCompleted` hands over and events from `events.stored` have the SDK's own
+shapes, `PluginCompletedRun` and `PluginStoredEvent`, not T3's internal data, which changes between
+releases. A stored event says only what happened in which thread and run, so read the thread for the
+rest.
 
 ## Work that runs over many turns
 
@@ -198,11 +203,11 @@ place of the thread; a `t3code://plugins/<pluginId>/<name>` link opens the deskt
 [`examples/quick-notes`](./examples/quick-notes) keeps notes in its server half's storage and shows
 them in both.
 
-The app can load web halves from several environments at once. Buttons, menu items, badges,
-banners, slash commands, `@` items, tool renderers and replaced parts show only in the threads of
-the environment the plugin runs on, which `api.environmentId` names. Pages, palette commands and
-sidebar sections come only from the first of those environments, the main one unless it's turned
-off.
+The app can load web halves from several environments at once. Buttons, menu items, badges, banners,
+slash commands, `@` items, right panels, tool renderers and replaced parts show only in the threads
+of the environment the plugin runs on, which `api.environmentId` names. Code block renderers apply
+in every thread. Pages, palette and keybinding commands and sidebar sections come only from the
+first of those environments, the main one unless it's turned off.
 
 `api.ui.replace(part, component)` draws one of T3's own parts your way. The component receives
 T3's own controls as ready-made pieces to arrange, plus `original`, T3's own drawing of the part.
@@ -260,8 +265,8 @@ parts of your design to survive that. Build each part on the most stable thing T
 - **Draw `original` for steps you don't handle.** The `timeline.item` part's `item` describes
   commands, file changes, searches, tool calls and reasoning. Other kinds of step have the type
   `other`, and T3 can add kinds in any release.
-- **Ship what the plugin runs.** Adding a folder leaves out `.git` and `node_modules`, so build
-  everything into the files the manifest names.
+- **Ship what the plugin runs.** Adding a folder in Settings → Plugins leaves out `.git` and
+  `node_modules`, so build everything into the files the manifest names.
 - **Ask for a seam.** When T3 doesn't hand over what you need, ask for a piece, part or token on
   the T3 Code repository instead of reaching into its markup.
 

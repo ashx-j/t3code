@@ -499,8 +499,8 @@ export interface PluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
   };
   readonly mcp: {
     /**
-     * Offers a tool to agents in every thread. MCP cannot take a tool back, so after the plugin
-     * deactivates it stays listed and answers that the plugin is disabled until it starts again.
+     * Offers a tool to agents in every thread until the plugin deactivates. Then it leaves new tool
+     * lists, and a call to it fails as an unknown tool.
      */
     readonly registerTool: (tool: PluginMcpTool, handler: PluginMcpToolHandler) => void;
   };
