@@ -1,11 +1,10 @@
-import { OrchestrationV2DomainEvent, type OrchestrationV2StoredEvent } from "@t3tools/contracts";
+import type { OrchestrationV2DomainEvent, OrchestrationV2StoredEvent } from "@t3tools/contracts";
 import type { PluginApi, PluginStoredEvent } from "@t3tools/plugin-sdk/server";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import type * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
-import { projectDomainEventForWire } from "../../orchestration-v2/WireProjection.ts";
 import type { OrchestrationEventStoreError } from "../../persistence/Errors.ts";
 import type * as OrchestrationEventStore from "../../persistence/OrchestrationEventStore.ts";
 import type { FacadeContext } from "./facade.ts";
@@ -13,17 +12,14 @@ import type { FacadeContext } from "./facade.ts";
 // A plugin that stops reading must not hold back event delivery for the rest of the server.
 const PLUGIN_EVENT_BUFFER = 1024;
 
-const encodeEvent = Schema.encodeUnknownSync(Schema.toCodecJson(OrchestrationV2DomainEvent));
-const isJsonObject = Schema.is(Schema.JsonObject);
-
-const toPluginEvent = (stored: OrchestrationV2StoredEvent): PluginStoredEvent => {
-  const event = encodeEvent(stored.event);
-  return {
-    sequence: stored.sequence,
-    type: stored.event.type,
-    event: isJsonObject(event) ? event : {},
-  };
-};
+/** The event `events.stored` hands plugins, so a change to T3's events never reaches them. */
+const toPluginEvent = ({ sequence, event }: OrchestrationV2StoredEvent): PluginStoredEvent => ({
+  sequence,
+  type: event.type,
+  threadId: event.threadId,
+  runId: event.runId ?? null,
+  occurredAt: DateTime.formatIso(event.occurredAt),
+});
 
 interface EventServices {
   readonly orchestrator: Orchestrator.OrchestratorV2["Service"];
@@ -37,9 +33,8 @@ interface EventServices {
  * `suspend` waits instead, for host features that must see every event.
  */
 export const storedEvents = (
-  facade: FacadeContext,
   services: EventServices,
-  options: Parameters<PluginApi["events"]["stored"]>[0],
+  options: Omit<Parameters<PluginApi["events"]["stored"]>[0], "signal">,
   strategy: "sliding" | "suspend",
 ) => {
   if (
@@ -62,14 +57,13 @@ export const storedEvents = (
       : stream;
   const live = (afterSequence: number) =>
     matching(services.orchestrator.streamStoredEventsFrom({ afterSequence, ...filter })).pipe(
-      Stream.map(toPluginEvent),
       Stream.buffer({ capacity: PLUGIN_EVENT_BUFFER, strategy }),
     );
   // Reads up to the newest event, then again from there, until nothing new was stored meanwhile.
   const from = (
     afterSequence: number,
   ): Stream.Stream<
-    PluginStoredEvent,
+    OrchestrationV2StoredEvent,
     Orchestrator.OrchestratorV2Error | OrchestrationEventStoreError
   > =>
     Stream.unwrap(
@@ -84,26 +78,24 @@ export const storedEvents = (
                     throughSequence: newest,
                     ...filter,
                   }),
-                ).pipe(
-                  Stream.map((stored) =>
-                    toPluginEvent({ ...stored, event: projectDomainEventForWire(stored.event) }),
-                  ),
                 ),
                 from(newest),
               ),
         ),
       ),
     );
-  const stream =
-    options.afterSequence === undefined
-      ? Stream.unwrap(services.eventStore.latestAgentSequence().pipe(Effect.map(live)))
-      : from(options.afterSequence);
-  return facade.iterate(stream, options.signal);
+  return options.afterSequence === undefined
+    ? Stream.unwrap(services.eventStore.latestAgentSequence().pipe(Effect.map(live)))
+    : from(options.afterSequence);
 };
 
 export const makeEventsApi = (
   facade: FacadeContext,
   services: EventServices,
 ): PluginApi["events"] => ({
-  stored: (options) => storedEvents(facade, services, options, "sliding"),
+  stored: (options) =>
+    facade.iterate(
+      storedEvents(services, options, "sliding").pipe(Stream.map(toPluginEvent)),
+      options.signal,
+    ),
 });

@@ -210,7 +210,9 @@ export const makePluginApi = (input: {
       storage: ownStorage,
       pluginName: input.name,
       runEvents: (afterSequence) =>
-        storedEvents(facade, services, { types: ["run.updated"], afterSequence }, "suspend"),
+        facade.iterate(
+          storedEvents(services, { types: ["run.updated"], afterSequence }, "suspend"),
+        ),
       latestSequence: () =>
         Effect.runPromiseWith(facade.context)(services.eventStore.latestAgentSequence()),
     }),

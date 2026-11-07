@@ -1,11 +1,21 @@
 import { assert, it } from "@effect/vitest";
-import { PluginId, ThreadId } from "@t3tools/contracts";
+import {
+  EventId,
+  MessageId,
+  type OrchestrationV2Run,
+  type OrchestrationV2StoredEvent,
+  PluginId,
+  ProviderInstanceId,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 import type {
   PluginApi,
+  PluginCompletedRun,
   PluginRuntimeRequest,
-  PluginStoredEvent,
 } from "@t3tools/plugin-sdk/server";
 import type { JsonValue } from "@t3tools/plugin-sdk/shared";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -125,11 +135,43 @@ it.effect(
     }).pipe(Effect.provide(PluginHooks.layer)),
 );
 
-const runUpdate = (sequence: number, runId: string, status: string): PluginStoredEvent => ({
-  sequence,
-  type: "run.updated",
-  event: { type: "run.updated", payload: { id: runId, threadId: "t", status } },
-});
+const runUpdate = (
+  sequence: number,
+  runId: string,
+  status: OrchestrationV2Run["status"],
+  fields: Partial<OrchestrationV2Run> = {},
+): OrchestrationV2StoredEvent => {
+  const threadId = ThreadId.make("t");
+  const codex = ProviderInstanceId.make("codex");
+  return {
+    sequence,
+    commandId: null,
+    event: {
+      type: "run.updated",
+      id: EventId.make(`event:${sequence}`),
+      threadId,
+      occurredAt: DateTime.makeUnsafe(61_000),
+      payload: {
+        id: RunId.make(runId),
+        threadId,
+        ordinal: 1,
+        providerInstanceId: codex,
+        modelSelection: { instanceId: codex, model: "gpt-5.5" },
+        providerThreadId: null,
+        userMessageId: MessageId.make("message:t"),
+        rootNodeId: null,
+        activeAttemptId: null,
+        status,
+        requestedAt: DateTime.makeUnsafe(0),
+        startedAt: DateTime.makeUnsafe(1_000),
+        completedAt: DateTime.makeUnsafe(61_000),
+        checkpointId: null,
+        contextHandoffId: null,
+        ...fields,
+      },
+    },
+  };
+};
 
 /**
  * Activates a plugin whose `register` adds run handlers, over the `stored` run updates after each
@@ -137,7 +179,7 @@ const runUpdate = (sequence: number, runId: string, status: string): PluginStore
  */
 const activateRuns = (input: {
   readonly saved: Map<string, JsonValue>;
-  readonly stored: ReadonlyArray<PluginStoredEvent>;
+  readonly stored: ReadonlyArray<OrchestrationV2StoredEvent>;
   readonly register: (turns: PluginApi["turns"]) => void;
   readonly onFailure?: (error: unknown) => void;
   readonly handlers?: number;
@@ -193,7 +235,8 @@ it.effect("delivers each ended run once and resumes after the last one it handle
   Effect.gen(function* () {
     const saved = new Map<string, JsonValue>();
     const requests: Array<number> = [];
-    const activate = (stored: ReadonlyArray<PluginStoredEvent>) =>
+    const received: Array<PluginCompletedRun> = [];
+    const activate = (stored: ReadonlyArray<OrchestrationV2StoredEvent>) =>
       Effect.gen(function* () {
         const seen: Array<string> = [];
         yield* activateRuns({
@@ -202,6 +245,7 @@ it.effect("delivers each ended run once and resumes after the last one it handle
           requests,
           register: (turns) =>
             turns.afterRunCompleted("steps", (run) => {
+              received.push(run);
               seen.push(`${run.runId}:${run.status}`);
             }),
         });
@@ -212,12 +256,22 @@ it.effect("delivers each ended run once and resumes after the last one it handle
     assert.deepStrictEqual(yield* activate([]), []);
     assert.deepStrictEqual(
       yield* activate([
-        runUpdate(10, "run:10", "completed"),
+        // A wake continues earlier work, so its work started before the run did.
+        runUpdate(10, "run:10", "completed", { workStartedAt: DateTime.makeUnsafe(500) }),
         runUpdate(11, "run:11", "running"),
         runUpdate(12, "run:12", "failed"),
       ]),
       ["run:10:completed", "run:12:failed"],
     );
+    assert.deepStrictEqual(received[0], {
+      runId: "run:10",
+      threadId: "t",
+      status: "completed",
+      model: { instanceId: "codex", model: "gpt-5.5" },
+      requestedAt: "1970-01-01T00:00:00.000Z",
+      startedAt: "1970-01-01T00:00:00.500Z",
+      completedAt: "1970-01-01T00:01:01.000Z",
+    });
     // A checkpoint landing on an ended run updates it again, after a restart too.
     assert.deepStrictEqual(
       yield* activate([

@@ -21,12 +21,16 @@ export interface PluginApiError extends Error {
   readonly code: string;
 }
 
+/** That something happened in a thread; read the thread for what it is now. */
 export interface PluginStoredEvent {
   /** Orchestration sequence number. Pass it as `afterSequence` to resume after this event. */
   readonly sequence: number;
   readonly type: string;
-  /** The orchestration domain event as the server encodes it on the wire. */
-  readonly event: JsonObject;
+  readonly threadId: string;
+  /** The run it belongs to, if any. */
+  readonly runId: string | null;
+  /** When it happened, in ISO 8601. */
+  readonly occurredAt: string;
 }
 
 export interface PluginMcpTool {
@@ -98,10 +102,17 @@ export interface PluginOutgoingMessage {
 export interface PluginCompletedRun {
   readonly runId: string;
   readonly threadId: string;
-  /** `completed`, `interrupted`, `failed`, `cancelled` or `rolled_back`. */
-  readonly status: string;
-  /** The run as the server encodes it on the wire. */
-  readonly run: JsonObject;
+  readonly status: "completed" | "interrupted" | "failed" | "cancelled" | "rolled_back";
+  /** The provider instance and model it ran on. */
+  readonly model: { readonly instanceId: string; readonly model: string };
+  /** When the message that started it was sent. Times are ISO 8601. */
+  readonly requestedAt: string;
+  /**
+   * When the agent started the work, or null for a run that never started, such as a queued
+   * message cancelled before it ran. A run that continues earlier work gives when that started.
+   */
+  readonly startedAt: string | null;
+  readonly completedAt: string | null;
 }
 
 /**

@@ -14,7 +14,7 @@ import * as Stream from "effect/Stream";
 import type * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import type * as OrchestrationEventStore from "../../persistence/OrchestrationEventStore.ts";
 import { makePluginActivation, type PluginPublication } from "../PluginApi.ts";
-import { storedEvents } from "./events.ts";
+import { makeEventsApi } from "./events.ts";
 import { makeFacadeContext } from "./facade.ts";
 
 it.effect("gives a plugin resuming from an old sequence every event stored since", () =>
@@ -59,18 +59,23 @@ it.effect("gives a plugin resuming from an old sequence every event stored since
       context: yield* Effect.context<never>(),
     });
 
-    const sequences = yield* Effect.promise(() =>
+    const events = yield* Effect.promise(() =>
       Array.fromAsync(
-        storedEvents(
-          facade,
-          services,
-          { types: ["run.background-work-cancelled"], afterSequence: 0 },
-          "sliding",
-        ),
-        (event) => event.sequence,
+        makeEventsApi(facade, services).stored({
+          types: ["run.background-work-cancelled"],
+          afterSequence: 0,
+        }),
       ),
     );
-    assert.strictEqual(sequences.length, stored.length);
-    assert.strictEqual(sequences.at(-1), stored.length);
+    assert.strictEqual(events.length, stored.length);
+    assert.strictEqual(events.at(-1)?.sequence, stored.length);
+    // What happened and where, without T3's own event shape.
+    assert.deepStrictEqual(events[0], {
+      sequence: 1,
+      type: "run.background-work-cancelled",
+      threadId: "thread:events",
+      runId: null,
+      occurredAt: "1970-01-01T00:00:00.000Z",
+    });
   }),
 );

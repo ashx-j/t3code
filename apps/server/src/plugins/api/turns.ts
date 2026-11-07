@@ -1,10 +1,15 @@
+import {
+  type OrchestrationV2Run,
+  orchestrationV2RunWorkStartedAt,
+  type OrchestrationV2StoredEvent,
+} from "@t3tools/contracts";
 import type {
   PluginApi,
   PluginBeforeDispatchResult,
   PluginCompletedRun,
-  PluginStoredEvent,
 } from "@t3tools/plugin-sdk/server";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -41,13 +46,30 @@ const dispatchOutcome = (text: string, result: PluginBeforeDispatchResult, plugi
   return undefined;
 };
 
-const TERMINAL_RUN_STATUSES = new Set([
+const ENDED_RUN_STATUSES: ReadonlySet<string> = new Set<PluginCompletedRun["status"]>([
   "completed",
   "interrupted",
   "failed",
   "cancelled",
   "rolled_back",
 ]);
+const hasEnded = (status: OrchestrationV2Run["status"]): status is PluginCompletedRun["status"] =>
+  ENDED_RUN_STATUSES.has(status);
+
+/** The run `afterRunCompleted` hands plugins, so a change to T3's runs never reaches them. */
+const toPluginRun = (
+  run: OrchestrationV2Run,
+  status: PluginCompletedRun["status"],
+): PluginCompletedRun => ({
+  runId: run.id,
+  threadId: run.threadId,
+  status,
+  model: { instanceId: run.modelSelection.instanceId, model: run.modelSelection.model },
+  requestedAt: DateTime.formatIso(run.requestedAt),
+  startedAt:
+    run.startedAt === null ? null : DateTime.formatIso(orchestrationV2RunWorkStartedAt(run)),
+  completedAt: run.completedAt === null ? null : DateTime.formatIso(run.completedAt),
+});
 
 const isJsonObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -86,7 +108,7 @@ export const makeTurnsApi = (
   api: {
     readonly storage: Pick<PluginApi["storage"], "get" | "set">;
     /** Every `run.updated` event after `afterSequence`; never drops events. */
-    readonly runEvents: (afterSequence: number) => AsyncIterable<PluginStoredEvent>;
+    readonly runEvents: (afterSequence: number) => AsyncIterable<OrchestrationV2StoredEvent>;
     /** The newest stored thread event's sequence, where reading from now starts. */
     readonly latestSequence: () => Promise<number>;
     /** Shown with a block reason, so the sender knows which plugin stopped the message. */
@@ -129,23 +151,18 @@ export const makeTurnsApi = (
               await api.storage.set(cursorKey, { sequence, runIds: [] });
             }
             for await (const stored of api.runEvents(sequence)) {
+              if (stored.event.type !== "run.updated") continue;
               const run = stored.event.payload;
-              if (!isJsonObject(run) || typeof run.status !== "string") continue;
-              const runId = String(run.id);
+              const { status } = run;
               // A retry restarts the same run, which then ends again.
-              if (!TERMINAL_RUN_STATUSES.has(run.status)) {
-                handled.delete(runId);
-                handled.delete(`${runId}${ROLLED_BACK_SUFFIX}`);
+              if (!hasEnded(status)) {
+                handled.delete(run.id);
+                handled.delete(`${run.id}${ROLLED_BACK_SUFFIX}`);
                 continue;
               }
-              const key = run.status === "rolled_back" ? `${runId}${ROLLED_BACK_SUFFIX}` : runId;
+              const key = status === "rolled_back" ? `${run.id}${ROLLED_BACK_SUFFIX}` : run.id;
               if (handled.has(key)) continue;
-              const completed: PluginCompletedRun = {
-                runId,
-                threadId: String(run.threadId),
-                status: run.status,
-                run: stored.event.payload as PluginCompletedRun["run"],
-              };
+              const completed = toPluginRun(run, status);
               // A handler out of time counts as done, so one hung run can't stall every later one.
               await Effect.runPromiseWith(facade.context)(
                 Effect.tryPromise({
