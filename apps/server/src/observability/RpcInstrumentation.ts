@@ -92,7 +92,6 @@ const RPC_AGGREGATES = {
   [WS_METHODS.pluginsSetEnabled]: "plugins",
   [WS_METHODS.pluginsSetAgentTools]: "plugins",
   [WS_METHODS.pluginsReload]: "plugins",
-  [WS_METHODS.pluginsInstall]: "plugins",
   [WS_METHODS.pluginsCreateUploadUrl]: "plugins",
   [WS_METHODS.pluginsRescan]: "plugins",
   [WS_METHODS.pluginsUninstall]: "plugins",

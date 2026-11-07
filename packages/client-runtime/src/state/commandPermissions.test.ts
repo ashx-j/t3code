@@ -103,7 +103,6 @@ describe("command permissions", () => {
     // Plugin tools let agents install plugins, so turning them on is a settings change.
     WS_METHODS.pluginsSetAgentTools,
     WS_METHODS.pluginsReload,
-    WS_METHODS.pluginsInstall,
     WS_METHODS.pluginsCreateUploadUrl,
     WS_METHODS.pluginsRescan,
     WS_METHODS.pluginsUninstall,

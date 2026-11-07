@@ -379,7 +379,6 @@ import {
   PluginCreateUploadUrlInput,
   PluginCreateUploadUrlResult,
   PluginError,
-  PluginInstallInput,
   PluginInvokeInput,
   PluginInvokeResult,
   PluginUninstallInput,
@@ -578,7 +577,6 @@ export const WS_METHODS = {
   pluginsSetEnabled: "plugins.setEnabled",
   pluginsSetAgentTools: "plugins.setAgentTools",
   pluginsReload: "plugins.reload",
-  pluginsInstall: "plugins.install",
   pluginsCreateUploadUrl: "plugins.createUploadUrl",
   pluginsRescan: "plugins.rescan",
   pluginsUninstall: "plugins.uninstall",
@@ -2024,12 +2022,6 @@ const WsPluginsReloadRpc = Rpc.make(WS_METHODS.pluginsReload, {
   error: PluginRpcError,
 });
 
-const WsPluginsInstallRpc = Rpc.make(WS_METHODS.pluginsInstall, {
-  payload: PluginInstallInput,
-  success: PluginMutationResult,
-  error: PluginRpcError,
-});
-
 /** Signs the URL a client uploads a dropped plugin folder to, over HTTP. */
 const WsPluginsCreateUploadUrlRpc = Rpc.make(WS_METHODS.pluginsCreateUploadUrl, {
   payload: PluginCreateUploadUrlInput,
@@ -2172,7 +2164,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsPluginsSetEnabledRpc,
   WsPluginsSetAgentToolsRpc,
   WsPluginsReloadRpc,
-  WsPluginsInstallRpc,
   WsPluginsCreateUploadUrlRpc,
   WsPluginsRescanRpc,
   WsPluginsUninstallRpc,

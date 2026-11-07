@@ -207,9 +207,6 @@ export const PluginReloadInput = Schema.Struct({
 });
 export type PluginReloadInput = typeof PluginReloadInput.Type;
 
-export const PluginInstallInput = Schema.Struct({ source: PluginInstallSource });
-export type PluginInstallInput = typeof PluginInstallInput.Type;
-
 /** Limits on a plugin folder a client uploads to the URL `plugins.createUploadUrl` returns. */
 export const PLUGIN_UPLOAD_MAX_FILES = 1_000;
 export const PLUGIN_UPLOAD_MAX_BYTES = 25 * 1024 * 1024;

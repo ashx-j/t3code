@@ -50,10 +50,6 @@ export function createPluginEnvironmentAtoms<R, E>(
       label: "environment-data:plugins:reload",
       tag: WS_METHODS.pluginsReload,
     }),
-    installPlugin: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:plugins:install",
-      tag: WS_METHODS.pluginsInstall,
-    }),
     // Signs the URL a dropped folder is uploaded to; see `PluginCreateUploadUrlResult`.
     createPluginUploadUrl: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:plugins:create-upload-url",

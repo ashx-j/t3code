@@ -3,7 +3,6 @@ import {
   PluginError,
   type PluginCreateUploadUrlInput,
   type PluginId,
-  type PluginInstallInput,
   type PluginInvokeInput,
   type PluginListInput,
   type PluginReloadInput,
@@ -53,11 +52,6 @@ export const makePluginRpcHandlers = (
     pluginHost.reload(input.pluginId).pipe(
       Effect.map((plugin) => ({ plugin })),
       Effect.mapError(toRpcError(input.pluginId)),
-    ),
-  [WS_METHODS.pluginsInstall]: (input: PluginInstallInput) =>
-    installer.install(input.source).pipe(
-      Effect.map((plugin) => ({ plugin })),
-      Effect.mapError((error) => new PluginError({ message: error.message })),
     ),
   [WS_METHODS.pluginsCreateUploadUrl]: (_input: PluginCreateUploadUrlInput) =>
     issuePluginUploadUrl().pipe(
