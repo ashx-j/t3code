@@ -611,6 +611,7 @@ function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
         className,
       )}
       data-slot="sidebar-inset"
+      data-t3-region="main"
       {...props}
     />
   );

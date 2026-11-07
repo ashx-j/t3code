@@ -8,10 +8,29 @@ const FOCUS_BOUNDARY_SELECTOR =
 const FOCUSABLE_SELECTOR =
   'button:not(:disabled), a[href], input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [contenteditable="true"], [tabindex]';
 
+/**
+ * Each area's `data-t3-region`, which plugin CSS targets. Plugins depend on these names, so they
+ * stay when an area's F6 name, label or element changes.
+ */
+const T3_REGIONS = {
+  sidebar: "sidebar",
+  conversation: "timeline",
+  composer: "composer",
+  details: "thread-details",
+  panel: "right-panel",
+  terminal: "terminal",
+  home: "home",
+  "pull-requests": "pull-requests",
+  settings: "settings",
+  "settings-nav": "settings-nav",
+  "plugin-page": "plugin-page",
+} as const;
+
 /** Props that make an element one stop in the F6 cycle; `order` sets its place in the cycle. */
-export function workspaceAreaProps(name: string, order: number, label: string) {
+export function workspaceAreaProps(name: keyof typeof T3_REGIONS, order: number, label: string) {
   return {
     "data-workspace-area": name,
+    "data-t3-region": T3_REGIONS[name],
     "data-workspace-order": order,
     "aria-label": label,
     role: "region",

@@ -62,3 +62,30 @@ it("a new draft does not load its reserved thread before the server lists it", a
   // A 404 here marks the thread deleted, and the view never loads it once the send creates it.
   expect(threadRequests).toEqual([]);
 });
+
+it("marks the window's main areas with the region names plugin styles target", async () => {
+  using _environment = installFakeEnvironment([]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const draftId = DraftId.make("draft-regions");
+  useComposerDraftStore
+    .getState()
+    .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
+      threadId: ThreadId.make("thread-regions"),
+    });
+
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByTestId("composer-editor")).toBeVisible();
+
+  // Plugins style these by name, so renaming one breaks them. The test viewport has no sidebar.
+  for (const region of ["main", "timeline", "composer"]) {
+    expect(document.querySelector(`[data-t3-region="${region}"]`), region).not.toBeNull();
+  }
+});
