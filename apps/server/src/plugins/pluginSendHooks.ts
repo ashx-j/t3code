@@ -113,17 +113,28 @@ export const makePluginSendHooks = Effect.gen(function* () {
   });
 
   // The last message in line on each thread. A hook or command can take seconds, and the thread's
-  // next message must not reach the orchestrator before it.
+  // next message must not reach the orchestrator before it. Only the dispatch waits its turn: a
+  // message's own hooks run at once, so slow hooks never add up across a thread's messages.
   const lines = new Map<ThreadId, Deferred.Deferred<void>>();
-  const inThreadOrder = <A, E>(threadId: ThreadId, effect: Effect.Effect<A, E>) =>
+  const inThreadOrder = <B, E1, A, E2>(
+    threadId: ThreadId,
+    prepare: Effect.Effect<B, E1>,
+    dispatch: (prepared: B) => Effect.Effect<A, E2>,
+  ) =>
     Effect.uninterruptibleMask((restore) => {
       const done = Deferred.makeUnsafe<void>();
       const ahead = lines.get(threadId);
       lines.set(threadId, done);
       return restore(
-        ahead === undefined ? effect : Deferred.await(ahead).pipe(Effect.andThen(effect)),
+        prepare.pipe(
+          Effect.flatMap((prepared) =>
+            ahead === undefined
+              ? dispatch(prepared)
+              : Deferred.await(ahead).pipe(Effect.andThen(dispatch(prepared))),
+          ),
+        ),
       ).pipe(
-        // A sender that gives up while waiting still lets the next one go only after its own.
+        // A sender that gives up or is blocked still lets the next one go only after its own.
         Effect.ensuring(
           Effect.suspend(() => {
             if (lines.get(threadId) === done) {
@@ -233,7 +244,9 @@ export const makePluginSendHooks = Effect.gen(function* () {
       : hooks.handlesMessages.pipe(
           // A message still in line keeps the next one behind it after the last plugin stops.
           Effect.flatMap((handled) =>
-            handled || lines.has(threadId) ? inThreadOrder(threadId, send) : send,
+            handled || lines.has(threadId)
+              ? inThreadOrder(threadId, withHooks(command), dispatch)
+              : send,
           ),
         );
   };

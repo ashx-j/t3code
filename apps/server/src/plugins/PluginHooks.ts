@@ -6,10 +6,13 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { T3_SLASH_COMMAND_NAMES } from "@t3tools/shared/slashCommands";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -58,7 +61,7 @@ type DispatchOutcome =
   | { readonly block: string; readonly pluginName: string }
   | undefined;
 
-/** The host makes hooks safe: bounded and fail-open. */
+/** The host makes hooks fail-open; the registry bounds them. */
 type BeforeDispatchHook = (message: PluginOutgoingMessage) => Effect.Effect<DispatchOutcome>;
 
 export interface PluginSlashCommand {
@@ -301,6 +304,12 @@ export class PluginHooks extends Context.Reference<PluginHooksRegistry>("t3/plug
   }),
 }) {}
 
+// Hooks sit on the send path of every message, so all of a message's hooks share a short
+// deadline. One that starts after it still gets a moment, so a hook that answers at once applies
+// after a hung one.
+const HOOKS_DEADLINE_MS = 2_000;
+const LATE_HOOK_MS = 100;
+
 const applyOutcome = (text: string, outcome: DispatchOutcome) =>
   outcome === undefined
     ? Effect.succeed(text)
@@ -418,14 +427,18 @@ const make = Effect.gen(function* () {
           : unlessAccepted(
               alreadyAccepted,
               message.text,
-              Effect.reduce(
-                all,
-                () => message.text,
-                (text, entry) =>
-                  entry
+              Effect.gen(function* () {
+                const deadline = (yield* Clock.currentTimeMillis) + HOOKS_DEADLINE_MS;
+                let text = message.text;
+                for (const entry of all) {
+                  const left = deadline - (yield* Clock.currentTimeMillis);
+                  const outcome = yield* entry
                     .run({ ...message, text })
-                    .pipe(Effect.flatMap((outcome) => applyOutcome(text, outcome))),
-              ),
+                    .pipe(Effect.timeoutOption(Duration.millis(Math.max(left, LATE_HOOK_MS))));
+                  text = yield* applyOutcome(text, Option.getOrUndefined(outcome));
+                }
+                return text;
+              }),
             ),
       ),
     );

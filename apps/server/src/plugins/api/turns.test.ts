@@ -34,7 +34,7 @@ const unusedRuntimeRequests = {
 };
 
 it.effect(
-  "runs beforeDispatch hooks in order, skipping one that throws or misses its deadline",
+  "runs beforeDispatch hooks in order, skipping ones that throw or miss the message's deadline",
   () =>
     Effect.gen(function* () {
       const hooks = yield* PluginHooks.PluginHooks;
@@ -53,16 +53,21 @@ it.effect(
           pluginName: "Hooked",
         },
       );
+      const hung = () => new Promise<never>(() => undefined);
       turns.beforeDispatch(() => ({ appendText: "first" }));
       turns.beforeDispatch(() => {
         throw new Error("broken hook");
       });
-      turns.beforeDispatch(() => new Promise(() => undefined));
+      turns.beforeDispatch(hung);
       turns.beforeDispatch((message) => ({ text: message.text.toUpperCase() }));
+      turns.beforeDispatch(hung);
       turns.beforeDispatch(async () => ({ appendText: "last" }));
+      turns.beforeDispatch(hung);
       turns.beforeDispatch((message) =>
         message.text.startsWith("HALT") ? { block: " " } : undefined,
       );
+      // The hooks share the message's 2 seconds; a hook that starts later still gets 100 ms.
+      const allHung = "2200 millis";
       const send = (text: string) =>
         hooks
           .beforeDispatch(
@@ -76,16 +81,16 @@ it.effect(
             },
             notAccepted,
           )
-          .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+          .pipe(Effect.forkChild({ startImmediately: true }));
 
       const sending = yield* send("Go");
-      yield* TestClock.adjust("2 seconds");
-      assert.deepStrictEqual(yield* Fiber.join(sending), Exit.succeed("GO\n\nFIRST\n\nlast"));
+      yield* TestClock.adjust(allHung);
+      assert.deepStrictEqual(sending.pollUnsafe(), Exit.succeed("GO\n\nFIRST\n\nlast"));
 
       const halting = yield* send("halt");
-      yield* TestClock.adjust("2 seconds");
+      yield* TestClock.adjust(allHung);
       assert.deepStrictEqual(
-        yield* Fiber.join(halting),
+        halting.pollUnsafe(),
         Exit.fail(
           new PluginHooks.PluginMessageBlockedError({
             pluginName: "Hooked",
@@ -112,16 +117,12 @@ it.effect(
             }),
             notAccepted,
           )
-          .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+          .pipe(Effect.forkChild({ startImmediately: true }));
       const notCommand = yield* rewrite("/please go");
-      yield* TestClock.adjust("2 seconds");
-      assert.deepStrictEqual(
-        yield* Fiber.join(notCommand),
-        Exit.succeed("/PLEASE GO\n\nFIRST\n\nlast"),
-      );
+      yield* TestClock.adjust(allHung);
+      assert.deepStrictEqual(notCommand.pollUnsafe(), Exit.succeed("/PLEASE GO\n\nFIRST\n\nlast"));
       const command = yield* rewrite("/review go");
-      yield* TestClock.adjust("2 seconds");
-      assert.deepStrictEqual(yield* Fiber.join(command), Exit.succeed("/review go"));
+      assert.deepStrictEqual(yield* Fiber.join(command), "/review go");
     }).pipe(Effect.provide(PluginHooks.layer)),
 );
 

@@ -5,9 +5,7 @@ import type {
   PluginStoredEvent,
 } from "@t3tools/plugin-sdk/server";
 import * as Cause from "effect/Cause";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 
 import type * as PluginHooks from "../PluginHooks.ts";
 import { type FacadeContext, PluginCodeError } from "./facade.ts";
@@ -16,8 +14,6 @@ import type { RuntimeRequestHooks } from "./runtimeRequests.ts";
 /** T3 keeps its own records in a plugin's storage under this prefix, out of the plugin's reach. */
 export const T3_STORAGE_PREFIX = "t3.";
 
-// A hook sits on the send path of every message, so it gets a short deadline and fails open.
-const BEFORE_DISPATCH_DEADLINE = Duration.seconds(2);
 const MAX_APPENDED_CHARS = 20_000;
 const MAX_BLOCK_REASON_CHARS = 500;
 
@@ -220,15 +216,10 @@ export const makeTurnsApi = (
                   ),
                 catch: (cause) => new PluginCodeError({ cause }),
               }).pipe(
-                Effect.timeoutOption(BEFORE_DISPATCH_DEADLINE),
-                Effect.map(
-                  Option.match({
-                    onNone: () => undefined,
-                    onSome: (result) =>
-                      activation.controller.signal.aborted
-                        ? undefined
-                        : dispatchOutcome(message.text, result, api.pluginName),
-                  }),
+                Effect.map((result) =>
+                  activation.controller.signal.aborted
+                    ? undefined
+                    : dispatchOutcome(message.text, result, api.pluginName),
                 ),
                 Effect.catchCause((cause) =>
                   Effect.sync(() => {

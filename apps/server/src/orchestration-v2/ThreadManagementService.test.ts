@@ -335,7 +335,7 @@ it.effect(
 );
 
 it.effect(
-  "a slow plugin command keeps the thread's next message behind it, not other threads'",
+  "a slow plugin command keeps the thread's next message behind it, not its hooks or other threads",
   () => {
     const threadId = ThreadId.make("thread:thread-management:chokepoint");
     const texts: Array<string> = [];
@@ -370,22 +370,28 @@ it.effect(
             Effect.as({ text: `Deploy ${outgoing.args} now.` }),
           ),
       );
+      const removeCheck = yield* hooks.addBeforeDispatch("checker", (outgoing) =>
+        Effect.sleep(Duration.seconds(1)).pipe(Effect.as({ text: `${outgoing.text} Checked.` })),
+      );
       const threads = yield* ThreadManagementService.ThreadManagementService;
       const deploying = yield* threads
         .dispatch(message("deploy", "/deploy staging"))
         .pipe(Effect.forkChild({ startImmediately: true }));
+      // The next message passes the hooks while the command runs, then waits for it.
       const testing = yield* threads
         .dispatch(message("tests", "And run the tests."))
         .pipe(Effect.forkChild({ startImmediately: true }));
-      // The plugin turns off mid-command; the thread's next message still waits its turn.
+      yield* TestClock.adjust(Duration.seconds(1));
+      // The plugins turn off mid-command; the thread's next message still waits its turn.
       yield* removeDeploy;
+      yield* removeCheck;
       const shipping = yield* threads
         .dispatch(message("ship", "Then ship it."))
         .pipe(Effect.forkChild({ startImmediately: true }));
       yield* threads.dispatch(
         message("elsewhere", "Unrelated.", ThreadId.make("thread:thread-management:elsewhere")),
       );
-      yield* TestClock.adjust(Duration.seconds(4));
+      yield* TestClock.adjust(Duration.seconds(3));
       yield* Fiber.join(deploying);
       yield* Fiber.join(testing);
       yield* Fiber.join(shipping);
@@ -393,7 +399,7 @@ it.effect(
       expect(texts).toEqual([
         "Unrelated.",
         "Deploy staging now.",
-        "And run the tests.",
+        "And run the tests. Checked.",
         "Then ship it.",
       ]);
     }).pipe(Effect.provide(layerTest));
