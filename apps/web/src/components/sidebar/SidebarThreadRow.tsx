@@ -20,7 +20,8 @@ import {
   resolveThreadProviderStack,
 } from "@t3tools/client-runtime/state/models";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { PluginThreadBadges } from "../../plugins/PluginActions";
+import { useAtomValue } from "@effect/atom-react";
+import { pluginUiAtom } from "../../plugins/pluginUi";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
@@ -656,6 +657,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
+  const pluginUi = useAtomValue(pluginUiAtom);
   const { leaseLiveStatus, rowRef: leaseRowRef } = useSidebarRowSubscriptionLease(props.isActive);
   const { revealRef } = props;
   const rowRef = (row: HTMLElement | null) => {
@@ -1442,7 +1444,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               ) : (
                 <span className="flex-1" />
               )}
-              <PluginThreadBadges threadKey={threadKey} />
+              {pluginUi === null ? null : <pluginUi.PluginThreadBadges threadKey={threadKey} />}
               {sortable?.isDragging ? (
                 dragDestination
               ) : (

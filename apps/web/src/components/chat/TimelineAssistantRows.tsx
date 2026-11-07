@@ -1,6 +1,4 @@
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
-import { PluginReplaceable } from "../../plugins/PluginReplaceable";
-import { PluginActionButtons } from "../../plugins/PluginActions";
 import { type RunId } from "@t3tools/contracts";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import { memo, use, useState } from "react";
@@ -62,16 +60,20 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
             request={ctx.citationRequest}
             listRef={ctx.listRef}
           >
-            <PluginReplaceable
-              part="message.assistant"
-              pieces={{
-                original: markdown,
-                text: messageText,
-                messageId: row.message.id,
-                threadId: ctx.threadRef?.threadId ?? null,
-                streaming: Boolean(row.message.streaming),
-              }}
-            />
+            {ctx.pluginUi === null ? (
+              markdown
+            ) : (
+              <ctx.pluginUi.PluginReplaceable
+                part="message.assistant"
+                pieces={{
+                  original: markdown,
+                  text: messageText,
+                  messageId: row.message.id,
+                  threadId: ctx.threadRef?.threadId ?? null,
+                  streaming: Boolean(row.message.streaming),
+                }}
+              />
+            )}
           </AssistantCitationSource>
         </div>
         {ctx.onOpenTurnDiff ? (
@@ -202,8 +204,8 @@ function AssistantMessageMeta({
       {projectedItem?.item.type === "assistant_message" ? (
         <AssistantForkButton projectedItem={projectedItem} />
       ) : null}
-      {ctx.threadRef && !message.streaming ? (
-        <PluginActionButtons
+      {ctx.pluginUi && ctx.threadRef && !message.streaming ? (
+        <ctx.pluginUi.PluginActionButtons
           place="message"
           environmentId={ctx.threadRef.environmentId}
           context={{

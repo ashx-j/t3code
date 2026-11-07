@@ -5,7 +5,6 @@ import { describe, expect, it } from "vite-plus/test";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import {
   capPluginMentionText,
-  PLUGIN_CONTEXT_KIND,
   pluginMentionContextId,
   pluginMentionContextRecords,
   pluginActionAtoms,
@@ -22,6 +21,7 @@ import {
   setPluginThreadBadge,
   withPluginThreadMenuItems,
 } from "./pluginRegistry";
+import { PLUGIN_CONTEXT_KIND } from "./pluginUi";
 
 const environmentId = EnvironmentId.make("environment:plugin-menu");
 const otherEnvironmentId = EnvironmentId.make("environment:other");

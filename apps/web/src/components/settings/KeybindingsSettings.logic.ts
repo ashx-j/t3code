@@ -16,7 +16,7 @@ import {
 import { shortcutConflictKey, shortcutKeyFromEvent } from "../../keybindings";
 import { isMacPlatform } from "../../lib/utils";
 import { METRIC_OPTIONS, WINDOW_OPTIONS } from "../usage/usageShortcuts";
-import { pluginCommandLabel } from "../../plugins/pluginRegistry";
+import { pluginCommandLabel } from "../../plugins/pluginUi";
 
 // Rank every usage command; mixing rank and alphabetical comparisons makes order input-dependent.
 const usageCommandOrder = new Map<KeybindingCommand, number>(

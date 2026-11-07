@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { pluginCommandsAtom } from "../../plugins/pluginRegistry";
+import { pluginCommandsAtom } from "../../plugins/pluginUi";
 import { useEnvironmentScope } from "../../state/session";
 import { useEnvironmentsWithScope, readEnvironmentScope } from "../../state/session";
 import {

@@ -87,7 +87,7 @@ import {
 } from "react";
 import type { LegendListRef } from "@legendapp/list/react";
 import { useAtomValue } from "@effect/atom-react";
-import { pluginCommandsAtom } from "../plugins/pluginRegistry";
+import { pluginCommandsAtom } from "../plugins/pluginUi";
 
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";

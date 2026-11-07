@@ -5,7 +5,7 @@ import { BlocksIcon } from "lucide-react";
 import { ContextChip, ContextChipLabel } from "../components/ContextChip";
 import { UnresolvedChip } from "../components/contextChipParts";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
-import { pluginMentionItemAtom } from "./pluginRegistry";
+import { pluginMentionItemAtom } from "./pluginUi";
 
 const TEXT_PREVIEW_CHARS = 280;
 

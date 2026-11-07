@@ -279,9 +279,8 @@ import {
   usePreparingComposerImages,
 } from "./preparingComposerImages";
 import { ComposerControlsBar } from "./ComposerControlsBar";
-import { PluginActionButtons } from "../../plugins/PluginActions";
-import { PluginReplaceable } from "../../plugins/PluginReplaceable";
-import { PLUGIN_CONTEXT_KIND } from "../../plugins/pluginRegistry";
+import { useAtomValue } from "@effect/atom-react";
+import { PLUGIN_CONTEXT_KIND, pluginUiAtom } from "../../plugins/pluginUi";
 import { composerCommandKeyHandler } from "./composerCommandKey";
 
 function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
@@ -603,6 +602,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onRemoveEditingQueuedAttachment,
   } = props;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const pluginUi = useAtomValue(pluginUiAtom);
   const composerDraftTargetKey = composerTargetKey(composerDraftTarget);
   const {
     heldRequestIds,
@@ -3169,14 +3169,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       focusComposer={focusComposer}
     />
   ) : null;
-  const composerPluginButtons = (
-    <PluginActionButtons
-      place="composer"
-      environmentId={environmentId}
-      context={{ threadId: routeKind === "server" ? routeThreadRef.threadId : null }}
-      size="icon-sm"
-    />
-  );
+  const composerPluginButtons =
+    pluginUi === null ? null : (
+      <pluginUi.PluginActionButtons
+        place="composer"
+        environmentId={environmentId}
+        context={{ threadId: routeKind === "server" ? routeThreadRef.threadId : null }}
+        size="icon-sm"
+      />
+    );
   const defaultComposerFooter = (
     <>
       {composerAttachButton ? <div className="me-2">{composerAttachButton}</div> : null}
@@ -3546,19 +3547,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   showMobilePendingAnswerActions && "hidden sm:flex",
                 )}
               >
-                <PluginReplaceable
-                  part="composer.controls"
-                  pieces={{
-                    original: defaultComposerFooter,
-                    attach: composerAttachButton,
-                    controls: composerControls,
-                    model: composerControlsBar("model"),
-                    effort: composerControlsBar("effort"),
-                    access: composerControlsBar("access"),
-                    actions: composerPrimaryActions,
-                    buttons: composerPluginButtons,
-                  }}
-                />
+                {pluginUi === null ? (
+                  defaultComposerFooter
+                ) : (
+                  <pluginUi.PluginReplaceable
+                    part="composer.controls"
+                    pieces={{
+                      original: defaultComposerFooter,
+                      attach: composerAttachButton,
+                      controls: composerControls,
+                      model: composerControlsBar("model"),
+                      effort: composerControlsBar("effort"),
+                      access: composerControlsBar("access"),
+                      actions: composerPrimaryActions,
+                      buttons: composerPluginButtons,
+                    }}
+                  />
+                )}
               </div>
             )}
             {showInlineRestingControls ? (

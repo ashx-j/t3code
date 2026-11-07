@@ -1,8 +1,6 @@
 import { InlineAudioPreview } from "../files/InlineAudioPreview";
-import { PluginReplaceable } from "../../plugins/PluginReplaceable";
-import { PluginActionButtons } from "../../plugins/PluginActions";
 import { SentPluginContextChip } from "../../plugins/PluginContextChip";
-import { PLUGIN_CONTEXT_KIND } from "../../plugins/pluginRegistry";
+import { PLUGIN_CONTEXT_KIND } from "../../plugins/pluginUi";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { findRevealRef } from "./markdownFindContext";
 import {
@@ -820,8 +818,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             variant="ghost"
           />
         )}
-        {ctx.threadRef ? (
-          <PluginActionButtons
+        {ctx.pluginUi && ctx.threadRef ? (
+          <ctx.pluginUi.PluginActionButtons
             place="message"
             environmentId={ctx.threadRef.environmentId}
             context={{
@@ -1212,8 +1210,9 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       headingLevelOffset={MESSAGE_HEADING_LEVEL}
     />
   );
+  if (ctx.pluginUi === null) return markdown;
   return (
-    <PluginReplaceable
+    <ctx.pluginUi.PluginReplaceable
       part="message.user"
       pieces={{
         original: markdown,

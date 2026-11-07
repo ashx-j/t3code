@@ -1,5 +1,5 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { runPluginThreadMenuItem, showThreadMenu } from "../plugins/pluginRegistry";
+import { runPluginThreadMenuItem, showThreadMenu } from "../plugins/pluginUi";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
 import { openGuestShareDialog } from "../components/chat/guestShareDialogState";
 import {

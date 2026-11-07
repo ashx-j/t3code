@@ -12,7 +12,9 @@ import { useRightPanelStore } from "../rightPanelStore";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
 import { HostImageUrlContext } from "./chat/hostImageUrl";
 import { registerPluginCodeBlock } from "../plugins/pluginRegistry";
-import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
+import { pluginUiAtom } from "../plugins/pluginUi";
+import { pluginUi } from "../plugins/pluginUiParts";
+import { AppAtomRegistryProvider, appAtomRegistry } from "../rpc/atomRegistry";
 
 const { workspaceSearch, filesystemMetadata } = vi.hoisted(() => ({
   workspaceSearch: vi.fn(),
@@ -254,6 +256,8 @@ describe("ChatMarkdown streaming", () => {
 
   it("lets a plugin draw closed code fences of its language", async () => {
     setup();
+    appAtomRegistry.set(pluginUiAtom, pluginUi);
+    using _ui = { [Symbol.dispose]: () => appAtomRegistry.set(pluginUiAtom, null) };
     using _renderer = {
       [Symbol.dispose]: registerPluginCodeBlock("hello-chart", {
         component: (props) => <p>Chart of {props.code}</p>,

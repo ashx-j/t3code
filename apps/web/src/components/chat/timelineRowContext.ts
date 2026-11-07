@@ -29,6 +29,7 @@ import { type MessagesTimelineRow, type WorkGroupScrollAnchor } from "./Messages
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import type { TurnItemDetailSource } from "../../state/queries";
 import { type HandoffTimelineRun } from "./V2LifecycleRow";
+import type { PluginUi } from "../../plugins/pluginUiParts";
 
 /**
  * Where an expanded row reads an item's detail and a command's output. The owner's rows read them
@@ -97,6 +98,8 @@ export interface TimelineRowSharedState {
   onWorktreeSetupWorkLocally: (() => void) | null;
   onOpenWorktreeSetupTerminal: ((terminalId: string) => void) | null;
   workGroupViewState: WorkGroupViewState;
+  /** Read once for the whole timeline, so rows subscribe to no plugin atom until plugins load. */
+  pluginUi: PluginUi | null;
 }
 
 export interface TimelineRowActivityState {

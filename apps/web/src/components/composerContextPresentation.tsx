@@ -55,7 +55,7 @@ import {
   UnresolvedChip,
 } from "./contextChipParts";
 import { ComposerPluginContextChip } from "../plugins/PluginContextChip";
-import { PLUGIN_CONTEXT_KIND } from "../plugins/pluginRegistry";
+import { PLUGIN_CONTEXT_KIND } from "../plugins/pluginUi";
 
 export type ComposerDraftContextRecord =
   | { kind: "terminal"; record: TerminalContextDraft }

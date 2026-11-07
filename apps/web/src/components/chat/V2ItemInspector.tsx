@@ -1,5 +1,4 @@
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
-import { PluginReplaceable } from "../../plugins/PluginReplaceable";
 import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
 import {
   toolCallLines,
@@ -23,9 +22,8 @@ import { Button } from "../ui/button";
 import ChatMarkdown from "../ChatMarkdown";
 import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
 import { RenderErrorBoundary } from "../RenderErrorBoundary";
-import { PluginToolBody } from "../../plugins/PluginToolBody";
-import { pluginToolNameOf } from "../../plugins/pluginRegistry";
-import { toPluginTimelineItem } from "../../plugins/pluginTimelineItem";
+import { pluginToolNameOf } from "../../plugins/pluginUi";
+import type { PluginUi } from "../../plugins/pluginUiParts";
 import { CommandOutputPanel, useCommandOutputStreaming } from "./CommandOutputPanel";
 import { resolveExternalWebLinkHref } from "./externalLinkContextMenu";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
@@ -40,6 +38,7 @@ interface V2ItemInspectorProps {
   readonly onOpenToolDiff?: ((target: ToolCallDiffTarget) => void) | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   readonly source?: TurnItemSource | undefined;
+  readonly pluginUi: PluginUi | null;
 }
 
 function SyntaxTokens({
@@ -391,8 +390,10 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
       ) : null}
 
       {item.type === "dynamic_tool" && dynamicToolBody !== null ? (
-        pluginToolNameOf(item.toolName) !== undefined && item.toolName !== null ? (
-          <PluginToolBody
+        props.pluginUi !== null &&
+        pluginToolNameOf(item.toolName) !== undefined &&
+        item.toolName !== null ? (
+          <props.pluginUi.PluginToolBody
             environmentId={props.environmentId}
             toolName={item.toolName}
             input={item.input}
@@ -432,12 +433,13 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
       ) : null}
     </div>
   );
+  if (props.pluginUi === null) return inspector;
   return (
-    <PluginReplaceable
+    <props.pluginUi.PluginReplaceable
       part="timeline.item"
       pieces={{
         original: inspector,
-        item: toPluginTimelineItem(item),
+        item: props.pluginUi.toPluginTimelineItem(item),
         output: outputState.output,
         commandOutput,
       }}

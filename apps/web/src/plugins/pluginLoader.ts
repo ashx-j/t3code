@@ -68,6 +68,8 @@ import {
   type PluginActionPlace,
   type PluginOwner,
 } from "./pluginRegistry";
+import { pluginUiAtom } from "./pluginUi";
+import { pluginUi } from "./pluginUiParts";
 import { isLoadableWebPlugin } from "./pluginWatch";
 
 const PANEL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -709,6 +711,8 @@ export function startPluginLoader(
   navigate: (path: string) => void,
 ): () => void {
   installHostModules();
+  // Stays once set: the registries empty out as plugins unload, so their readers draw nothing.
+  appAtomRegistry.set(pluginUiAtom, pluginUi);
   const shortcutHandlers: CommandHandlers = {};
   // Registered with the first plugin command, so key presses pay nothing until one exists.
   let stopShortcuts: (() => void) | undefined;

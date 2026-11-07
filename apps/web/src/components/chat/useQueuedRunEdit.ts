@@ -40,7 +40,7 @@ import {
   startAttachmentUpload,
 } from "../../lib/attachmentUploadQueue";
 import { buildMessageContext } from "../../lib/composerContextRecords";
-import { pluginMentionContextRecords } from "../../plugins/pluginRegistry";
+import { pluginMentionContextRecords } from "../../plugins/pluginUi";
 import { readFileAsDataUrl } from "../../lib/imageCompression";
 import type { TerminalContextDraft } from "../../lib/terminalContext";
 import type { ReviewCommentContext } from "../../reviewCommentContext";

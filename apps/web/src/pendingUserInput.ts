@@ -10,7 +10,7 @@ import {
 } from "@t3tools/client-runtime/state/pending-user-input";
 
 import { collectInlineContextIds } from "./lib/composerContextReferences";
-import { PLUGIN_CONTEXT_KIND, pluginMentionAnswerText } from "./plugins/pluginRegistry";
+import { PLUGIN_CONTEXT_KIND, pluginMentionAnswerText } from "./plugins/pluginUi";
 
 export function projectPendingUserInputAnswer(
   answer: unknown,

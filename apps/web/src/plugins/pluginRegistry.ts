@@ -2,7 +2,6 @@ import type {
   ComposerContextId,
   ContextMenuItem,
   EnvironmentId,
-  LocalApi,
   PLUGIN_COMMAND_PATTERN,
   UnknownContextRecord,
 } from "@t3tools/contracts";
@@ -15,6 +14,7 @@ import { Atom } from "effect/reactivity";
 import type { ComponentType } from "react";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { PLUGIN_CONTEXT_KIND } from "./pluginUi";
 
 export interface PluginRightPanelEntry {
   readonly environmentId: EnvironmentId;
@@ -69,7 +69,8 @@ export interface PluginToolRendererProps {
 }
 
 // Plain maps with one list-level version: chat code reads them on render and re-renders on the
-// version alone, so a plugin never adds a subscription per row or per panel.
+// version alone, so a plugin never adds a subscription per row or per panel. App code outside the
+// plugin runtime and lazy routes reads them through `pluginUi.ts`, so this stays out of startup.
 const rightPanels = new Map<string, PluginRightPanelEntry>();
 const settingsPanels = new Map<string, PluginSettingsPanelEntry>();
 const webFailures = new Map<string, string>();
@@ -288,13 +289,6 @@ export const pluginBannersAtom = Atom.family((environmentId: string) => {
     return stable([...banners.values()].filter((entry) => entry.environmentId === environmentId));
   });
 });
-
-/**
- * The `plg_<pluginId>_<tool>` name inside a reported tool name: Codex reports it bare, Claude as
- * `mcp__<server>__plg_…` and ACP agents as `<server>.plg_…`. Undefined for other tools.
- */
-export const pluginToolNameOf = (toolName: string | null | undefined) =>
-  toolName?.match(/(?:^|__|\.)(plg_[a-z][a-z0-9-]*_[A-Za-z0-9_-]+)$/)?.[1];
 
 export const pluginToolRendererKey = (environmentId: EnvironmentId, toolName: string) =>
   `${environmentId}\u0000${toolName}`;
@@ -533,16 +527,6 @@ export function withPluginThreadMenuItems<Id extends string>(
   ];
 }
 
-/** `api.contextMenu.show` for a thread menu, with the environment's plugin items after T3's own. */
-export function showThreadMenu<Id extends string>(
-  api: Pick<LocalApi, "contextMenu">,
-  items: ReadonlyArray<ContextMenuItem<Id>>,
-  position: { readonly x: number; readonly y: number } | undefined,
-  environmentId: EnvironmentId,
-) {
-  return api.contextMenu.show(withPluginThreadMenuItems(items, environmentId), position);
-}
-
 /** Runs the plugin item a thread menu returned; false when `menuId` is not a plugin item. */
 export function runPluginThreadMenuItem(
   menuId: string,
@@ -720,9 +704,6 @@ export const pluginMentionItemsAtom = Atom.family((environmentId: string) => {
     );
   });
 });
-
-/** The context kind of a plugin `@` item's chip. Clients without plugins treat it as unknown. */
-export const PLUGIN_CONTEXT_KIND = "plugin";
 
 const MENTION_TEXT_MAX_CHARS = 30_000;
 // A chip's record holds at most 64,000 characters of JSON, and the rest of it is short.

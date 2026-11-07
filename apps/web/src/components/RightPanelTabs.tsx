@@ -48,7 +48,8 @@ import {
   TerminalSquare,
   Puzzle,
 } from "lucide-react";
-import { PluginPanelLauncherItems, PluginPanelMenuItems } from "../plugins/PluginPanelMenuItems";
+import { useAtomValue } from "@effect/atom-react";
+import { pluginUiAtom } from "../plugins/pluginUi";
 import { Volume2, VolumeOff } from "lucide";
 import {
   type KeyboardEvent as ReactKeyboardEvent,
@@ -338,6 +339,7 @@ function RightPanelEmptyState(props: {
   sideChatDisabledReason: string | null;
 }) {
   const [highlight, setHighlight] = useState(-1);
+  const pluginUi = useAtomValue(pluginUiAtom);
 
   const actions = [
     {
@@ -564,7 +566,9 @@ function RightPanelEmptyState(props: {
               />
             ),
           )}
-          <PluginPanelLauncherItems environmentId={props.environmentId} />
+          {pluginUi === null ? null : (
+            <pluginUi.PluginPanelLauncherItems environmentId={props.environmentId} />
+          )}
         </div>
       </div>
     </div>
@@ -1034,6 +1038,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const focusedSurface = props.surfaces.find((surface) => surface.id === props.activeSurfaceId);
   const ownsDesktopTitleBar = isElectron && props.mode === "inline";
   const browserProfiles = useBrowserDefaults().profiles;
+  const pluginUi = useAtomValue(pluginUiAtom);
   const { resolvedTheme } = useTheme();
   const tabListRef = useRef<HTMLDivElement>(null);
   const addSurfaceTriggerRef = useRef<HTMLButtonElement>(null);
@@ -1469,10 +1474,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                       </SurfaceMenuItem>
                     );
                   })}
-                  <PluginPanelMenuItems
-                    environmentId={props.environmentId}
-                    onOpen={() => setAddSurfaceMenuOpen(false)}
-                  />
+                  {pluginUi === null ? null : (
+                    <pluginUi.PluginPanelMenuItems
+                      environmentId={props.environmentId}
+                      onOpen={() => setAddSurfaceMenuOpen(false)}
+                    />
+                  )}
                 </MenuPopup>
               </Menu>
             ) : null}

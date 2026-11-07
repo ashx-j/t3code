@@ -10,8 +10,7 @@ import {
 import { discardComposerDraft } from "../lib/discardComposerDraft";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
 import { useAtomValue } from "@effect/atom-react";
-import { runPluginThreadMenuItem, showThreadMenu } from "../plugins/pluginRegistry";
-import { PluginSidebarSections } from "../plugins/PluginSidebarSections";
+import { pluginUiAtom, runPluginThreadMenuItem, showThreadMenu } from "../plugins/pluginUi";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 import * as Schema from "effect/Schema";
@@ -903,6 +902,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const pluginUi = useAtomValue(pluginUiAtom);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
@@ -3608,7 +3608,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           ) : null}
         </SidebarGroup>
       </SidebarContent>
-      <PluginSidebarSections />
+      {pluginUi === null ? null : <pluginUi.PluginSidebarSections />}
       <SidebarChromeFooter />
     </>
   );

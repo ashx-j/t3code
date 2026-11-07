@@ -3,7 +3,8 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 
 import { PluginRenderBoundary } from "./PluginRenderBoundary";
-import { pluginToolNameOf, pluginToolRendererAtom, pluginToolRendererKey } from "./pluginRegistry";
+import { pluginToolRendererAtom, pluginToolRendererKey } from "./pluginRegistry";
+import { pluginToolNameOf } from "./pluginUi";
 
 /**
  * A plugin MCP tool call's details, drawn by the plugin when it registered a renderer for the

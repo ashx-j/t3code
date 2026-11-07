@@ -32,11 +32,8 @@ import { searchProviderSkills } from "../../providerSkillSearch";
 import { useThreadShells } from "~/state/entities";
 import { useEnvironmentIdentities, useEnvironmentMachines } from "~/state/environments";
 import { offersLinkedEnvironmentsAtom } from "~/state/peerLinks";
-import {
-  pluginMentionItemsAtom,
-  pluginSlashCommandsAtom,
-  type PluginMentionItem,
-} from "~/plugins/pluginRegistry";
+import type { PluginMentionItem } from "~/plugins/pluginRegistry";
+import { pluginMentionItemsAtom, pluginSlashCommandsAtom } from "~/plugins/pluginUi";
 import {
   pullRequestEnvironment,
   usePullRequestList,
