@@ -1187,7 +1187,7 @@ export const layerPluginTools = Layer.effectDiscard(
             readOnlyHint: entry.access === "read",
           },
         }),
-        annotations: Context.empty(),
+        annotations: Context.make(McpSchema.EnabledWhen, () => plugins.isOffered(entry.name)),
         handle: (payload) =>
           Effect.withFiber((fiber) =>
             call(isJsonObject(payload) ? payload : {}).pipe(

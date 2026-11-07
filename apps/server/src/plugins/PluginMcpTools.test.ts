@@ -7,6 +7,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import type { PluginApi, PluginDefinition } from "@t3tools/plugin-sdk/server";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -90,9 +91,31 @@ const call = (
     Effect.provideService(McpSchema.McpServerClient, mcpClient),
   );
 
+// What `tools/list` shows the client: the tools whose `EnabledWhen` passes.
 const toolNames = McpServer.McpServer.pipe(
-  Effect.map((server) => server.tools.map(({ tool }) => tool.name)),
+  Effect.map((server) =>
+    server.tools
+      .filter(
+        ({ annotations }) =>
+          Context.getOrUndefined(
+            annotations,
+            McpSchema.EnabledWhen,
+          )?.({
+            protocolVersion: mcpClient.protocolVersion,
+            capabilities: mcpClient.clientCapabilities,
+            clientInfo: mcpClient.clientInfo,
+          }) ?? true,
+      )
+      .map(({ tool }) => tool.name),
+  ),
 );
+
+/** Lists tools, then calls `name`, which must be gone from both. */
+const assertGone = Effect.fn(function* (name: string) {
+  assert.notInclude(yield* toolNames, name);
+  const notFound = yield* call(name, fullAccessClient).pipe(Effect.flip);
+  assert.include(notFound.message, "not found");
+});
 
 const isDefinition = (value: unknown): value is PluginDefinition =>
   typeof value === "object" &&
@@ -135,7 +158,7 @@ const installed: PluginState = {
   hasWeb: false,
 };
 
-it.effect("answer under plg_ names with access checks, then answer disabled", () =>
+it.effect("answer under plg_ names with access checks, and leave the list once stopped", () =>
   Effect.gen(function* () {
     const api = yield* activateFixture();
     api.mcp.registerTool(
@@ -228,10 +251,7 @@ it.effect("answer under plg_ names with access checks, then answer disabled", ()
 
     const tools = yield* PluginMcpTools.PluginMcpTools;
     yield* tools.unregisterPlugin(mcpPlugin);
-    assert.deepStrictEqual(yield* call("plg_mcp-plugin_echo", threadCaller, { text: "hi" }), {
-      isError: true,
-      text: "Plugin mcp-plugin is disabled.",
-    });
+    yield* assertGone("plg_mcp-plugin_echo");
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -393,12 +413,11 @@ it.effect("offers the plugin management tools only once a plugin is installed", 
       text: '{"settings":{"mode":"b"}}',
     });
     assert.deepStrictEqual(settingsPatches, [{ pluginId: "mcp-plugin", patch: { mode: "b" } }]);
-    // Turned off in Settings: a session that already listed the tools keeps them, and they refuse.
+    // Turned off in Settings, even for a session that already listed them.
     yield* tools.offerManagementTools(false);
-    const refused = yield* call("t3_plugins_list", readOnlyClient);
-    assert.isTrue(refused.isError);
-    assert.include(refused.text, "turned off in Settings > Plugins");
+    yield* assertGone("t3_plugins_list");
     yield* tools.offerManagementTools(true);
+    assert.include(yield* toolNames, "t3_plugins_list");
     // One linked copy that isn't in use is unlinked by its folder, as Settings does it.
     yield* call("t3_plugins_uninstall", fullAccessClient, {
       pluginId: "mcp-plugin",

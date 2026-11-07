@@ -197,18 +197,23 @@ export class PluginMcpTools extends Context.Service<
       /** Aborts when the plugin turns off; a call still running then answers that it is disabled. */
       readonly deactivated: AbortSignal;
     }) => Effect.Effect<void, PluginMcpToolNameError>;
-    /** MCP has no tool removal, so each of the plugin's tools answers "disabled" instead. */
+    /** Withdraws the plugin's tools. */
     readonly unregisterPlugin: (pluginId: PluginId) => Effect.Effect<void>;
     /** The plugins `t3_plugins_list` reports. */
     readonly setInstalledPlugins: (plugins: ReadonlyArray<PluginState>) => Effect.Effect<void>;
-    /**
-     * Offers or withdraws the `t3_plugins_*` management tools. MCP has no tool removal, so a
-     * session that already listed them keeps them, and they refuse every call.
-     */
+    /** Offers or withdraws the `t3_plugins_*` management tools. */
     readonly offerManagementTools: (offered: boolean) => Effect.Effect<void>;
     /** Connects the management tools to the plugin host. */
     readonly setHostActions: (actions: PluginMcpHostActions) => Effect.Effect<void>;
-    /** Hands `publish` every tool now and each change until the scope closes. */
+    /**
+     * Whether `/mcp` lists and runs the tool, read on every list and call. Withdrawn tools stay
+     * registered, because MCP servers can't remove one, so this hides them.
+     */
+    readonly isOffered: (name: string) => boolean;
+    /**
+     * Hands `publish` every tool now and each change until the scope closes. A withdrawn tool is
+     * published again, so clients hear the list changed.
+     */
     readonly attach: (
       publish: (tool: PluginMcpToolEntry) => Effect.Effect<void>,
     ) => Effect.Effect<void, never, Scope.Scope>;
@@ -239,6 +244,12 @@ const make = () => {
   // Inside `register`, `unregisterPlugin` or `offerManagementTools`, which have their spans.
   const publish = Effect.fnUntraced(function* (entry: PluginMcpToolEntry) {
     tools.set(entry.name, entry);
+    for (const publisher of publishers) yield* publisher(entry);
+  });
+  const withdraw = Effect.fnUntraced(function* (name: string) {
+    const entry = tools.get(name);
+    if (entry === undefined) return;
+    tools.delete(name);
     for (const publisher of publishers) yield* publisher(entry);
   });
 
@@ -493,14 +504,7 @@ const make = () => {
     unregisterPlugin: Effect.fn("PluginMcpTools.unregisterPlugin")(function* (pluginId) {
       const names = toolsByPlugin.get(pluginId);
       toolsByPlugin.delete(pluginId);
-      for (const name of names ?? []) {
-        const entry = tools.get(name);
-        if (entry === undefined) continue;
-        yield* publish({
-          ...entry,
-          call: () => Effect.fail(new PluginMcpToolDisabledError({ pluginId })),
-        });
-      }
+      for (const name of names ?? []) yield* withdraw(name);
     }),
     setInstalledPlugins: Effect.fn("PluginMcpTools.setInstalledPlugins")((plugins) =>
       Effect.sync(() => {
@@ -520,21 +524,7 @@ const make = () => {
         pluginsSettings,
       ];
       for (const entry of managementTools) {
-        if (offered) {
-          yield* publish(entry);
-          continue;
-        }
-        tools.delete(entry.name);
-        const turnedOff = {
-          ...entry,
-          call: () =>
-            Effect.fail(
-              new PluginMcpManagementError({
-                reason: "Plugin tools for agents are turned off in Settings > Plugins.",
-              }),
-            ),
-        };
-        for (const publisher of publishers) yield* publisher(turnedOff);
+        yield* offered ? publish(entry) : withdraw(entry.name);
       }
     }),
     setHostActions: Effect.fn("PluginMcpTools.setHostActions")((actions) =>
@@ -542,6 +532,7 @@ const make = () => {
         hostActions = actions;
       }),
     ),
+    isOffered: (name) => tools.has(name),
     attach: Effect.fn("PluginMcpTools.attach")((publisher) =>
       Effect.acquireRelease(
         Effect.gen(function* () {
