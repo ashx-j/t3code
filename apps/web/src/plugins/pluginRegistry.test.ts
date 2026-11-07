@@ -8,6 +8,7 @@ import {
   PLUGIN_CONTEXT_KIND,
   pluginMentionContextId,
   pluginMentionContextRecords,
+  pluginActionAtoms,
   pluginMentionItemsAtom,
   pluginPageAtom,
   pluginSlashCommandsAtom,
@@ -29,6 +30,7 @@ const owner = { environmentId, pluginId: "notes", pluginName: "Notes" };
 describe("plugin thread menu items", () => {
   it("adds only the thread environment's items after a separator and runs the one picked", () => {
     const ran: Array<string> = [];
+    const messageActions = appAtomRegistry.get(pluginActionAtoms.message(environmentId));
     using _item = {
       [Symbol.dispose]: registerPluginAction("threadMenu", {
         key: "plugin:flags:clear",
@@ -49,6 +51,8 @@ describe("plugin thread menu items", () => {
     expect(runPluginThreadMenuItem("plugin:flags:clear", environmentId, "thread-1")).toBe(true);
     expect(runPluginThreadMenuItem("rename", environmentId, "thread-1")).toBe(false);
     expect(ran).toEqual(["thread-1"]);
+    // Every timeline row reads message actions, so a thread menu item must not hand them a new list.
+    expect(appAtomRegistry.get(pluginActionAtoms.message(environmentId))).toBe(messageActions);
   });
 });
 
@@ -124,7 +128,11 @@ describe("plugin @ items", () => {
     });
     expect(appAtomRegistry.get(pluginSlashCommandsAtom(environmentId))).toBe(slashCommands);
     hideBanner();
-    expect(appAtomRegistry.get(pluginMentionItemsAtom(environmentId))).toHaveLength(2);
+    const mentions = appAtomRegistry.get(pluginMentionItemsAtom(environmentId));
+    expect(mentions).toHaveLength(2);
+    setPluginMentionItems(otherEnvironmentId, "notes", [item]);
+    expect(appAtomRegistry.get(pluginMentionItemsAtom(environmentId))).toBe(mentions);
+    setPluginMentionItems(otherEnvironmentId, "notes", []);
     expect(appAtomRegistry.get(pluginMentionItemsAtom(otherEnvironmentId))).toEqual([]);
     setPluginMentionItems(environmentId, "notes", []);
     expect(appAtomRegistry.get(pluginMentionItemsAtom(environmentId))).toEqual([]);

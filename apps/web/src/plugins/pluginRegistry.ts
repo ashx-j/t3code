@@ -497,12 +497,13 @@ const readPluginActions = <Place extends PluginActionPlace>(
   [...actions[place].values()].filter((entry) => entry.environmentId === environmentId);
 
 const actionsAtom = <Place extends PluginActionPlace>(place: Place) =>
-  Atom.family((environmentId: EnvironmentId) =>
-    Atom.make((get) => {
+  Atom.family((environmentId: EnvironmentId) => {
+    const stable = stableList<PluginActionEntry<Place>>();
+    return Atom.make((get) => {
       get(actionsVersionAtom);
-      return readPluginActions(place, environmentId);
-    }),
-  );
+      return stable(readPluginActions(place, environmentId));
+    });
+  });
 
 export const pluginActionAtoms: {
   readonly [Place in PluginActionPlace]: (
@@ -708,14 +709,17 @@ export function setPluginMentionItems(
   appAtomRegistry.set(mentionItemsVersionAtom, appAtomRegistry.get(mentionItemsVersionAtom) + 1);
 }
 
-export const pluginMentionItemsAtom = Atom.family((environmentId: string) =>
-  Atom.make((get) => {
+export const pluginMentionItemsAtom = Atom.family((environmentId: string) => {
+  const stable = stableList<PluginMentionItem>();
+  return Atom.make((get) => {
     get(mentionItemsVersionAtom);
-    return [...mentionItems.entries()]
-      .filter(([key]) => key.startsWith(`${environmentId}\u0000`))
-      .flatMap(([, items]) => items);
-  }),
-);
+    return stable(
+      [...mentionItems.entries()]
+        .filter(([key]) => key.startsWith(`${environmentId}\u0000`))
+        .flatMap(([, items]) => items),
+    );
+  });
+});
 
 /** The context kind of a plugin `@` item's chip. Clients without plugins treat it as unknown. */
 export const PLUGIN_CONTEXT_KIND = "plugin";
