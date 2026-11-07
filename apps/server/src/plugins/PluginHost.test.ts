@@ -16,12 +16,9 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderSessionId,
-  RuntimeRequestId,
   SourceControlProviderKind,
   ThreadId,
   type TurnItemId,
-  type OrchestrationV2ServerCommand,
-  type OrchestrationV2DomainEvent,
   type PluginState,
   type PluginStatesEvent,
   type Project,
@@ -286,6 +283,133 @@ const waitForStatuses = (
     Stream.runHead,
     Effect.map(Option.getOrThrow),
   );
+
+const workbench = PluginId.make("workbench-plugin");
+const workbenchThread = ThreadId.make("thread:plugin-workbench");
+const workbenchProject = ProjectId.make("project:plugin-workbench");
+const workbenchModel = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.5" };
+const workbenchTextModel = {
+  instanceId: ProviderInstanceId.make("claudeAgent"),
+  model: "haiku",
+};
+
+interface Workbench {
+  readonly host: PluginHost.PluginHost["Service"];
+  readonly hooks: PluginHooks.PluginHooksRegistry;
+  readonly call: (
+    method: string,
+    input?: Schema.Json,
+  ) => ReturnType<PluginHost.PluginHost["Service"]["invoke"]>;
+  /** Sends `text` to the workbench thread, through its provider `instanceId` when given. */
+  readonly send: (
+    text: string,
+    instanceId?: string,
+  ) => Effect.Effect<string, PluginHooks.PluginMessageBlockedError>;
+  /** What the providers list, empty unless a test sets them. */
+  readonly setProviders: (providers: ReadonlyArray<ServerProvider>) => void;
+  readonly prompted: ReadonlyArray<TextGeneration.TextGenerationInput>;
+}
+
+/**
+ * Runs `body` with the workbench fixture plugin active, over a project, a thread and a text
+ * generation model, and services that record what the plugin asks of them.
+ */
+const withWorkbench = Effect.fn(function* <A, E>(
+  body: (workbench: Workbench) => Effect.Effect<A, E>,
+) {
+  const prompted: Array<TextGeneration.TextGenerationInput> = [];
+  let providers: ReadonlyArray<ServerProvider> = [];
+  const project: Project = {
+    id: workbenchProject,
+    title: "Workbench project",
+    workspaceRoot: "/repo",
+    defaultModelSelection: workbenchModel,
+    scripts: [],
+    createdAt: "2026-10-31T00:00:00.000Z",
+    updatedAt: "2026-10-31T00:00:00.000Z",
+    deletedAt: null,
+  };
+  const services = Layer.mergeAll(
+    Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+    Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedSome(project) }),
+    Layer.mock(ProviderRegistry.ProviderRegistry)({
+      getProviders: Effect.sync(() => providers),
+    }),
+    Layer.mock(ProviderDriverRegistration.ProviderDriverRegistration)({}),
+    Layer.mock(SourceControlDrivers.SourceControlPluginDrivers)({ current: () => [] }),
+    Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+    Layer.mock(SecretRequests.SecretRequests)({}),
+    Layer.mock(TextGeneration.TextGeneration)({
+      generateText: (input) =>
+        Effect.sync(() => {
+          prompted.push(input);
+          return { text: "Two commits since the last deploy." };
+        }),
+    }),
+    Layer.mock(Orchestrator.OrchestratorV2)({
+      streamStoredEventsFrom: () => Stream.never,
+      streamDomainEvents: Stream.never,
+      listActiveShellIndex: () => Effect.succeed([]),
+    }),
+    Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({
+      latestAgentSequence: () => Effect.succeed(0),
+    }),
+    Layer.mock(ThreadManagementService.ThreadManagementService)({
+      listProjectThreads: () => Effect.succeed([]),
+      getThreadShell: () =>
+        Effect.succeed({
+          id: workbenchThread,
+          projectId: workbenchProject,
+          worktreePath: null,
+          deletedAt: null,
+        } as never),
+    }),
+    Layer.mock(ProjectStore.ProjectStoreV2)({ listShells: () => Effect.succeed([]) }),
+    Layer.mock(ServerEnvironment.ServerEnvironment)({
+      getDescriptor: Effect.succeed({
+        environmentId: EnvironmentId.make("environment:plugin-workbench"),
+        label: "Workbench host",
+        platform: { os: "linux", arch: "x64" },
+        serverVersion: packageJson.version,
+        capabilities: { repositoryIdentity: false, plugins: true },
+      }),
+    }),
+    ServerSettings.layerTest({ textGenerationModelSelection: workbenchTextModel }).pipe(
+      Layer.orDie,
+    ),
+  );
+  yield* writePluginsConfig({
+    enabled: { [workbench]: true },
+    devPaths: [`${fixturesDir}workbench-plugin`],
+  });
+  return yield* Effect.gen(function* () {
+    const host = yield* PluginHost.PluginHost;
+    const hooks = yield* PluginHooks.PluginHooks;
+    yield* waitForStatuses(host, { [workbench]: "active" });
+    return yield* body({
+      host,
+      hooks,
+      call: (method, input) => host.invoke({ pluginId: workbench, method, input, scopes: operate }),
+      send: (text, instanceId) =>
+        hooks.beforeDispatch(
+          {
+            threadId: workbenchThread,
+            messageId: "message:workbench",
+            text,
+            createdBy: "user",
+            creationSource: "web",
+            attachments: [],
+          },
+          notAccepted,
+          ...(instanceId === undefined ? [] : [Effect.succeed(instanceId)]),
+        ),
+      setProviders: (next) => {
+        providers = next;
+      },
+      prompted,
+    });
+  }).pipe(Effect.provide(layerHost(services)));
+}, Effect.provide(layerConfig()));
 
 it.layer(NodeServices.layer)("PluginHost", (it) => {
   it.effect("activates an enabled plugin and serves its methods, settings and storage", () =>
@@ -1096,125 +1220,9 @@ module.exports = { activate(api) {
     }).pipe(Effect.provide(layerConfig())),
   );
 
-  it.effect("gives a plugin threads, projects, server info, schedules, hooks and commands", () =>
-    Effect.gen(function* () {
-      const workbench = PluginId.make("workbench-plugin");
-      const threadId = ThreadId.make("thread:plugin-workbench");
-      const dispatched: Array<OrchestrationV2ServerCommand> = [];
-      const responded = yield* Queue.unbounded<OrchestrationV2ServerCommand>();
-      // Approval and question events reach the plugin's runtime request hook; the records are
-      // what the projection holds when each event is read.
-      const domainEvents = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
-      let records = { runtimeRequests: [] as Array<unknown>, turnItems: [] as Array<unknown> };
-      const projectId = ProjectId.make("project:plugin-workbench");
-      const defaultModel = {
-        instanceId: ProviderInstanceId.make("codex"),
-        model: "gpt-5.5",
-      };
-      const project: Project = {
-        id: projectId,
-        title: "Workbench project",
-        workspaceRoot: "/repo",
-        defaultModelSelection: defaultModel,
-        scripts: [],
-        createdAt: "2026-10-31T00:00:00.000Z",
-        updatedAt: "2026-10-31T00:00:00.000Z",
-        deletedAt: null,
-      };
-      const launched: Array<ThreadLaunchService.ThreadLaunchInput> = [];
-      const prompted: Array<TextGeneration.TextGenerationInput> = [];
-      const textModel = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "haiku" };
-      const projectUpdates: Array<unknown> = [];
-      // Empty except while the slash command case runs, so new threads keep the project's model.
-      let providers: ReadonlyArray<ServerProvider> = [];
-      const services = Layer.mergeAll(
-        Layer.mock(ThreadLaunchService.ThreadLaunchService)({
-          launch: (input) =>
-            Effect.sync(() => {
-              launched.push(input);
-              return { threadId: input.threadId } as never;
-            }),
-        }),
-        Layer.mock(ProjectService.ProjectService)({
-          getById: () => Effect.succeedSome(project),
-          update: (input) =>
-            Effect.sync(() => {
-              projectUpdates.push(input);
-              return { ...project, pinnedAt: "2026-10-31T00:00:00.000Z" };
-            }),
-        }),
-        Layer.mock(ProviderRegistry.ProviderRegistry)({
-          getProviders: Effect.sync(() => providers),
-        }),
-        Layer.mock(ProviderDriverRegistration.ProviderDriverRegistration)({}),
-        Layer.mock(SourceControlDrivers.SourceControlPluginDrivers)({ current: () => [] }),
-        Layer.mock(GitVcsDriver.GitVcsDriver)({}),
-        Layer.mock(SecretRequests.SecretRequests)({}),
-        Layer.mock(TextGeneration.TextGeneration)({
-          generateText: (input) =>
-            Effect.sync(() => {
-              prompted.push(input);
-              return { text: "Two commits since the last deploy." };
-            }),
-        }),
-        Layer.mock(Orchestrator.OrchestratorV2)({
-          streamStoredEventsFrom: () => Stream.never,
-          streamDomainEvents: Stream.fromQueue(domainEvents),
-          listActiveShellIndex: () => Effect.succeed([]),
-          getThreadRecords: () => Effect.sync(() => records as never),
-        }),
-        Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({
-          latestAgentSequence: () => Effect.succeed(0),
-        }),
-        Layer.mock(ThreadManagementService.ThreadManagementService)({
-          listProjectThreads: () => Effect.succeed([]),
-          getThreadShell: () =>
-            Effect.succeed({
-              id: threadId,
-              projectId,
-              worktreePath: null,
-              deletedAt: null,
-            } as never),
-          settleThread: (input) =>
-            Effect.sync(() => {
-              dispatched.push({ type: "thread.settle", ...input } as never);
-              return { sequence: 1 };
-            }),
-          dispatch: (command) =>
-            Effect.sync(() => {
-              dispatched.push(command);
-              return { sequence: 1, storedEvents: [] } as never;
-            }).pipe(
-              Effect.tap(() =>
-                command.type === "runtime-request.respond"
-                  ? Queue.offer(responded, command)
-                  : Effect.void,
-              ),
-            ),
-        }),
-        Layer.mock(ProjectStore.ProjectStoreV2)({ listShells: () => Effect.succeed([]) }),
-        Layer.mock(ServerEnvironment.ServerEnvironment)({
-          getDescriptor: Effect.succeed({
-            environmentId: EnvironmentId.make("environment:plugin-workbench"),
-            label: "Workbench host",
-            platform: { os: "linux", arch: "x64" },
-            serverVersion: packageJson.version,
-            capabilities: { repositoryIdentity: false, plugins: true },
-          }),
-        }),
-        ServerSettings.layerTest({ textGenerationModelSelection: textModel }).pipe(Layer.orDie),
-      );
-      yield* writePluginsConfig({
-        enabled: { [workbench]: true },
-        devPaths: [`${fixturesDir}workbench-plugin`],
-      });
-      yield* Effect.gen(function* () {
-        const host = yield* PluginHost.PluginHost;
-        const hooks = yield* PluginHooks.PluginHooks;
-        yield* waitForStatuses(host, { [workbench]: "active" });
-        const call = (method: string, input?: Schema.Json) =>
-          host.invoke({ pluginId: workbench, method, input, scopes: operate });
-
+  it.effect("gives a plugin the server's version and environment, its threads and projects", () =>
+    withWorkbench(({ call }) =>
+      Effect.gen(function* () {
         assert.deepStrictEqual(yield* call("overview"), {
           version: packageJson.version,
           environment: "Workbench host",
@@ -1222,68 +1230,32 @@ module.exports = { activate(api) {
           projects: 0,
           firstThreadId: null,
         });
+      }),
+    ),
+  );
 
-        yield* call("renameThread", { threadId, title: "Renamed by a plugin" });
-        assert.deepInclude(dispatched[0], {
-          type: "thread.metadata.update",
-          threadId,
-          title: "Renamed by a plugin",
-        });
-        // A blank title is refused, not stored.
-        const blankTitle = yield* Effect.flip(call("renameThread", { threadId, title: "  " }));
-        assert.strictEqual(blankTitle._tag, "PluginHandlerError");
-        assert.lengthOf(dispatched, 1);
-
-        yield* call("noteThread", { threadId });
-        assert.deepInclude(dispatched[1], {
-          type: "thread.notification.record",
-          threadId,
-          notification: {
-            source: { kind: "system" },
-            outcome: "completed",
-            summary: "Workbench: Checked",
-          },
-        });
-
+  it.effect("runs a plugin's send hooks on the messages users send", () =>
+    withWorkbench(({ send }) =>
+      Effect.gen(function* () {
         assert.strictEqual(
-          yield* hooks.beforeDispatch(
-            {
-              threadId,
-              messageId: "message:context",
-              text: "Ship it #context",
-              createdBy: "user",
-              creationSource: "web",
-              attachments: [],
-            },
-            notAccepted,
-          ),
+          yield* send("Ship it #context"),
           "Ship it #context\n\nContext from workbench-plugin.",
         );
-        const outgoing = (text: string) =>
-          hooks.beforeDispatch(
-            {
-              threadId,
-              messageId: "message:workbench",
-              text,
-              createdBy: "user",
-              creationSource: "web",
-              attachments: [],
-            },
-            notAccepted,
-          );
-        assert.strictEqual(yield* outgoing("#shout ship it"), "SHIP IT");
+        assert.strictEqual(yield* send("#shout ship it"), "SHIP IT");
         assert.strictEqual(
-          (yield* Effect.flip(outgoing("Deploy with #secret"))).message,
+          (yield* Effect.flip(send("Deploy with #secret"))).message,
           "Workbench: Remove the secret first.",
         );
+      }),
+    ),
+  );
 
-        // The plugin's command runs instead of the send hooks, and lists with every provider's.
+  it.effect("runs a plugin's slash command instead of the send hooks, and lists it", () =>
+    withWorkbench(({ hooks, send }) =>
+      Effect.gen(function* () {
+        assert.strictEqual(yield* send("/deploy staging"), "Deploy to staging and report back.");
         assert.strictEqual(
-          yield* outgoing("/deploy staging"),
-          "Deploy to staging and report back.",
-        );
-        assert.strictEqual(
-          (yield* Effect.flip(outgoing("/deploy"))).message,
+          (yield* Effect.flip(send("/deploy"))).message,
           "Workbench: Name an environment, for example /deploy staging.",
         );
         const [provider] = PluginHooks.withPluginSlashCommands(
@@ -1298,22 +1270,30 @@ module.exports = { activate(api) {
           ],
           yield* hooks.currentSlashCommands,
         );
-        const deploy = {
-          name: "deploy",
-          description: "Deploy to an environment",
-          input: { hint: "environment" },
-        };
         const status = { name: "status", description: "Show the deploy status" };
-        // A provider's own command of the same name wins, in its lists and when sent to it.
+        // A provider's own command of the same name stays in its list.
         assert.deepStrictEqual(provider?.slashCommands, [
           { name: "deploy", description: "Provider deploy" },
           { name: "review" },
           status,
         ]);
-        assert.deepStrictEqual(provider?.workspaceSnapshots?.[0]?.slashCommands, [deploy, status]);
-        // Its own command wins when the message goes to it, whether every folder has it or the
-        // repository of the thread's project adds it.
-        providers = [
+        assert.deepStrictEqual(provider?.workspaceSnapshots?.[0]?.slashCommands, [
+          {
+            name: "deploy",
+            description: "Deploy to an environment",
+            input: { hint: "environment" },
+          },
+          status,
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("lets a provider's own command of the same name win when a message goes to it", () =>
+    withWorkbench(({ send, setProviders }) =>
+      Effect.gen(function* () {
+        // Whether every folder has it or the repository of the thread's project adds it.
+        setProviders([
           { instanceId: "claudeAgent", slashCommands: [{ name: "deploy" }] },
           {
             instanceId: "cursor",
@@ -1325,27 +1305,21 @@ module.exports = { activate(api) {
             slashCommands: [],
             workspaceSnapshots: [{ cwd: "/elsewhere", slashCommands: [{ name: "deploy" }] }],
           },
-        ] as unknown as ReadonlyArray<ServerProvider>;
-        const sendTo = (instanceId: string) =>
-          hooks.beforeDispatch(
-            {
-              threadId,
-              messageId: "message:workbench",
-              text: "/deploy staging",
-              createdBy: "user",
-              creationSource: "web",
-              attachments: [],
-            },
-            notAccepted,
-            Effect.succeed(instanceId),
-          );
-        assert.strictEqual(yield* sendTo("claudeAgent"), "/deploy staging");
-        assert.strictEqual(yield* sendTo("cursor"), "/deploy staging");
-        assert.strictEqual(yield* sendTo("codex"), "Deploy to staging and report back.");
-        providers = [];
+        ] as unknown as ReadonlyArray<ServerProvider>);
+        assert.strictEqual(yield* send("/deploy staging", "claudeAgent"), "/deploy staging");
+        assert.strictEqual(yield* send("/deploy staging", "cursor"), "/deploy staging");
+        assert.strictEqual(
+          yield* send("/deploy staging", "codex"),
+          "Deploy to staging and report back.",
+        );
+      }),
+    ),
+  );
 
-        // Plugins sharing a name: the id that sorts first handles it, whichever started first,
-        // and the other plugin keeps the rest of its commands.
+  it.effect("gives a shared slash command name to the plugin whose id sorts first", () =>
+    withWorkbench(({ hooks, send }) =>
+      Effect.gen(function* () {
+        // Whichever started first, and the other plugin keeps the rest of its commands.
         const removeEarlier = yield* hooks.addSlashCommand(
           { pluginId: "aaa-plugin", pluginName: "Earlier", name: "deploy" },
           () => Effect.succeed({ text: "Deployed by the earlier plugin." }),
@@ -1354,8 +1328,8 @@ module.exports = { activate(api) {
           { pluginId: "zzz-plugin", pluginName: "Later", name: "status" },
           () => Effect.succeed({ text: "Status from the later plugin." }),
         );
-        assert.strictEqual(yield* outgoing("/deploy staging"), "Deployed by the earlier plugin.");
-        assert.strictEqual(yield* outgoing("/status"), "Report the deploy status.");
+        assert.strictEqual(yield* send("/deploy staging"), "Deployed by the earlier plugin.");
+        assert.strictEqual(yield* send("/status"), "Report the deploy status.");
         assert.deepStrictEqual(
           (yield* hooks.currentSlashCommands).map(
             (command) => `${command.pluginId}/${command.name}`,
@@ -1364,109 +1338,30 @@ module.exports = { activate(api) {
         );
         yield* removeEarlier;
         yield* removeLater;
-        assert.strictEqual(
-          yield* outgoing("/deploy staging"),
-          "Deploy to staging and report back.",
-        );
+        assert.strictEqual(yield* send("/deploy staging"), "Deploy to staging and report back.");
+      }),
+    ),
+  );
 
-        const request = (id: string, kind: string) => ({
-          id,
-          nodeId: `node:${id}`,
-          kind,
-          status: "pending",
-          responseCapability: {
-            type: "live",
-            providerSessionId: "session:workbench",
-            supportsFeedback: true,
-          },
-        });
-        const item = (requestId: string, fields: object) => ({
-          id: `item:${requestId}`,
-          threadId,
-          runId: "run:workbench",
-          requestId,
-          status: "waiting",
-          ...fields,
-        });
-        const event = (type: string, payload: object) => ({ type, threadId, payload }) as never;
-        const gitStatus = item("request:git", {
-          type: "approval_request",
-          requestKind: "command",
-          prompt: "git status --short",
-        });
-        const remove = item("request:rm", {
-          type: "approval_request",
-          requestKind: "command",
-          prompt: "rm -rf build",
-        });
-        const question = item("request:ask", {
-          type: "user_input_request",
-          questions: [
-            {
-              id: "scope",
-              header: "Scope",
-              question: "Which files?",
-              options: [
-                { label: "Only src", description: "Leave tests alone" },
-                { label: "Everything", description: "Touch all files" },
-              ],
-            },
-          ],
-        });
-
-        // Claude records the request before its item, so the plugin is asked once the item lands.
-        records = { runtimeRequests: [request("request:git", "command")], turnItems: [] };
-        yield* Queue.offer(
-          domainEvents,
-          event("runtime-request.updated", records.runtimeRequests[0]!),
-        );
-        records = { ...records, turnItems: [gitStatus] };
-        yield* Queue.offer(domainEvents, event("turn-item.updated", gitStatus));
-        assert.deepInclude(yield* Queue.take(responded), {
-          requestId: RuntimeRequestId.make("request:git"),
-          decision: "accept",
-        });
-
-        // Codex records the item first.
-        records = { runtimeRequests: [], turnItems: [remove] };
-        yield* Queue.offer(domainEvents, event("turn-item.updated", remove));
-        records = { ...records, runtimeRequests: [request("request:rm", "command")] };
-        yield* Queue.offer(
-          domainEvents,
-          event("runtime-request.updated", records.runtimeRequests[0]!),
-        );
-        assert.deepInclude(yield* Queue.take(responded), {
-          requestId: RuntimeRequestId.make("request:rm"),
-          decision: "decline",
-          feedback: "Workbench does not allow rm.",
-        });
-
-        records = {
-          runtimeRequests: [request("request:ask", "user_input")],
-          turnItems: [question],
-        };
-        yield* Queue.offer(domainEvents, event("turn-item.updated", question));
-        assert.deepInclude(yield* Queue.take(responded), {
-          requestId: RuntimeRequestId.make("request:ask"),
-          answers: { scope: "Only src" },
-        });
-
-        // The plugin titles the threads it recognises and leaves the rest to T3.
+  it.effect("titles the threads a plugin recognises and leaves the rest to T3", () =>
+    withWorkbench(({ hooks }) =>
+      Effect.gen(function* () {
         const titles = withPluginTextGeneration(hooks, {
           generateThreadTitle: () => Effect.succeed({ title: "T3 title" }),
         } as unknown as ProviderTextGeneration);
         const title = (message: string) =>
-          titles.generateThreadTitle({
-            cwd: "/repo",
-            message,
-            modelSelection: defaultModel,
-          });
+          titles.generateThreadTitle({ cwd: "/repo", message, modelSelection: workbenchModel });
         assert.deepStrictEqual(yield* title("#titled Release prep"), {
           title: "Workbench: Release prep",
         });
         assert.deepStrictEqual(yield* title("Release prep"), { title: "T3 title" });
+      }),
+    ),
+  );
 
-        // A free-form prompt runs on the text generation model from the settings.
+  it.effect("runs a plugin's own prompt on the text generation model from the settings", () =>
+    withWorkbench(({ call, prompted }) =>
+      Effect.gen(function* () {
         assert.strictEqual(
           yield* call("summarize", { log: "abc123 fix\ndef456 feat" }),
           "Two commits since the last deploy.",
@@ -1475,47 +1370,21 @@ module.exports = { activate(api) {
           cwd: `${fixturesDir}workbench-plugin`,
           prompt: "Summarize these commits in one sentence:\nabc123 fix\ndef456 feat",
         });
-        assert.deepInclude(prompted[0]?.modelSelection, textModel);
+        assert.deepInclude(prompted[0]?.modelSelection, workbenchTextModel);
+      }),
+    ),
+  );
 
-        // Thread and project management go through the commands and services clients use.
-        dispatched.length = 0;
-        const tidied = yield* call("tidyThread", { threadId, projectId });
-        assert.deepStrictEqual(
-          dispatched.map((command) => command.type),
-          [
-            "thread.archive",
-            "thread.unarchive",
-            "thread.snooze",
-            "thread.unsnooze",
-            "thread.settle",
-            "thread.unsettle",
-            "thread.delete",
-          ],
-        );
-        assert.deepInclude(dispatched[2], { snoozedUntil: "2026-11-01T09:00:00.000Z" });
-        assert.deepInclude(launched[0], {
-          projectId,
-          title: "Follow-up",
-          modelSelection: defaultModel,
-          interactionMode: "default",
-          workspaceStrategy: { type: "root" },
-          createdBy: "agent",
-          creationSource: "server",
-        });
-        assert.strictEqual(launched[0]?.initialMessage?.text, "Check the deploy.");
-        assert.deepInclude(projectUpdates[0], { projectId, pinned: true });
-        assert.deepStrictEqual(tidied, {
-          threadId: launched[0]?.threadId ?? null,
-          project: "Workbench project",
-        });
-
+  it.effect("runs a plugin's work on an interval", () =>
+    withWorkbench(({ host }) =>
+      Effect.gen(function* () {
         const tick = yield* host
           .subscribe({ pluginId: workbench, channel: "ticks" })
           .pipe(Stream.runHead, Effect.forkChild({ startImmediately: true }));
         yield* TestClock.adjust("1 second");
         assert.deepStrictEqual(yield* Fiber.join(tick), Option.some(1));
-      }).pipe(Effect.provide(layerHost(services)));
-    }).pipe(Effect.provide(layerConfig())),
+      }),
+    ),
   );
 
   it.effect("serves an active plugin's web files and themes, and stops when disabled", () =>

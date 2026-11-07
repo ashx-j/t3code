@@ -53,10 +53,17 @@ const accepted = (decision: "accept" | "decline") => ({
   decision,
 });
 
+const itemUpdated = {
+  type: "turn-item.updated",
+  threadId,
+  payload: item,
+} as unknown as OrchestrationV2DomainEvent;
+
 /**
  * Hooks over a pending deploy approval. `subscribe` makes each subscription to the event stream,
- * `respond` decides whether the server accepts each answer, and `waiting` lists the request's
- * thread among the live ones before any event names it.
+ * `respond` decides whether the server accepts each answer, `waiting` lists the request's thread
+ * among the live ones before any event names it, and `records` is what the thread has recorded
+ * when the hooks read it, the request and its item by default.
  */
 const harness = Effect.fn(function* (options: {
   readonly subscribe: (
@@ -66,6 +73,10 @@ const harness = Effect.fn(function* (options: {
     command: OrchestrationV2ServerCommand,
   ) => Effect.Effect<void, Orchestrator.OrchestratorV2Error>;
   readonly waiting?: boolean;
+  readonly records?: () => {
+    readonly runtimeRequests: ReadonlyArray<object>;
+    readonly turnItems: ReadonlyArray<object>;
+  };
 }) {
   const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
   const responded = yield* Queue.unbounded<OrchestrationV2ServerCommand>();
@@ -78,7 +89,9 @@ const harness = Effect.fn(function* (options: {
           options.waiting === true ? [{ id: threadId, mayBeLive: true } as never] : [],
         ),
       getThreadRecords: () =>
-        Effect.succeed({ runtimeRequests: [request], turnItems: [item] } as never),
+        Effect.sync(
+          () => (options.records?.() ?? { runtimeRequests: [request], turnItems: [item] }) as never,
+        ),
     }),
   );
   const threads = yield* Effect.provide(
@@ -165,6 +178,76 @@ it.layer(NodeServices.layer)("runtime request hooks", (it) => {
       const { responded, hook } = yield* harness({ subscribe: Stream.fromQueue, waiting: true });
       hook("answers", async () => ({ decision: "accept" }));
       assert.deepInclude(yield* Queue.take(responded), accepted("accept"));
+    }),
+  );
+
+  it.effect("asks once the request and its turn item are both recorded, in either order", () =>
+    Effect.gen(function* () {
+      // Claude records the request before its item.
+      let records: { runtimeRequests: Array<object>; turnItems: Array<object> } = {
+        runtimeRequests: [request],
+        turnItems: [],
+      };
+      const requestFirst = yield* harness({ subscribe: Stream.fromQueue, records: () => records });
+      requestFirst.hook("answers", async () => ({ decision: "accept" }));
+      yield* Queue.offer(requestFirst.events, pending);
+      records = { runtimeRequests: [request], turnItems: [item] };
+      yield* Queue.offer(requestFirst.events, itemUpdated);
+      assert.deepInclude(yield* Queue.take(requestFirst.responded), accepted("accept"));
+
+      // Codex records the item first, for a request that takes feedback.
+      records = { runtimeRequests: [], turnItems: [item] };
+      const itemFirst = yield* harness({ subscribe: Stream.fromQueue, records: () => records });
+      itemFirst.hook("answers", async () => ({ decision: "decline", feedback: "Not today." }));
+      yield* Queue.offer(itemFirst.events, itemUpdated);
+      records = {
+        runtimeRequests: [
+          {
+            ...request,
+            responseCapability: { ...request.responseCapability, supportsFeedback: true },
+          },
+        ],
+        turnItems: [item],
+      };
+      yield* Queue.offer(itemFirst.events, pending);
+      assert.deepInclude(yield* Queue.take(itemFirst.responded), {
+        ...accepted("decline"),
+        feedback: "Not today.",
+      });
+    }),
+  );
+
+  it.effect("answers a question with the options the plugin picks", () =>
+    Effect.gen(function* () {
+      const question = {
+        ...item,
+        type: "user_input_request",
+        questions: [
+          {
+            id: "scope",
+            header: "Scope",
+            question: "Which files?",
+            options: [
+              { label: "Only src", description: "Leave tests alone" },
+              { label: "Everything", description: "Touch all files" },
+            ],
+          },
+        ],
+      };
+      const { events, responded, hook } = yield* harness({
+        subscribe: Stream.fromQueue,
+        records: () => ({
+          runtimeRequests: [{ ...request, kind: "user_input" }],
+          turnItems: [question],
+        }),
+      });
+      hook("answers", async () => ({ answers: { scope: "Only src" } }));
+      yield* Queue.offer(events, pending);
+      assert.deepInclude(yield* Queue.take(responded), {
+        type: "runtime-request.respond",
+        requestId: RuntimeRequestId.make("request:deploy"),
+        answers: { scope: "Only src" },
+      });
     }),
   );
 
