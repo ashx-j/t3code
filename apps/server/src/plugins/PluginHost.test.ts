@@ -478,8 +478,9 @@ module.exports = { activate() {} };`,
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
         const states = yield* waitForStatuses(host, { crashing: "failed" });
+        // Its switch shows it off, so turning it on is how the user retries it.
         assert.deepInclude(stateOf(states, id), {
-          enabled: true,
+          enabled: false,
           failure: { stage: "crash", message: "thrown in a timer" },
         });
         assert.isFalse(yield* fs.exists(`${rootDir}/loaded`));

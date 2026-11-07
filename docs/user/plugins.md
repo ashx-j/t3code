@@ -35,7 +35,7 @@ files. Turning a plugin off doesn't stop code it started on its own, such as a t
 says some of its code is still running, restart T3 Code to stop it.
 
 A plugin can stop T3 Code's server with an error. When the server starts again, that plugin stays
-off and its row says it stopped the server. Use **Reload**, or turn it off and on, to try it again.
+off and its row says it stopped the server. To try it again, turn it back on.
 
 ## Plugin settings
 

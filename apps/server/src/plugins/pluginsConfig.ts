@@ -111,8 +111,9 @@ export const makePluginsConfig = Effect.gen(function* () {
         ),
       ),
     /**
-     * Saves that the plugin crashed the server, so the next start lists it as failed and leaves it
-     * off. Synchronous, because Node exits right after; it throws if the write fails.
+     * Saves that the plugin crashed the server and turns it off, so the next start lists it as
+     * failed with its switch off. Synchronous, because Node exits right after; it throws if the
+     * write fails.
      */
     recordCrash: (pluginId: PluginId, message: string) => {
       // From disk, like `write`, unless it can't be read.
@@ -122,7 +123,11 @@ export const makePluginsConfig = Effect.gen(function* () {
       } catch {
         // Such as a file edited by hand into invalid JSON.
       }
-      const next = { ...last, crashed: { ...last.crashed, [pluginId]: message } };
+      const next = {
+        ...last,
+        enabled: { ...last.enabled, [pluginId]: false },
+        crashed: { ...last.crashed, [pluginId]: message },
+      };
       const temporary = `${configPath}.crash-${process.pid}.tmp`;
       NodeFS.writeFileSync(temporary, `${encodeConfigSync(next)}\n`);
       NodeFS.renameSync(temporary, configPath);

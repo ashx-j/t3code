@@ -28,8 +28,8 @@ the alternative is one plugin bug stopping the server and every running agent.
 
 An uncaught exception still stops the server, because Node calls resuming after one unsafe. When the
 guard ties one to a plugin, it saves the error to `plugins.json` before Node exits. The next start
-lists that plugin as failed and leaves it off until the user reloads it or turns it off and on, so a
-plugin that throws at startup can't stop every start. A failure the guard can't tie to a plugin
+lists that plugin as failed with its switch off until the user turns it on again, so a plugin that
+throws at startup can't stop every start. A failure the guard can't tie to a plugin
 stops the server too.
 
 On Node 24 and later, the host runs plugin code in an `AsyncLocalStorage` scope, which Node carries

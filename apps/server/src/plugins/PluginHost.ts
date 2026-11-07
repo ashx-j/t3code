@@ -457,14 +457,16 @@ const make = Effect.gen(function* () {
   const startPlugin = (plugin: DiscoveredPlugin) =>
     FiberMap.run(activations, plugin.id, activatePlugin(plugin));
 
-  // A plugin that stopped the server stays off, or the restart would only crash again.
+  // A plugin that stopped the server was turned off then, or the restart would only crash again.
   const initialRecord = (plugin: DiscoveredPlugin, found: Found): PluginRecord => {
     if ("failure" in plugin) return { plugin, status: "failed", failure: plugin.failure };
-    if (found.enabled[plugin.id] !== true) return { plugin, status: "disabled" };
     const crashed = found.crashed[plugin.id];
-    return crashed === undefined
+    if (crashed !== undefined) {
+      return { plugin, status: "failed", failure: { stage: "crash", message: crashed } };
+    }
+    return found.enabled[plugin.id] === true
       ? { plugin, status: "loading" }
-      : { plugin, status: "failed", failure: { stage: "crash", message: crashed } };
+      : { plugin, status: "disabled" };
   };
   // A shadowed copy keeps its manifest for its row, but started it would take over the record
   // of the copy in use, which shares its id.
@@ -524,7 +526,7 @@ const make = Effect.gen(function* () {
 
   /** Rescans the plugin folders and lists what appeared; `restart` also restarts with new code. */
   const rediscover = Effect.fn("PluginHost.rediscover")(function* (restart: PluginId | undefined) {
-    // Reloading a plugin that stopped the server is the user retrying it.
+    // Reloading a plugin that stopped the server clears that failure; it stays off until turned on.
     if (restart !== undefined) yield* pluginsConfig.clearCrash(restart);
     const { plugins, found } = yield* discover(false);
     if (restart !== undefined) yield* stopPlugin(restart);

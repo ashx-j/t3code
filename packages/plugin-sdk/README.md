@@ -105,7 +105,7 @@ keeps the latest 64 values of each channel and loses older ones.
 A promise rejection in plugin code that nothing handles, such as in a timer, doesn't stop T3 Code.
 It shows on the plugin's row in Settings → Plugins, and the plugin keeps running. An exception
 nothing catches does stop the server. When T3 Code can tell it was your plugin's, the plugin stays
-off after the restart until the user reloads it. That includes a throw in a timer callback and an
+off after the restart until the user turns it on again. That includes a throw in a timer callback and an
 `'error'` event with no listener, so catch errors in callbacks and give every child process, socket
 and stream you create an `'error'` listener.
 
