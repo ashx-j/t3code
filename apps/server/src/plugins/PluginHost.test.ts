@@ -628,6 +628,7 @@ module.exports = { activate(api) {
   api.rpc.register("awaitLater", () => { setTimeout(async () => { await api.threads.read("thread:gone"); }, 0); }, { access: "read" });
   api.rpc.register("spawnMissing", () => { require("node:child_process").spawn("t3-plugin-test-missing-command"); }, { access: "read" });
   api.turns.beforeDispatch(() => { sends += 1; throw new Error("send hook failed " + sends); });
+  api.onDeactivate(() => { setTimeout(() => { throw new Error("left running"); }, 0); });
 } };`,
       );
       // A timer it sets while starting fails, then it fails to start.
@@ -699,6 +700,14 @@ module.exports = { activate(api) {
           "send hook failed 1",
           "send hook failed 3",
         ]);
+
+        // Code a turned-off plugin left running still fails onto its row, which says so.
+        yield* TestClock.adjust("5 seconds");
+        const leftover = yield* host
+          .setEnabled(id, false)
+          .pipe(Effect.andThen(nextFailure("send hook failed 3")));
+        assert.strictEqual(leftover, "left running");
+        assert.include(stateOf(yield* host.list, id), { enabled: false, status: "disabled" });
 
         // A failure while starting belongs to that start, so Disable clears it.
         const starting = PluginId.make("leaky-start");

@@ -98,10 +98,18 @@ export function PluginRow({
             `${labelled ? `${label}: ` : ""}${shadowed ? "Not used" : FAILURE_STAGES[failure.stage]}: ${failure.message}`,
           ],
     ),
-    ...copies.flatMap(({ label, plugin: { serverFailure } }) =>
+    ...copies.flatMap(({ label, plugin: { serverFailure, enabled } }) =>
       serverFailure === undefined
         ? []
-        : [`${labelled ? `${label}: ` : ""}Failed while running: ${serverFailure}`],
+        : [
+            `${labelled ? `${label}: ` : ""}Failed while running: ${serverFailure}`,
+            // Turning a plugin off clears its failures on the server, so this one came after.
+            ...(enabled
+              ? []
+              : [
+                  `${labelled ? `${label}: ` : ""}Some of its code is still running. Restarting T3 Code stops it.`,
+                ]),
+          ],
     ),
     ...copies.flatMap(({ label, environmentId: copyEnvironmentId }) => {
       const webFailure = webFailures.get(copyEnvironmentId);
