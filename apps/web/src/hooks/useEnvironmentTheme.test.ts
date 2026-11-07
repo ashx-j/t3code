@@ -1,21 +1,32 @@
 import type { EnvironmentTheme } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-const publishedThemes = vi.hoisted(() => ({
-  atom: null as unknown as import("effect/reactivity").Atom.Writable<
-    ReadonlyArray<EnvironmentTheme>
-  >,
+// Like the real config, the themes and the latest event change together in one update.
+interface ServerState {
+  readonly themes: ReadonlyArray<EnvironmentTheme>;
+  readonly event: { readonly type: string } | null;
+}
+const server = vi.hoisted(() => ({
+  state: null as unknown as import("effect/reactivity").Atom.Writable<ServerState>,
 }));
 vi.mock(import("../state/server"), async () => {
   const { Atom } = await import("effect/reactivity");
-  publishedThemes.atom = Atom.make<ReadonlyArray<EnvironmentTheme>>([]);
-  return { primaryServerEnvironmentThemesAtom: publishedThemes.atom } as never;
+  server.state = Atom.make<ServerState>({ themes: [], event: null });
+  return {
+    primaryServerEnvironmentThemesAtom: Atom.make((get) => get(server.state).themes),
+    primaryServerConfigEventAtom: Atom.make((get) => get(server.state).event),
+  } as never;
 });
+const publish = (
+  registry: { readonly set: (atom: typeof server.state, state: ServerState) => void },
+  themes: ReadonlyArray<EnvironmentTheme>,
+) => registry.set(server.state, { themes, event: { type: "environmentThemesUpdated" } });
 const refreshTheme = vi.hoisted(() => vi.fn());
 vi.mock(import("./useTheme"), () => ({ refreshTheme }) as never);
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import {
+  ENVIRONMENT_THEMES_STORAGE_KEY,
   getThemeDefinition,
   installCustomTheme,
   invalidateCustomThemes,
@@ -31,7 +42,7 @@ const NIGHTFALL_THEME = {
 } as const;
 
 afterEach(() => {
-  appAtomRegistry.set(publishedThemes.atom, []);
+  appAtomRegistry.set(server.state, { themes: [], event: null });
 });
 
 describe("environment themes", () => {
@@ -88,10 +99,10 @@ describe("environment themes", () => {
 
   // Routes without the old root sync component (/connect, prompt-link landings) never saw them.
   it("resolves published themes without a React subscriber mounted", () => {
-    appAtomRegistry.set(publishedThemes.atom, [NIGHTFALL_THEME]);
+    publish(appAtomRegistry, [NIGHTFALL_THEME]);
     expect(getThemeDefinition("nightfall")?.label).toBe("Nightfall");
 
-    appAtomRegistry.set(publishedThemes.atom, [{ ...NIGHTFALL_THEME, name: "Nightfall 2" }]);
+    publish(appAtomRegistry, [{ ...NIGHTFALL_THEME, name: "Nightfall 2" }]);
     expect(getThemeDefinition("nightfall")?.label).toBe("Nightfall 2");
   });
 
@@ -108,7 +119,7 @@ describe("environment themes", () => {
     });
     invalidateCustomThemes();
     try {
-      appAtomRegistry.set(publishedThemes.atom, [NIGHTFALL_THEME]);
+      publish(appAtomRegistry, [NIGHTFALL_THEME]);
       expect(getThemeDefinition("nightfall")?.label).toBe("Nightfall");
       const environment = getThemeDefinition("nightfall");
       if (!environment) throw new Error("expected the published theme");
@@ -122,13 +133,52 @@ describe("environment themes", () => {
     expect(getThemeDefinition("nightfall")?.label).toBe("Nightfall");
   });
 
+  it("uses the palettes saved last start until the server sends its own, then saves those", async () => {
+    const store = new Map([
+      [
+        ENVIRONMENT_THEMES_STORAGE_KEY,
+        JSON.stringify(publishedThemeDefinitions([NIGHTFALL_THEME])),
+      ],
+    ]);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      localStorage: {
+        getItem: (key: string) => store.get(key) ?? null,
+        setItem: (key: string, value: string) => store.set(key, value),
+        removeItem: (key: string) => store.delete(key),
+      },
+    });
+    vi.resetModules();
+    const { appAtomRegistry: registry } = await import("../rpc/atomRegistry");
+    const palette = await import("../themePalette");
+    const { startEnvironmentThemeRepaint } = await import("./useEnvironmentTheme");
+    const stop = startEnvironmentThemeRepaint();
+    try {
+      expect(palette.getThemeDefinition("nightfall")?.label).toBe("Nightfall");
+
+      // The server no longer publishes it, so its first themes event is empty.
+      publish(registry, []);
+      expect(palette.getThemeDefinition("nightfall")).toBeNull();
+      expect(store.has(ENVIRONMENT_THEMES_STORAGE_KEY)).toBe(false);
+
+      publish(registry, [{ ...NIGHTFALL_THEME, name: "Nightfall 2" }]);
+      expect(JSON.parse(store.get(ENVIRONMENT_THEMES_STORAGE_KEY) ?? "[]")[0]?.label).toBe(
+        "Nightfall 2",
+      );
+    } finally {
+      stop();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("repaints when the environment publishes themes nothing has read yet", async () => {
     vi.resetModules();
     const { appAtomRegistry: registry } = await import("../rpc/atomRegistry");
     const { startEnvironmentThemeRepaint } = await import("./useEnvironmentTheme");
     const stop = startEnvironmentThemeRepaint();
     try {
-      registry.set(publishedThemes.atom, [NIGHTFALL_THEME]);
+      publish(registry, [NIGHTFALL_THEME]);
       expect(refreshTheme).toHaveBeenCalledTimes(1);
     } finally {
       stop();
