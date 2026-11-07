@@ -151,7 +151,7 @@ session. So an ACP agent shows "ready" with unknown sign-in until a turn runs. I
 providers only on a usage limit, so a selected provider that can't write text fails every title.
 
 Source control drivers are Effect code in the server's runtime. A plugin's own `effect` would work
-only while it matched the server's, so drivers build with `api.providers.runtime`. The SDK's source
-control types are T3's own, and those change with every nightly, so such a plugin tracks one T3
-version. A plugin host joins remote recognition after the built-ins, so it cannot take a built-in
-host's remotes.
+only while it matched the server's, so drivers build with `api.providers.runtime`. The published SDK
+carries a copy of T3's source control types from its build, and those change with every nightly, so
+such a plugin tracks one T3 version. A plugin host joins remote recognition after the built-ins, so
+it cannot take a built-in host's remotes.

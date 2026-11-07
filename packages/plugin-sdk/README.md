@@ -10,6 +10,24 @@ builds to its own `dist/web.js` with the Vite preset below. The plugins in
 [`fixtures/`](./fixtures) back the tests and are small and working too. They are written by hand
 and need no build. `hello-web` uses most of the web API.
 
+## Install
+
+```sh
+npm install --save-dev @t3tools/plugin-sdk
+```
+
+The SDK has no dependencies of its own. What else a plugin needs depends on its parts:
+
+- A web half needs `react` and `@types/react` as dev dependencies, plus `react-dom` if it imports
+  it, and Vite 8 or later to build it. The bundle uses T3's own React at runtime, but the build
+  reads React's exports.
+- Atoms from `@t3tools/plugin-sdk/atom` need `effect`. So does typechecking a server half, which
+  also needs `@types/node`. Use the `effect` version the SDK lists as a peer dependency.
+
+To use an SDK that isn't on npm, such as one from a fork, run `vp run build` in
+`packages/plugin-sdk` of a T3 Code checkout. Then run `npm pack` in its `dist` folder and install
+the `.tgz` file it writes.
+
 ## Manifest
 
 ```json
@@ -161,9 +179,9 @@ instance's environment variables.
 Source control hosts are Effect code that runs in the server: build them with the modules in
 `api.providers.runtime` (and the helpers in `api.sourceControl.runtime`), never with an `effect`
 you import, because the server bundles its own copy. Types come from one import,
-`@t3tools/plugin-sdk/server/providers`, which re-exports T3 Code's internal source control types.
-They change with every nightly, so build the plugin against the T3 Code version it runs on, and
-expect to update it often.
+`@t3tools/plugin-sdk/server/providers`, which carries a copy of T3 Code's internal source control
+types from the version the SDK was built from. They change with every nightly, so use the SDK built
+from the T3 Code version the plugin runs on, and expect to update it often.
 
 ## Web half
 
