@@ -89,10 +89,25 @@ for the web half, and MCP tools for agents.
 Everything a plugin registers is released when it is disabled, reloaded or uninstalled; add your
 own cleanup with `api.onDeactivate`.
 
-A failure in plugin code that nothing awaits, such as a throw in a timer, doesn't stop T3 Code. It
-shows on the plugin's row in Settings → Plugins, and the plugin keeps running. Give every child
-process, socket and stream you create an `'error'` listener anyway: Node reports an unhandled
-`'error'` event as a crash, and when T3 Code can't tell it came from your plugin, the server stops.
+`rpc.register` takes an `access`. Any session that can read the environment may call a `read`
+method, a guest's read-only session included. A `write` method needs the `orchestration:operate`
+scope, which the owner's sessions have and a read-only session lacks. The handler's second argument
+has the caller's `access` and a `signal`. The signal aborts when the caller goes away, the plugin
+stops, or 30 seconds pass, and a method that hasn't answered by then fails. A client can send any
+JSON as input, so check it before acting on it.
+
+`rpc.publish` sends a value to every session that follows the channel, and any session that can
+read the environment may follow one, so never publish secrets. A subscriber gets only the values
+published after it subscribes, so give the web half a method that returns the current value, as
+[`examples/quick-notes`](./examples/quick-notes) does with `list`. A subscriber that falls behind
+keeps the latest 64 values of each channel and loses older ones.
+
+A promise rejection in plugin code that nothing handles, such as in a timer, doesn't stop T3 Code.
+It shows on the plugin's row in Settings → Plugins, and the plugin keeps running. An exception
+nothing catches does stop the server. When T3 Code can tell it was your plugin's, the plugin stays
+off after the restart until the user reloads it. That includes a throw in a timer callback and an
+`'error'` event with no listener, so catch errors in callbacks and give every child process, socket
+and stream you create an `'error'` listener.
 
 ## Web half
 

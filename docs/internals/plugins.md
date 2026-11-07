@@ -19,20 +19,23 @@ the API hands a plugin comes from `call` or `refused` in
 [`facade.ts`](../../apps/server/src/plugins/api/facade.ts), which mark it handled.
 
 Plugin code can still fail where nothing T3 runs is waiting, such as in a timer or a child process
-with no `'error'` listener. The
-[failure guard](../../apps/server/src/plugins/pluginFailureGuard.ts) catches the uncaught exception
-or unhandled rejection. When it ties one to a plugin, it records it as that plugin's
-`serverFailure` and returns, so Node does not exit. The throw has unwound only the callback that
-ran plugin code. The plugin stays active. Disabling or reloading it releases what it registered
-through the API, but timers it started itself keep running, and Node keeps its code until the
-server restarts. This is accepted because the user chose to install that code, and the alternative
-is one plugin bug stopping the server and every running agent. A failure the guard can't tie to a
-plugin still stops the server.
+with no `'error'` listener. The [failure guard](../../apps/server/src/plugins/pluginFailureGuard.ts)
+ties such a failure to a plugin when it can. A plugin's unhandled rejection becomes that plugin's
+`serverFailure`, and Node does not exit. The plugin stays active. Disabling or reloading it releases
+what it registered through the API, but timers it started itself keep running, and Node keeps its
+code until the server restarts. This is accepted because the user chose to install that code, and
+the alternative is one plugin bug stopping the server and every running agent.
+
+An uncaught exception still stops the server, because Node calls resuming after one unsafe. When the
+guard ties one to a plugin, it saves the error to `plugins.json` before Node exits. The next start
+lists that plugin as failed and leaves it off until the user reloads it or turns it off and on, so a
+plugin that throws at startup can't stop every start. A failure the guard can't tie to a plugin
+stops the server too.
 
 On Node 24 and later, the host runs plugin code in an `AsyncLocalStorage` scope, which Node carries
 into the timers and callbacks that code starts, so a failure with only Node's frames in its stack
 is still the plugin's. Before Node 24 that tracking slows every promise in the process about 3x, so
-it is off there and the guard goes by plugin API errors and stack frames alone. A plugin failure
+it is off there and the guard goes by plugin API errors and stack frames alone. A plugin's rejection
 with only Node's frames then stops the server. The server still allows Node 22.16+ and 23.11+.
 
 ## The API and manifests
@@ -41,18 +44,24 @@ The server bundle inlines `effect`, so plugins never share the host's Effect run
 instances. They get Promises, `AsyncIterable` streams, `AbortSignal` and the SDK's own types, never
 T3's contracts, which change between releases.
 
+`plugins.invoke` and `plugins.subscribe` need only the read scope, so the host checks a method's
+`access` itself: a `write` method needs the caller's operate scope, as T3's own changes do. A call
+fails after 30 seconds and aborts the handler's signal, so a handler that never answers can't hold
+a client's call open. Each subscriber gets its own sliding buffer per channel, so a busy channel or
+a slow subscriber drops only that channel's oldest values.
+
 Manifests ignore keys they don't know, so a newer manifest key is lost silently on an older T3.
 `engines.t3` is how a plugin asks for a newer T3: the server refuses to install or start a version
 outside it.
 
 ## State lives beside T3's
 
-`<stateDir>/plugins.json` holds enabled flags and dev paths. Settings go in `plugin-data/<id>/` and
-storage in `plugins.sqlite`. They stay out of `settings.json`, whose writer drops keys it doesn't
-know, and out of `statev2.sqlite`, whose numbered migrations refuse to start when a fork's id
-collides with an upstream one. Settings stay out of `plugins/<id>/`, so replacing a plugin's files
-keeps them. Removing a plugin deletes its settings, secrets and storage, so nothing is left that no
-plugin can reach.
+`<stateDir>/plugins.json` holds enabled flags, dev paths and the plugins that stopped the server.
+Settings go in `plugin-data/<id>/` and storage in `plugins.sqlite`. They stay out of
+`settings.json`, whose writer drops keys it doesn't know, and out of `statev2.sqlite`, whose
+numbered migrations refuse to start when a fork's id collides with an upstream one. Settings stay
+out of `plugins/<id>/`, so replacing a plugin's files keeps them. Removing a plugin deletes its
+settings, secrets and storage, so nothing is left that no plugin can reach.
 
 ## Installing
 
@@ -63,7 +72,9 @@ old version waits in staging until the new one starts and goes back if it fails.
 Clients upload a dropped folder's files, never its path, which would mean nothing on a remote
 environment. They post them over HTTP to a URL `plugins.createUploadUrl` signs for 5 minutes,
 because one large WebSocket message holds up every other stream on the socket. As for attachments,
-the signature is the credential, so the upload works the same on every kind of connection.
+the signature is the credential, so the upload works the same on every kind of connection. Each URL
+installs once. The server keeps its unused URLs in memory, so a restart refuses those it signed
+before.
 
 Discovery takes the id from the manifest, because people copy plugin folders in by hand. Nothing
 watches `plugins/`: the server reads it at startup, on reload and when Settings asks.
@@ -80,8 +91,8 @@ Once the app is idle, [`PluginLoaderStarter`](../../apps/web/src/plugins/PluginL
 follows `plugins.subscribeStates` for each chosen environment, a stream of its own because the
 server config stream would resend the whole config on every plugin change. It downloads the web
 loader only when an active plugin has a web part, and a separate small styles chunk only when one
-has a `styles/` folder, so a client without them downloads no plugin code. The server starts plugins
-after it is listening.
+has a `styles/` folder. A client with neither still downloads the stub and a small watcher, and
+keeps one stream open per chosen environment. The server starts plugins after it is listening.
 
 A bare `import(url)` cannot send credentials, so the loader fetches each bundle with the
 connection's credentials and imports it from a `blob:` URL, which the desktop CSP allows. Mobile
