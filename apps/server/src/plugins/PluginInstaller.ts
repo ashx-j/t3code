@@ -6,6 +6,7 @@ import {
   type PluginUploadFile,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -19,6 +20,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/http";
 
+import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { STATUS_UPSTREAM_REFRESH_ENV } from "../vcs/GitVcsDriverCore.ts";
@@ -133,10 +135,46 @@ const withoutCredentials = (text: string, source: PluginInstallSource) => {
   return userinfo === undefined ? text : text.replaceAll(`${userinfo}@`, "***@");
 };
 
-const withoutAvailableUpdate = (current: PluginsConfigFile, pluginId: PluginId) => {
-  if (current.updates === undefined) return current;
-  const { [pluginId]: _found, ...available } = current.updates.available;
-  return { ...current, updates: { ...current.updates, available } };
+/** What plugins.json records about how a plugin was installed, put back when a swap is undone. */
+interface InstallRecord {
+  readonly source: PluginInstallSource | undefined;
+  /** The npm version or git commit fetched. */
+  readonly installed: string | undefined;
+  /** A newer version the last update check found. */
+  readonly available: string | undefined;
+}
+
+const installRecordOf = (current: PluginsConfigFile, pluginId: PluginId): InstallRecord => ({
+  source: current.sources?.[pluginId],
+  installed: current.installed?.[pluginId],
+  available: current.updates?.available[pluginId],
+});
+
+const withInstallRecord = (
+  current: PluginsConfigFile,
+  pluginId: PluginId,
+  record: InstallRecord,
+): PluginsConfigFile => {
+  const { [pluginId]: _source, ...sources } = current.sources ?? {};
+  const { [pluginId]: _installed, ...installed } = current.installed ?? {};
+  const { [pluginId]: _available, ...available } = current.updates?.available ?? {};
+  return {
+    ...current,
+    sources: record.source === undefined ? sources : { ...sources, [pluginId]: record.source },
+    installed:
+      record.installed === undefined ? installed : { ...installed, [pluginId]: record.installed },
+    ...(current.updates === undefined && record.available === undefined
+      ? {}
+      : {
+          updates: {
+            checkedAt: current.updates?.checkedAt ?? 0,
+            available:
+              record.available === undefined
+                ? available
+                : { ...available, [pluginId]: record.available },
+          },
+        }),
+  };
 };
 
 const decodeManifestJson = Schema.decodeUnknownEffect(Schema.fromJsonString(PluginManifest));
@@ -327,32 +365,32 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
     return result.code === 0 ? commitFromLsRemote(result.stdout, source.ref) : undefined;
   });
 
-  const installOrigin = Effect.fn("PluginInstaller.installOrigin")(function* (
-    origin: InstallOrigin,
+  /** Why this server cannot run `manifest`, checked before anything is stopped or moved. */
+  const engineRefusal = (manifest: PluginManifest) =>
+    satisfiesSemverRange(packageJson.version, manifest.engines.t3)
+      ? undefined
+      : `${manifest.name} ${manifest.version} needs T3 Code ${manifest.engines.t3}, and this server is ${packageJson.version}.`;
+
+  /**
+   * Swaps `<stagingDir>/plugin` into the plugins folder under the lifecycle lock and starts it. The
+   * replaced version waits in `<stagingDir>/previous` and goes back if the new one fails to start.
+   * `stagingDir` is removed unless it holds a version's only copy, which startup then restores.
+   */
+  const swapIn = Effect.fn("PluginInstaller.swapIn")(function* (input: {
+    readonly manifest: PluginManifest;
+    readonly stagingDir: string;
+    readonly installed: InstallRecord;
     /** Set by `update`: the id the source must still provide, checked before anything moves. */
-    expectedId: PluginId | undefined,
-  ) {
-    const source = "source" in origin ? origin.source : undefined;
-    const id = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
-    const stagingDir = path.join(stagingRoot, id);
+    readonly expectedId: PluginId | undefined;
+  }) {
+    const { manifest, stagingDir } = input;
+    const source = input.installed.source;
     const staged = path.join(stagingDir, "plugin");
-    yield* fs
-      .makeDirectory(stagingDir, { recursive: true })
-      .pipe(Effect.mapError(installFailed("Could not create the staging folder.")));
-    const { manifest, fetched } = yield* Effect.gen(function* () {
-      const fetched =
-        "source" in origin
-          ? yield* fetchSource(origin.source, staged)
-          : yield* writeFiles(origin.files, staged).pipe(Effect.as(undefined));
-      return { manifest: yield* readSourceManifest(staged), fetched };
-    }).pipe(
-      Effect.tapError(() =>
-        fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore),
-      ),
-    );
     const previous = path.join(stagingDir, "previous");
     let stopped = false;
-    yield* host
+    let stranded = false;
+    yield* Effect.addFinalizer(() => (stranded ? Effect.void : removeStaging(stagingDir)));
+    const swapped = yield* host
       .lifecycle(
         // Read under the lock, so another install or a removal cannot change them before the swap.
         Effect.gen(function* () {
@@ -366,11 +404,13 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
           const refusal =
             existing?.source === "dev"
               ? `${manifest.id} is linked from ${existing.folder}. Unlink it first.`
-              : expectedId !== undefined && manifest.id !== expectedId
-                ? `The source now provides ${manifest.id}, not ${expectedId}.`
-                : existing !== undefined && !sameSource(recorded, source)
-                  ? `${manifest.id} is already installed from somewhere else. Remove it first to replace it.`
-                  : undefined;
+              : input.expectedId !== undefined && manifest.id !== input.expectedId
+                ? `The source now provides ${manifest.id}, not ${input.expectedId}.`
+                : input.expectedId !== undefined && existing === undefined
+                  ? `${input.expectedId} is not installed.`
+                  : existing !== undefined && !sameSource(recorded, source)
+                    ? `${manifest.id} is already installed from somewhere else. Remove it first to replace it.`
+                    : undefined;
           if (refusal !== undefined) return yield* new PluginInstallError({ reason: refusal });
           const target =
             existing === undefined ? path.join(pluginsDir, manifest.id) : existing.folder;
@@ -404,31 +444,122 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
               hadPrevious ? fs.rename(previous, target).pipe(Effect.ignore) : Effect.void,
             ),
           );
-          yield* host.writeConfig((current) => {
-            const { [manifest.id]: _previous, ...installed } = current.installed ?? {};
-            const { [manifest.id]: _source, ...sources } = current.sources ?? {};
-            return {
-              ...withoutAvailableUpdate(current, manifest.id),
-              enabled: { ...current.enabled, [manifest.id]: enabled },
-              sources: source === undefined ? sources : { ...sources, [manifest.id]: source },
-              installed:
-                fetched === undefined ? installed : { ...installed, [manifest.id]: fetched },
-            };
-          });
+          yield* host.writeConfig((current) => ({
+            ...withInstallRecord(current, manifest.id, input.installed),
+            enabled: { ...current.enabled, [manifest.id]: enabled },
+          }));
+          return {
+            target,
+            replaced: hadPrevious
+              ? {
+                  version:
+                    existing !== undefined && "manifest" in existing
+                      ? existing.manifest.version
+                      : undefined,
+                  installed: installRecordOf(pluginsFile, manifest.id),
+                }
+              : undefined,
+          };
         }),
       )
       .pipe(
-        Effect.ensuring(
-          fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore),
-        ),
-        // Whatever happened after the stop, the plugin folder holds one version; start it again.
-        Effect.ensuring(
-          Effect.suspend(() =>
-            stopped ? host.reload(manifest.id).pipe(Effect.ignore) : Effect.void,
-          ),
+        // Whatever failed after the stop, the plugin folder holds one version; start it again.
+        Effect.onError(() =>
+          stopped ? host.reload(manifest.id).pipe(Effect.ignore) : Effect.void,
         ),
       );
-    return yield* host.state(manifest.id);
+    const started = yield* host.reload(manifest.id);
+    if (swapped.replaced === undefined || started.status !== "failed") return started;
+    const { replaced } = swapped;
+    yield* host
+      .lifecycle(
+        Effect.gen(function* () {
+          yield* host.stop(manifest.id);
+          yield* fs
+            .rename(swapped.target, path.join(stagingDir, "failed"))
+            .pipe(Effect.mapError(installFailed("Could not move the failed version aside.")));
+          yield* fs.rename(previous, swapped.target).pipe(
+            Effect.tapError(() =>
+              Effect.sync(() => {
+                stranded = true;
+              }),
+            ),
+            Effect.mapError(
+              installFailed("Could not put the previous version back. Restart T3 Code to finish."),
+            ),
+          );
+          yield* host.writeConfig((current) =>
+            withInstallRecord(current, manifest.id, replaced.installed),
+          );
+        }),
+      )
+      .pipe(Effect.ensuring(host.reload(manifest.id).pipe(Effect.ignore)));
+    return yield* new PluginInstallError({
+      reason: `${manifest.name} ${manifest.version} failed to start, so ${replaced.version ?? "the previous version"} is back. It failed with: ${started.failure?.message ?? "an unknown error"}`,
+    });
+  }, Effect.scoped);
+
+  /** Fetches `origin` into a new staging folder and returns the folder and what it holds. */
+  const stage = Effect.fn("PluginInstaller.stage")(function* (origin: InstallOrigin) {
+    const stagingDir = path.join(stagingRoot, yield* crypto.randomUUIDv4().pipe(Effect.orDie));
+    const staged = path.join(stagingDir, "plugin");
+    yield* fs
+      .makeDirectory(stagingDir, { recursive: true })
+      .pipe(Effect.mapError(installFailed("Could not create the staging folder.")));
+    return yield* Effect.gen(function* () {
+      const fetched =
+        "source" in origin
+          ? yield* fetchSource(origin.source, staged)
+          : yield* writeFiles(origin.files, staged).pipe(Effect.as(undefined));
+      return { stagingDir, manifest: yield* readSourceManifest(staged), fetched };
+    }).pipe(Effect.tapError(() => removeStaging(stagingDir)));
+  });
+
+  const removeStaging = (stagingDir: string) =>
+    fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore);
+
+  const installOrigin = Effect.fn("PluginInstaller.installOrigin")(function* (
+    origin: InstallOrigin,
+    expectedId: PluginId | undefined,
+  ) {
+    const { stagingDir, manifest, fetched } = yield* stage(origin);
+    const refusal = engineRefusal(manifest);
+    if (refusal !== undefined) {
+      yield* removeStaging(stagingDir);
+      return yield* new PluginInstallError({ reason: refusal });
+    }
+    return yield* swapIn({
+      manifest,
+      stagingDir,
+      expectedId,
+      installed: {
+        source: "source" in origin ? origin.source : undefined,
+        installed: fetched,
+        available: undefined,
+      },
+    });
+  });
+
+  /**
+   * Whether the newest version at `source`, `latest`, says it runs on this server, read from its
+   * manifest, so update checks never offer one that would be refused.
+   */
+  const runsHere = Effect.fn("PluginInstaller.runsHere")(function* (
+    source: PluginInstallSource,
+    latest: string,
+  ) {
+    const { stagingDir, manifest } = yield* stage({
+      source: source.type === "npm" ? { ...source, version: latest } : source,
+    });
+    yield* removeStaging(stagingDir);
+    const refusal = engineRefusal(manifest);
+    if (refusal !== undefined) {
+      yield* Effect.logInfo("not offering a plugin update this server cannot run", {
+        pluginId: manifest.id,
+        engines: manifest.engines.t3,
+      });
+    }
+    return refusal === undefined;
   });
 
   // A folder loaded where it is, so an author's edits plus a reload are the whole loop.
@@ -508,10 +639,14 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
     yield* Effect.forEach(
       Object.entries(current.sources ?? {}),
       ([pluginId, source]) =>
-        remoteVersion(source).pipe(
-          Effect.map((latest) => {
-            if (latest !== undefined) found[pluginId] = latest;
-          }),
+        Effect.gen(function* () {
+          const latest = yield* remoteVersion(source);
+          if (latest === undefined) return;
+          if (latest !== current.installed?.[pluginId] && !(yield* runsHere(source, latest))) {
+            return;
+          }
+          found[pluginId] = latest;
+        }).pipe(
           // A source that cannot be reached keeps what the last check found.
           Effect.catchCause((cause) => {
             const previous = current.updates?.available[pluginId];
@@ -570,9 +705,14 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
   const removeFromConfig = (pluginId: PluginId) =>
     host.writeConfig((current) => {
       const { [pluginId]: _removed, ...enabled } = current.enabled ?? {};
-      const { [pluginId]: _source, ...sources } = current.sources ?? {};
-      const { [pluginId]: _installed, ...installed } = current.installed ?? {};
-      return { ...withoutAvailableUpdate(current, pluginId), enabled, sources, installed };
+      return {
+        ...withInstallRecord(current, pluginId, {
+          source: undefined,
+          installed: undefined,
+          available: undefined,
+        }),
+        enabled,
+      };
     });
 
   const forgetDevPath = (folder: string) =>

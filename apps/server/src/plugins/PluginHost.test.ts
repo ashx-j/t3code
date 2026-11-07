@@ -137,6 +137,19 @@ const npmTarball = gzipTarball(
   tarEntry("package/server.cjs", "module.exports = { activate() {} };"),
 );
 const npmIntegrity = `sha512-${NodeCrypto.createHash("sha512").update(npmTarball).digest("base64")}`;
+// A package whose releases all need a T3 Code that does not exist yet.
+const npmFutureTarball = gzipTarball(
+  tarEntry(
+    "package/t3-plugin.json",
+    JSON.stringify({
+      id: "npm-future",
+      name: "npm future",
+      version: "1.1.0",
+      engines: { t3: ">=999.0.0" },
+    }),
+  ),
+);
+const npmFutureIntegrity = `sha512-${NodeCrypto.createHash("sha512").update(npmFutureTarball).digest("base64")}`;
 // The registry's `latest` tag, which update checks compare with what was installed.
 let npmLatest = "1.0.0";
 let npmMetadataRequests = 0;
@@ -152,13 +165,17 @@ const layerNpmRegistry = Layer.succeed(
   HttpClient.make((request) => {
     const url = request.url;
     if (!url.endsWith(".tgz")) npmMetadataRequests += 1;
-    const body = url.endsWith(".tgz")
-      ? new Response(npmTarball)
-      : url.endsWith("/npm-hello")
-        ? Response.json(npmDocument("npm-hello", npmIntegrity))
-        : url.endsWith("/npm-tampered")
-          ? Response.json(npmDocument("npm-tampered", "sha512-AAAA"))
-          : new Response("not found", { status: 404 });
+    const body = url.endsWith("/npm-future.tgz")
+      ? new Response(npmFutureTarball)
+      : url.endsWith(".tgz")
+        ? new Response(npmTarball)
+        : url.endsWith("/npm-hello")
+          ? Response.json(npmDocument("npm-hello", npmIntegrity))
+          : url.endsWith("/npm-tampered")
+            ? Response.json(npmDocument("npm-tampered", "sha512-AAAA"))
+            : url.endsWith("/npm-future")
+              ? Response.json(npmDocument("npm-future", npmFutureIntegrity))
+              : new Response("not found", { status: 404 });
     return Effect.succeed(HttpClientResponse.fromWeb(request, body));
   }),
 );
@@ -218,6 +235,29 @@ const writeInstalledPlugin = Effect.fn(function* (id: string, serverSource: stri
   );
   yield* writeFile(`${rootDir}/server.cjs`, serverSource);
   return rootDir;
+});
+
+const upgrade = PluginId.make("upgrade");
+/** Version `version` of the `upgrade` plugin in `folder`, whose `activate` runs `activate`. */
+const writeUpgradeVersion = Effect.fn(function* (
+  folder: string,
+  version: string,
+  options: { readonly activate?: string; readonly engines?: string } = {},
+) {
+  yield* writeFile(
+    `${folder}/t3-plugin.json`,
+    JSON.stringify({
+      id: upgrade,
+      name: "Upgrade",
+      version,
+      engines: { t3: options.engines ?? ">=0.1.0" },
+      server: "./server.cjs",
+    }),
+  );
+  yield* writeFile(
+    `${folder}/server.cjs`,
+    `module.exports = { activate() { ${options.activate ?? ""} } };`,
+  );
 });
 
 const stateOf = (states: ReadonlyArray<PluginState>, id: string) =>
@@ -1713,6 +1753,79 @@ module.exports = { activate(api) {
     }).pipe(Effect.provide(layerConfig())),
   );
 
+  it.effect("puts the working version back when its update fails to start", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const folder = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-plugin-upgrade-" });
+      yield* writeUpgradeVersion(folder, "1.0.0");
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const installer = yield* PluginInstaller.PluginInstaller;
+        yield* waitForStatuses(host, {});
+        yield* installer.install({ type: "path", path: folder });
+        yield* writeUpgradeVersion(folder, "2.0.0", {
+          activate: `throw new Error("2.0.0 refuses to start");`,
+        });
+        const failed = yield* installer.update(upgrade).pipe(Effect.flip);
+        assert.strictEqual(
+          failed.message,
+          "Upgrade 2.0.0 failed to start, so 1.0.0 is back. It failed with: 2.0.0 refuses to start",
+        );
+        assert.include(stateOf(yield* host.list, upgrade), { version: "1.0.0", status: "active" });
+        assert.notInclude(
+          yield* fs.readFileString(`${stateDir}/plugins/upgrade/server.cjs`),
+          "refuses to start",
+        );
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("refuses an update that needs a newer T3 Code before stopping the version in use", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const folder = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-plugin-upgrade-" });
+      yield* writeUpgradeVersion(folder, "1.0.0");
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const installer = yield* PluginInstaller.PluginInstaller;
+        yield* waitForStatuses(host, {});
+        const installed = yield* installer.install({ type: "path", path: folder });
+        yield* writeUpgradeVersion(folder, "2.0.0", { engines: ">=999.0.0" });
+        const refused = yield* installer.update(upgrade).pipe(Effect.flip);
+        assert.strictEqual(
+          refused.message,
+          `Upgrade 2.0.0 needs T3 Code >=999.0.0, and this server is ${packageJson.version}.`,
+        );
+        const kept = stateOf(yield* host.list, upgrade);
+        assert.include(kept, { version: "1.0.0", status: "active" });
+        // Never stopped: the same start keeps running.
+        assert.strictEqual(kept?.revision, installed.revision);
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("does not offer an update that needs a newer T3 Code", () =>
+    Effect.gen(function* () {
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      yield* writeInstalledPlugin("npm-future", "module.exports = { activate() {} };");
+      yield* writeFile(
+        `${stateDir}/plugins.json`,
+        JSON.stringify({
+          sources: { "npm-future": { type: "npm", name: "npm-future" } },
+          installed: { "npm-future": "1.0.0" },
+        }),
+      );
+      npmLatest = "1.1.0";
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const installer = yield* PluginInstaller.PluginInstaller;
+        yield* waitForStatuses(host, { "npm-future": "disabled" });
+        assert.isUndefined(stateOf(yield* installer.checkUpdates, "npm-future")?.availableUpdate);
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
   it.effect("checks installed plugins for updates once a day, not at startup", () =>
     Effect.gen(function* () {
       const { stateDir } = yield* ServerConfig.ServerConfig;
@@ -1743,7 +1856,8 @@ module.exports = { activate(api) {
           stateOf(Option.getOrThrow(yield* Fiber.join(found)), "npm-hello")?.availableUpdate,
           { version: "1.1.0" },
         );
-        assert.strictEqual(npmMetadataRequests, 1);
+        // Once for the latest version, once more to download it and read its engines.
+        assert.strictEqual(npmMetadataRequests, 2);
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
