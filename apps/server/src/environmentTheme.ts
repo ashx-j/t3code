@@ -17,6 +17,8 @@ import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -52,9 +54,10 @@ export class EnvironmentThemeService extends Context.Service<
     readonly streamChanges: Stream.Stream<ReadonlyArray<EnvironmentTheme>>;
 
     /**
-     * Theme folders of active plugins, read after the environment's own folder. The first theme
-     * with an id wins, so a plugin cannot replace a theme the user published. Every call reads
-     * the folders again, so a plugin that restarts with edited files publishes them.
+     * Theme folders of active plugins, each `<plugin folder>/themes`, read after the environment's
+     * own folder; one linked out of its plugin folder is skipped. The first theme with an id wins,
+     * so a plugin cannot replace a theme the user published. Every call reads the folders again,
+     * so a plugin that restarts with edited files publishes them.
      */
     readonly setPluginThemeDirectories: (directories: ReadonlyArray<string>) => Effect.Effect<void>;
   }
@@ -162,6 +165,17 @@ export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
 const make = Effect.gen(function* () {
   const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  // Untraced: it runs for each plugin inside every refresh.
+  const insideItsPlugin = Effect.fnUntraced(function* (directory: string) {
+    const real = yield* fs.realPath(directory).pipe(Effect.option);
+    const root = yield* fs.realPath(path.dirname(directory)).pipe(Effect.option);
+    return (
+      Option.isSome(real) &&
+      Option.isSome(root) &&
+      real.value.startsWith(`${root.value}${path.sep}`)
+    );
+  });
   // Sequence numbers let subscribers drop queued events older than their initial snapshot.
   const changes = yield* PubSub.sliding<PublishedThemes>(1);
   const published = yield* Ref.make<PublishedThemes>({ seq: 0, themes: [] });
@@ -176,6 +190,7 @@ const make = Effect.gen(function* () {
       const themes: Array<EnvironmentTheme> = [];
       const ids = new Set<string>();
       for (const directory of [environmentThemesDir, ...(yield* Ref.get(pluginDirectories))]) {
+        if (directory !== environmentThemesDir && !(yield* insideItsPlugin(directory))) continue;
         const found = yield* readPublishedThemes(directory).pipe(
           Effect.provideService(FileSystem.FileSystem, fs),
         );

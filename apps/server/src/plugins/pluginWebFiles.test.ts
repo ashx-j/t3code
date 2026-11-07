@@ -1,8 +1,11 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { PluginId } from "@t3tools/contracts";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 
+import * as ServerConfig from "../config.ts";
 import * as PluginHost from "./PluginHost.ts";
 import {
   fixturesDir,
@@ -11,6 +14,7 @@ import {
   publishedThemeDirectories,
   stateOf,
   waitForStatuses,
+  writeFile,
   writePluginsConfig,
 } from "./pluginHostTestHarness.ts";
 import * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
@@ -73,6 +77,39 @@ it.layer(NodeServices.layer)("PluginWebFiles", (it) => {
         const missing = yield* routes.handle({ pluginId: helloWeb, request }).pipe(Effect.flip);
         assert.strictEqual(missing._tag, "PluginHttpRouteNotFoundError");
         assert.deepStrictEqual(publishedThemeDirectories.at(-1), []);
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect.skipIf(!symlinksSupported)("reads no file a link takes out of the plugin", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const rootDir = `${stateDir}/plugins/linking`;
+      yield* writeFile(
+        `${rootDir}/t3-plugin.json`,
+        JSON.stringify({
+          id: "linking",
+          name: "Linking",
+          version: "0.1.0",
+          engines: { t3: ">=0.1.0" },
+          web: "./web.js",
+        }),
+      );
+      yield* writeFile(`${rootDir}/styles/base.css`, "body {}");
+      yield* writeFile(`${stateDir}/outside/secret.css`, "Not the plugin's.");
+      yield* writeFile(`${stateDir}/outside/web.js`, "export default {};");
+      yield* fs.symlink(`${stateDir}/outside/secret.css`, `${rootDir}/styles/secret.css`);
+      yield* fs.symlink(`${stateDir}/outside/web.js`, `${rootDir}/web.js`);
+      yield* writePluginsConfig({ enabled: { linking: true } });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const state = stateOf(yield* waitForStatuses(host, { linking: "active" }), "linking");
+        assert.deepStrictEqual(
+          state?.styles?.map(({ file }) => file),
+          ["base.css"],
+        );
+        assert.isUndefined(state?.webRevision);
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );

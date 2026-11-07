@@ -36,8 +36,23 @@ export const makePluginWebFiles = Effect.gen(function* () {
   const httpRoutes = yield* PluginHttpRoutes.PluginHttpRoutes;
   const context = yield* Effect.context<never>();
 
-  // Web files are served from the plugin's real folder; a path or symlink out of `within` is refused.
-  // A request whose `revision` names the file's contents may be cached for good.
+  // Reads a plain file whose real path stays inside the real folder `within`, so a path or link
+  // out of it, a link cycle, or a pipe reads nothing. Untraced: each caller has its span.
+  const readWithin = Effect.fnUntraced(function* (within: string, file: string) {
+    const resolved = yield* fs.realPath(file).pipe(Effect.option);
+    if (Option.isNone(resolved)) return Option.none();
+    const real = resolved.value;
+    if (!real.startsWith(`${within}${path.sep}`)) return Option.none();
+    const info = yield* fs.stat(real).pipe(Effect.option);
+    if (Option.isNone(info) || info.value.type !== "File") return Option.none();
+    return yield* fs.readFile(real).pipe(
+      Effect.map((body) => Option.some({ real, body })),
+      Effect.orElseSucceed(() => Option.none()),
+    );
+  });
+
+  // Web files are served from the plugin's real folder. A request whose `revision` names the
+  // file's contents may be cached for good.
   const readWebFile = Effect.fn("PluginHost.readWebFile")(function* (
     within: string,
     file: string | undefined,
@@ -45,13 +60,9 @@ export const makePluginWebFiles = Effect.gen(function* () {
   ) {
     const notFound = { status: 404, body: "Not found." };
     if (file === undefined) return notFound;
-    const resolved = yield* fs.realPath(file).pipe(Effect.option);
-    if (Option.isNone(resolved)) return notFound;
-    const real = resolved.value;
-    if (real !== within && !real.startsWith(`${within}${path.sep}`)) return notFound;
-    const info = yield* fs.stat(real).pipe(Effect.option);
-    if (Option.isNone(info) || info.value.type !== "File") return notFound;
-    const body = yield* fs.readFile(real);
+    const read = yield* readWithin(within, file);
+    if (Option.isNone(read)) return notFound;
+    const { real, body } = read.value;
     return {
       status: 200,
       headers: {
@@ -116,10 +127,9 @@ export const makePluginWebFiles = Effect.gen(function* () {
     const bundle = path.join(plugin.rootDir, entry);
     yield* registerFileRoute(plugin, "/web.js", () => bundle, plugin.rootDir, true);
     yield* serveFolder(plugin, "assets", false);
-    // The bundle's contents now, for its URL; one that cannot be read gets no revision.
-    return yield* fs
-      .readFile(bundle)
-      .pipe(Effect.map(contentRevision), Effect.option, Effect.map(Option.getOrUndefined));
+    // The bundle's contents now, for its URL; one that cannot be served gets no revision.
+    const read = yield* readWithin(plugin.rootDir, bundle);
+    return Option.isSome(read) ? contentRevision(read.value.body) : undefined;
   });
 
   // The `.css` files directly in `styles/`, in name order, each with the revision for its URL.
@@ -129,13 +139,17 @@ export const makePluginWebFiles = Effect.gen(function* () {
     const names = yield* fs
       .readDirectory(dir)
       .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+    // Only the ones it serves, so not a folder named like a stylesheet or a link out of `styles/`.
     const styles = yield* Effect.forEach(
       names.filter((name) => name.endsWith(".css")).toSorted(),
       (file) =>
-        fs.readFile(path.join(dir, file)).pipe(
-          Effect.map((contents) => [{ file, revision: contentRevision(contents) }]),
-          // Such as a folder named like a stylesheet.
-          Effect.orElseSucceed(() => []),
+        readWithin(dir, path.join(dir, file)).pipe(
+          Effect.map(
+            Option.match({
+              onNone: () => [],
+              onSome: ({ body }) => [{ file, revision: contentRevision(body) }],
+            }),
+          ),
         ),
     );
     return styles.flat();

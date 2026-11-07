@@ -210,6 +210,28 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
     ),
   );
 
+  it.effect.skipIf(!symlinksSupported)("ignores a plugin's themes folder linked out of it", () =>
+    withEnvironmentThemes(
+      {},
+      Effect.gen(function* () {
+        const environmentTheme = yield* EnvironmentTheme.EnvironmentThemeService;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const base = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-plugin-themes-" });
+        const outside = path.join(base, "outside");
+        yield* fs.makeDirectory(outside);
+        yield* fs.writeFileString(
+          path.join(outside, "nightfall.json"),
+          encodeThemeFile(NIGHTFALL_THEME),
+        );
+        yield* fs.makeDirectory(path.join(base, "plugin"));
+        yield* fs.symlink(outside, path.join(base, "plugin", "themes"));
+        yield* environmentTheme.setPluginThemeDirectories([path.join(base, "plugin", "themes")]);
+        assert.deepEqual(yield* currentThemes, []);
+      }),
+    ),
+  );
+
   it.effect("does not charge skipped files against the total size limit", () =>
     withEnvironmentThemes(
       {
