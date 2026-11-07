@@ -4,6 +4,9 @@ import { formatInlineContextReference } from "./lib/composerContextReferences";
 import { threadContextReference } from "./lib/composerContextRecords";
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import { pluginMentionContextId, setPluginMentionItems } from "./plugins/pluginRegistry";
+import { pluginUiAtom } from "./plugins/pluginUi";
+import { pluginUi } from "./plugins/pluginUiParts";
+import { appAtomRegistry } from "./rpc/atomRegistry";
 
 import {
   carryDisplacedCustomAnswerIntoPrompt,
@@ -27,6 +30,9 @@ describe("projectPendingUserInputAnswer", () => {
       "Compare [Reference work](t3-thread://v2/env-answer/reference-thread)",
     );
 
+    // Plugin items exist only once plugin UI has loaded.
+    appAtomRegistry.set(pluginUiAtom, pluginUi);
+    using _ui = { [Symbol.dispose]: () => appAtomRegistry.set(pluginUiAtom, null) };
     const environmentId = EnvironmentId.make("env-answer");
     const contextId = pluginMentionContextId(environmentId, "notes", "checklist");
     setPluginMentionItems(environmentId, "notes", [
