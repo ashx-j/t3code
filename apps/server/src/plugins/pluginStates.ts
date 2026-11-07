@@ -1,0 +1,185 @@
+import {
+  type AuthEnvironmentScope,
+  AuthSettingsWriteScope,
+  type PluginFailure,
+  type PluginManifest,
+  type PluginState,
+  type PluginStatesEvent,
+  type PluginStatus,
+} from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
+import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
+
+import * as EnvironmentTheme from "../environmentTheme.ts";
+import type { PluginActivation } from "./PluginApi.ts";
+import type { DiscoveredPlugin } from "./pluginDiscovery.ts";
+import type { PluginFailures } from "./pluginFailures.ts";
+import type { PluginsConfigFile } from "./pluginsConfig.ts";
+
+/** What the host knows about one listed copy of a plugin. */
+export interface PluginRecord {
+  readonly plugin: DiscoveredPlugin;
+  readonly status: PluginStatus;
+  readonly failure?: PluginFailure;
+  readonly activation?: PluginActivation;
+  readonly revision?: number;
+  readonly webRevision?: string;
+  readonly styles?: PluginState["styles"];
+}
+
+export const manifestOf = (plugin: DiscoveredPlugin): PluginManifest | undefined =>
+  "manifest" in plugin ? plugin.manifest : undefined;
+
+// Folders on the server are for clients that manage plugins; read access can be a guest's.
+const withoutServerPaths = (state: PluginState): PluginState => {
+  const { linkedFolder: _folder, ...shown } = state;
+  return shown;
+};
+const managesPlugins = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+  scopes.includes(AuthSettingsWriteScope);
+
+interface ClientList {
+  readonly plugins: ReadonlyArray<PluginState>;
+}
+
+// Compared per subscriber, since each one sees its own view of the list.
+const statesEvent = (
+  previous: ClientList | undefined,
+  next: ClientList,
+): PluginStatesEvent | undefined => {
+  if (previous === undefined) return { _tag: "snapshot", ...next };
+  const rows = next.plugins.flatMap((plugin, index) =>
+    Equal.equals(plugin, previous.plugins[index]) ? [] : [{ index, plugin }],
+  );
+  return rows.length === 0 && next.plugins.length === previous.plugins.length
+    ? undefined
+    : { _tag: "changed", length: next.plugins.length, rows };
+};
+
+const toState = (
+  record: PluginRecord,
+  config: PluginsConfigFile,
+  webFailure: string | undefined,
+  serverFailure: string | undefined,
+): PluginState => {
+  const manifest = manifestOf(record.plugin);
+  const { id } = record.plugin;
+  return {
+    id: record.plugin.id,
+    name: manifest?.name ?? record.plugin.id,
+    ...(manifest === undefined
+      ? {}
+      : {
+          version: manifest.version,
+          ...(manifest.description === undefined ? {} : { description: manifest.description }),
+          ...(manifest.settingsSchema === undefined
+            ? {}
+            : { settingsSchema: manifest.settingsSchema }),
+        }),
+    permissions: manifest?.permissions ?? [],
+    source: record.plugin.source,
+    ...(record.plugin.source === "dev" ? { linkedFolder: record.plugin.folder } : {}),
+    enabled: config.enabled?.[id] === true,
+    status: record.status,
+    ...(record.failure === undefined ? {} : { failure: record.failure }),
+    ...(record.revision === undefined ? {} : { revision: record.revision }),
+    ...(record.webRevision === undefined ? {} : { webRevision: record.webRevision }),
+    ...(record.styles === undefined || record.styles.length === 0 ? {} : { styles: record.styles }),
+    hasServer: manifest?.server !== undefined,
+    hasWeb: manifest?.web !== undefined,
+    ...(webFailure === undefined ? {} : { webFailure }),
+    ...(serverFailure === undefined ? {} : { serverFailure }),
+  };
+};
+
+/**
+ * Builds the plugin list clients see from the host's records, plugins.json and the failures, and
+ * publishes it, with the theme folders of plugins that are on, after each change.
+ */
+export const makePluginStates = Effect.fn("PluginStates.make")(function* (input: {
+  readonly records: Ref.Ref<ReadonlyArray<PluginRecord>>;
+  readonly config: Effect.Effect<PluginsConfigFile>;
+  readonly failures: PluginFailures;
+}) {
+  const { records, failures } = input;
+  const environmentThemes = yield* EnvironmentTheme.EnvironmentThemeService;
+  const path = yield* Path.Path;
+  const changes = yield* PubSub.sliding<ReadonlyArray<PluginState>>(1);
+  const publishLock = yield* Semaphore.make(1);
+
+  const statesOf = Effect.fn("PluginHost.statesOf")(function* (all: ReadonlyArray<PluginRecord>) {
+    const config = yield* input.config;
+    const failuresOf = yield* failures.current;
+    return all.map((record) => {
+      const failed = failuresOf(record.plugin.id, record.revision);
+      return toState(record, config, failed.web, failed.server);
+    });
+  });
+  const current = Ref.get(records).pipe(Effect.flatMap(statesOf));
+  // What the last publish sent, starting from the empty list clients get before any. Settings
+  // rescans on every visit, and a list sent again would make every client stream rebuild what it
+  // already shows.
+  let published: ReadonlyArray<PluginState> = [];
+  // Reading and publishing under one lock, so a slower fiber cannot publish an older list last.
+  const publishUnderLock = publishLock.withPermits(1)(
+    Effect.gen(function* () {
+      const all = yield* Ref.get(records);
+      const states = yield* statesOf(all);
+      if (Equal.equals(states, published)) return;
+      // Every enabled plugin that has not failed, so a starting or restarting one keeps its themes:
+      // windows would otherwise paint T3's colors, forget the saved theme, then switch back.
+      yield* environmentThemes.setPluginThemeDirectories(
+        all.flatMap((record, index) => {
+          const state = states[index];
+          return state?.enabled === true && state.status !== "failed"
+            ? [path.join(record.plugin.rootDir, "themes")]
+            : [];
+        }),
+      );
+      yield* PubSub.publish(changes, states);
+      published = states;
+    }),
+  );
+
+  const stream = Stream.unwrap(
+    Effect.gen(function* () {
+      const subscription = yield* PubSub.subscribe(changes);
+      const snapshot = yield* current;
+      return Stream.concat(Stream.make(snapshot), Stream.fromSubscription(subscription));
+    }),
+  );
+  const forClient =
+    (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+    (plugins: ReadonlyArray<PluginState>): ClientList => ({
+      plugins: managesPlugins(scopes) ? plugins : plugins.map(withoutServerPaths),
+    });
+
+  return {
+    current,
+    /** Sends the list if it changed. A caller that disconnects mid-publish cannot leave it unsent. */
+    publish: Effect.uninterruptible(publishUnderLock),
+    /** The current list, then the whole list after every change. */
+    stream,
+    listForClient: Effect.fn("PluginHost.listForClient")(function* (
+      scopes: ReadonlyArray<AuthEnvironmentScope>,
+    ) {
+      return forClient(scopes)(yield* current);
+    }),
+    streamForClient: (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+      stream.pipe(
+        Stream.map(forClient(scopes)),
+        Stream.mapAccum(
+          (): ClientList | undefined => undefined,
+          (previous, next) => {
+            const event = statesEvent(previous, next);
+            return [next, event === undefined ? [] : [event]];
+          },
+        ),
+      ),
+  };
+});

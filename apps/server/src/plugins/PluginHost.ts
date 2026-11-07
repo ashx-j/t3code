@@ -5,14 +5,10 @@ import * as NodeModule from "node:module";
 import {
   AuthEnvironmentScope,
   AuthOrchestrationOperateScope,
-  AuthSettingsWriteScope,
-  type PluginFailure,
   PluginId,
-  type PluginManifest,
   type PluginListResult,
   type PluginState,
   type PluginStatesEvent,
-  type PluginStatus,
 } from "@t3tools/contracts";
 import type { PluginDefinition } from "@t3tools/plugin-sdk/server";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
@@ -21,14 +17,12 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Equal from "effect/Equal";
 import * as Fiber from "effect/Fiber";
 import * as FiberMap from "effect/FiberMap";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -37,7 +31,6 @@ import * as Stream from "effect/Stream";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
-import * as EnvironmentTheme from "../environmentTheme.ts";
 import { forkParked } from "../serverActivation.ts";
 import {
   makePluginActivation,
@@ -47,29 +40,22 @@ import {
 } from "./PluginApi.ts";
 import { errorText, PluginCodeError, pluginCodeScope } from "./api/facade.ts";
 import { makePluginFailureGuard } from "./pluginFailureGuard.ts";
+import { makePluginFailures } from "./pluginFailures.ts";
 import { discoverPlugins, type DiscoveredPlugin } from "./pluginDiscovery.ts";
 import * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
 import * as PluginInstaller from "./PluginInstaller.ts";
 import * as PluginMcpTools from "./PluginMcpTools.ts";
-import {
-  makePluginsConfig,
-  type PluginConfigError,
-  type PluginsConfigFile,
-} from "./pluginsConfig.ts";
+import { makePluginsConfig, type PluginConfigError } from "./pluginsConfig.ts";
 import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
+import { makePluginStates, manifestOf, type PluginRecord } from "./pluginStates.ts";
 import { makePluginWebFiles } from "./pluginWebFiles.ts";
 
-// Clients send web failures, so they are bounded like plugin errors.
-const MAX_WEB_FAILURE_CHARS = 1_000;
 // Plugin code that never settles must not keep a plugin loading, a client's call open, or Disable
 // and Reload waiting, forever. The cleanup deadline covers all of a plugin's cleanups together.
 const ACTIVATE_DEADLINE = Duration.seconds(30);
 const INVOKE_DEADLINE = Duration.seconds(30);
 const CLEANUP_DEADLINE = Duration.seconds(5);
-// A plugin's failures outside a call reach clients at most this often, the latest one last, so a
-// timer failing every few milliseconds with new text does not resend the list each time.
-const FAILURE_PUBLISH_INTERVAL = Duration.seconds(5);
 // Values of one channel a subscriber has not taken yet; past this the oldest go.
 const CHANNEL_BUFFER = 64;
 
@@ -230,86 +216,11 @@ type PluginSettingsError =
 
 const isJson = Schema.is(Schema.Json);
 
-interface PluginRecord {
-  readonly plugin: DiscoveredPlugin;
-  readonly status: PluginStatus;
-  readonly failure?: PluginFailure;
-  readonly activation?: PluginActivation;
-  readonly revision?: number;
-  readonly webRevision?: string;
-  readonly styles?: PluginState["styles"];
-}
-
 /** What plugins.json says about the plugins a discovery found. */
 interface Found {
   readonly enabled: Readonly<Record<string, boolean>>;
   readonly crashed: Readonly<Record<string, string>>;
 }
-
-const manifestOf = (plugin: DiscoveredPlugin): PluginManifest | undefined =>
-  "manifest" in plugin ? plugin.manifest : undefined;
-
-// Folders on the server are for clients that manage plugins; read access can be a guest's.
-const withoutServerPaths = (state: PluginState): PluginState => {
-  const { linkedFolder: _folder, ...shown } = state;
-  return shown;
-};
-const managesPlugins = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
-  scopes.includes(AuthSettingsWriteScope);
-
-interface ClientList {
-  readonly plugins: ReadonlyArray<PluginState>;
-}
-
-// Compared per subscriber, since each one sees its own view of the list.
-const statesEvent = (
-  previous: ClientList | undefined,
-  next: ClientList,
-): PluginStatesEvent | undefined => {
-  if (previous === undefined) return { _tag: "snapshot", ...next };
-  const rows = next.plugins.flatMap((plugin, index) =>
-    Equal.equals(plugin, previous.plugins[index]) ? [] : [{ index, plugin }],
-  );
-  return rows.length === 0 && next.plugins.length === previous.plugins.length
-    ? undefined
-    : { _tag: "changed", length: next.plugins.length, rows };
-};
-
-const toState = (
-  record: PluginRecord,
-  config: PluginsConfigFile,
-  webFailure: string | undefined,
-  serverFailure: string | undefined,
-): PluginState => {
-  const manifest = manifestOf(record.plugin);
-  const { id } = record.plugin;
-  return {
-    id: record.plugin.id,
-    name: manifest?.name ?? record.plugin.id,
-    ...(manifest === undefined
-      ? {}
-      : {
-          version: manifest.version,
-          ...(manifest.description === undefined ? {} : { description: manifest.description }),
-          ...(manifest.settingsSchema === undefined
-            ? {}
-            : { settingsSchema: manifest.settingsSchema }),
-        }),
-    permissions: manifest?.permissions ?? [],
-    source: record.plugin.source,
-    ...(record.plugin.source === "dev" ? { linkedFolder: record.plugin.folder } : {}),
-    enabled: config.enabled?.[id] === true,
-    status: record.status,
-    ...(record.failure === undefined ? {} : { failure: record.failure }),
-    ...(record.revision === undefined ? {} : { revision: record.revision }),
-    ...(record.webRevision === undefined ? {} : { webRevision: record.webRevision }),
-    ...(record.styles === undefined || record.styles.length === 0 ? {} : { styles: record.styles }),
-    hasServer: manifest?.server !== undefined,
-    hasWeb: manifest?.web !== undefined,
-    ...(webFailure === undefined ? {} : { webFailure }),
-    ...(serverFailure === undefined ? {} : { serverFailure }),
-  };
-};
 
 // One loader for the packaged single executable and plain Node: a require created from an
 // absolute path loads files from disk in both, and plugin code resolves its own imports.
@@ -332,7 +243,6 @@ const make = Effect.gen(function* () {
     mcpTools: yield* PluginMcpTools.PluginMcpTools,
   };
   const settingsStore = services.settings;
-  const environmentThemes = yield* EnvironmentTheme.EnvironmentThemeService;
   const httpRoutes = yield* PluginHttpRoutes.PluginHttpRoutes;
 
   const pluginsDir = path.join(config.stateDir, "plugins");
@@ -344,66 +254,18 @@ const make = Effect.gen(function* () {
   // Seeded with the clock so a restarted server never repeats a revision a client already saw.
   let revision = yield* Clock.currentTimeMillis;
   const nextRevision = () => ++revision;
-  // By plugin id, for the start it was reported for: a new start's revision hides the old one.
-  const webFailures = yield* Ref.make<
-    ReadonlyMap<PluginId, { readonly revision: number; readonly message: string }>
-  >(new Map());
-  // Like web failures. A stopped plugin's leftover timers fail with no revision.
-  const serverFailures = yield* Ref.make<
-    ReadonlyMap<PluginId, { readonly revision: number | undefined; readonly message: string }>
-  >(new Map());
-  const changes = yield* PubSub.sliding<ReadonlyArray<PluginState>>(1);
   const lifecycle = yield* Semaphore.make(1);
-  const publishLock = yield* Semaphore.make(1);
   const activations = yield* FiberMap.make<PluginId>();
   const hostScope = yield* Effect.scope;
 
-  const statesOf = Effect.fn("PluginHost.statesOf")(function* (all: ReadonlyArray<PluginRecord>) {
-    const config = yield* pluginsConfig.current;
-    const failures = yield* Ref.get(webFailures);
-    const serverFailed = yield* Ref.get(serverFailures);
-    return all.map((record) => {
-      const webFailure = failures.get(record.plugin.id);
-      const serverFailure = serverFailed.get(record.plugin.id);
-      return toState(
-        record,
-        config,
-        webFailure !== undefined && webFailure.revision === record.revision
-          ? webFailure.message
-          : undefined,
-        serverFailure !== undefined && serverFailure.revision === record.revision
-          ? serverFailure.message
-          : undefined,
-      );
-    });
+  const failures = yield* makePluginFailures;
+  const pluginStates = yield* makePluginStates({
+    records,
+    config: pluginsConfig.current,
+    failures,
   });
-  const currentStates = Ref.get(records).pipe(Effect.flatMap(statesOf));
-  // What the last publish sent, starting from the empty list clients get before any. Settings
-  // rescans on every visit, and a list sent again would make every client stream rebuild what it
-  // already shows.
-  let published: ReadonlyArray<PluginState> = [];
-  // Reading and publishing under one lock, so a slower fiber cannot publish an older list last.
-  const publishUnderLock = publishLock.withPermits(1)(
-    Effect.gen(function* () {
-      const all = yield* Ref.get(records);
-      const states = yield* statesOf(all);
-      if (Equal.equals(states, published)) return;
-      // Every enabled plugin that has not failed, so a starting or restarting one keeps its themes:
-      // windows would otherwise paint T3's colors, forget the saved theme, then switch back.
-      yield* environmentThemes.setPluginThemeDirectories(
-        all.flatMap((record, index) => {
-          const state = states[index];
-          return state?.enabled === true && state.status !== "failed"
-            ? [path.join(record.plugin.rootDir, "themes")]
-            : [];
-        }),
-      );
-      yield* PubSub.publish(changes, states);
-      published = states;
-    }),
-  );
-  // A caller that disconnects mid-publish must not leave a change it made unsent.
-  const publishStates = Effect.uninterruptible(publishUnderLock);
+  const currentStates = pluginStates.current;
+  const publishStates = pluginStates.publish;
   const findRecord = (pluginId: string) =>
     Ref.get(records).pipe(Effect.map((all) => all.find((record) => record.plugin.id === pluginId)));
   const stateOf = (pluginId: PluginId) =>
@@ -425,39 +287,10 @@ const make = Effect.gen(function* () {
       return next;
     }).pipe(Effect.andThen(publishStates));
 
-  // When each plugin's failure was last published, and the plugins whose next one is waiting.
-  const failurePublishedAt = new Map<PluginId, number>();
-  const failurePublishWaiting = new Set<PluginId>();
-  // A timer that fails every second with the same text logs and publishes once. Untraced: a
-  // plugin's timer can fail every few milliseconds.
+  // Untraced: a plugin's timer can fail every few milliseconds.
   const recordServerFailure = Effect.fnUntraced(function* (pluginId: PluginId, error: unknown) {
     const record = yield* findRecord(pluginId);
-    const message = errorText(error);
-    const known = (yield* Ref.get(serverFailures)).get(pluginId);
-    if (known?.revision === record?.revision && known?.message === message) return;
-    yield* Ref.update(serverFailures, (all) =>
-      new Map(all).set(pluginId, { revision: record?.revision, message }),
-    );
-    if (failurePublishWaiting.has(pluginId)) return;
-    const publishedAt = failurePublishedAt.get(pluginId);
-    const wait =
-      publishedAt === undefined
-        ? 0
-        : publishedAt +
-          Duration.toMillis(FAILURE_PUBLISH_INTERVAL) -
-          (yield* Clock.currentTimeMillis);
-    if (wait > 0) {
-      failurePublishWaiting.add(pluginId);
-      yield* Effect.sleep(Duration.millis(wait)).pipe(
-        Effect.ensuring(Effect.sync(() => failurePublishWaiting.delete(pluginId))),
-      );
-    }
-    failurePublishedAt.set(pluginId, yield* Clock.currentTimeMillis);
-    yield* Effect.logWarning("plugin code failed outside a call", {
-      pluginId,
-      reason: (yield* Ref.get(serverFailures)).get(pluginId)?.message ?? message,
-    });
-    yield* publishStates;
+    if (yield* failures.recordServer(pluginId, record?.revision, error)) yield* publishStates;
   });
   // Recorded at once and outside the plugin's scope, where the guard hears of it, and in the
   // host's scope, so a publish still waiting ends with the host.
@@ -612,11 +445,7 @@ const make = Effect.gen(function* () {
     yield* FiberMap.remove(activations, pluginId);
     // A failure from before the stop, even one while loading, which has no revision, belongs to
     // that start; failures of code left running after it are recorded again.
-    yield* Ref.update(serverFailures, (all) => {
-      const next = new Map(all);
-      next.delete(pluginId);
-      return next;
-    });
+    yield* failures.clearServer(pluginId);
     // Plugins without server code have no activation but may still serve files.
     yield* httpRoutes.unregisterPlugin(pluginId);
     const record = yield* findRecord(pluginId);
@@ -853,36 +682,11 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  const streamStates = Stream.unwrap(
-    Effect.gen(function* () {
-      const subscription = yield* PubSub.subscribe(changes);
-      const snapshot = yield* currentStates;
-      return Stream.concat(Stream.make(snapshot), Stream.fromSubscription(subscription));
-    }),
-  );
-  const forClient =
-    (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
-    (plugins: ReadonlyArray<PluginState>): ClientList => ({
-      plugins: managesPlugins(scopes) ? plugins : plugins.map(withoutServerPaths),
-    });
-
   const service = PluginHost.of({
     list: currentStates,
-    streamStates,
-    listForClient: Effect.fn("PluginHost.listForClient")(function* (scopes) {
-      return forClient(scopes)(yield* currentStates);
-    }),
-    streamForClient: (scopes) =>
-      streamStates.pipe(
-        Stream.map(forClient(scopes)),
-        Stream.mapAccum(
-          (): ClientList | undefined => undefined,
-          (previous, next) => {
-            const event = statesEvent(previous, next);
-            return [next, event === undefined ? [] : [event]];
-          },
-        ),
-      ),
+    streamStates: pluginStates.stream,
+    listForClient: pluginStates.listForClient,
+    streamForClient: pluginStates.streamForClient,
     setEnabled,
     reload,
     rescan: rescan(),
@@ -892,12 +696,7 @@ const make = Effect.gen(function* () {
         return yield* new PluginNotFoundError({ pluginId: report.pluginId });
       }
       if (record.revision !== report.revision) return;
-      yield* Ref.update(webFailures, (all) =>
-        new Map(all).set(report.pluginId, {
-          revision: report.revision,
-          message: report.message.slice(0, MAX_WEB_FAILURE_CHARS),
-        }),
-      );
+      yield* failures.reportWeb(report.pluginId, report.revision, report.message);
       yield* publishStates;
     }),
     getSettings: Effect.fn("PluginHost.getSettings")(function* (pluginId) {
