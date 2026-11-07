@@ -2,14 +2,10 @@ import { Button, Input } from "@t3tools/plugin-sdk/ui";
 import { defineWebPlugin } from "@t3tools/plugin-sdk/web";
 import { useEffect, useState } from "react";
 
+import type { Note, QuickNotesRpc } from "./rpc.ts";
+
 // Built to web.js by `vp build --config examples/quick-notes/vite.config.ts` from
 // packages/plugin-sdk.
-interface Note {
-  readonly id: string;
-  readonly text: string;
-  readonly at: string;
-}
-
 const css = `
 .quick-notes-list { display: flex; flex-direction: column; gap: 0.25rem; }
 .quick-notes-item { display: flex; align-items: center; gap: 0.5rem; font-size: 0.8125rem; }
@@ -19,10 +15,9 @@ const css = `
 .quick-notes-form { display: flex; gap: 0.5rem; }
 `;
 
-export default defineWebPlugin({
+export default defineWebPlugin<QuickNotesRpc>({
   activate(api) {
     api.injectStyles(css);
-    const asNotes = (value: unknown) => (Array.isArray(value) ? (value as Array<Note>) : []);
     // A read-only client, for one, is refused; say so instead of leaving the draft as it was.
     const showFailure = (error: unknown) =>
       api.toast({
@@ -34,16 +29,16 @@ export default defineWebPlugin({
     function useNotes() {
       const [notes, setNotes] = useState<ReadonlyArray<Note>>([]);
       useEffect(() => {
-        void api.rpc.invoke("list").then((value) => setNotes(asNotes(value)));
-        return api.rpc.subscribe("notes", (value) => setNotes(asNotes(value)));
+        void api.rpc.invoke("list").then(setNotes);
+        return api.rpc.subscribe("notes", setNotes);
       }, []);
       return notes;
     }
 
     // Every note is also an `@` item that puts the note into the message.
-    const offerNotes = (value: unknown) =>
+    const offerNotes = (notes: ReadonlyArray<Note>) =>
       api.composer.setMentionItems(
-        asNotes(value).map((note) => ({
+        notes.map((note) => ({
           id: note.id,
           label: note.text.slice(0, 60),
           description: "Quick note",

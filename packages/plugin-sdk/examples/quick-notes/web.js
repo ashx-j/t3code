@@ -4,7 +4,10 @@ var read$2 = (name) => host$2[name];
 var Button = /* @__PURE__ */ read$2("Button");
 var Input = /* @__PURE__ */ read$2("Input");
 // src/web.ts
-/** Types a web plugin. The ESM bundle's default export is the result. */
+/**
+ * Types a web plugin. The ESM bundle's default export is the result. Pass the plugin's
+ * `PluginRpcMap`, as in `defineWebPlugin<NotesRpc>({ ... })`, to type `api.rpc`.
+ */
 var defineWebPlugin = (definition) => definition;
 // \0t3-plugin-host:react
 var host$1 = globalThis.__t3PluginHost.react;
@@ -28,7 +31,6 @@ var css = `
 var web_default = defineWebPlugin({
   activate(api) {
     api.injectStyles(css);
-    const asNotes = (value) => (Array.isArray(value) ? value : []);
     const showFailure = (error) =>
       api.toast({
         type: "error",
@@ -38,14 +40,14 @@ var web_default = defineWebPlugin({
     function useNotes() {
       const [notes, setNotes] = useState([]);
       useEffect(() => {
-        api.rpc.invoke("list").then((value) => setNotes(asNotes(value)));
-        return api.rpc.subscribe("notes", (value) => setNotes(asNotes(value)));
+        api.rpc.invoke("list").then(setNotes);
+        return api.rpc.subscribe("notes", setNotes);
       }, []);
       return notes;
     }
-    const offerNotes = (value) =>
+    const offerNotes = (notes) =>
       api.composer.setMentionItems(
-        asNotes(value).map((note) => ({
+        notes.map((note) => ({
           id: note.id,
           label: note.text.slice(0, 60),
           description: "Quick note",

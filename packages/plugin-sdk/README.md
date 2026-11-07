@@ -148,6 +148,12 @@ a settings panel, palette commands (which the desktop app can also list in its m
 slash commands and banners, timeline renderers for the plugin's agent tools, renderers for fenced
 code languages, styles, assets, navigation and toasts.
 
+`api.rpc.invoke` and `api.rpc.subscribe` reach the methods and channels the server half adds with
+`rpc.register` and `rpc.publish`. Describe them once as a `PluginRpcMap` type from
+`@t3tools/plugin-sdk/shared`, and pass it to both `definePlugin` and `defineWebPlugin`. Then a
+wrong method name, input or value fails to typecheck in either half.
+[`examples/quick-notes`](./examples/quick-notes) keeps its map in `rpc.ts`.
+
 Plugins can also add buttons and menu items to T3's own toolbars and menus: under each message
 (`messages.addAction`), in the thread header (`threads.addHeaderButton`), beside the composer's
 attach button (`composer.addButton`) and in the thread actions menu (`threads.addMenuItem`).

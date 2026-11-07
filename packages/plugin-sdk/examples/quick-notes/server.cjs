@@ -1,15 +1,19 @@
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off - plugin code, which doesn't use Effect.
 const { randomUUID } = require("node:crypto");
 
-/** @type {import("@t3tools/plugin-sdk/server").PluginDefinition} */
+/** @type {import("@t3tools/plugin-sdk/server").PluginDefinition<import("./rpc.ts").QuickNotesRpc>} */
 module.exports = {
   activate(api) {
-    /** @returns {Promise<Array<{ id: string; text: string; at: string }>>} */
+    /** @typedef {import("./rpc.ts").Note} Note */
+    /** @returns {Promise<ReadonlyArray<Note>>} */
     const read = async () => {
       const notes = await api.storage.get("notes");
       return Array.isArray(notes) ? notes : [];
     };
     // Each change waits for the one before it, so two quick adds never drop a note.
+    /** @type {Promise<unknown>} */
     let changing = Promise.resolve();
+    /** @param {(notes: ReadonlyArray<Note>) => ReadonlyArray<Note>} update */
     const change = (update) => {
       const changed = changing.then(async () => {
         const notes = update(await read());

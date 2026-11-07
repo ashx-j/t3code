@@ -4,7 +4,7 @@ import type {
   PluginSourceControlDriver,
   PluginSourceControlRuntime,
 } from "./providers.ts";
-import type { JsonObject, JsonValue } from "./shared.ts";
+import type { JsonObject, JsonValue, PluginRpcMap } from "./shared.ts";
 
 /** `read` methods need the caller's `orchestration:read` scope, `write` methods `orchestration:operate`. */
 export type PluginRpcAccess = "read" | "write";
@@ -14,10 +14,13 @@ export interface PluginRpcContext {
   readonly signal: AbortSignal;
 }
 
-export type PluginRpcHandler = (
-  input: JsonValue | undefined,
+/** Answers one method of a `PluginRpcMap`. */
+export type PluginRpcHandler<
+  Method extends PluginRpcMap["methods"][string] = PluginRpcMap["methods"][string],
+> = (
+  input: Method["input"],
   context: PluginRpcContext,
-) => JsonValue | Promise<JsonValue>;
+) => Method["output"] | Promise<Method["output"]>;
 
 /** How every rejected API call fails. `code` names the server's error; treat it as opaque. */
 export interface PluginApiError extends Error {
@@ -263,8 +266,11 @@ export interface PluginLogger {
   readonly error: (message: string, fields?: JsonObject) => void;
 }
 
-/** What `activate` receives. Everything is scoped to one activation and released on deactivate. */
-export interface PluginApi {
+/**
+ * What `activate` receives. Everything is scoped to one activation and released on deactivate.
+ * `Rpc` types the methods and channels the web half calls.
+ */
+export interface PluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
   readonly version: 1;
   readonly id: string;
   readonly rootDir: string;
@@ -286,14 +292,21 @@ export interface PluginApi {
     readonly list: (prefix?: string) => Promise<ReadonlyArray<string>>;
   };
   readonly rpc: {
-    /** Answers `plugins.invoke` calls for `method` from clients and agents. */
-    readonly register: (
-      method: string,
-      handler: PluginRpcHandler,
+    /**
+     * Answers `plugins.invoke` calls for `method` from clients and agents. `input` has the type
+     * `Rpc` gives it, but agents can call any method with any JSON through `t3_plugins_invoke`, so
+     * check input before acting on it.
+     */
+    readonly register: <Method extends Extract<keyof Rpc["methods"], string>>(
+      method: Method,
+      handler: PluginRpcHandler<Rpc["methods"][Method]>,
       options: { readonly access: PluginRpcAccess },
     ) => void;
     /** Sends `value` to every `plugins.subscribe` caller on `channel`. Any session that can read this environment may subscribe, so never publish secrets. */
-    readonly publish: (channel: string, value: JsonValue) => void;
+    readonly publish: <Channel extends Extract<keyof Rpc["channels"], string>>(
+      channel: Channel,
+      value: Rpc["channels"][Channel],
+    ) => void;
   };
   /** Runs when the plugin is disabled or reloaded, or the server stops; at once if that already happened. */
   readonly onDeactivate: (cleanup: () => void | Promise<void>) => void;
@@ -570,9 +583,14 @@ export interface PluginApi {
   };
 }
 
-export interface PluginDefinition {
-  readonly activate: (api: PluginApi) => void | Promise<void>;
+export interface PluginDefinition<Rpc extends PluginRpcMap = PluginRpcMap> {
+  readonly activate: (api: PluginApi<Rpc>) => void | Promise<void>;
 }
 
-/** Types a server plugin. The CommonJS entry sets `module.exports` to the result. */
-export const definePlugin = (definition: PluginDefinition): PluginDefinition => definition;
+/**
+ * Types a server plugin. The CommonJS entry sets `module.exports` to the result. Pass the plugin's
+ * `PluginRpcMap`, as in `definePlugin<NotesRpc>({ ... })`, to type `api.rpc`.
+ */
+export const definePlugin = <Rpc extends PluginRpcMap = PluginRpcMap>(
+  definition: PluginDefinition<Rpc>,
+): PluginDefinition<Rpc> => definition;

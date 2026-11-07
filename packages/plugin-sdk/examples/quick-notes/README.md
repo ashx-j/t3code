@@ -9,4 +9,5 @@ Install it by dragging this folder onto **Settings → Plugins**, or with **Add 
 
 It uses `sidebar.addSection`, `pages.register`, `composer.setMentionItems`, `rpc.invoke` and
 `rpc.subscribe` on the web side,
-and `rpc.register`, `rpc.publish` and `storage` on the server side.
+and `rpc.register`, `rpc.publish` and `storage` on the server side. Both halves check their calls
+against the `QuickNotesRpc` type in `rpc.ts`.
