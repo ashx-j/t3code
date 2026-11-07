@@ -395,21 +395,21 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
     }).pipe(Effect.provide(layerConfig())),
   );
 
-  it.effect("lists plugin code that fails outside a call instead of stopping the server", () =>
+  it.effect("lists a plugin's rejection nobody handles instead of stopping the server", () =>
     Effect.gen(function* () {
       yield* writeInstalledPlugin(
         "leaky",
         `module.exports = { activate(api) {
-  api.rpc.register("throwLater", () => { setTimeout(() => { throw new Error("thrown in a timer"); }, 0); }, { access: "read" });
-  api.rpc.register("spawnMissing", () => { require("node:child_process").spawn("t3-plugin-test-missing-command"); }, { access: "read" });
-  api.onDeactivate(() => { setTimeout(() => { throw new Error("left running"); }, 0); });
+  api.rpc.register("rejectLater", () => { setTimeout(() => { Promise.reject(new Error("rejected in a timer")); }, 0); }, { access: "read" });
+  api.rpc.register("readMissing", () => { void require("node:fs/promises").readFile("/t3-plugin-test-missing-file"); }, { access: "read" });
+  api.onDeactivate(() => { setTimeout(() => { Promise.reject(new Error("left running")); }, 0); });
 } };`,
       );
       // A timer it sets while starting fails, then it fails to start.
       yield* writeInstalledPlugin(
         "leaky-start",
         `module.exports = { activate() {
-  setTimeout(() => { throw new Error("thrown while starting"); }, 0);
+  setTimeout(() => { Promise.reject(new Error("rejected while starting")); }, 0);
   return new Promise((_, reject) => setTimeout(() => reject(new Error("activate failed")), 0));
 } };`,
       );
@@ -430,30 +430,64 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
             .invoke({ pluginId: id, method, input: undefined, scopes: operate })
             .pipe(Effect.andThen(nextFailure(previous)));
 
-        const thrown = yield* failureAfter("throwLater", undefined);
-        assert.strictEqual(thrown, "thrown in a timer");
+        const rejected = yield* failureAfter("rejectLater", undefined);
+        assert.strictEqual(rejected, "rejected in a timer");
         // A plugin's failures reach clients at once, then at most every 5 seconds.
         yield* TestClock.adjust("5 seconds");
-        // A child process with no error listener fails onto the row too, though its stack is all
-        // Node's.
-        const spawned = yield* failureAfter("spawnMissing", thrown);
-        assert.include(spawned, "ENOENT");
+        // A failed read it never awaited lands on the row too, though its stack is all Node's.
+        const read = yield* failureAfter("readMissing", rejected);
+        assert.include(read, "ENOENT");
         assert.include(stateOf(yield* host.list, id), { status: "active" });
 
         // Code a turned-off plugin left running still fails onto its row, which says so.
         yield* TestClock.adjust("5 seconds");
-        const leftover = yield* host
-          .setEnabled(id, false)
-          .pipe(Effect.andThen(nextFailure(spawned)));
+        const leftover = yield* host.setEnabled(id, false).pipe(Effect.andThen(nextFailure(read)));
         assert.strictEqual(leftover, "left running");
         assert.include(stateOf(yield* host.list, id), { enabled: false, status: "disabled" });
 
         // A failure while starting belongs to that start, so Disable clears it.
         const starting = PluginId.make("leaky-start");
         assert.include(stateOf(yield* host.list, starting), {
-          serverFailure: "thrown while starting",
+          serverFailure: "rejected while starting",
         });
         assert.isUndefined((yield* host.setEnabled(starting, false)).serverFailure);
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("does not start a plugin that stopped the server until it is turned on again", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const rootDir = yield* writeInstalledPlugin(
+        "crashing",
+        `require("node:fs").writeFileSync(__dirname + "/loaded", "");
+module.exports = { activate() {} };`,
+      );
+      yield* writePluginsConfig({ enabled: { crashing: true } });
+      const id = PluginId.make("crashing");
+      const thrown = new Error("thrown in a timer");
+      thrown.stack = `Error: thrown in a timer\n    at ${yield* fs.realPath(rootDir)}/server.cjs:1:1`;
+      yield* Effect.gen(function* () {
+        yield* waitForStatuses(yield* PluginHost.PluginHost, { crashing: "active" });
+        // As Node reports an uncaught exception, just before it exits.
+        process.emit("uncaughtExceptionMonitor", thrown);
+      }).pipe(Effect.provide(layerHost()));
+      yield* fs.remove(`${rootDir}/loaded`);
+
+      // The next start lists it as failed and leaves its code unloaded.
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const states = yield* waitForStatuses(host, { crashing: "failed" });
+        assert.deepInclude(stateOf(states, id), {
+          enabled: true,
+          failure: { stage: "crash", message: "thrown in a timer" },
+        });
+        assert.isFalse(yield* fs.exists(`${rootDir}/loaded`));
+        assert.include(yield* host.setEnabled(id, true), { status: "active" });
+      }).pipe(Effect.provide(layerHost()));
+      // Turned on again, it starts with the server again.
+      yield* Effect.gen(function* () {
+        yield* waitForStatuses(yield* PluginHost.PluginHost, { crashing: "active" });
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );

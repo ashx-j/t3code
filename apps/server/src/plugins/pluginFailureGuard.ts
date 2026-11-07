@@ -1,24 +1,23 @@
-// @effect-diagnostics globalConsole:off - The guard runs in Node's process callbacks, outside an Effect runtime, and prints T3's own crashes the way Node does.
+// @effect-diagnostics globalConsole:off - The guard runs in Node's process callbacks, outside an Effect runtime, where printing is all it can do with its own failure.
 import type { PluginId } from "@t3tools/contracts";
 import * as Predicate from "effect/Predicate";
 
 import { PluginApiCallError, pluginCodeScope } from "./api/facade.ts";
 
-const CRASH_EVENTS = ["uncaughtException", "unhandledRejection"] as const;
-type CrashEvent = (typeof CRASH_EVENTS)[number];
-const isCrashEvent = (event: string | symbol): event is CrashEvent =>
-  event === "uncaughtException" || event === "unhandledRejection";
+const REJECTION = "unhandledRejection";
 type Listener = (...args: ReadonlyArray<unknown>) => unknown;
 const isListener = (value: unknown): value is Listener => typeof value === "function";
 
 /**
- * Keeps plugin code that fails outside a call, such as in a timer, from stopping the server. It
- * wraps every other crash listener so plugin failures skip it, and listens itself only while none
- * does, because the Cursor SDK guard exits only while it listens alone. One per process.
+ * Ties plugin failures outside a call to the plugin. An uncaught exception goes to `onCrash` and
+ * still stops the server, since Node calls resuming unsafe. A plugin's unhandled rejection goes to
+ * `onRejection` and skips the other listeners, which the guard wraps; it listens only while none do.
  */
-export const makePluginFailureGuard = (
-  onPluginFailure: (pluginId: PluginId, error: unknown) => void,
-) => {
+export const makePluginFailureGuard = (handlers: {
+  readonly onRejection: (pluginId: PluginId, reason: unknown) => void;
+  /** Runs just before Node reports the exception, so it has to finish synchronously. */
+  readonly onCrash: (pluginId: PluginId, error: unknown) => void;
+}) => {
   // Node keeps loaded plugin code and its timers until exit, so a root is never dropped.
   const roots = new Map<string, PluginId>();
   // Each wrapper and what `process.rawListeners` held before it: the listener or its `once` wrapper.
@@ -43,39 +42,43 @@ export const makePluginFailureGuard = (
     return undefined;
   };
 
-  // What Node does with no listener, for failures that aren't a plugin's.
-  const alone: Record<CrashEvent, (error: unknown) => void> = {
-    uncaughtException: (error) => {
-      const pluginId = pluginOf(error);
-      // Node calls resuming after an uncaught exception unsafe; accepted for trusted plugin code.
-      if (pluginId !== undefined) return onPluginFailure(pluginId, error);
-      console.error(error);
-      process.exit(1);
-    },
-    unhandledRejection: (reason) => {
-      const pluginId = pluginOf(reason);
-      if (pluginId !== undefined) return onPluginFailure(pluginId, reason);
-      throw reason;
-    },
+  // Node calls monitors before the exception's listeners or its own exit. It adds no listener, so
+  // whatever stops the server for T3's crashes stops it for a plugin's too.
+  const onUncaught = (error: unknown) => {
+    const pluginId = pluginOf(error);
+    if (pluginId === undefined) return;
+    try {
+      handlers.onCrash(pluginId, error);
+    } catch (recordError) {
+      // Node still reports the crash itself.
+      console.error(recordError);
+    }
+  };
+
+  // What Node does with no listener, for rejections that aren't a plugin's.
+  const alone = (reason: unknown) => {
+    const pluginId = pluginOf(reason);
+    if (pluginId !== undefined) return handlers.onRejection(pluginId, reason);
+    throw reason;
   };
 
   // Node's `off` and `listeners()` read `listener`, as on its own `once` wrappers.
-  const wrap = (event: CrashEvent, raw: Listener) => {
+  const wrap = (raw: Listener) => {
     const listener: unknown = Reflect.get(raw, "listener");
     const original = isListener(listener) ? listener : raw;
     const gated = Object.assign(
-      (error: unknown, detail: unknown) => {
-        const pluginId = pluginOf(error);
+      (reason: unknown, promise: unknown) => {
+        const pluginId = pluginOf(reason);
         if (pluginId !== undefined) {
-          // Every wrapper sees the failure; the first records it.
+          // Every wrapper sees the rejection; the first records it.
           const first = process
-            .rawListeners(event)
+            .rawListeners(REJECTION)
             .find((other) => isListener(other) && wrapped.has(other));
-          if (first === gated) onPluginFailure(pluginId, error);
+          if (first === gated) handlers.onRejection(pluginId, reason);
           return;
         }
-        if (original !== raw) process.off(event, gated);
-        Reflect.apply(original, process, [error, detail]);
+        if (original !== raw) process.off(REJECTION, gated);
+        Reflect.apply(original, process, [reason, promise]);
       },
       { listener: original },
     );
@@ -87,32 +90,30 @@ export const makePluginFailureGuard = (
     if (!installed || syncing) return;
     syncing = true;
     try {
-      for (const event of CRASH_EVENTS) {
-        const listeners = process.rawListeners(event).filter(isListener);
-        const others = listeners.filter((other) => other !== alone[event]);
-        if (
-          others.every((other) => wrapped.has(other)) &&
-          (others.length === 0) === listeners.includes(alone[event])
-        ) {
-          continue;
-        }
-        // Re-adding them all keeps their order.
-        process.removeAllListeners(event);
-        for (const other of others) {
-          process.on(event, wrapped.has(other) ? other : wrap(event, other));
-        }
-        if (others.length === 0) process.on(event, alone[event]);
+      const listeners = process.rawListeners(REJECTION).filter(isListener);
+      const others = listeners.filter((other) => other !== alone);
+      if (
+        others.every((other) => wrapped.has(other)) &&
+        (others.length === 0) === listeners.includes(alone)
+      ) {
+        return;
       }
+      // Re-adding them all keeps their order.
+      process.removeAllListeners(REJECTION);
+      for (const other of others) {
+        process.on(REJECTION, wrapped.has(other) ? other : wrap(other));
+      }
+      if (others.length === 0) process.on(REJECTION, alone);
     } finally {
       syncing = false;
     }
   };
   // Node adds a listener after announcing it, so it is wrapped once it is in.
   const onNewListener = (event: string | symbol) => {
-    if (!syncing && isCrashEvent(event)) queueMicrotask(sync);
+    if (!syncing && event === REJECTION) queueMicrotask(sync);
   };
   const onRemoveListener = (event: string | symbol) => {
-    if (!syncing && isCrashEvent(event)) sync();
+    if (!syncing && event === REJECTION) sync();
   };
 
   return {
@@ -124,6 +125,7 @@ export const makePluginFailureGuard = (
       sync();
       process.on("newListener", onNewListener);
       process.on("removeListener", onRemoveListener);
+      process.on("uncaughtExceptionMonitor", onUncaught);
     },
     /** Puts back the listeners it wrapped. */
     uninstall: () => {
@@ -131,12 +133,11 @@ export const makePluginFailureGuard = (
       installed = false;
       process.off("newListener", onNewListener);
       process.off("removeListener", onRemoveListener);
-      for (const event of CRASH_EVENTS) {
-        const others = process.rawListeners(event).filter(isListener);
-        process.removeAllListeners(event);
-        for (const other of others) {
-          if (other !== alone[event]) process.on(event, wrapped.get(other) ?? other);
-        }
+      process.off("uncaughtExceptionMonitor", onUncaught);
+      const others = process.rawListeners(REJECTION).filter(isListener);
+      process.removeAllListeners(REJECTION);
+      for (const other of others) {
+        if (other !== alone) process.on(REJECTION, wrapped.get(other) ?? other);
       }
     },
   };

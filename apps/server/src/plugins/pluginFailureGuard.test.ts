@@ -1,4 +1,4 @@
-import { assert, it, vi } from "@effect/vitest";
+import { assert, it } from "@effect/vitest";
 import { PluginId } from "@t3tools/contracts";
 
 import { pluginCodeScope } from "./api/facade.ts";
@@ -22,91 +22,98 @@ const withoutRunnerListeners = () => {
   };
 };
 
-/** A guard watching the `leaky` plugin, with exits and their printed errors caught. */
+/** A guard watching the `leaky` plugin, with what it recorded. */
 const watchLeaky = () => {
-  const recorded: Array<string> = [];
-  const guard = makePluginFailureGuard((pluginId) => recorded.push(pluginId));
-  const exit = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
-  const printed = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  const rejected: Array<string> = [];
+  const crashed: Array<string> = [];
+  const guard = makePluginFailureGuard({
+    onRejection: (pluginId) => rejected.push(pluginId),
+    onCrash: (pluginId) => crashed.push(pluginId),
+  });
   guard.watch("/plugins/leaky/", leaky);
-  return {
-    recorded,
-    exits: () => exit.mock.calls.length,
-    [Symbol.dispose]: () => {
-      guard.uninstall();
-      exit.mockRestore();
-      printed.mockRestore();
-    },
-    uninstall: guard.uninstall,
-  };
+  return { rejected, crashed, uninstall: guard.uninstall, [Symbol.dispose]: guard.uninstall };
 };
 
-// As Node reports a crash.
-const crash = (error: Error) => process.emit("uncaughtException", error);
+const pluginError = (message: string) => {
+  const error = new Error(message);
+  error.stack = `Error: ${message}\n    at /plugins/leaky/server.cjs:1:1`;
+  return error;
+};
 
-it("hands T3's own crashes to a listener added after it, and only those", async () => {
+// As Node reports a rejection nobody handled.
+const reject = (reason: Error) => process.emit("unhandledRejection", reason, Promise.resolve());
+const messageOf = (reason: unknown) => (reason instanceof Error ? reason.message : String(reason));
+
+it("records a plugin's uncaught exception and leaves the exit to Node", () => {
   using _runner = withoutRunnerListeners();
   using guard = watchLeaky();
-  const seen: Array<string> = [];
-  // Such as the Cursor SDK's guard, when its layer builds after a plugin started.
-  const late = (error: Error) => seen.push(error.message);
-  process.on("uncaughtException", late);
-  await Promise.resolve();
 
-  const pluginError = new Error("thrown in a timer");
-  pluginError.stack = "Error: thrown in a timer\n    at /plugins/leaky/server.cjs:1:1";
-  crash(pluginError);
-  crash(new Error("T3 crashed"));
+  // Node tells the monitor before the listeners, or its own exit when there are none.
+  process.emit("uncaughtExceptionMonitor", pluginError("thrown in a timer"));
+  process.emit("uncaughtExceptionMonitor", new Error("T3 crashed"));
 
-  assert.deepStrictEqual(guard.recorded, ["leaky"]);
-  assert.deepStrictEqual(seen, ["T3 crashed"]);
-  assert.strictEqual(guard.exits(), 0);
-  // It listens alone, so a guard that exits only then still stops the server.
-  assert.strictEqual(process.listenerCount("uncaughtException"), 1);
+  assert.deepStrictEqual(guard.crashed, ["leaky"]);
+  // It adds no listener, so Node, or a guard that exits only while it listens alone, still exits.
+  assert.strictEqual(process.listenerCount("uncaughtException"), 0);
   guard.uninstall();
-  assert.deepStrictEqual(process.listeners("uncaughtException"), [late]);
+  assert.strictEqual(process.listenerCount("uncaughtExceptionMonitor"), 0);
 });
 
-it("calls a listener added with once for one crash", () => {
+it("hands T3's own rejections to a listener added after it, and only those", async () => {
+  using _runner = withoutRunnerListeners();
+  using guard = watchLeaky();
+  const seen: Array<string> = [];
+  // Such as a provider SDK's guard, when its layer builds after a plugin started.
+  const late = (reason: unknown) => seen.push(messageOf(reason));
+  process.on("unhandledRejection", late);
+  await Promise.resolve();
+
+  reject(pluginError("rejected in a timer"));
+  reject(new Error("T3 rejected"));
+
+  assert.deepStrictEqual(guard.rejected, ["leaky"]);
+  assert.deepStrictEqual(seen, ["T3 rejected"]);
+  // It listens alone, so a guard that acts only then still does.
+  assert.strictEqual(process.listenerCount("unhandledRejection"), 1);
+  guard.uninstall();
+  assert.deepStrictEqual(process.listeners("unhandledRejection"), [late]);
+});
+
+it("calls a listener added with once for one rejection", () => {
   using _runner = withoutRunnerListeners();
   const seen: Array<string> = [];
-  process.once("uncaughtException", (error) => seen.push(error.message));
-  using guard = watchLeaky();
+  process.once("unhandledRejection", (reason) => seen.push(messageOf(reason)));
+  using _guard = watchLeaky();
 
-  crash(new Error("first"));
-  crash(new Error("second"));
-
-  assert.deepStrictEqual(seen, ["first"]);
+  reject(new Error("first"));
   // With nothing else listening, the second stops the server as Node would.
-  assert.strictEqual(guard.exits(), 1);
+  assert.throws(() => reject(new Error("second")), "second");
+  assert.deepStrictEqual(seen, ["first"]);
 });
 
 it("stops calling a listener its owner removes", () => {
   using _runner = withoutRunnerListeners();
   const seen: Array<string> = [];
-  const listener = (error: Error) => seen.push(error.message);
-  process.on("uncaughtException", listener);
-  using guard = watchLeaky();
+  const listener = (reason: unknown) => seen.push(messageOf(reason));
+  process.on("unhandledRejection", listener);
+  using _guard = watchLeaky();
 
-  process.off("uncaughtException", listener);
-  crash(new Error("T3 crashed"));
+  process.off("unhandledRejection", listener);
 
+  assert.throws(() => reject(new Error("T3 rejected")), "T3 rejected");
   assert.deepStrictEqual(seen, []);
-  assert.strictEqual(guard.exits(), 1);
 });
 
 it("stops calling a plugin's own listener once the plugin removes it on disable", async () => {
   using _runner = withoutRunnerListeners();
-  using guard = watchLeaky();
+  using _guard = watchLeaky();
   const seen: Array<string> = [];
-  const listener = (error: Error) => seen.push(error.message);
+  const listener = (reason: unknown) => seen.push(messageOf(reason));
   // As the plugin's `activate`, then its `onDeactivate`.
-  pluginCodeScope.run(leaky, () => process.on("uncaughtException", listener));
+  pluginCodeScope.run(leaky, () => process.on("unhandledRejection", listener));
   await Promise.resolve();
-  process.off("uncaughtException", listener);
+  process.off("unhandledRejection", listener);
 
-  crash(new Error("T3 crashed"));
-
+  assert.throws(() => reject(new Error("T3 rejected")), "T3 rejected");
   assert.deepStrictEqual(seen, []);
-  assert.strictEqual(guard.exits(), 1);
 });

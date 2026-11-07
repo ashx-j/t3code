@@ -18,7 +18,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import type { DiscoveredPlugin } from "./pluginDiscovery.ts";
 import type { PluginNotFoundError } from "./PluginHost.ts";
-import type { PluginConfigError, PluginsConfigFile } from "./pluginsConfig.ts";
+import { type PluginConfigError, type PluginsConfigFile, withoutCrash } from "./pluginsConfig.ts";
 import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
 
@@ -313,7 +313,7 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
   const removeFromConfig = (pluginId: PluginId) =>
     host.writeConfig((current) => {
       const { [pluginId]: _removed, ...enabled } = current.enabled ?? {};
-      return { ...current, enabled };
+      return { ...withoutCrash(current, pluginId), enabled };
     });
 
   const forgetDevPath = (folder: string) =>

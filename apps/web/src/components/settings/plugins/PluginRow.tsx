@@ -32,6 +32,7 @@ const FAILURE_STAGES = {
   compatibility: "Incompatible",
   load: "Failed to load",
   activate: "Failed to start",
+  crash: "Stopped the server",
 } as const;
 
 /**

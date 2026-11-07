@@ -80,12 +80,14 @@ export type PluginSource = typeof PluginSource.Type;
 export const PluginStatus = Schema.Literals(["active", "disabled", "failed", "loading"]);
 export type PluginStatus = typeof PluginStatus.Type;
 
+/** `crash` is a plugin that stopped the server, kept off until the user turns it on or reloads it. */
 export const PluginFailureStage = Schema.Literals([
   "discovery",
   "manifest",
   "compatibility",
   "load",
   "activate",
+  "crash",
 ]);
 export type PluginFailureStage = typeof PluginFailureStage.Type;
 

@@ -240,6 +240,12 @@ interface PluginRecord {
   readonly styles?: PluginState["styles"];
 }
 
+/** What plugins.json says about the plugins a discovery found. */
+interface Found {
+  readonly enabled: Readonly<Record<string, boolean>>;
+  readonly crashed: Readonly<Record<string, string>>;
+}
+
 const manifestOf = (plugin: DiscoveredPlugin): PluginManifest | undefined =>
   "manifest" in plugin ? plugin.manifest : undefined;
 
@@ -461,7 +467,10 @@ const make = Effect.gen(function* () {
         Effect.forkIn(recordServerFailure(pluginId, error), hostScope, { startImmediately: true }),
       );
     });
-  const failureGuard = makePluginFailureGuard(reportServerFailure);
+  const failureGuard = makePluginFailureGuard({
+    onRejection: reportServerFailure,
+    onCrash: (pluginId, error) => pluginsConfig.recordCrash(pluginId, errorText(error)),
+  });
   // Added before the teardown finalizer, so it runs after plugin cleanups.
   yield* Effect.addFinalizer(() => Effect.sync(failureGuard.uninstall));
 
@@ -619,16 +628,19 @@ const make = Effect.gen(function* () {
   const startPlugin = (plugin: DiscoveredPlugin) =>
     FiberMap.run(activations, plugin.id, activatePlugin(plugin));
 
-  const initialRecord = (plugin: DiscoveredPlugin, enabled: boolean): PluginRecord =>
-    "failure" in plugin
-      ? { plugin, status: "failed", failure: plugin.failure }
-      : { plugin, status: enabled ? "loading" : "disabled" };
+  // A plugin that stopped the server stays off, or the restart would only crash again.
+  const initialRecord = (plugin: DiscoveredPlugin, found: Found): PluginRecord => {
+    if ("failure" in plugin) return { plugin, status: "failed", failure: plugin.failure };
+    if (found.enabled[plugin.id] !== true) return { plugin, status: "disabled" };
+    const crashed = found.crashed[plugin.id];
+    return crashed === undefined
+      ? { plugin, status: "loading" }
+      : { plugin, status: "failed", failure: { stage: "crash", message: crashed } };
+  };
   // A shadowed copy keeps its manifest for its row, but started it would take over the record
   // of the copy in use, which shares its id.
-  const startsAtDiscovery = (
-    plugin: DiscoveredPlugin,
-    enabled: Readonly<Record<string, boolean>>,
-  ) => enabled[plugin.id] === true && !("failure" in plugin);
+  const startsAtDiscovery = (plugin: DiscoveredPlugin, found: Found) =>
+    initialRecord(plugin, found).status === "loading";
 
   // Startup tolerates an unreadable plugins.json; an explicit reload reports it instead.
   const discover = Effect.fn("PluginHost.discover")(function* (lenient: boolean) {
@@ -637,7 +649,8 @@ const make = Effect.gen(function* () {
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
     );
-    return { plugins, enabled: current.enabled ?? {} };
+    const found: Found = { enabled: current.enabled ?? {}, crashed: current.crashed ?? {} };
+    return { plugins, found };
   });
 
   // Lifecycle changes run in the host's scope, so a caller that disconnects only stops waiting
@@ -682,7 +695,9 @@ const make = Effect.gen(function* () {
 
   /** Rescans the plugin folders and lists what appeared; `restart` also restarts with new code. */
   const rediscover = Effect.fn("PluginHost.rediscover")(function* (restart: PluginId | undefined) {
-    const { plugins, enabled } = yield* discover(false);
+    // Reloading a plugin that stopped the server is the user retrying it.
+    if (restart !== undefined) yield* pluginsConfig.clearCrash(restart);
+    const { plugins, found } = yield* discover(false);
     if (restart !== undefined) yield* stopPlugin(restart);
     const known = yield* Ref.get(records);
     // A record survives only while discovery still finds the same copy the same way. One whose copy
@@ -711,7 +726,7 @@ const make = Effect.gen(function* () {
     // are read again here: one still starting may have finished while the others stopped.
     yield* Ref.update(records, (current) =>
       next.map(({ plugin, kept }) => {
-        if (kept === undefined) return initialRecord(plugin, enabled[plugin.id] === true);
+        if (kept === undefined) return initialRecord(plugin, found);
         const latest = current.find((record) => record.plugin === kept.plugin) ?? kept;
         if ("failure" in plugin) return { ...latest, plugin, failure: plugin.failure };
         // One that runs nothing takes the files found now, so starting it loads their manifest.
@@ -722,7 +737,7 @@ const make = Effect.gen(function* () {
     );
     yield* publishStates;
     for (const { plugin, kept } of next) {
-      if (kept === undefined && startsAtDiscovery(plugin, enabled)) yield* startPlugin(plugin);
+      if (kept === undefined && startsAtDiscovery(plugin, found)) yield* startPlugin(plugin);
     }
     return plugins;
   });
@@ -808,15 +823,15 @@ const make = Effect.gen(function* () {
     .withPermits(1)(
       Effect.gen(function* () {
         yield* recoverStaging;
-        const { plugins, enabled } = yield* discover(true);
+        const { plugins, found } = yield* discover(true);
         yield* Ref.set(
           records,
-          plugins.map((plugin) => initialRecord(plugin, enabled[plugin.id] === true)),
+          plugins.map((plugin) => initialRecord(plugin, found)),
         );
         yield* publishStates;
         // Each plugin activates in its own fiber, so a slow one delays nobody else.
         for (const plugin of plugins) {
-          if (startsAtDiscovery(plugin, enabled)) yield* startPlugin(plugin);
+          if (startsAtDiscovery(plugin, found)) yield* startPlugin(plugin);
         }
       }),
     )
