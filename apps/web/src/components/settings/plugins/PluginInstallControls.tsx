@@ -1,0 +1,202 @@
+import { useAtomValue } from "@effect/atom-react";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import type { EnvironmentId } from "@t3tools/contracts";
+import type * as Cause from "effect/Cause";
+import { FolderDownIcon } from "lucide-react";
+import { useRef, useState } from "react";
+
+import { cn } from "../../../lib/utils";
+import { type PluginFolder, pickedFolder } from "../../../plugins/pluginFolders";
+import { pluginEnvironment } from "../../../state/plugins";
+import { useAtomCommand } from "../../../state/use-atom-command";
+import { Button } from "../../ui/button";
+import {
+  Dialog,
+  DialogDescription,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../../ui/dialog";
+import type { PluginTarget } from "./pluginTargets";
+
+export function AddPluginButton(props: {
+  readonly environmentId: EnvironmentId;
+  readonly disabled: boolean;
+  readonly onClick: () => void;
+}) {
+  const canInstall = useAtomValue(
+    pluginEnvironment.installPluginFiles.permissionAtom(props.environmentId),
+  );
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      disabled={props.disabled || !canInstall}
+      onClick={props.onClick}
+    >
+      Add plugin
+    </Button>
+  );
+}
+
+export function InstallProblems({ problems }: { readonly problems: ReadonlyArray<string> }) {
+  if (problems.length === 0) return null;
+  return (
+    <ul className="mt-2 space-y-1 text-destructive text-xs">
+      {problems.map((problem) => (
+        <li key={problem}>{problem}</li>
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * Installs plugins on the first of `targets`. A plugin only changes the app, and the app draws
+ * plugin changes only from `uiSource`, so installing it on the others would change nothing.
+ */
+export function usePluginInstaller(
+  targets: ReadonlyArray<PluginTarget>,
+  uiSource: { readonly environmentId: EnvironmentId | null; readonly name: string },
+) {
+  const installFiles = useAtomCommand(pluginEnvironment.installPluginFiles, {
+    label: "plugin install",
+    reportFailure: false,
+  });
+  const [installing, setInstalling] = useState<string | null>(null);
+  const [problems, setProblems] = useState<ReadonlyArray<string>>([]);
+
+  const installOnTargets = async (
+    install: (environmentId: EnvironmentId) => ReturnType<typeof installFiles>,
+    report: (problem: string) => void,
+  ) => {
+    const [main] = targets;
+    if (main === undefined) return report("No environment here can run plugins.");
+    const reportFailure = (
+      target: PluginTarget,
+      result: { readonly cause: Cause.Cause<unknown> },
+    ) => {
+      const error = squashAtomCommandFailure(result);
+      const message = error instanceof Error ? error.message : "Could not install the plugin.";
+      report(targets.length > 1 ? `${target.label}: ${message}` : message);
+    };
+    const first = await install(main.environmentId);
+    if (first._tag === "Failure") return reportFailure(main, first);
+    const { plugin } = first.value;
+    // Such as when that environment is offline and another one came first.
+    if (main.environmentId !== uiSource.environmentId) {
+      report(
+        `${plugin.name} only changes the app, and this app shows plugin changes only from ${uiSource.name}, so it does nothing on ${main.label}.`,
+      );
+    }
+  };
+
+  // Resolves true when everything installed everywhere it should.
+  const run = async (work: (report: (problem: string) => void) => Promise<void>) => {
+    const found: Array<string> = [];
+    setProblems([]);
+    await work((problem) => found.push(problem));
+    setInstalling(null);
+    setProblems(found);
+    return found.length === 0;
+  };
+
+  return {
+    installing,
+    problems,
+    clearProblems: () => setProblems([]),
+    installFolders: (folders: ReadonlyArray<PluginFolder>) => {
+      // Outside `run`, which would end the install in progress as far as the page can tell.
+      if (installing !== null) {
+        setProblems([`${installing} is still installing. Add more once it's done.`]);
+        return Promise.resolve(false);
+      }
+      return run(async (report) => {
+        if (folders.length === 0) return report("Drop a plugin's folder, not the files in it.");
+        for (const folder of folders) {
+          setInstalling(folder.name);
+          const files = await folder.read().catch((error: unknown) => {
+            report(error instanceof Error ? error.message : `Could not read ${folder.name}.`);
+            return null;
+          });
+          if (files === null) continue;
+          await installOnTargets(
+            (environmentId) => installFiles({ environmentId, input: { files } }),
+            report,
+          );
+        }
+      });
+    },
+  };
+}
+
+export function AddPluginDialog({
+  open,
+  onOpenChange,
+  installer,
+  dragActive,
+  scopeNote,
+}: {
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
+  readonly installer: ReturnType<typeof usePluginInstaller>;
+  readonly dragActive: boolean;
+  readonly scopeNote: string;
+}) {
+  const folderInput = useRef<HTMLInputElement>(null);
+  const busy = installer.installing !== null;
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogPopup className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Add a plugin</DialogTitle>
+          <DialogDescription>{scopeNote} Install only plugins you trust.</DialogDescription>
+        </DialogHeader>
+        <DialogPanel>
+          <div
+            className={cn(
+              "flex flex-col items-center gap-1.5 rounded-lg border border-dashed px-4 py-6 text-center",
+              dragActive ? "border-primary bg-primary/5" : "border-border",
+            )}
+          >
+            <FolderDownIcon className="size-5 text-muted-foreground" />
+            <p className="text-sm">
+              {busy ? `Installing ${installer.installing}…` : "Drop plugin folders here"}
+            </p>
+            <p className="text-muted-foreground text-xs">
+              T3 Code copies each one into its plugins folder.
+            </p>
+            <Button
+              className="mt-2"
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={() => folderInput.current?.click()}
+            >
+              Choose folder
+            </Button>
+            <input
+              ref={(input) => {
+                // Not in React's input props; it makes the picker choose folders, not files.
+                if (input !== null) input.webkitdirectory = true;
+                folderInput.current = input;
+              }}
+              type="file"
+              hidden
+              onChange={(event) => {
+                const folder = pickedFolder(Array.from(event.currentTarget.files ?? []));
+                // Cleared so picking the same folder again still reports a change.
+                event.currentTarget.value = "";
+                if (folder === undefined) return;
+                void installer
+                  .installFolders([folder])
+                  .then((installed) => installed && onOpenChange(false));
+              }}
+            />
+          </div>
+          <InstallProblems problems={installer.problems} />
+        </DialogPanel>
+      </DialogPopup>
+    </Dialog>
+  );
+}

@@ -57,6 +57,13 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.scheduledTasksUpsert]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksSetEnabled]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksDelete]: AuthOrchestrationOperateScope,
+  // Plugins change what every client of the environment loads, so managing them is a settings
+  // change.
+  [WS_METHODS.pluginsSetEnabled]: AuthSettingsWriteScope,
+  [WS_METHODS.pluginsReload]: AuthSettingsWriteScope,
+  [WS_METHODS.pluginsInstallFiles]: AuthSettingsWriteScope,
+  [WS_METHODS.pluginsRescan]: AuthSettingsWriteScope,
+  [WS_METHODS.pluginsUninstall]: AuthSettingsWriteScope,
   [WS_METHODS.scheduledTasksRunNow]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksRotateWebhookToken]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,

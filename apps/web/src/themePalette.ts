@@ -17,10 +17,12 @@ import {
   T3_CODE_DARK_THEME_COLORS,
   RESERVED_THEME_IDS,
   THEME_COLOR_ROLES,
+  THEME_STATUS_COLOR_ROLES,
   type ThemeAppearance,
   type ThemeColorRole,
   type ThemeColors,
   type ThemeDefinition,
+  type ThemeStatusColors,
   type ThemeVariants,
 } from "@t3tools/shared/themePalettes";
 import {
@@ -109,6 +111,34 @@ function isThemeAppearance(value: unknown): value is ThemeAppearance {
   return value === "light" || value === "dark";
 }
 
+const THEME_RADIUS = /^(?:0|\d{1,2}(?:\.\d{1,3})?(?:px|rem))$/;
+
+function statusColorsFrom(colors: unknown): ThemeStatusColors | undefined {
+  if (!isRecord(colors)) return undefined;
+  const picked: Partial<Record<keyof ThemeStatusColors, string>> = {};
+  for (const role of THEME_STATUS_COLOR_ROLES) {
+    const value = colors[role];
+    if (isThemeColor(value)) picked[role] = value;
+  }
+  return Object.keys(picked).length > 0 ? picked : undefined;
+}
+
+/** A published theme's corner radius and status colors, as `ThemeDefinition` holds them. */
+function publishedThemeExtras(
+  radius: unknown,
+  statusColors: Partial<Record<ThemeAppearance, unknown>>,
+): Pick<ThemeDefinition, "radius" | "statusColors"> {
+  const status: Partial<Record<ThemeAppearance, ThemeStatusColors>> = {};
+  for (const appearance of ["light", "dark"] as const) {
+    const colors = statusColorsFrom(statusColors[appearance]);
+    if (colors !== undefined) status[appearance] = colors;
+  }
+  return {
+    ...(typeof radius === "string" && THEME_RADIUS.test(radius) ? { radius } : {}),
+    ...(Object.keys(status).length > 0 ? { statusColors: status } : {}),
+  };
+}
+
 export function isThemeColor(value: unknown): value is string {
   return typeof value === "string" && toCanonicalThemeColor(value) !== null;
 }
@@ -167,7 +197,8 @@ function parseStoredThemeVariants(
   return Object.keys(variants).length > 0 ? variants : undefined;
 }
 
-function parseStoredTheme(value: unknown): ThemeDefinition | null {
+// Only published themes keep `sidebarArtwork`; custom themes never show the artwork.
+function parseStoredTheme(value: unknown, published = false): ThemeDefinition | null {
   if (!isRecord(value)) return null;
   if (!isThemeId(value.id) || RESERVED_THEME_IDS.has(value.id)) return null;
   if (!isThemeLabel(value.label) || !isThemeAppearance(value.appearance)) return null;
@@ -185,13 +216,20 @@ function parseStoredTheme(value: unknown): ThemeDefinition | null {
     ...(variants ? { variants } : {}),
     ...(collection ? { collection } : {}),
     ...(value.managed === true ? { managed: true } : {}),
+    ...(published && value.sidebarArtwork === true ? { sidebarArtwork: true } : {}),
+    ...(published
+      ? publishedThemeExtras(value.radius, isRecord(value.statusColors) ? value.statusColors : {})
+      : {}),
   };
 }
 
-function parseStoredThemes(storedThemes: ReadonlyArray<unknown>): ReadonlyArray<ThemeDefinition> {
+function parseStoredThemes(
+  storedThemes: ReadonlyArray<unknown>,
+  published = false,
+): ReadonlyArray<ThemeDefinition> {
   const themes: ThemeDefinition[] = [];
   for (const value of storedThemes) {
-    const theme = parseStoredTheme(value);
+    const theme = parseStoredTheme(value, published);
     if (theme && !themes.some((existing) => existing.id === theme.id)) {
       themes.push(theme);
     }
@@ -278,6 +316,12 @@ function environmentThemeDefinition(theme: EnvironmentTheme): ThemeDefinition {
     appearance: theme.appearance,
     colors: publishedThemeColors(theme, theme.appearance, theme.colors),
     ...(Object.keys(variants).length > 0 ? { variants } : {}),
+    ...(theme.sidebarArtwork === true ? { sidebarArtwork: true } : {}),
+    ...publishedThemeExtras(theme.radius, {
+      [theme.appearance]: theme.colors,
+      [theme.appearance === "dark" ? "light" : "dark"]:
+        theme.variants?.[theme.appearance === "dark" ? "light" : "dark"],
+    }),
     // Only the pure seeded form is guided-generator output. An exported file,
     // or seeds carrying explicit role overrides, must open Duplicate in the
     // advanced editor -- the guided one regenerates from canvas and accent and
@@ -322,8 +366,8 @@ const publishedThemesAtom = Atom.make((get): ReadonlyArray<EnvironmentTheme> => 
 }).pipe(Atom.withLabel("web-published-environment-themes"));
 
 // The server sends its palettes as their own event after it connects. Until the first one,
-// the palettes it sent last time stand in, so a published theme paints from the first frame,
-// and the boot screen in index.html reads the same copy.
+// the palettes it sent last time stand in, so a published theme (a plugin's, say) paints from
+// the first frame, and the boot screen in index.html reads the same copy.
 const environmentThemesKnownAtom = Atom.make(false).pipe(Atom.keepAlive);
 
 function readStoredEnvironmentThemes(): ReadonlyArray<ThemeDefinition> {
@@ -332,7 +376,7 @@ function readStoredEnvironmentThemes(): ReadonlyArray<ThemeDefinition> {
     const parsed: unknown = JSON.parse(
       window.localStorage.getItem(ENVIRONMENT_THEMES_STORAGE_KEY) ?? "null",
     );
-    return Array.isArray(parsed) ? parseStoredThemes(parsed) : EMPTY_CUSTOM_THEMES;
+    return Array.isArray(parsed) ? parseStoredThemes(parsed, true) : EMPTY_CUSTOM_THEMES;
   } catch {
     return EMPTY_CUSTOM_THEMES;
   }
@@ -393,6 +437,23 @@ export function startEnvironmentThemeCache(): () => void {
     stopKnowing();
     stopSaving();
   };
+}
+
+/**
+ * An imported theme file whose id a published theme, such as a plugin's, already uses, renamed to a
+ * copy. A saved theme wins an id collision on purpose, so editing a published theme overrides it,
+ * but importing a plugin's own file would otherwise hide the plugin's theme and its radius and
+ * status colors.
+ */
+export function asImportedThemeCopy(theme: ThemeDefinition): ThemeDefinition {
+  const published = getEnvironmentThemes();
+  if (!published.some((candidate) => candidate.id === theme.id)) return theme;
+  // A saved copy is left out, so importing the file again offers to replace that copy.
+  const taken = new Set(published.map((candidate) => candidate.id));
+  const base = `${theme.id.slice(0, 38)}-copy`;
+  let id = base;
+  for (let copy = 2; taken.has(id); copy += 1) id = `${base}-${copy}`;
+  return { ...theme, id, label: `${theme.label.slice(0, 43)} copy` };
 }
 
 function getEnvironmentThemes(): ReadonlyArray<ThemeDefinition> {
@@ -1251,12 +1312,22 @@ export function getThemeDefinition(theme: ThemePreference): ThemeDefinition | nu
   );
 }
 
-export function themeAllowsSidebarArtwork(theme: ThemePreference): boolean {
+/** The send button's artwork follows built-in themes only; a published theme styles it plainly. */
+export function themeAllowsComposerArtwork(theme: ThemePreference): boolean {
   const themeId = themeIdFromPreference(theme);
   return (
-    BUILT_IN_THEME_DEFINITIONS.find((definition) => definition.id === themeId)?.sidebarArtwork ===
+    BUILT_IN_THEME_DEFINITIONS.find((candidate) => candidate.id === themeId)?.sidebarArtwork ===
     true
   );
+}
+
+/** Built-in themes and published ones, such as a plugin's, can allow it; custom themes can't. */
+export function themeAllowsSidebarArtwork(theme: ThemePreference): boolean {
+  const themeId = themeIdFromPreference(theme);
+  const definition =
+    BUILT_IN_THEME_DEFINITIONS.find((candidate) => candidate.id === themeId) ??
+    getEnvironmentThemes().find((candidate) => candidate.id === themeId);
+  return definition?.sidebarArtwork === true;
 }
 
 /** Every selection path must check single-appearance themes to keep mix and appearance tiles in sync. */
@@ -1491,11 +1562,15 @@ export function removeCustomThemes(themeIds: ReadonlyArray<string>): void {
   );
 }
 
+const THEME_STATUS_COLOR_ROLE_SET: ReadonlySet<string> = new Set(THEME_STATUS_COLOR_ROLES);
+
 function parseThemeColorOverrides(value: unknown): ThemeColorOverrides {
   if (!isRecord(value)) throw new Error("Theme colors must be objects.");
 
   const overrides: Partial<Record<ThemeColorRole, string>> = {};
   for (const [role, color] of Object.entries(value)) {
+    // A published theme's status colors; an imported copy keeps T3's own, like its radius.
+    if (THEME_STATUS_COLOR_ROLE_SET.has(role)) continue;
     if (!THEME_COLOR_ROLE_SET.has(role)) {
       throw new Error(`"${role}" is not a supported theme color role.`);
     }
@@ -1670,8 +1745,37 @@ export function applyThemeColorPreview(colors: ThemeColors, appearance: ThemeApp
   for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
     if (isThemeColor(value)) root.style.setProperty(APP_THEME_VARIABLES[role], value);
   }
+  applyPublishedThemeExtras(root, null, appearance);
   applyContextChipVariables(root, colors);
   setThemePreviewAppearance(appearance);
+}
+
+const STATUS_COLOR_VARIABLES: Readonly<Record<keyof ThemeStatusColors, string>> = {
+  success: "--success",
+  successForeground: "--success-foreground",
+  info: "--info",
+  infoForeground: "--info-foreground",
+};
+
+// Set inline on the root, which beats T3's own light and dark values, and removed otherwise.
+function applyPublishedThemeExtras(
+  root: HTMLElement,
+  palette: ThemeDefinition | null,
+  mode: ThemeAppearance,
+) {
+  // Custom themes win an id collision, so only the published definition itself counts.
+  if (palette !== null && getEnvironmentThemes().includes(palette)) {
+    root.dataset.themePublished = "";
+  } else {
+    delete root.dataset.themePublished;
+  }
+  const set = (variable: string, value: string | undefined) => {
+    if (value === undefined) root.style.removeProperty(variable);
+    else root.style.setProperty(variable, value);
+  };
+  set("--radius", palette?.radius);
+  const status = palette?.statusColors?.[mode];
+  for (const role of THEME_STATUS_COLOR_ROLES) set(STATUS_COLOR_VARIABLES[role], status?.[role]);
 }
 
 export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppearance): void {
@@ -1691,6 +1795,7 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
       root.style.setProperty(APP_THEME_VARIABLES[role], value);
     }
     applyContextChipVariables(root, colors);
+    applyPublishedThemeExtras(root, palette, mode);
     return;
   }
 
@@ -1698,6 +1803,7 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
   for (const variable of Object.values(APP_THEME_VARIABLES)) {
     root.style.removeProperty(variable);
   }
+  applyPublishedThemeExtras(root, null, appearance ?? "light");
   applyContextChipVariables(root, getStandardPaintedThemeColors(appearance ?? "light"));
 }
 

@@ -26,11 +26,16 @@ vi.mock(import("./useTheme"), () => ({ refreshTheme }) as never);
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import {
+  asImportedThemeCopy,
   ENVIRONMENT_THEMES_STORAGE_KEY,
   getThemeDefinition,
   installCustomTheme,
   invalidateCustomThemes,
+  parseThemeFile,
   publishedThemeDefinitions,
+  THEME_FILE_VERSION,
+  themeAllowsComposerArtwork,
+  themeAllowsSidebarArtwork,
 } from "../themePalette";
 
 const NIGHTFALL_THEME = {
@@ -101,9 +106,39 @@ describe("environment themes", () => {
   it("resolves published themes without a React subscriber mounted", () => {
     publish(appAtomRegistry, [NIGHTFALL_THEME]);
     expect(getThemeDefinition("nightfall")?.label).toBe("Nightfall");
+    expect(themeAllowsSidebarArtwork("nightfall")).toBe(false);
 
-    publish(appAtomRegistry, [{ ...NIGHTFALL_THEME, name: "Nightfall 2" }]);
-    expect(getThemeDefinition("nightfall")?.label).toBe("Nightfall 2");
+    // A published theme, such as a plugin's, can keep the sidebar artwork, but not on the send
+    // button, and can set T3's corner radius and status colors.
+    publish(appAtomRegistry, [
+      {
+        ...NIGHTFALL_THEME,
+        name: "Nightfall 2",
+        sidebarArtwork: true,
+        radius: "0.625rem",
+        colors: { success: "#3fb950", info: "not-a-color" },
+        variants: { light: { info: "#0969da" } },
+      },
+    ]);
+    expect(getThemeDefinition("nightfall")).toMatchObject({
+      label: "Nightfall 2",
+      radius: "0.625rem",
+      statusColors: { dark: { success: "#3fb950" }, light: { info: "#0969da" } },
+    });
+    expect(themeAllowsSidebarArtwork("nightfall")).toBe(true);
+    expect(themeAllowsComposerArtwork("nightfall")).toBe(false);
+    // Importing the same theme file makes a copy instead of hiding the published original.
+    const imported = parseThemeFile({
+      version: THEME_FILE_VERSION,
+      id: "nightfall",
+      name: "Nightfall",
+      appearance: "dark",
+      colors: { canvas: "#1a1b26" },
+    });
+    expect(asImportedThemeCopy(imported)).toMatchObject({
+      id: "nightfall-copy",
+      label: "Nightfall copy",
+    });
   });
 
   it("lets a theme the user saved win an id collision", () => {
@@ -137,7 +172,16 @@ describe("environment themes", () => {
     const store = new Map([
       [
         ENVIRONMENT_THEMES_STORAGE_KEY,
-        JSON.stringify(publishedThemeDefinitions([NIGHTFALL_THEME])),
+        JSON.stringify(
+          publishedThemeDefinitions([
+            {
+              ...NIGHTFALL_THEME,
+              sidebarArtwork: true,
+              radius: "10px",
+              colors: { info: "#0969da" },
+            },
+          ]),
+        ),
       ],
     ]);
     vi.stubGlobal("window", {
@@ -156,8 +200,13 @@ describe("environment themes", () => {
     const stop = startEnvironmentThemeRepaint();
     try {
       expect(palette.getThemeDefinition("nightfall")?.label).toBe("Nightfall");
+      expect(palette.themeAllowsSidebarArtwork("nightfall")).toBe(true);
+      expect(palette.getThemeDefinition("nightfall")).toMatchObject({
+        radius: "10px",
+        statusColors: { dark: { info: "#0969da" } },
+      });
 
-      // The server no longer publishes it, so its first themes event is empty.
+      // The plugin that published it is gone: the server's first themes event is empty.
       publish(registry, []);
       expect(palette.getThemeDefinition("nightfall")).toBeNull();
       expect(store.has(ENVIRONMENT_THEMES_STORAGE_KEY)).toBe(false);

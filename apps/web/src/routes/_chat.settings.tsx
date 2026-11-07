@@ -14,7 +14,10 @@ import {
 } from "../components/settings/SettingsScopeContext";
 import { useEnvironments } from "../state/environments";
 import { SettingsScopeNotice } from "../components/settings/SettingsScopeNotice";
-import { SETTINGS_DEVICE_ONLY_PATHS } from "../components/settings/SettingsScopeSentence";
+import {
+  SETTINGS_DEVICE_ONLY_PATHS,
+  SETTINGS_ENVIRONMENT_ONLY_PATHS,
+} from "../components/settings/SettingsScopeSentence";
 import { SettingsPageContainer } from "../components/settings/settingsLayout";
 import {
   retainSettingsScope,
@@ -111,7 +114,9 @@ function SettingsContentLayout() {
   const location = useLocation();
   const { search, environment } = useSettingsScope();
   const contentScopeKey =
-    location.pathname === "/settings/diagnostics" || location.pathname === "/settings/providers"
+    location.pathname === "/settings/diagnostics" ||
+    location.pathname === "/settings/providers" ||
+    location.pathname === "/settings/plugins"
       ? environment?.environmentId
       : JSON.stringify(search);
   const [restoreSignal, setRestoreSignal] = useState(0);
@@ -149,7 +154,9 @@ function SettingsRouteLayout() {
   const pathname = useLocation({ select: (location) => location.pathname });
   return (
     <SettingsScopeProvider
-      search={rawSearch}
+      search={
+        SETTINGS_ENVIRONMENT_ONLY_PATHS.has(pathname) ? { machine: rawSearch.machine } : rawSearch
+      }
       singleEnvironment={pathname === "/settings/providers" || pathname === "/settings/secrets"}
       onChange={(next) => {
         // Send every axis so retain middleware recognizes "all" as an explicit target.
