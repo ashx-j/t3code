@@ -2072,12 +2072,32 @@ it.live("lists a project's git worktrees for a plugin", () =>
   }).pipe(Effect.provide(layerConfig()), Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.live("refuses git URLs that fetch code unencrypted", () =>
+  Effect.gen(function* () {
+    const installer = yield* PluginInstaller.PluginInstaller;
+    for (const [url, scheme] of [
+      ["http://127.0.0.1:1/plugin.git", "http"],
+      ["GIT://127.0.0.1:1/plugin.git", "git"],
+    ] as const) {
+      const failed = yield* installer.install({ type: "git", url }).pipe(Effect.flip);
+      assert.strictEqual(
+        failed.message,
+        `${scheme}:// URLs are not encrypted, so anyone on the network could change the plugin's code. Use an https or ssh URL.`,
+      );
+    }
+  }).pipe(
+    Effect.provide(
+      layerHost().pipe(Layer.provideMerge(layerConfig()), Layer.provideMerge(NodeServices.layer)),
+    ),
+  ),
+);
+
 it.live("keeps a git URL's credentials out of a failed install's reason", () =>
   Effect.gen(function* () {
     const installer = yield* PluginInstaller.PluginInstaller;
-    // Git prints `user:token@host` for a git:// URL it cannot reach.
+    // Older git versions print `user:token@host` for a URL they cannot reach.
     const failed = yield* installer
-      .install({ type: "git", url: "git://ash:secret-token@127.0.0.1:1/plugin.git" })
+      .install({ type: "git", url: "https://ash:secret-token@127.0.0.1:1/plugin.git" })
       .pipe(Effect.flip);
     assert.match(failed.message, /^git clone failed: /);
     assert.notInclude(failed.message, "secret-token");

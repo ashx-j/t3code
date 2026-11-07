@@ -204,7 +204,8 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
       ),
     );
 
-  // Prompts off, and only transports that cannot run commands (no `ext::`).
+  // Prompts off, and only transports that are encrypted or local and cannot run commands (no
+  // `ext::`), which also covers redirects and submodules.
   const runGit = (args: ReadonlyArray<string>) =>
     processRunner.run({
       command: "git",
@@ -213,7 +214,7 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
       env: {
         ...process.env,
         ...STATUS_UPSTREAM_REFRESH_ENV,
-        GIT_ALLOW_PROTOCOL: "https:http:ssh:git:file",
+        GIT_ALLOW_PROTOCOL: "https:ssh:file",
       },
     });
 
@@ -261,6 +262,13 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
       );
       yield* writeFiles(files, into);
       return version;
+    }
+    // Refused here with a reason; git would only say the transport is not allowed.
+    const scheme = /^([a-z][a-z0-9+.-]*):\/\//i.exec(source.url)?.[1]?.toLowerCase();
+    if (scheme === "http" || scheme === "git") {
+      return yield* new PluginInstallError({
+        reason: `${scheme}:// URLs are not encrypted, so anyone on the network could change the plugin's code. Use an https or ssh URL.`,
+      });
     }
     const result = yield* runGit([
       "clone",
