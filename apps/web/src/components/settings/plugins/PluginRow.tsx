@@ -144,7 +144,9 @@ export function PluginRow({
         <>
           {plugin.description}
           {plugin.permissions.length > 0 ? (
-            <span className="block">Permissions: {plugin.permissions.join(", ")}</span>
+            <span className="block">
+              Says it uses: {plugin.permissions.join(", ")}. T3 Code doesn't enforce this.
+            </span>
           ) : null}
         </>
       }
