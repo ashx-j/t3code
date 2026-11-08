@@ -115,6 +115,12 @@ interface StoredSettings {
   readonly secrets: Readonly<Record<string, string>>;
 }
 
+/** The text of settings.json and of the plugin's secret entry, undefined when there is none. */
+interface SavedFiles {
+  readonly settings: string | undefined;
+  readonly secrets: string | undefined;
+}
+
 interface SettingsChange {
   readonly pluginId: PluginId;
   readonly settings: Schema.JsonObject;
@@ -222,6 +228,9 @@ const make = Effect.gen(function* () {
   const changesPubSub = yield* PubSub.sliding<SettingsChange>(64);
   // Keyed by schema identity: a reloaded plugin brings a new manifest object.
   const validators = new WeakMap<Schema.JsonObject, ReturnType<typeof compileSettingsSchema>>();
+  // Only `update` and `clear` write these files, under the write lock, so the copy stays true and
+  // a hand edit shows after a restart. Text, so a plugin that mutates what it read can't change it.
+  const savedFiles = new Map<PluginId, SavedFiles>();
 
   const settingsPath = (pluginId: PluginId) =>
     path.join(stateDir, "plugin-data", pluginId, "settings.json");
@@ -243,22 +252,38 @@ const make = Effect.gen(function* () {
         );
   };
 
+  // The caller holds the write lock, so a read from disk can't save a copy older than a write.
+  const readSavedFiles = Effect.fnUntraced(function* (pluginId: PluginId) {
+    const cached = savedFiles.get(pluginId);
+    if (cached !== undefined) return cached;
+    const settings = yield* fileSystem.readFileString(settingsPath(pluginId)).pipe(
+      Effect.catchIf(
+        (error) => error.reason._tag === "NotFound",
+        () => Effect.undefined,
+      ),
+      Effect.mapError(
+        (cause) => new PluginSettingsPersistenceError({ pluginId, operation: "read", cause }),
+      ),
+    );
+    const secrets = yield* secretStore.get(secretName(pluginId)).pipe(
+      Effect.map((bytes) =>
+        Option.getOrUndefined(Option.map(bytes, (value) => textDecoder.decode(value))),
+      ),
+      Effect.mapError(
+        (cause) => new PluginSettingsPersistenceError({ pluginId, operation: "readSecret", cause }),
+      ),
+    );
+    const files: SavedFiles = { settings, secrets };
+    savedFiles.set(pluginId, files);
+    return files;
+  });
+
   // Shares the span of the public operation that reads.
   const load = Effect.fnUntraced(
-    function* (pluginId: PluginId, fields: ReadonlySet<string>) {
-      const raw = yield* fileSystem.readFileString(settingsPath(pluginId)).pipe(
-        Effect.asSome,
-        Effect.catchIf(
-          (error) => error.reason._tag === "NotFound",
-          () => Effect.succeedNone,
-        ),
-      );
-      const stored = Option.isSome(raw) ? yield* decodeSettingsJson(raw.value) : {};
+    function* (pluginId: PluginId, fields: ReadonlySet<string>, files: SavedFiles) {
+      const stored = files.settings === undefined ? {} : yield* decodeSettingsJson(files.settings);
       const values = Object.fromEntries(Object.entries(stored).filter(([key]) => !fields.has(key)));
-      const saved = yield* secretStore.get(secretName(pluginId)).pipe(
-        Effect.flatMap((bytes) =>
-          decodeSecretsJson(Option.isSome(bytes) ? textDecoder.decode(bytes.value) : "{}"),
-        ),
+      const saved = yield* decodeSecretsJson(files.secrets ?? "{}").pipe(
         Effect.mapError(
           (cause) =>
             new PluginSettingsPersistenceError({ pluginId, operation: "readSecret", cause }),
@@ -272,13 +297,20 @@ const make = Effect.gen(function* () {
     (effect, pluginId) =>
       effect.pipe(
         Effect.catchTags({
-          PlatformError: (cause) =>
-            Effect.fail(new PluginSettingsPersistenceError({ pluginId, operation: "read", cause })),
           SchemaError: (cause) =>
             Effect.fail(new PluginSettingsPersistenceError({ pluginId, operation: "read", cause })),
         }),
       ),
   );
+
+  const loadCurrent = (pluginId: PluginId, fields: ReadonlySet<string>) => {
+    const cached = savedFiles.get(pluginId);
+    return (
+      cached === undefined
+        ? writeSemaphore.withPermits(1)(readSavedFiles(pluginId))
+        : Effect.succeed(cached)
+    ).pipe(Effect.flatMap((files) => load(pluginId, fields, files)));
+  };
 
   const clientView = ({ values, secrets }: StoredSettings): Schema.JsonObject => ({
     ...values,
@@ -289,7 +321,7 @@ const make = Effect.gen(function* () {
     pluginId: PluginId,
     settingsSchema: Schema.JsonObject | undefined,
   ) {
-    const { values, secrets } = yield* load(pluginId, secretFields(settingsSchema));
+    const { values, secrets } = yield* loadCurrent(pluginId, secretFields(settingsSchema));
     return { ...defaultsOf(settingsSchema), ...values, ...secrets } satisfies Schema.JsonObject;
   });
 
@@ -297,7 +329,7 @@ const make = Effect.gen(function* () {
     pluginId: PluginId,
     settingsSchema: Schema.JsonObject | undefined,
   ) {
-    return clientView(yield* load(pluginId, secretFields(settingsSchema)));
+    return clientView(yield* loadCurrent(pluginId, secretFields(settingsSchema)));
   });
 
   const update = Effect.fn("PluginSettingsStore.update")(function* (
@@ -310,7 +342,7 @@ const make = Effect.gen(function* () {
       settingsSchema === undefined ? undefined : yield* validatorFor(pluginId, settingsSchema);
     return yield* writeSemaphore.withPermits(1)(
       Effect.gen(function* () {
-        const current = yield* load(pluginId, fields);
+        const current = yield* load(pluginId, fields, yield* readSavedFiles(pluginId));
         const stale = keysOutside(settingsSchema, current.values);
         if (stale.length > 0) {
           yield* Effect.logWarning("dropping plugin settings its schema no longer has", {
@@ -345,31 +377,48 @@ const make = Effect.gen(function* () {
             ),
           ),
         };
+        const secrets =
+          Object.keys(next.secrets).length === 0
+            ? undefined
+            : yield* encodeSecretsJson(next.secrets).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new PluginSettingsPersistenceError({
+                      pluginId,
+                      operation: "writeSecret",
+                      cause,
+                    }),
+                ),
+              );
+        const settings = yield* encodeSettingsJson(next.values).pipe(
+          Effect.mapError(
+            (cause) => new PluginSettingsPersistenceError({ pluginId, operation: "write", cause }),
+          ),
+        );
+        // A write that fails partway leaves the next read to the disk.
+        savedFiles.delete(pluginId);
         // Written on every save, which drops the secrets of fields the schema no longer has.
         yield* (
-          Object.keys(next.secrets).length === 0
+          secrets === undefined
             ? secretStore.remove(secretName(pluginId))
-            : encodeSecretsJson(next.secrets).pipe(
-                Effect.flatMap((json) =>
-                  secretStore.set(secretName(pluginId), textEncoder.encode(json)),
-                ),
-              )
+            : secretStore.set(secretName(pluginId), textEncoder.encode(secrets))
         ).pipe(
           Effect.mapError(
             (cause) =>
               new PluginSettingsPersistenceError({ pluginId, operation: "writeSecret", cause }),
           ),
         );
-        yield* encodeSettingsJson(next.values).pipe(
-          Effect.flatMap((contents) =>
-            writeFileStringAtomically({ filePath: settingsPath(pluginId), contents }),
-          ),
+        yield* writeFileStringAtomically({
+          filePath: settingsPath(pluginId),
+          contents: settings,
+        }).pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),
           Effect.mapError(
             (cause) => new PluginSettingsPersistenceError({ pluginId, operation: "write", cause }),
           ),
         );
+        savedFiles.set(pluginId, { settings, secrets });
 
         yield* PubSub.publish(changesPubSub, {
           pluginId,
@@ -387,23 +436,28 @@ const make = Effect.gen(function* () {
     );
 
   const clear: PluginSettingsStore["Service"]["clear"] = Effect.fn("PluginSettingsStore.clear")(
-    function* (pluginId) {
-      yield* secretStore
-        .remove(secretName(pluginId))
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new PluginSettingsPersistenceError({ pluginId, operation: "writeSecret", cause }),
-          ),
-        );
-      yield* fileSystem
-        .remove(path.dirname(settingsPath(pluginId)), { recursive: true, force: true })
-        .pipe(
-          Effect.mapError(
-            (cause) => new PluginSettingsPersistenceError({ pluginId, operation: "write", cause }),
-          ),
-        );
-    },
+    (pluginId) =>
+      writeSemaphore.withPermits(1)(
+        Effect.gen(function* () {
+          savedFiles.delete(pluginId);
+          yield* secretStore
+            .remove(secretName(pluginId))
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new PluginSettingsPersistenceError({ pluginId, operation: "writeSecret", cause }),
+              ),
+            );
+          yield* fileSystem
+            .remove(path.dirname(settingsPath(pluginId)), { recursive: true, force: true })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new PluginSettingsPersistenceError({ pluginId, operation: "write", cause }),
+              ),
+            );
+        }),
+      ),
   );
 
   return PluginSettingsStore.of({ get, getForClient, update, changes, clear });

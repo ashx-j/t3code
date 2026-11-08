@@ -183,6 +183,8 @@ it.layer(NodeServices.layer)("PluginSettingsStore", (it) => {
         "plugin-upload-signing-key.bin",
       ]);
       assert.deepStrictEqual(yield* store.get(longerId, settingsSchema), { token: "other-secret" });
+      // Reinstalling starts fresh, not from the copy the store keeps in memory.
+      assert.deepStrictEqual(yield* store.get(hello, settingsSchema), {});
       assert.deepStrictEqual(
         yield* secretStore.get("plugin-upload-signing-key"),
         Option.some(signingKey),
