@@ -102,10 +102,7 @@ export class PluginSettingsStore extends Context.Service<
     >;
     /** The plugin view after each successful `update` of that plugin. */
     readonly changes: (pluginId: PluginId) => Stream.Stream<Schema.JsonObject>;
-    /**
-     * Deletes the plugin's settings file and its secrets, with those of renamed fields when the
-     * secret store keeps them in a folder.
-     */
+    /** Deletes the plugin's settings file and every secret it saved, renamed fields' included. */
     readonly clear: (
       pluginId: PluginId,
       settingsSchema: Schema.JsonObject | undefined,
@@ -126,6 +123,9 @@ interface SettingsChange {
 const SettingsJson = fromJsonStringPretty(Schema.JsonObject);
 const decodeSettingsJson = Schema.decodeUnknownEffect(SettingsJson);
 const encodeSettingsJson = Schema.encodeEffect(SettingsJson);
+const SecretsJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
+const decodeSecretsJson = Schema.decodeUnknownEffect(SecretsJson);
+const encodeSecretsJson = Schema.encodeEffect(SecretsJson);
 const isJson = Schema.is(Schema.Json);
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -165,11 +165,9 @@ const keysOutside = (settingsSchema: Schema.JsonObject | undefined, values: Sche
   return Object.keys(values).filter((key) => !Object.hasOwn(properties, key));
 };
 
-// Secret names become file names, so the field is base64url encoded. T3's own secret names, ids
-// and base64url have no `.`, so `plugin.<id>.` starts only that plugin's secrets.
-const secretPrefix = (pluginId: PluginId) => `plugin.${pluginId}.`;
-const secretName = (pluginId: PluginId, field: string) =>
-  `${secretPrefix(pluginId)}${Buffer.from(field, "utf8").toString("base64url")}`;
+// One entry holds all of a plugin's secrets, so removal finds them in a store that can't list
+// names. T3's own secret names have no `.`, so this name can't be one of them.
+const secretName = (pluginId: PluginId) => `plugin.${pluginId}`;
 
 const formatPathSegment = (segment: PropertyKey | { readonly key: PropertyKey }) => {
   const key = Predicate.isObject(segment) ? segment.key : segment;
@@ -257,21 +255,18 @@ const make = Effect.gen(function* () {
       );
       const stored = Option.isSome(raw) ? yield* decodeSettingsJson(raw.value) : {};
       const values = Object.fromEntries(Object.entries(stored).filter(([key]) => !fields.has(key)));
-      const secrets = yield* Effect.forEach(
-        fields,
-        (field) =>
-          secretStore.get(secretName(pluginId, field)).pipe(
-            Effect.mapError(
-              (cause) =>
-                new PluginSettingsPersistenceError({ pluginId, operation: "readSecret", cause }),
-            ),
-            Effect.map(Option.map((bytes) => [field, textDecoder.decode(bytes)] as const)),
-          ),
-        { concurrency: "unbounded" },
+      const saved = yield* secretStore.get(secretName(pluginId)).pipe(
+        Effect.flatMap((bytes) =>
+          decodeSecretsJson(Option.isSome(bytes) ? textDecoder.decode(bytes.value) : "{}"),
+        ),
+        Effect.mapError(
+          (cause) =>
+            new PluginSettingsPersistenceError({ pluginId, operation: "readSecret", cause }),
+        ),
       );
       return {
         values,
-        secrets: Object.fromEntries(secrets.flatMap((secret) => Option.toArray(secret))),
+        secrets: Object.fromEntries(Object.entries(saved).filter(([field]) => fields.has(field))),
       } satisfies StoredSettings;
     },
     (effect, pluginId) =>
@@ -350,24 +345,20 @@ const make = Effect.gen(function* () {
             ),
           ),
         };
-        yield* Effect.forEach(
-          fields,
-          (field) => {
-            const value = next.secrets[field];
-            if (value === current.secrets[field]) return Effect.void;
-            const name = secretName(pluginId, field);
-            return (
-              value === undefined
-                ? secretStore.remove(name)
-                : secretStore.set(name, textEncoder.encode(value))
-            ).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new PluginSettingsPersistenceError({ pluginId, operation: "writeSecret", cause }),
-              ),
-            );
-          },
-          { discard: true },
+        // Written on every save, which drops the secrets of fields the schema no longer has.
+        yield* (
+          Object.keys(next.secrets).length === 0
+            ? secretStore.remove(secretName(pluginId))
+            : encodeSecretsJson(next.secrets).pipe(
+                Effect.flatMap((json) =>
+                  secretStore.set(secretName(pluginId), textEncoder.encode(json)),
+                ),
+              )
+        ).pipe(
+          Effect.mapError(
+            (cause) =>
+              new PluginSettingsPersistenceError({ pluginId, operation: "writeSecret", cause }),
+          ),
         );
         yield* encodeSettingsJson(next.values).pipe(
           Effect.flatMap((contents) =>
@@ -396,36 +387,15 @@ const make = Effect.gen(function* () {
     );
 
   const clear: PluginSettingsStore["Service"]["clear"] = Effect.fn("PluginSettingsStore.clear")(
-    function* (pluginId, settingsSchema) {
-      const names = new Set(
-        Array.from(secretFields(settingsSchema), (field) => secretName(pluginId, field)),
-      );
-      // Also secrets of fields the plugin has since renamed.
-      if (secretStore.directory !== undefined) {
-        const files = yield* fileSystem
-          .readDirectory(secretStore.directory)
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new PluginSettingsPersistenceError({ pluginId, operation: "readSecret", cause }),
-            ),
-          );
-        for (const file of files) {
-          if (file.startsWith(secretPrefix(pluginId)) && file.endsWith(".bin")) {
-            names.add(file.slice(0, -".bin".length));
-          }
-        }
-      }
-      for (const name of names) {
-        yield* secretStore
-          .remove(name)
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new PluginSettingsPersistenceError({ pluginId, operation: "writeSecret", cause }),
-            ),
-          );
-      }
+    function* (pluginId) {
+      yield* secretStore
+        .remove(secretName(pluginId))
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new PluginSettingsPersistenceError({ pluginId, operation: "writeSecret", cause }),
+          ),
+        );
       yield* fileSystem
         .remove(path.dirname(settingsPath(pluginId)), { recursive: true, force: true })
         .pipe(

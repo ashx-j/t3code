@@ -29,9 +29,17 @@ const settingsSchema: Schema.JsonObject = {
   additionalProperties: false,
 };
 
+// Like a keychain, this store can't list what it holds.
+const layerSecretStoreWithoutFolder = Layer.effect(
+  ServerSecretStore.ServerSecretStore,
+  Effect.map(ServerSecretStore.make, ({ directory: _directory, ...store }) =>
+    ServerSecretStore.ServerSecretStore.of(store),
+  ),
+);
+
 const layerTest = () =>
   Layer.mergeAll(PluginSettingsStore.layer, ServerSettings.layer).pipe(
-    Layer.provideMerge(ServerSecretStore.layer),
+    Layer.provideMerge(layerSecretStoreWithoutFolder),
     Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
     Layer.provideMerge(
       Layer.fresh(
@@ -141,10 +149,9 @@ it.layer(NodeServices.layer)("PluginSettingsStore", (it) => {
 
       yield* store.update(hello, settingsSchema, { token: null });
       assert.deepStrictEqual(yield* store.getForClient(hello, settingsSchema), { name: "b" });
-      const secretNames = yield* FileSystem.FileSystem.use((fileSystem) =>
-        fileSystem.readDirectory(secretsDir),
+      assert.isEmpty(
+        yield* FileSystem.FileSystem.use((fileSystem) => fileSystem.readDirectory(secretsDir)),
       );
-      assert.isFalse(secretNames.some((name) => name.startsWith(`plugin.${hello}.`)));
     }).pipe(Effect.provide(layerTest())),
   );
 
@@ -160,13 +167,6 @@ it.layer(NodeServices.layer)("PluginSettingsStore", (it) => {
       };
       const longerId = PluginId.make("hello-world");
       yield* store.update(hello, settingsSchema, { token: "old-secret" });
-      // This field's encoded name contains a hyphen, like a longer id does.
-      yield* store.update(
-        hello,
-        { type: "object", properties: { 密钥: { type: "string", format: "t3-secret" } } },
-        { 密钥: "unicode-secret" },
-      );
-      yield* store.update(hello, renamed, { apiKey: "new-secret" });
       yield* store.update(longerId, settingsSchema, { token: "other-secret" });
       // A longer id's secrets are kept even when it has no settings folder.
       yield* fileSystem.remove(path.join(stateDir, "plugin-data", longerId), { recursive: true });
@@ -178,8 +178,10 @@ it.layer(NodeServices.layer)("PluginSettingsStore", (it) => {
       yield* store.clear(hello, renamed);
       yield* store.clear(PluginId.make("upload-signing-key"), undefined);
 
-      const secretNames = yield* fileSystem.readDirectory(secretsDir);
-      assert.isFalse(secretNames.some((name) => name.startsWith(`plugin.${hello}.`)));
+      assert.sameMembers(yield* fileSystem.readDirectory(secretsDir), [
+        `plugin.${longerId}.bin`,
+        "plugin-upload-signing-key.bin",
+      ]);
       assert.deepStrictEqual(yield* store.get(longerId, settingsSchema), { token: "other-secret" });
       assert.deepStrictEqual(
         yield* secretStore.get("plugin-upload-signing-key"),
