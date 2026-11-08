@@ -4,7 +4,7 @@ import { ThreadId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
 import { expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 
@@ -86,10 +86,15 @@ it("marks the window's main areas with the region names plugin styles target", a
   });
   await expect.element(page.getByTestId("composer-editor")).toBeVisible();
 
-  // Plugins style these by name, so renaming one breaks them. The test viewport has no sidebar.
-  for (const region of ["main", "timeline", "composer"]) {
-    expect(document.querySelector(`[data-t3-region="${region}"]`), region).not.toBeNull();
-  }
+  // Plugins style these by name, so renaming or moving one breaks them. The sidebar, thread
+  // details, terminal and command palette tests check the other names the SDK README lists.
+  expect(document.querySelector('[data-slot="sidebar-inset"]')).toHaveAttribute(
+    "data-t3-region",
+    "main",
+  );
+  await expect
+    .element(page.getByRole("region", { name: "Conversation" }))
+    .toHaveAttribute("data-t3-region", "timeline");
 
   // A region sits on the element that paints its area, so a plugin's plain rule recolors it.
   const pluginSheet = document.createElement("style");
@@ -98,4 +103,28 @@ it("marks the window's main areas with the region names plugin styles target", a
   using _pluginSheet = { [Symbol.dispose]: () => pluginSheet.remove() };
   const composerBox = document.querySelector("[data-chat-composer-main-surface]");
   expect(composerBox && getComputedStyle(composerBox).backgroundColor).toBe("rgb(1, 2, 3)");
+
+  await userEvent.click(page.getByRole("button", { name: "Toggle right panel" }));
+  await expect
+    .element(page.getByRole("region", { name: "Workspace panel" }))
+    .toHaveAttribute("data-t3-region", "right-panel");
+
+  await router.navigate({ to: "/settings/general" });
+  await expect
+    .element(page.getByRole("region", { name: "Settings content" }))
+    .toHaveAttribute("data-t3-region", "settings");
+  await expect
+    .element(page.getByRole("navigation", { name: "Settings sections" }))
+    .toHaveAttribute("data-t3-region", "settings-nav");
+
+  await router.navigate({ to: "/pull-requests", search: { involvement: "all", state: "open" } });
+  await expect
+    .element(page.getByRole("region", { name: "Pull requests" }))
+    .toHaveAttribute("data-t3-region", "pull-requests");
+
+  // The welcome page draws the home page under its setup dialog.
+  await router.navigate({ to: "/welcome" });
+  const homeTitle = page.getByText("What should we work on?");
+  await expect.element(homeTitle).toBeInTheDocument();
+  expect(homeTitle.element().closest("[data-t3-region]")).toHaveAttribute("data-t3-region", "home");
 });
