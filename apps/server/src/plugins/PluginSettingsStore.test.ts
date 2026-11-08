@@ -144,7 +144,7 @@ it.layer(NodeServices.layer)("PluginSettingsStore", (it) => {
       const secretNames = yield* FileSystem.FileSystem.use((fileSystem) =>
         fileSystem.readDirectory(secretsDir),
       );
-      assert.isFalse(secretNames.some((name) => name.startsWith(`plugin-${hello}.`)));
+      assert.isFalse(secretNames.some((name) => name.startsWith(`plugin.${hello}.`)));
     }).pipe(Effect.provide(layerTest())),
   );
 
@@ -171,11 +171,20 @@ it.layer(NodeServices.layer)("PluginSettingsStore", (it) => {
       // A longer id's secrets are kept even when it has no settings folder.
       yield* fileSystem.remove(path.join(stateDir, "plugin-data", longerId), { recursive: true });
 
+      // T3's own upload signing key, whose name starts like this plugin's secrets would.
+      const secretStore = yield* ServerSecretStore.ServerSecretStore;
+      const signingKey = yield* secretStore.getOrCreateRandom("plugin-upload-signing-key", 32);
+
       yield* store.clear(hello, renamed);
+      yield* store.clear(PluginId.make("upload-signing-key"), undefined);
 
       const secretNames = yield* fileSystem.readDirectory(secretsDir);
-      assert.isFalse(secretNames.some((name) => name.startsWith(`plugin-${hello}.`)));
+      assert.isFalse(secretNames.some((name) => name.startsWith(`plugin.${hello}.`)));
       assert.deepStrictEqual(yield* store.get(longerId, settingsSchema), { token: "other-secret" });
+      assert.deepStrictEqual(
+        yield* secretStore.get("plugin-upload-signing-key"),
+        Option.some(signingKey),
+      );
     }).pipe(Effect.provide(layerTest())),
   );
 

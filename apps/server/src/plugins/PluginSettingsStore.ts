@@ -165,9 +165,9 @@ const keysOutside = (settingsSchema: Schema.JsonObject | undefined, values: Sche
   return Object.keys(values).filter((key) => !Object.hasOwn(properties, key));
 };
 
-// Secret names become file names, so the field is base64url encoded. Neither ids nor base64url
-// contain `.`, so `plugin-<id>.` starts only that plugin's secrets.
-const secretPrefix = (pluginId: PluginId) => `plugin-${pluginId}.`;
+// Secret names become file names, so the field is base64url encoded. T3's own secret names, ids
+// and base64url have no `.`, so `plugin.<id>.` starts only that plugin's secrets.
+const secretPrefix = (pluginId: PluginId) => `plugin.${pluginId}.`;
 const secretName = (pluginId: PluginId, field: string) =>
   `${secretPrefix(pluginId)}${Buffer.from(field, "utf8").toString("base64url")}`;
 
