@@ -193,6 +193,19 @@ it.effect("answer under plg_ names with access checks, and leave the list once s
         ),
       /1000 characters/,
     );
+    assert.throws(
+      () =>
+        api.mcp.registerTool(
+          {
+            name: "wide",
+            description: "Takes a long schema.",
+            inputSchema: { type: "object", description: "x".repeat(4000) },
+            access: "read",
+          },
+          () => null,
+        ),
+      /4000 characters/,
+    );
 
     const names = yield* toolNames;
     assert.includeMembers(names, ["plg_mcp-plugin_echo", "plg_mcp-plugin_touch"]);

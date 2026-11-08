@@ -14,8 +14,11 @@ const TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
 // Every thread's agent reads every enabled plugin's tools.
 const MAX_TOOLS_PER_PLUGIN = 32;
 const MAX_DESCRIPTION_CHARS = 1000;
+// Measured as the JSON clients receive.
+const MAX_INPUT_SCHEMA_CHARS = 4000;
 
 const isJson = Schema.is(Schema.Json);
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.JsonObject));
 
 export class PluginMcpToolNameError extends Schema.TaggedError<PluginMcpToolNameError>()(
   "PluginMcpToolNameError",
@@ -29,12 +32,17 @@ export const isPluginMcpToolNameError = Schema.is(PluginMcpToolNameError);
 
 export class PluginMcpToolLimitError extends Schema.TaggedError<PluginMcpToolLimitError>()(
   "PluginMcpToolLimitError",
-  { tool: Schema.String, limit: Schema.Literals(["tools", "description"]) },
+  { tool: Schema.String, limit: Schema.Literals(["tools", "description", "inputSchema"]) },
 ) {
   override get message(): string {
-    return this.limit === "tools"
-      ? `A plugin registers at most ${MAX_TOOLS_PER_PLUGIN} tools, so "${this.tool}" was not added.`
-      : `Tool "${this.tool}" needs a description of at most ${MAX_DESCRIPTION_CHARS} characters.`;
+    switch (this.limit) {
+      case "tools":
+        return `A plugin registers at most ${MAX_TOOLS_PER_PLUGIN} tools, so "${this.tool}" was not added.`;
+      case "description":
+        return `Tool "${this.tool}" needs a description of at most ${MAX_DESCRIPTION_CHARS} characters.`;
+      case "inputSchema":
+        return `Tool "${this.tool}" needs an input schema of at most ${MAX_INPUT_SCHEMA_CHARS} characters as JSON.`;
+    }
   }
 }
 
@@ -131,6 +139,9 @@ const make = () => {
       }
       if (tool.description.length > MAX_DESCRIPTION_CHARS) {
         return yield* new PluginMcpToolLimitError({ tool: tool.name, limit: "description" });
+      }
+      if (encodeJson(tool.inputSchema).length > MAX_INPUT_SCHEMA_CHARS) {
+        return yield* new PluginMcpToolLimitError({ tool: tool.name, limit: "inputSchema" });
       }
       const names = toolsByPlugin.get(pluginId) ?? new Set();
       if (!names.has(name) && names.size >= MAX_TOOLS_PER_PLUGIN) {

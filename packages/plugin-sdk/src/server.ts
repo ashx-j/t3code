@@ -35,7 +35,7 @@ export interface PluginMcpTool {
   readonly name: string;
   /** At most 1000 characters. */
   readonly description: string;
-  /** JSON Schema for the tool's arguments. */
+  /** JSON Schema for the tool's arguments, at most 4000 characters as JSON. */
   readonly inputSchema: JsonObject;
   /**
    * Every agent sees the tool. A `write` tool runs only for an agent in a thread set to Full
