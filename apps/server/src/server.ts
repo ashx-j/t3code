@@ -89,7 +89,6 @@ import * as ProcessRunner from "./processRunner.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as PluginHost from "./plugins/PluginHost.ts";
-import * as PluginHttpRoutes from "./plugins/PluginHttpRoutes.ts";
 import * as PluginUploads from "./plugins/pluginUploads.ts";
 import * as PluginMcpTools from "./plugins/PluginMcpTools.ts";
 import * as PluginSettingsStore from "./plugins/PluginSettingsStore.ts";
@@ -687,10 +686,8 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(Layer.mergeAll(NativeAppIconResolver.layer, layerProjectFaviconResolver)),
   Layer.provideMerge(layerRepositoryIdentityResolver),
   Layer.provideMerge(CodexManagedTokenBroker.layer),
-  // One registry each for MCP and HTTP below and the plugin host above, and the upload URLs.
-  Layer.provideMerge(
-    Layer.mergeAll(PluginMcpTools.layer, PluginHttpRoutes.layer, PluginUploads.layer),
-  ),
+  // The MCP tool registry /mcp below and the plugin host above share, and the upload URLs.
+  Layer.provideMerge(Layer.mergeAll(PluginMcpTools.layer, PluginUploads.layer)),
   Layer.provideMerge(layerServerEnvironment),
   Layer.provideMerge(layerAuth),
   Layer.provideMerge(ServerSecretStore.layer),
@@ -719,7 +716,7 @@ const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   Layer.provide(NetService.layer),
 );
 
-// The plugin host sits on top of the runtime for its theme service, secret store and registries.
+// The plugin host sits on top of the runtime for its theme service, secret store and registry.
 const layerRuntimeDependenciesWithPlugins = PluginHost.layer.pipe(
   Layer.provide(Layer.mergeAll(PluginSettingsStore.layer, PluginStorage.layer)),
   Layer.provideMerge(layerRuntimeDependencies),
@@ -750,7 +747,7 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerAssetRoute,
     ServerHttp.layerAttachmentUploadRoute,
     GuestHttp.layer,
-    PluginHttpRoutes.layerRoute,
+    PluginHost.layerWebFilesRoute,
     PluginUploads.layerRoute,
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,

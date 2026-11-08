@@ -5,6 +5,7 @@ import * as NodeModule from "node:module";
 import {
   AuthEnvironmentScope,
   AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
   PluginId,
   type PluginListResult,
   type PluginState,
@@ -28,9 +29,16 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import {
+  HttpRouter,
+  HttpServerRequest,
+  HttpServerRespondable,
+  HttpServerResponse,
+} from "effect/http";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
+import { authenticateRawRouteWithScope } from "../http.ts";
 import { forkParked } from "../serverActivation.ts";
 import {
   makePluginActivation,
@@ -42,14 +50,13 @@ import { errorText, PluginCodeError, pluginCodeScope } from "./api/facade.ts";
 import { makePluginFailureGuard } from "./pluginFailureGuard.ts";
 import { makePluginFailures } from "./pluginFailures.ts";
 import { discoverPlugins, type DiscoveredPlugin } from "./pluginDiscovery.ts";
-import * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
 import * as PluginInstaller from "./PluginInstaller.ts";
 import * as PluginMcpTools from "./PluginMcpTools.ts";
 import { makePluginsConfig, type PluginConfigError } from "./pluginsConfig.ts";
 import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
 import { makePluginStates, manifestOf, type PluginRecord } from "./pluginStates.ts";
-import { makePluginWebFiles } from "./pluginWebFiles.ts";
+import { makePluginWebFiles, type PluginWebFile } from "./pluginWebFiles.ts";
 
 // Plugin code that never settles must not keep a plugin loading, a client's call open, or Disable
 // and Reload waiting, forever. The cleanup deadline covers all of a plugin's cleanups together.
@@ -189,6 +196,15 @@ export class PluginHost extends Context.Service<
       | PluginHandlerError
       | PluginHandlerTimeoutError
     >;
+    /**
+     * What an active plugin serves at `/api/plugins/<pluginId><path>`: its `web.js`, or a file in
+     * its `assets/` or `styles/`. A `revision` that names the file's contents lets it be cached.
+     */
+    readonly readWebFile: (input: {
+      readonly pluginId: string;
+      readonly path: string;
+      readonly revision: string | undefined;
+    }) => Effect.Effect<Option.Option<PluginWebFile>>;
     /** Values the plugin publishes on `channel` until it deactivates. */
     readonly subscribe: (input: {
       readonly pluginId: PluginId;
@@ -234,7 +250,6 @@ const make = Effect.gen(function* () {
     mcpTools: yield* PluginMcpTools.PluginMcpTools,
   };
   const settingsStore = services.settings;
-  const httpRoutes = yield* PluginHttpRoutes.PluginHttpRoutes;
 
   const pluginsDir = path.join(config.stateDir, "plugins");
   const pluginsConfig = yield* makePluginsConfig;
@@ -377,12 +392,12 @@ const make = Effect.gen(function* () {
         },
       });
     }
-    const webRevision =
-      manifest.web === undefined ? undefined : yield* webFiles.serveWebFiles(plugin, manifest.web);
+    const web = yield* webFiles.find(plugin, manifest.web);
     const started = {
       status: "active" as const,
-      ...(webRevision === undefined ? {} : { webRevision }),
-      styles: yield* webFiles.serveStyles(plugin),
+      webFiles: web.folders,
+      ...(web.webRevision === undefined ? {} : { webRevision: web.webRevision }),
+      styles: web.styles,
     };
     if (manifest.server === undefined) {
       return yield* setRecord(plugin.id, { ...started, revision: nextRevision() });
@@ -441,20 +456,19 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Interrupts a pending activation, then tears down a finished one. The record stops routing
-   * calls before cleanups run; the caller sets the plugin's next status.
+   * Interrupts a pending activation, then stops an active plugin: its record stops routing calls
+   * and serving files before cleanups run. The caller sets the plugin's next status.
    */
   const stopPlugin = Effect.fn("PluginHost.stop")(function* (pluginId: PluginId) {
     yield* FiberMap.remove(activations, pluginId);
     // A failure from before the stop, even one while loading, which has no revision, belongs to
     // that start; failures of code left running after it are recorded again.
     yield* failures.clearServer(pluginId);
-    // Plugins without server code have no activation but may still serve files.
-    yield* httpRoutes.unregisterPlugin(pluginId);
+    // A plugin without server code is active with no activation.
     const record = yield* findRecord(pluginId);
-    if (record?.activation === undefined) return;
+    if (record?.status !== "active") return;
     yield* setRecord(pluginId, { status: "disabled" });
-    yield* teardown(pluginId, record.activation);
+    if (record.activation !== undefined) yield* teardown(pluginId, record.activation);
   });
 
   const startPlugin = (plugin: DiscoveredPlugin) =>
@@ -773,6 +787,16 @@ const make = Effect.gen(function* () {
       }
       return output;
     }),
+    readWebFile: Effect.fn("PluginHost.readWebFile")(function* (request) {
+      const record = yield* findRecord(request.pluginId);
+      if (record?.status !== "active" || record.webFiles === undefined) return Option.none();
+      return yield* webFiles.read(
+        record.plugin.rootDir,
+        record.webFiles,
+        request.path,
+        request.revision,
+      );
+    }),
     subscribe: (request) =>
       Stream.unwrap(
         Effect.gen(function* () {
@@ -802,3 +826,35 @@ const make = Effect.gen(function* () {
 
 /** Provides the host and the installer it builds. */
 export const layer = Layer.effectContext(make);
+
+const WEB_FILES_ROUTE_PREFIX = "/api/plugins";
+
+/** `GET /api/plugins/<pluginId>/<path>`, answered with what the active plugin serves there. */
+export const layerWebFilesRoute = HttpRouter.add(
+  "GET",
+  `${WEB_FILES_ROUTE_PREFIX}/*`,
+  Effect.gen(function* () {
+    // Same sign-in as reads on the rest of `/api`.
+    yield* authenticateRawRouteWithScope(AuthOrchestrationReadScope);
+    const url = HttpServerRequest.toURL(yield* HttpServerRequest.HttpServerRequest);
+    if (Option.isNone(url)) return HttpServerResponse.text("Bad Request", { status: 400 });
+    const rest = url.value.pathname.slice(`${WEB_FILES_ROUTE_PREFIX}/`.length);
+    const slash = rest.indexOf("/");
+    const host = yield* PluginHost;
+    const file = yield* host.readWebFile({
+      pluginId: slash === -1 ? rest : rest.slice(0, slash),
+      path: slash === -1 ? "/" : rest.slice(slash),
+      revision: url.value.searchParams.get("v") ?? undefined,
+    });
+    return Option.match(file, {
+      onNone: () => HttpServerResponse.text("Not Found", { status: 404 }),
+      onSome: ({ headers, body }) => HttpServerResponse.uint8Array(body, { headers }),
+    });
+  }).pipe(
+    Effect.catchTags({
+      EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
+      EnvironmentInternalError: HttpServerRespondable.toResponse,
+      EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
+    }),
+  ),
+);

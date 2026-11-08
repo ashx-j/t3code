@@ -1,6 +1,6 @@
 // @effect-diagnostics preferSchemaOverJson:off - like the tests, it writes manifests as plain JSON.
-// The plugin host with its real stores and registries, for its tests and the tests of the modules
-// it builds.
+// The plugin host with its real stores and MCP tool registry, for its tests and the tests of the
+// modules it builds.
 import type { PluginState } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -13,7 +13,6 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as EnvironmentTheme from "../environmentTheme.ts";
 import * as ServerConfig from "../config.ts";
 import * as PluginHost from "./PluginHost.ts";
-import * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
 import * as PluginMcpTools from "./PluginMcpTools.ts";
 import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
@@ -40,7 +39,7 @@ export const layerHost = (themes = layerThemes) =>
       Layer.provideMerge(Layer.mergeAll(PluginSettingsStore.layer, PluginStorage.layer)),
       Layer.provide(ServerSecretStore.layer),
       Layer.provide(themes),
-      Layer.provideMerge(Layer.mergeAll(PluginMcpTools.layer, PluginHttpRoutes.layer)),
+      Layer.provideMerge(PluginMcpTools.layer),
     ),
   );
 

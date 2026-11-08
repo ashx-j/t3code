@@ -20,6 +20,7 @@ import type { PluginActivation } from "./PluginApi.ts";
 import type { DiscoveredPlugin } from "./pluginDiscovery.ts";
 import type { PluginFailures } from "./pluginFailures.ts";
 import type { PluginsConfigFile } from "./pluginsConfig.ts";
+import type { PluginWebFolders } from "./pluginWebFiles.ts";
 
 /** What the host knows about one listed copy of a plugin. */
 export interface PluginRecord {
@@ -30,6 +31,7 @@ export interface PluginRecord {
   readonly revision?: number;
   readonly webRevision?: string;
   readonly styles?: PluginState["styles"];
+  readonly webFiles?: PluginWebFolders;
 }
 
 export const manifestOf = (plugin: DiscoveredPlugin): PluginManifest | undefined =>

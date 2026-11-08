@@ -34,7 +34,6 @@ import {
   writeInstalledPlugin,
   writePluginsConfig,
 } from "./pluginHostTestHarness.ts";
-import * as PluginHttpRoutes from "./PluginHttpRoutes.ts";
 import * as PluginInstaller from "./PluginInstaller.ts";
 import { makePluginRpcHandlers } from "./pluginRpcHandlers.ts";
 import * as PluginStorage from "./PluginStorage.ts";
@@ -229,10 +228,11 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
 
   it.effect("fails a plugin that registers a method with an unknown access level", () =>
     Effect.gen(function* () {
-      yield* writeInstalledPlugin(
+      const rootDir = yield* writeInstalledPlugin(
         "typo",
         `module.exports = { activate(api) { api.rpc.register("go", () => 1, { access: "Write" }); } };`,
       );
+      yield* writeFile(`${rootDir}/styles/base.css`, "body {}");
       yield* writePluginsConfig({ enabled: { typo: true } });
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
@@ -241,6 +241,13 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
           stage: "activate",
           message: 'Method "go" needs access "read" or "write".',
         });
+        // Nor does it serve its files.
+        const served = yield* host.readWebFile({
+          pluginId: "typo",
+          path: "/styles/base.css",
+          revision: undefined,
+        });
+        assert.isTrue(Option.isNone(served));
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
@@ -329,13 +336,12 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           }),
         );
         yield* host.reload(id);
-        const routes = yield* PluginHttpRoutes.PluginHttpRoutes;
-        const request = { path: "/web.js", query: {} };
-        assert.strictEqual((yield* routes.handle({ pluginId: id, request })).status, 200);
-        const outside = yield* routes
-          .handle({ pluginId: id, request: { ...request, path: "/assets/secret.txt" } })
-          .pipe(Effect.flip);
-        assert.strictEqual(outside._tag, "PluginHttpRouteNotFoundError");
+        const served = (path: string) =>
+          host
+            .readWebFile({ pluginId: id, path, revision: undefined })
+            .pipe(Effect.map(Option.isSome));
+        assert.isTrue(yield* served("/web.js"));
+        assert.isFalse(yield* served("/assets/secret.txt"));
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
