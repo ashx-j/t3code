@@ -85,7 +85,7 @@ Each browser keeps its own choice of the environments it loads plugin UI from, t
 default, because that code runs with every connection's credentials. Right panels show only in their
 environment's threads. Commands have no thread, so only the first chosen environment registers them.
 
-With no plugins, the plugin code in the startup chunks of a production build is about 8 KB of
+With no plugins, the plugin code in the startup chunks of a production build is about 9 KB of
 minified JS, under 4 KB gzipped. Most of it is the plugin contract schemas and RPC definitions,
 [`PluginLoaderStarter`](../../apps/web/src/plugins/PluginLoaderStarter.tsx), `pluginFollow` and the
 [`pluginUi.ts`](../../apps/web/src/plugins/pluginUi.ts) stub that app code reads plugin parts
