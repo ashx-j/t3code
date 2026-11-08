@@ -719,7 +719,7 @@ const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   Layer.provide(NetService.layer),
 );
 
-// The plugin host sits on top of the runtime so plugins can reach orchestration.
+// The plugin host sits on top of the runtime for its theme service, secret store and registries.
 const layerRuntimeDependenciesWithPlugins = PluginHost.layer.pipe(
   Layer.provide(Layer.mergeAll(PluginSettingsStore.layer, PluginStorage.layer)),
   Layer.provideMerge(layerRuntimeDependencies),
