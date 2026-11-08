@@ -14,8 +14,8 @@ T3 Code copies a plugin folder into the environment's `plugins` folder, so later
 copy do not affect the installed plugin. To update it, add the new version's folder the same way.
 A new plugin is installed turned off, so none of it runs until you have read its row and turned it
 on. A new version of a plugin stays on or off as the old one was. If a new version fails to install
-or start, you keep the version you had, and T3 Code says why. A plugin that needs a newer version of T3 Code isn't installed, and T3 Code says
-why.
+or start, you keep the version you had, and T3 Code says why. A plugin that needs a newer version
+of T3 Code isn't installed, and T3 Code says why.
 
 Plugin folders you copy into the `plugins` folder yourself show up, turned off, the next time you
 open **Settings → Plugins**. That folder is `~/.t3/userdata/plugins` on the environment's machine
@@ -28,9 +28,9 @@ top of the page. To use a plugin on several environments, add it to each of them
 
 Use the switch on the plugin's row. A plugin that fails to start shows the reason on its row, for
 example when it needs a newer version of T3 Code. A plugin with server code needs the environment's
-T3 Code server to run on Node 24 or later. The desktop app's server does. **Reload** restarts a plugin with its current
-files. Turning a plugin off doesn't stop code it started on its own, such as a timer. If its row
-says some of its code is still running, restart T3 Code to stop it.
+T3 Code server to run on Node 24 or later, as the desktop app's does. **Reload** restarts a plugin
+with its current files. Turning a plugin off doesn't stop code it started on its own, such as a
+timer. If its row says some of its code is still running, restart T3 Code to stop it.
 
 A plugin can stop T3 Code's server with an error. When the server starts again, that plugin stays
 off and its row says it stopped the server. To try it again, turn it back on.

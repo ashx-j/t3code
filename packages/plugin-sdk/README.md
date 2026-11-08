@@ -4,10 +4,10 @@ Types and build helpers for T3 Code plugins. A plugin is a folder with a `t3-plu
 an optional server half that runs inside the T3 Code server, and an optional web half that runs in
 the web and desktop apps. Plugins are trusted code: they run with the same access as T3 Code.
 
-[`examples/`](./examples) has plugins to copy from. Those with a `vite.config.ts` build their web
-halves instead of committing them: run `vp run build:examples` in `packages/plugin-sdk` before
-adding one to T3 Code. Each builds to its own `dist/web.js` with the Vite preset below. The plugins
-in [`fixtures/`](./fixtures) back the tests and are small and working too. They are written by hand
+[`examples/quick-notes`](./examples/quick-notes) is a plugin to copy from. It builds its web half
+instead of committing it: run `vp run build:examples` in `packages/plugin-sdk` before adding it to
+T3 Code, which builds it to `dist/web.js` with the Vite preset below. The plugins in
+[`fixtures/`](./fixtures) back the tests and are small and working too. They are written by hand
 and need no build. `hello-web` uses most of the web API.
 
 ## Install
@@ -111,6 +111,32 @@ off after the restart until the user turns it on again. That includes a throw in
 `'error'` event with no listener, so catch errors in callbacks and give every child process, socket
 and stream you create an `'error'` listener.
 
+## Tools for agents
+
+`api.mcp.registerTool(tool, handler)` gives agents a tool, as
+[`fixtures/mcp-plugin`](./fixtures/mcp-plugin) does.
+
+- Agents see the tool as `plg_<id>_<name>`. `name` uses letters, digits, `_` and `-`, and the
+  whole name must fit in 64 characters, because MCP clients refuse longer ones.
+- `access` is `read` or `write`. Any agent can call a `read` tool. A `write` tool runs only for an
+  agent in a thread set to Full access and not in Plan mode, or an outside agent approved with Full
+  access. Other agents, and agents from linked environments, get a refusal. Make every tool that
+  changes something `write`.
+- `inputSchema` is a JSON Schema with `"type": "object"` and no `anyOf`, `oneOf` or `allOf` at its
+  top level, which model APIs refuse. Put alternatives inside a property. An agent can send any
+  JSON object, so check the input before acting on it.
+- The handler's second argument has a `signal`, which aborts when the agent cancels the call or the
+  plugin stops, and the `threadId` of the calling agent's thread, or `null` for an MCP client
+  outside a thread. It returns JSON, and a throw becomes an error the agent reads.
+- Every agent in every thread of the environment sees the tools of every plugin that is on, so
+  each tool takes up room in every agent's context. A plugin registers at most 32 tools, each with
+  a description of up to 1,000 characters and an input schema of up to 4,000 characters as JSON.
+  `registerTool` throws when a tool breaks a rule, so a plugin that registers it in `activate` fails
+  to start and says why.
+
+The server API can't read T3's threads, projects or providers. A tool can keep its own data per
+thread in `storage` under the `threadId`, but it can't look that thread up.
+
 ## Web half
 
 ```tsx
@@ -178,9 +204,11 @@ parts of your design to survive that. Build each part on the most stable thing T
   across releases: `sidebar`, `main` (everything beside the sidebar), `timeline`, `composer`,
   `thread-details`, `right-panel`, `terminal`, `home`, `pull-requests`, `settings`,
   `settings-nav` and `command-palette`. A plain `background` rule recolors most regions, such as
-  `[data-t3-region="composer"] { background: #101820; }`. The surfaces inside `main` and
-  `right-panel` paint over them, so set `--background` on those two instead. For `terminal`, set
-  `--terminal-background`, which a terminal reads when it opens.
+  `[data-t3-region="composer"] { background: #101820; }`. The surfaces inside `main`,
+  `right-panel` and `pull-requests` paint over them, so set `--background` on those three instead.
+  For `terminal`, set `--terminal-background`, which a terminal reads when it opens. `terminal` is
+  the drawer under the chat. A terminal opened in the right panel has no `terminal` region, so set
+  `--terminal-background` on `right-panel` to reach it.
 - **Reach into T3's markup only as a last resort.** Selectors on `aria-label`, `data-slot`, class
   names such as `[class~="border-border/65"]` or `.lucide-shield-off`, and `:has()` break when T3
   renames or moves things. Use one only when no theme value or region does the job. Keep each rule

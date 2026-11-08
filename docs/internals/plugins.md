@@ -85,13 +85,15 @@ Each browser keeps its own choice of the environments it loads plugin UI from, t
 default, because that code runs with every connection's credentials. Right panels show only in their
 environment's threads. Commands have no thread, so only the first chosen environment registers them.
 
-At startup the app loads only a small stub, [`pluginUi.ts`](../../apps/web/src/plugins/pluginUi.ts).
-Once the app is idle, [`PluginLoaderStarter`](../../apps/web/src/plugins/PluginLoaderStarter.tsx)
-follows `plugins.subscribeStates` for each chosen environment, a stream of its own because the
-server config stream would resend the whole config on every plugin change. It downloads the web
-loader only when an active plugin has a web part, and a separate small styles chunk only when one
-has a `styles/` folder. A client with neither still downloads the stub and a small watcher, and
-keeps one stream open per chosen environment. The server starts plugins after it is listening.
+With no plugins, the plugin code in the startup chunks of a production build is about 8 KB of
+minified JS, under 4 KB gzipped. Most of it is the plugin contract schemas and RPC definitions,
+[`PluginLoaderStarter`](../../apps/web/src/plugins/PluginLoaderStarter.tsx), `pluginFollow` and the
+[`pluginUi.ts`](../../apps/web/src/plugins/pluginUi.ts) stub that app code reads plugin parts
+through. Once the app is idle, the starter downloads a 2 KB watcher and follows
+`plugins.subscribeStates` for each chosen environment, a stream of its own because the server
+config stream would resend the whole config on every plugin change. It downloads the web loader
+only when an active plugin has a web part, and a separate small styles chunk only when one has a
+`styles/` folder. The server starts plugins after it is listening.
 
 A bare `import(url)` cannot send credentials, so the loader fetches each bundle with the
 connection's credentials and imports it from a `blob:` URL, which the desktop CSP allows. Mobile

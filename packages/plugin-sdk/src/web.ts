@@ -65,10 +65,9 @@ export interface WebPluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
   };
   readonly settings: {
     /**
-     * Shows on the Plugins page in place of the generated settings form. On a plugin installed in
-     * several environments, the page shows the panel from the first one plugin UI loads from, which
-     * changes that copy alone, and the generated form, when the schema has fields, stays below it
-     * for every copy.
+     * Shows on the Plugins page in place of the generated settings form, in browsers that load
+     * plugin UI from this plugin's environment. Other browsers show the generated form, if the
+     * `settingsSchema` has fields.
      */
     readonly registerPanel: (component: WebPluginComponent) => void;
   };
