@@ -158,7 +158,8 @@ export class PluginHost extends Context.Service<
     ) => Effect.Effect<PluginState, PluginNotFoundError | PluginConfigError>;
     /**
      * Rescans the plugin folders without restarting anything. Plugins whose folders appeared are
-     * listed, turned off unless plugins.json turns them on; ones whose folders are gone stop.
+     * listed, turned off unless plugins.json turns them on; ones whose folders are gone stop, and
+     * plugins.json forgets them.
      */
     readonly rescan: Effect.Effect<
       { readonly plugins: ReadonlyArray<PluginState> },
@@ -494,6 +495,14 @@ const make = Effect.gen(function* () {
     const plugins = yield* discoverPlugins({ pluginsDir, devPaths: current.devPaths ?? [] }).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
+    );
+    yield* pluginsConfig.forgetMissing(new Set(plugins.map((plugin) => plugin.id))).pipe(
+      Effect.catchTags({
+        PluginConfigError: (error) =>
+          lenient
+            ? Effect.logWarning("could not update plugins.json", { path: error.path })
+            : Effect.fail(error),
+      }),
     );
     const found: Found = { enabled: current.enabled ?? {}, crashed: current.crashed ?? {} };
     return { plugins, found };

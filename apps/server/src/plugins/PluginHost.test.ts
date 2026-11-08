@@ -260,7 +260,7 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
         `const marker = require("node:path").join(__dirname, "..", "..", "goes-cleaned");
 module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").writeFileSync(marker, "")); } };`,
       );
-      yield* writePluginsConfig({ enabled: { stays: true, goes: true, arrives: true } });
+      yield* writePluginsConfig({ enabled: { stays: true, goes: true } });
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
         const fs = yield* FileSystem.FileSystem;
@@ -272,13 +272,12 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         assert.isTrue(yield* fs.exists(`${stays}/../../goes-cleaned`));
         assert.isUndefined(stateOf(yield* host.list, "goes"));
 
-        // Reloading a plugin that is gone still starts the plugins the rescan found.
-        yield* writeInstalledPlugin("arrives", `module.exports = { activate() {} };`);
-        const missing = yield* host.reload(PluginId.make("goes")).pipe(Effect.flip);
+        // A folder copied in later with its id is a plugin the user hasn't seen, so it starts off,
+        // and reloading the gone plugin still lists it.
+        yield* writeInstalledPlugin("goes", `module.exports = { activate() {} };`);
+        const missing = yield* host.reload(PluginId.make("arrives")).pipe(Effect.flip);
         assert.strictEqual(missing._tag, "PluginNotFoundError");
-        assert.include(yield* host.setEnabled(PluginId.make("arrives"), true), {
-          status: "active",
-        });
+        assert.include(stateOf(yield* host.list, "goes"), { status: "disabled", enabled: false });
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );

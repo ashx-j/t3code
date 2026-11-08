@@ -101,6 +101,29 @@ export const makePluginsConfig = Effect.gen(function* () {
         ...withoutCrash(current, pluginId),
         enabled: { ...current.enabled, [pluginId]: enabled },
       })),
+    /**
+     * Forgets the switch and crash of every plugin not in `found`, writing only if there are any.
+     * A switch left on by a folder deleted by hand would start the next folder with its id unseen.
+     */
+    forgetMissing: (found: ReadonlySet<string>) => {
+      const keep = <V>(entries: Readonly<Record<string, V>>) =>
+        Object.fromEntries(Object.entries(entries).filter(([id]) => found.has(id)));
+      const missing = (config: PluginsConfigFile) =>
+        [...Object.keys(config.enabled ?? {}), ...Object.keys(config.crashed ?? {})].some(
+          (id) => !found.has(id),
+        );
+      return Ref.get(current).pipe(
+        Effect.flatMap((last) =>
+          missing(last)
+            ? write((latest) => ({
+                ...latest,
+                ...(latest.enabled === undefined ? {} : { enabled: keep(latest.enabled) }),
+                ...(latest.crashed === undefined ? {} : { crashed: keep(latest.crashed) }),
+              }))
+            : Effect.void,
+        ),
+      );
+    },
     /** Forgets that the plugin crashed the server, writing only if it had. */
     clearCrash: (pluginId: PluginId) =>
       read.pipe(
