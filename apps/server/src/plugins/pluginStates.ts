@@ -97,7 +97,7 @@ const toState = (
 
 /**
  * Builds the plugin list clients see from the host's records, plugins.json and the failures, and
- * publishes it, with the theme folders of plugins that are on, after each change.
+ * publishes it after each change, with the theme folders of plugins that are on when those change.
  */
 export const makePluginStates = Effect.fn("PluginStates.make")(function* (input: {
   readonly records: Ref.Ref<ReadonlyArray<PluginRecord>>;
@@ -122,6 +122,9 @@ export const makePluginStates = Effect.fn("PluginStates.make")(function* (input:
   // rescans on every visit, and a list sent again would make every client stream rebuild what it
   // already shows.
   let published: ReadonlyArray<PluginState> = [];
+  // The copies whose theme folders the theme service last got, which reads every folder each time.
+  // A reload discovers its plugin afresh, so the new copy's themes are read again.
+  let themed: ReadonlyArray<DiscoveredPlugin> = [];
   // Reading and publishing under one lock, so a slower fiber cannot publish an older list last.
   const publishUnderLock = publishLock.withPermits(1)(
     Effect.gen(function* () {
@@ -130,14 +133,16 @@ export const makePluginStates = Effect.fn("PluginStates.make")(function* (input:
       if (Equal.equals(states, published)) return;
       // Every enabled plugin that has not failed, so a starting or restarting one keeps its themes:
       // windows would otherwise paint T3's colors, forget the saved theme, then switch back.
-      yield* environmentThemes.setPluginThemeDirectories(
-        all.flatMap((record, index) => {
-          const state = states[index];
-          return state?.enabled === true && state.status !== "failed"
-            ? [path.join(record.plugin.rootDir, "themes")]
-            : [];
-        }),
-      );
+      const copies = all.flatMap((record, index) => {
+        const state = states[index];
+        return state?.enabled === true && state.status !== "failed" ? [record.plugin] : [];
+      });
+      if (copies.length !== themed.length || copies.some((copy, index) => copy !== themed[index])) {
+        yield* environmentThemes.setPluginThemeDirectories(
+          copies.map((copy) => path.join(copy.rootDir, "themes")),
+        );
+        themed = copies;
+      }
       yield* PubSub.publish(changes, states);
       published = states;
     }),

@@ -614,8 +614,8 @@ module.exports = { activate() {} };`,
 } };`,
       );
       yield* writePluginsConfig({ enabled: { stubborn: true } });
-      // Every publish that changes the list hands over the theme folders, and holds there while
-      // `held` is set.
+      // Every publish that changes the theme folders hands them over, and holds there while `held`
+      // is set.
       const themeFolders: Array<ReadonlyArray<string>> = [];
       let held:
         | { readonly reached: Deferred.Deferred<void>; readonly release: Deferred.Deferred<void> }

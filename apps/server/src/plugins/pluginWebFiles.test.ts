@@ -50,15 +50,11 @@ it.layer(NodeServices.layer)("PluginWebFiles", (it) => {
         assert.strictEqual(response.headers["cache-control"], "no-store");
         const themes = `${fixturesDir}hello-web/themes`;
         assert.deepStrictEqual(publishedThemeDirectories.at(-1), [themes]);
-        // A reload publishes its folder again, so its files are read again, without dropping it
-        // first: windows would flash T3's colors.
+        // A reload hands its folder over once more, so its files are read again, without dropping
+        // it first: windows would flash T3's colors.
         publishedThemeDirectories.length = 0;
         yield* host.reload(helloWeb);
-        assert.isNotEmpty(publishedThemeDirectories);
-        assert.deepStrictEqual(
-          publishedThemeDirectories.filter((directories) => !directories.includes(themes)),
-          [],
-        );
+        assert.deepStrictEqual(publishedThemeDirectories, [[themes]]);
         const asset = yield* routes.handle({
           pluginId: helloWeb,
           request: { ...request, path: "/assets/hello.txt" },
