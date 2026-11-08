@@ -100,8 +100,10 @@ release builds cannot load code, so the mobile app shows no plugin UI, settings 
 Bundles get React, the UI kit, `Atom` functions and atom hooks from `globalThis.__t3PluginHost`,
 because a second React or effect would not share T3's renderer or atom registry. The SDK declares
 its own atom types, so a plugin needs no `effect` and T3's effect upgrades don't break its
-typecheck. Nothing compares those types with effect's, so an effect upgrade that changes a shared
-function or hook needs a matching change in the SDK's `atom.ts` or `atom-react.ts`.
+typecheck. No type check compares those types with effect's. Instead the `hello-web` fixture
+typechecks against the SDK's types, and `pluginLoader.browser.test.ts` runs its settings panel on
+effect's functions, so an effect upgrade that changes one the fixture uses fails there. A change to
+a shared function or hook needs a matching change in the SDK's `atom.ts` or `atom-react.ts`.
 
 Plugin themes arrive over the server config stream after the first paint, so the client saves them
 in localStorage for the boot script in `index.html`. The server marks plugin themes, so the client

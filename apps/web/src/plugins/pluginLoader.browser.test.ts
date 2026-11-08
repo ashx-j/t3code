@@ -1,9 +1,11 @@
 import { EnvironmentId, PluginId, type PluginState } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
+import { createElement } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import helloWebSource from "../../../../packages/plugin-sdk/fixtures/hello-web/web.js?raw";
-import { fakeTimers } from "../../test/render";
+import { fakeTimers, render } from "../../test/render";
 
 vi.mock(import("../state/session"), async (original) => ({
   ...(await original()),
@@ -36,7 +38,7 @@ vi.mock(import("../state/plugins"), () => ({
   } as never,
 }));
 
-import { appAtomRegistry } from "../rpc/atomRegistry";
+import { AppAtomRegistryProvider, appAtomRegistry } from "../rpc/atomRegistry";
 import { startPluginLoader } from "./pluginLoader";
 import {
   pluginCommandsAtom,
@@ -119,6 +121,26 @@ describe("startPluginLoader", () => {
     expect(fetchSpy.mock.calls[1]?.[1]).toEqual({ headers: { authorization: "Bearer token" } });
     // A plugin's atoms come from the app's own copy of effect, so the app's registry runs them.
     expect(Reflect.get(globalThis, "__t3PluginHost")).toMatchObject({ atom: { make: Atom.make } });
+    // The fixture typechecks against the SDK's hand-written atom types, so its settings panel
+    // checks that effect's functions and hooks still behave as those types say.
+    const helloSettings = appAtomRegistry.get(
+      pluginSettingsPanelAtom(pluginContributionKey(environmentId, "hello-web")),
+    )!.component;
+    const settingsPanel = () =>
+      createElement(AppAtomRegistryProvider, null, createElement(helloSettings));
+    {
+      await using screen = await render(settingsPanel());
+      const sayHello = screen.getByRole("button", { name: "Say hello" });
+      for (let press = 0; press < 4; press++) await userEvent.click(sayHello);
+      await expect.element(screen.getByText("Hellos: 3")).toBeVisible();
+      await userEvent.click(screen.getByRole("button", { name: "Reset" }));
+      await expect.element(screen.getByText("Hellos: 0")).toBeVisible();
+      await userEvent.click(sayHello);
+      // The count stays in the registry once nothing reads it.
+      await screen.rerender(null);
+      await screen.rerender(settingsPanel());
+      await expect.element(screen.getByText("Hellos: 1")).toBeVisible();
+    }
 
     const [command] = appAtomRegistry.get(pluginCommandsAtom(environmentId));
     expect(command?.command).toBe("plugin.hello-web.open-settings");
