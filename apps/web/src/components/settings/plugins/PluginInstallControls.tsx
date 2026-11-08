@@ -61,7 +61,6 @@ export function usePluginInstaller(
   const [installing, setInstalling] = useState<string | null>(null);
   const [problems, setProblems] = useState<ReadonlyArray<string>>([]);
 
-  // Resolves true when every folder installed with nothing to report.
   const run = async (work: (report: (problem: string) => void) => Promise<void>) => {
     const found: Array<string> = [];
     setProblems([]);

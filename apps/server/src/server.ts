@@ -686,7 +686,7 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(Layer.mergeAll(NativeAppIconResolver.layer, layerProjectFaviconResolver)),
   Layer.provideMerge(layerRepositoryIdentityResolver),
   Layer.provideMerge(CodexManagedTokenBroker.layer),
-  // The MCP tool registry /mcp below and the plugin host above share, and the upload URLs.
+  // /mcp and the plugin host share one MCP tool registry and one set of upload URLs.
   Layer.provideMerge(Layer.mergeAll(PluginMcpTools.layer, PluginUploads.layer)),
   Layer.provideMerge(layerServerEnvironment),
   Layer.provideMerge(layerAuth),

@@ -102,7 +102,10 @@ export class PluginSettingsStore extends Context.Service<
     >;
     /** The plugin view after each successful `update` of that plugin. */
     readonly changes: (pluginId: PluginId) => Stream.Stream<Schema.JsonObject>;
-    /** Deletes the plugin's settings file and the secrets its schema declares. */
+    /**
+     * Deletes the plugin's settings file and its secrets, with those of renamed fields when the
+     * secret store keeps them in a folder.
+     */
     readonly clear: (
       pluginId: PluginId,
       settingsSchema: Schema.JsonObject | undefined,

@@ -54,7 +54,6 @@ export function PluginRow({
     await action();
     setBusy(false);
   };
-  // A plugin loaded from its own folder through `devPaths` is unlinked instead; the folder stays.
   const removeLabel = plugin.source === "dev" ? "Unlink" : "Remove";
   // Only a shadowed link can be dropped on its own, by its folder; see `isShadowed`.
   const shadowedLink = shadowed && plugin.source === "dev" ? plugin.linkedFolder : undefined;

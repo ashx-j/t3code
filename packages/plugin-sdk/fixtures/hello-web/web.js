@@ -16,7 +16,6 @@ const { Button } = host.ui;
 const greetingCount = Atom.family((/** @type {string} */ greeting) =>
   Atom.withLabel(Atom.keepAlive(Atom.make(0)), `hello-web/${greeting}`),
 );
-// Counts hellos up to 3.
 const hellos = Atom.writable(
   (get) => get(greetingCount("hello")),
   (ctx, /** @type {number} */ count) => ctx.set(greetingCount("hello"), Math.min(count, 3)),

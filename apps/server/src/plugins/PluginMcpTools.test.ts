@@ -179,7 +179,6 @@ it.effect("answer under plg_ names with access checks, and leave the list once s
         ),
       /oneOf at the top of its input schema/,
     );
-    // Every thread's agent reads every enabled plugin's tools.
     assert.throws(
       () =>
         api.mcp.registerTool(
