@@ -17,7 +17,6 @@ vi.mock(import("../state/session"), async (original) => ({
 const state = await vi.hoisted(async () => {
   const { Atom, AsyncResult } = await import("effect/reactivity");
   return {
-    reportWebFailure: vi.fn(),
     live: Atom.make<AsyncResult.AsyncResult<{ readonly plugins: ReadonlyArray<PluginState> }>>(
       AsyncResult.initial(),
     ),
@@ -33,13 +32,6 @@ vi.mock(import("../state/plugins"), () => ({
       label: "plugin-file-headers",
       run: async (_registry: unknown, input: { readonly url: string }) =>
         AsyncResult.success({ authorization: "DPoP relay-token", dpop: `proof for ${input.url}` }),
-    },
-    reportPluginWebFailure: {
-      label: "plugin-web-failure",
-      run: async (_registry: unknown, input: unknown) => {
-        state.reportWebFailure(input);
-        return AsyncResult.success({});
-      },
     },
   } as never,
 }));
@@ -68,9 +60,8 @@ const webPlugin = (id: string): PluginState => ({
   hasWeb: true,
 });
 
-// Every case starts with no plugins listed and no failures reported.
+// Every case starts with no plugins listed.
 function setup() {
-  state.reportWebFailure.mockReset();
   appAtomRegistry.set(state.live, AsyncResult.initial());
 }
 
@@ -118,22 +109,10 @@ describe("startPluginLoader", () => {
       expect(appAtomRegistry.get(pluginWebFailuresAtom("broken-web")).get(environmentId)).toBe(
         "The request for /web.js failed with 500.",
       );
+      expect(appAtomRegistry.get(pluginWebFailuresAtom("no-activate-web")).get(environmentId)).toBe(
+        "The web bundle does not export a plugin with an activate function.",
+      );
     });
-    // The server hears of the plugin's own failures, tied to the start that failed, so its row
-    // shows them in every client. A failed download is this client's network, so it stays here.
-    await vi.waitFor(() =>
-      expect(state.reportWebFailure).toHaveBeenCalledWith({
-        environmentId,
-        input: {
-          pluginId: "no-activate-web",
-          revision: 4,
-          message: "The web bundle does not export a plugin with an activate function.",
-        },
-      }),
-    );
-    expect(state.reportWebFailure).not.toHaveBeenCalledWith(
-      expect.objectContaining({ input: expect.objectContaining({ pluginId: "broken-web" }) }),
-    );
     expect(String(fetchSpy.mock.calls[1]?.[0])).toBe(
       "http://plugins.test/api/plugins/hello-web/web.js?v=0.1.0",
     );

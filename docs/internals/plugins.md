@@ -109,9 +109,6 @@ in localStorage for the boot script in `index.html`. The server marks plugin the
 can show only those of chosen environments. The desktop main process cannot read localStorage, so
 the page sends it the canvas it paints under a light and a dark native theme.
 
-The loader reports a web half's failure with `plugins.reportWebFailure`, which needs the settings
-write scope, so a guest or read-only client cannot put text on the plugin's row.
-
 ## Agent tools
 
 MCP servers can't remove a tool, so each plugin tool registers with an `EnabledWhen` check that the

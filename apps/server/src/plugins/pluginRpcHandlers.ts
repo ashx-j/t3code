@@ -6,7 +6,6 @@ import {
   type PluginInvokeInput,
   type PluginListInput,
   type PluginReloadInput,
-  type PluginReportWebFailureInput,
   type PluginRescanInput,
   type PluginSetEnabledInput,
   type PluginSettingsGetInput,
@@ -52,8 +51,6 @@ export const makePluginRpcHandlers = (
     uploads.issueUrl.pipe(Effect.mapError((error) => new PluginError({ message: error.message }))),
   [WS_METHODS.pluginsRescan]: (_input: PluginRescanInput) =>
     pluginHost.rescan.pipe(Effect.mapError((error) => new PluginError({ message: error.message }))),
-  [WS_METHODS.pluginsReportWebFailure]: (input: PluginReportWebFailureInput) =>
-    pluginHost.reportWebFailure(input).pipe(Effect.mapError(toRpcError(input.pluginId))),
   [WS_METHODS.pluginsUninstall]: (input: PluginUninstallInput) =>
     installer
       .uninstall(input.pluginId, input.linkedFolder)

@@ -6,52 +6,36 @@ import * as Ref from "effect/Ref";
 
 import { errorText } from "./api/facade.ts";
 
-// Clients send web failures, so they are bounded like plugin errors.
-const MAX_WEB_FAILURE_CHARS = 1_000;
 // A plugin's failures outside a call reach clients at most this often, the latest one last, so a
 // timer failing every few milliseconds with new text does not resend the list each time.
 const FAILURE_PUBLISH_INTERVAL = Duration.seconds(5);
 
-interface Failure<Revision> {
-  readonly revision: Revision;
+interface Failure {
+  readonly revision: number | undefined;
   readonly message: string;
 }
 
-const messageFor = <Revision>(
-  failure: Failure<Revision> | undefined,
-  revision: number | undefined,
-) => (failure !== undefined && failure.revision === revision ? failure.message : undefined);
-
 /**
- * Builds the host's record of the failures a plugin's row shows: web failures clients report and
- * server code failing outside a call. Each belongs to the start, the revision, it happened in.
+ * Builds the host's record of the failures a plugin's row shows: server code failing outside a
+ * call. Each belongs to the start, the revision, it happened in.
  */
 export const makePluginFailures = Effect.gen(function* () {
-  // By plugin id, for the start it was reported for: a new start's revision hides the old one.
-  const webFailures = yield* Ref.make<ReadonlyMap<PluginId, Failure<number>>>(new Map());
-  // Like web failures. A stopped plugin's leftover timers fail with no revision.
-  const serverFailures = yield* Ref.make<ReadonlyMap<PluginId, Failure<number | undefined>>>(
-    new Map(),
-  );
+  // By plugin id, for the start it happened in: a new start's revision hides the old one. A
+  // stopped plugin's leftover timers fail with no revision.
+  const serverFailures = yield* Ref.make<ReadonlyMap<PluginId, Failure>>(new Map());
   // When each plugin's failure was last published, and the plugins whose next one is waiting.
   const publishedAt = new Map<PluginId, number>();
   const waiting = new Set<PluginId>();
 
   return {
-    /** Looks up a plugin's failures for the start `revision`. */
+    /** Looks up a plugin's server failure for the start `revision`. */
     current: Effect.gen(function* () {
-      const web = yield* Ref.get(webFailures);
       const server = yield* Ref.get(serverFailures);
-      return (pluginId: PluginId, revision: number | undefined) => ({
-        web: messageFor(web.get(pluginId), revision),
-        server: messageFor(server.get(pluginId), revision),
-      });
+      return (pluginId: PluginId, revision: number | undefined) => {
+        const failure = server.get(pluginId);
+        return failure !== undefined && failure.revision === revision ? failure.message : undefined;
+      };
     }),
-    /** Keeps the latest web failure a client reported for the start `revision`. */
-    reportWeb: (pluginId: PluginId, revision: number, message: string) =>
-      Ref.update(webFailures, (all) =>
-        new Map(all).set(pluginId, { revision, message: message.slice(0, MAX_WEB_FAILURE_CHARS) }),
-      ),
     /**
      * Records a failure of the start `revision` outside a call, then succeeds with whether to
      * publish: a timer that fails every second with the same text logs and publishes once.

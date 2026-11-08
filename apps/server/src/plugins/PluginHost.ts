@@ -171,15 +171,6 @@ export class PluginHost extends Context.Service<
       PluginNotFoundError | PluginNotActiveError | PluginSettingsError
     >;
     /**
-     * Keeps the latest web failure a client reported for the plugin's current start, in memory.
-     * A report about an earlier start is ignored.
-     */
-    readonly reportWebFailure: (input: {
-      readonly pluginId: PluginId;
-      readonly revision: number;
-      readonly message: string;
-    }) => Effect.Effect<void, PluginNotFoundError>;
-    /**
      * `scopes` are the caller's; methods the plugin registered as writes need the operate scope. A
      * handler that has not answered within 30 seconds is aborted.
      */
@@ -692,15 +683,6 @@ const make = Effect.gen(function* () {
     setEnabled,
     reload,
     rescan: rescan(),
-    reportWebFailure: Effect.fn("PluginHost.reportWebFailure")(function* (report) {
-      const record = yield* findRecord(report.pluginId);
-      if (record === undefined) {
-        return yield* new PluginNotFoundError({ pluginId: report.pluginId });
-      }
-      if (record.revision !== report.revision) return;
-      yield* failures.reportWeb(report.pluginId, report.revision, report.message);
-      yield* publishStates;
-    }),
     getSettings: Effect.fn("PluginHost.getSettings")(function* (pluginId) {
       const manifest = yield* manifestFor(pluginId);
       return yield* settingsStore.getForClient(pluginId, manifest.settingsSchema);

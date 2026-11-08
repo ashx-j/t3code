@@ -64,8 +64,6 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.pluginsRescan]: AuthSettingsWriteScope,
   [WS_METHODS.pluginsUninstall]: AuthSettingsWriteScope,
   [WS_METHODS.pluginsSettingsUpdate]: AuthSettingsWriteScope,
-  // The plugin's row shows the report, so a guest or read-only client must not write it.
-  [WS_METHODS.pluginsReportWebFailure]: AuthSettingsWriteScope,
   [WS_METHODS.scheduledTasksRunNow]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksRotateWebhookToken]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,

@@ -99,18 +99,6 @@ const installHostModules = () =>
     } satisfies Record<(typeof HOST_UI_EXPORTS)[number], unknown>,
   });
 
-/** Tells the server why a plugin's web half failed, so its row says so in every client. */
-const reportWebFailure = (environmentId: EnvironmentId, plugin: PluginState, message: string) => {
-  if (plugin.revision === undefined) return;
-  void runAtomCommand(
-    appAtomRegistry,
-    pluginEnvironment.reportPluginWebFailure,
-    { environmentId, input: { pluginId: plugin.id, revision: plugin.revision, message } },
-    // A client without settings access may not report; the Plugins page still shows it.
-    { reportFailure: false, reportDefect: false },
-  );
-};
-
 const isWebPluginDefinition = (value: unknown): value is WebPluginDefinition =>
   typeof value === "object" &&
   value !== null &&
@@ -182,12 +170,7 @@ function makeWebPluginApi({
   const pluginId = plugin.id;
   const assetUrls = new Map<string, Promise<string>>();
   // Shared by everything the plugin draws, so a render failure reaches its row once.
-  const owner: PluginOwner = {
-    environmentId,
-    pluginId,
-    pluginName: plugin.name,
-    report: (message) => reportWebFailure(environmentId, plugin, message),
-  };
+  const owner: PluginOwner = { environmentId, pluginId, pluginName: plugin.name };
   return {
     version: 1,
     id: pluginId,
@@ -478,10 +461,6 @@ export function startPluginLoader(
       // restart instead of failing again on every change.
       if (!downloaded) loaded.delete(plugin.id);
       setPluginWebFailure(environmentId, plugin.id, errorText(error));
-      // Only the plugin's own failures reach the server. A failed download is this client's
-      // network, and clients that each report a different one would republish the list back and
-      // forth.
-      if (downloaded) reportWebFailure(environmentId, plugin, errorText(error));
     }
   };
 

@@ -59,11 +59,6 @@ export function createPluginEnvironmentAtoms<R, E>(
       label: "environment-data:plugins:uninstall",
       tag: WS_METHODS.pluginsUninstall,
     }),
-    // The web loader reports why a plugin's web half failed, so its row shows it in every client.
-    reportPluginWebFailure: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:plugins:report-web-failure",
-      tag: WS_METHODS.pluginsReportWebFailure,
-    }),
     updatePluginSettings: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:plugins:update-settings",
       tag: WS_METHODS.pluginsSettingsUpdate,

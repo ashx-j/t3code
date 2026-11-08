@@ -174,6 +174,4 @@ export interface PluginOwner {
   readonly environmentId: EnvironmentId;
   readonly pluginId: string;
   readonly pluginName: string;
-  /** Passes a failure on to the server, which shows it on the plugin's row in every client. */
-  readonly report?: (message: string) => void;
 }

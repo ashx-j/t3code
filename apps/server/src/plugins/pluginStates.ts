@@ -64,7 +64,6 @@ const statesEvent = (
 const toState = (
   record: PluginRecord,
   config: PluginsConfigFile,
-  webFailure: string | undefined,
   serverFailure: string | undefined,
 ): PluginState => {
   const manifest = manifestOf(record.plugin);
@@ -92,7 +91,6 @@ const toState = (
     ...(record.styles === undefined || record.styles.length === 0 ? {} : { styles: record.styles }),
     hasServer: manifest?.server !== undefined,
     hasWeb: manifest?.web !== undefined,
-    ...(webFailure === undefined ? {} : { webFailure }),
     ...(serverFailure === undefined ? {} : { serverFailure }),
   };
 };
@@ -114,11 +112,10 @@ export const makePluginStates = Effect.fn("PluginStates.make")(function* (input:
 
   const statesOf = Effect.fn("PluginHost.statesOf")(function* (all: ReadonlyArray<PluginRecord>) {
     const config = yield* input.config;
-    const failuresOf = yield* failures.current;
-    return all.map((record) => {
-      const failed = failuresOf(record.plugin.id, record.revision);
-      return toState(record, config, failed.web, failed.server);
-    });
+    const failureOf = yield* failures.current;
+    return all.map((record) =>
+      toState(record, config, failureOf(record.plugin.id, record.revision)),
+    );
   });
   const current = Ref.get(records).pipe(Effect.flatMap(statesOf));
   // What the last publish sent, starting from the empty list clients get before any. Settings
@@ -161,7 +158,10 @@ export const makePluginStates = Effect.fn("PluginStates.make")(function* (input:
 
   return {
     current,
-    /** Sends the list if it changed. A caller that disconnects mid-publish cannot leave it unsent. */
+    /**
+     * Sends the list if it changed. A stop that interrupts a starting plugin mid-publish cannot
+     * leave it unsent.
+     */
     publish: Effect.uninterruptible(publishUnderLock),
     /** The current list, then the whole list after every change. */
     stream,

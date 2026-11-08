@@ -493,44 +493,6 @@ module.exports = { activate() {} };`,
     }).pipe(Effect.provide(layerConfig())),
   );
 
-  it.effect("keeps the web failure a client reports for a plugin's current start", () =>
-    Effect.gen(function* () {
-      const { stateDir } = yield* ServerConfig.ServerConfig;
-      yield* writeFile(
-        `${stateDir}/plugins/web-only/t3-plugin.json`,
-        JSON.stringify({
-          id: "web-only",
-          name: "Web only",
-          version: "0.1.0",
-          engines: { t3: ">=0.1.0" },
-          web: "./web.js",
-        }),
-      );
-      yield* writeFile(`${stateDir}/plugins/web-only/web.js`, "export default {};");
-      yield* writePluginsConfig({ enabled: { "web-only": true } });
-      yield* Effect.gen(function* () {
-        const host = yield* PluginHost.PluginHost;
-        const id = PluginId.make("web-only");
-        const revision = stateOf(yield* waitForStatuses(host, { [id]: "active" }), id)?.revision;
-        assert.isDefined(revision);
-        const webFailure = Effect.map(host.list, (states) => stateOf(states, id)?.webFailure);
-        const report = (message: string, at = revision) =>
-          host.reportWebFailure({ pluginId: id, revision: at, message });
-
-        yield* report("load threw");
-        yield* report("activate threw");
-        assert.strictEqual(yield* webFailure, "activate threw");
-        // A restart forgets it, and a report about the earlier start is ignored.
-        const reloaded = yield* host.reload(id);
-        assert.isUndefined(reloaded.webFailure);
-        yield* report("stale");
-        assert.isUndefined(yield* webFailure);
-        yield* report("fresh", reloaded.revision);
-        assert.strictEqual(yield* webFailure, "fresh");
-      }).pipe(Effect.provide(layerHost()));
-    }).pipe(Effect.provide(layerConfig())),
-  );
-
   it.effect("keeps a quiet channel's value while a busy channel overflows its buffer", () =>
     Effect.gen(function* () {
       yield* writeInstalledPlugin(

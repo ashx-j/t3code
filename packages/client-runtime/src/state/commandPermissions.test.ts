@@ -105,7 +105,6 @@ describe("command permissions", () => {
     WS_METHODS.pluginsRescan,
     WS_METHODS.pluginsUninstall,
     WS_METHODS.pluginsSettingsUpdate,
-    WS_METHODS.pluginsReportWebFailure,
   ])("requires the destination settings grant for %s", (method) =>
     Effect.scoped(
       Effect.gen(function* () {

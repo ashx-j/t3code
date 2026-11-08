@@ -127,8 +127,6 @@ export const PluginState = Schema.Struct({
   linkedFolder: Schema.optionalKey(Schema.String),
   hasServer: Schema.Boolean,
   hasWeb: Schema.Boolean,
-  /** Why its web half failed in a client since it last started, as that client reported it. */
-  webFailure: Schema.optionalKey(Schema.String),
   /** Why its server code failed outside a call since it last started, such as in a timer. */
   serverFailure: Schema.optionalKey(Schema.String),
   settingsSchema: Schema.optionalKey(Schema.JsonObject),
@@ -227,17 +225,6 @@ export type PluginCreateUploadUrlResult = typeof PluginCreateUploadUrlResult.Typ
 
 export const PluginRescanInput = Schema.Struct({});
 export type PluginRescanInput = typeof PluginRescanInput.Type;
-
-/**
- * A client's report that a plugin's web half failed. `revision` is the start the client loaded,
- * so a report about an earlier start is ignored.
- */
-export const PluginReportWebFailureInput = Schema.Struct({
-  pluginId: PluginId,
-  revision: Schema.Number,
-  message: Schema.String,
-});
-export type PluginReportWebFailureInput = typeof PluginReportWebFailureInput.Type;
 
 export const PluginUninstallInput = Schema.Struct({
   pluginId: PluginId,
