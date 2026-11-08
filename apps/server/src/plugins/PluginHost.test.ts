@@ -508,19 +508,6 @@ module.exports = { activate() {} };`,
       );
       yield* writeFile(`${stateDir}/plugins/web-only/web.js`, "export default {};");
       yield* writePluginsConfig({ enabled: { "web-only": true } });
-      // Holds a publish where it hands over the theme folders, which every publish that changes
-      // the list does.
-      let held:
-        | { readonly reached: Deferred.Deferred<void>; readonly release: Deferred.Deferred<void> }
-        | undefined;
-      const layerHeldPublish = Layer.mock(EnvironmentTheme.EnvironmentThemeService)({
-        setPluginThemeDirectories: () =>
-          held === undefined
-            ? Effect.void
-            : Deferred.succeed(held.reached, undefined).pipe(
-                Effect.andThen(Deferred.await(held.release)),
-              ),
-      });
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
         const id = PluginId.make("web-only");
@@ -529,33 +516,6 @@ module.exports = { activate() {} };`,
         const webFailure = Effect.map(host.list, (states) => stateOf(states, id)?.webFailure);
         const report = (message: string, at = revision) =>
           host.reportWebFailure({ pluginId: id, revision: at, message });
-
-        // A client that disconnects mid-publish still gets its report to the others.
-        const sent = yield* host.streamStates.pipe(
-          Stream.filter((states) => stateOf(states, id)?.webFailure === "load threw"),
-          Stream.runHead,
-          Effect.forkChild({ startImmediately: true }),
-        );
-        held = { reached: yield* Deferred.make<void>(), release: yield* Deferred.make<void>() };
-        const reporting = yield* report("load threw").pipe(
-          Effect.forkChild({ startImmediately: true }),
-        );
-        yield* Deferred.await(held.reached);
-        const interrupting = yield* Fiber.interrupt(reporting).pipe(
-          Effect.forkChild({ startImmediately: true }),
-        );
-        yield* Deferred.succeed(held.release, undefined);
-        held = undefined;
-        yield* Fiber.join(interrupting);
-        assert.isTrue(Option.isSome(yield* Fiber.join(sent)));
-
-        const call = yield* host
-          .invoke({ pluginId: id, method: "ping", input: undefined, scopes: operate })
-          .pipe(Effect.flip);
-        assert.strictEqual(
-          call.message,
-          "Plugin web-only has no server half, so it has no methods or channels.",
-        );
 
         yield* report("load threw");
         yield* report("activate threw");
@@ -567,7 +527,7 @@ module.exports = { activate() {} };`,
         assert.isUndefined(yield* webFailure);
         yield* report("fresh", reloaded.revision);
         assert.strictEqual(yield* webFailure, "fresh");
-      }).pipe(Effect.provide(layerHost(layerHeldPublish)));
+      }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
 
@@ -650,7 +610,7 @@ module.exports = { activate() {} };`,
     }).pipe(Effect.provide(layerConfig())),
   );
 
-  it.effect("finishes disabling a plugin when the caller gives up during its cleanup", () =>
+  it.effect("finishes disabling a plugin when the caller gives up, or while it starts", () =>
     Effect.gen(function* () {
       const started = Promise.withResolvers<void>();
       const gate = Promise.withResolvers<void>();
@@ -664,6 +624,37 @@ module.exports = { activate() {} };`,
 } };`,
       );
       yield* writePluginsConfig({ enabled: { stubborn: true } });
+      // Every publish that changes the list hands over the theme folders, and holds there while
+      // `held` is set.
+      const themeFolders: Array<ReadonlyArray<string>> = [];
+      let held:
+        | { readonly reached: Deferred.Deferred<void>; readonly release: Deferred.Deferred<void> }
+        | undefined;
+      const layerHeldPublish = Layer.mock(EnvironmentTheme.EnvironmentThemeService)({
+        setPluginThemeDirectories: (directories) => {
+          themeFolders.push(directories);
+          return held === undefined
+            ? Effect.void
+            : Deferred.succeed(held.reached, undefined).pipe(
+                Effect.andThen(Deferred.await(held.release)),
+              );
+        },
+      });
+      // A disable's last wait before it stops the plugin is removing the temporary folder of its
+      // plugins.json write. A fork runs only once the disable waits again, which is at that stop.
+      let releaseOnWrite: Deferred.Deferred<void> | undefined;
+      const layerReleaseOnWrite = layerFileSystemWith((fs) => ({
+        remove: (target, options) =>
+          fs
+            .remove(target, options)
+            .pipe(
+              Effect.andThen(
+                releaseOnWrite !== undefined && target.includes("plugins.json.")
+                  ? Effect.forkChild(Deferred.succeed(releaseOnWrite, undefined))
+                  : Effect.void,
+              ),
+            ),
+      }));
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
         const id = PluginId.make("stubborn");
@@ -681,7 +672,23 @@ module.exports = { activate() {} };`,
           .invoke({ pluginId: id, method: "ping", input: undefined, scopes: operate })
           .pipe(Effect.flip);
         assert.strictEqual(error._tag, "PluginNotActiveError");
-      }).pipe(Effect.provide(layerHost()));
+
+        // A stop that interrupts a start while it hands over its theme folder still lets that
+        // list go out, or the disabled list would match the last one sent and keep the folder.
+        const starting = {
+          reached: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
+        held = starting;
+        const enabling = yield* host
+          .setEnabled(id, true)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(starting.reached);
+        releaseOnWrite = starting.release;
+        assert.include(yield* host.setEnabled(id, false), { status: "disabled" });
+        yield* Fiber.join(enabling);
+        assert.deepStrictEqual(themeFolders.at(-1), []);
+      }).pipe(Effect.provide(layerHost(layerHeldPublish).pipe(Layer.provide(layerReleaseOnWrite))));
       Reflect.deleteProperty(globalThis, "__t3PluginHostCleanupStarted");
       Reflect.deleteProperty(globalThis, "__t3PluginHostCleanupGate");
     }).pipe(Effect.provide(layerConfig())),
