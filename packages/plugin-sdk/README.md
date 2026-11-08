@@ -198,4 +198,4 @@ plugin on in Settings → Plugins, and use **Reload** after each change. **Unlin
 it from `devPaths` and leaves the folder alone.
 
 To install a finished plugin, drag its folder onto Settings → Plugins, or use **Add plugin** to
-choose it.
+choose it. It installs turned off, so turn it on on its row.

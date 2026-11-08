@@ -12,9 +12,9 @@ choose the folder in a file window.
 
 T3 Code copies a plugin folder into the environment's `plugins` folder, so later changes to your
 copy do not affect the installed plugin. To update it, add the new version's folder the same way.
-A new plugin is turned on and started once it is installed, and a new version of a plugin you
-turned off stays off. If a new version fails to install or start, you keep the version you had, and
-T3 Code says why. A plugin that needs a newer version of T3 Code isn't installed, and T3 Code says
+A new plugin is installed turned off, so none of it runs until you have read its row and turned it
+on. A new version of a plugin stays on or off as the old one was. If a new version fails to install
+or start, you keep the version you had, and T3 Code says why. A plugin that needs a newer version of T3 Code isn't installed, and T3 Code says
 why.
 
 Plugin folders you copy into the `plugins` folder yourself show up, turned off, the next time you

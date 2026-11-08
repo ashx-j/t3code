@@ -656,7 +656,7 @@ module.exports = { activate() {} };`,
     }).pipe(Effect.provide(layerConfig())),
   );
 
-  it.effect("installs a dropped folder and lists folders put in the plugins folder, off", () =>
+  it.effect("installs a dropped folder or one put in the plugins folder turned off", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const { stateDir } = yield* ServerConfig.ServerConfig;
@@ -675,11 +675,14 @@ module.exports = { activate() {} };`,
         yield* host.rescan;
         assert.isTrue(yield* fs.exists(`${stateDir}/plugins`));
 
+        // Nothing of a new plugin runs until its switch is turned on.
         const installed = yield* installer.installFiles(helloFiles);
-        assert.include(installed, { id: hello, status: "active", enabled: true });
-        // The same folder dropped again replaces it.
+        assert.include(installed, { id: hello, status: "disabled", enabled: false });
+        const started = yield* host.setEnabled(hello, true);
+        // The same folder dropped again replaces it and keeps it on.
         const replaced = yield* installer.installFiles(helloFiles);
-        assert.notStrictEqual(replaced.revision, installed.revision);
+        assert.include(replaced, { status: "active", enabled: true });
+        assert.notStrictEqual(replaced.revision, started.revision);
 
         // Copied in by hand under any name, a plugin is listed on the next rescan, turned off.
         yield* writeFile(`${stateDir}/plugins/My Notes/t3-plugin.json`, notesManifest("1.0.0"));
@@ -732,6 +735,7 @@ module.exports = { activate() {} };`,
         const installer = yield* PluginInstaller.PluginInstaller;
         yield* waitForStatuses(host, {});
         yield* installer.installFiles(upgrade("1.0.0"));
+        yield* host.setEnabled(PluginId.make("upgrade"), true);
         const failed = yield* installer
           .installFiles(upgrade("2.0.0", `throw new Error("2.0.0 refuses to start");`))
           .pipe(Effect.flip);
@@ -837,6 +841,7 @@ module.exports = { activate() {} };`,
         const installer = yield* PluginInstaller.PluginInstaller;
         yield* waitForStatuses(host, {});
         yield* installer.installFiles(upgrade("1.0.0"));
+        yield* host.setEnabled(PluginId.make("upgrade"), true);
         const refused = yield* installer
           .installFiles(upgrade("2.0.0", ">=999.0.0"))
           .pipe(Effect.flip);

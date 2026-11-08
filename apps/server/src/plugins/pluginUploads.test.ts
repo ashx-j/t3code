@@ -70,7 +70,10 @@ it.layer(NodeServices.layer)("PluginUploads", (it) => {
           "notes/read me.md": "Hello.",
         });
         assert.strictEqual(response.status, 200);
-        assert.include(JSON.parse(response.text).plugin, { id: "hello-plugin", status: "active" });
+        assert.include(JSON.parse(response.text).plugin, {
+          id: "hello-plugin",
+          status: "disabled",
+        });
         const fs = yield* FileSystem.FileSystem;
         const { stateDir } = yield* ServerConfig.ServerConfig;
         assert.strictEqual(

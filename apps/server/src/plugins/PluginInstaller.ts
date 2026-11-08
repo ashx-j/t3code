@@ -41,9 +41,9 @@ export class PluginInstaller extends Context.Service<
   PluginInstaller,
   {
     /**
-     * Installs a plugin folder a client sent as files into the plugins folder, enables it and
-     * starts it. It is staged first and swapped in with a rename, so a failed install leaves the
-     * previous version.
+     * Installs a plugin folder a client sent as files into the plugins folder. A new plugin is
+     * turned off; a replaced one keeps its switch and restarts if on. It is staged first and
+     * swapped in with a rename, so a failed install leaves the previous version.
      */
     readonly installFiles: (
       files: ReadonlyArray<PluginUploadFile>,
@@ -174,9 +174,10 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
       : `${manifest.name} ${manifest.version} needs T3 Code ${manifest.engines.t3}, and this server is ${packageJson.version}.`;
 
   /**
-   * Swaps `<stagingDir>/plugin` into the plugins folder under the lifecycle lock and starts it. The
-   * replaced version waits in `<stagingDir>/previous` and goes back if the new one fails to start.
-   * `stagingDir` is removed unless it holds a version's only copy, which startup then restores.
+   * Swaps `<stagingDir>/plugin` into the plugins folder under the lifecycle lock and starts it if it
+   * is on. The replaced version waits in `<stagingDir>/previous` and goes back if the new one fails
+   * to start. `stagingDir` is removed unless it holds a version's only copy, which startup then
+   * restores.
    */
   const swapIn = Effect.fn("PluginInstaller.swapIn")(function* (
     manifest: PluginManifest,
@@ -210,9 +211,10 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
               reason: `The plugins folder already has a ${manifest.id} folder${owner === undefined ? "" : ` holding ${owner.id}`}. Move it, then install again.`,
             });
           }
-          // Installing over a disabled plugin keeps it disabled; a new install is enabled.
+          // A new plugin starts off, so none of it runs until the user has seen its row and turned
+          // it on. A replaced one keeps its switch.
           const enabled =
-            existing === undefined ? true : (yield* host.config).enabled?.[manifest.id] === true;
+            existing !== undefined && (yield* host.config).enabled?.[manifest.id] === true;
           stopped = true;
           yield* host.stop(manifest.id);
           yield* fs
