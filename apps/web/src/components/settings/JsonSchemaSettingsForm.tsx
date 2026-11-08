@@ -1,7 +1,3 @@
-import {
-  type PluginSettingsField,
-  pluginSettingsForm,
-} from "@t3tools/client-runtime/plugins/settings-form";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { XIcon } from "lucide-react";
@@ -13,6 +9,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { SecretInput } from "./SecretInput";
+import { type PluginSettingsField, pluginSettingsForm } from "./plugins/pluginSettingsForm";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
 
 // `null` clears a saved value, so the plugin gets its default again.

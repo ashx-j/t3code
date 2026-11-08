@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { pluginSettingsForm } from "./pluginSettingsForm.ts";
+import { pluginSettingsForm } from "./pluginSettingsForm";
 
 describe("pluginSettingsForm", () => {
   it("derives one field per supported property", () => {

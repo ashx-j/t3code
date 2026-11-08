@@ -1,5 +1,4 @@
 import { useAtomValue } from "@effect/atom-react";
-import { pluginSettingsForm } from "@t3tools/client-runtime/plugins/settings-form";
 import type { EnvironmentId, PluginState } from "@t3tools/contracts";
 import { ChevronUpIcon, RotateCwIcon, SlidersHorizontalIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
@@ -17,6 +16,7 @@ import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "../../ui/po
 import { Switch } from "../../ui/switch";
 import { SettingsRow } from "../settingsLayout";
 import { PluginSettingsRows } from "./PluginSettingsRows";
+import { pluginSettingsForm } from "./pluginSettingsForm";
 
 const FAILURE_STAGES = {
   discovery: "Not found",

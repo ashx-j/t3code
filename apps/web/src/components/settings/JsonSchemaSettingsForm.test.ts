@@ -1,7 +1,7 @@
-import { pluginSettingsForm } from "@t3tools/client-runtime/plugins/settings-form";
 import { describe, expect, it } from "vite-plus/test";
 
 import { toJsonPatch, toPatch } from "./JsonSchemaSettingsForm";
+import { pluginSettingsForm } from "./plugins/pluginSettingsForm";
 
 const form = pluginSettingsForm({
   type: "object",
