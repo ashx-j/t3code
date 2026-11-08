@@ -33,6 +33,17 @@ it.effect("keeps a failed call the plugin never awaits from stopping the server"
     );
 
     void facade.call(Effect.fail(new CallFailedError()));
+    // A stream it reads, such as `api.settings.changes()`, fails like a call.
+    const pull = () =>
+      facade.iterate(Stream.fail(new CallFailedError()))[Symbol.asyncIterator]().next();
+    void pull();
+    const pulled = yield* Effect.promise(() =>
+      pull().then(
+        () => undefined,
+        (error: { readonly code: string }) => error.code,
+      ),
+    );
+    assert.strictEqual(pulled, "CallFailedError");
     activation.controller.abort();
     activation.ended.abort();
     // A timer such as `setInterval(() => void api.storage.set(...))` outliving the plugin.

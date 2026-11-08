@@ -112,39 +112,40 @@ export const makeFacadeContext = (input: {
   // T3's work for a call is not the plugin's code, so it leaves the plugin's scope.
   const runExit = <A, E>(effect: Effect.Effect<A, E>) =>
     pluginCodeScope.exit(() => Effect.runPromiseExitWith(context)(effect));
+  // Cleanups may still save state; afterwards a disabled plugin's leftovers cannot act.
+  const call: FacadeContext["call"] = (effect) =>
+    activation.ended.signal.aborted
+      ? refused(
+          new PluginApiCallError(
+            pluginId,
+            "PluginDeactivated",
+            "This plugin activation has ended.",
+          ),
+        )
+      : forPlugin(
+          runExit(effect).then((exit) => {
+            if (Exit.isSuccess(exit)) return exit.value;
+            const error = Cause.squash(exit.cause);
+            const code =
+              typeof error === "object" &&
+              error !== null &&
+              "_tag" in error &&
+              typeof error._tag === "string"
+                ? error._tag
+                : "PluginApiFailure";
+            throw new PluginApiCallError(
+              pluginId,
+              code,
+              error instanceof Error ? error.message : "The plugin API call failed.",
+            );
+          }),
+        );
   return {
     pluginId,
     activation,
     context,
     asPlugin: (run) => pluginCodeScope.run(pluginId, run),
-    // Cleanups may still save state; afterwards a disabled plugin's leftovers cannot act.
-    call: (effect) =>
-      activation.ended.signal.aborted
-        ? refused(
-            new PluginApiCallError(
-              pluginId,
-              "PluginDeactivated",
-              "This plugin activation has ended.",
-            ),
-          )
-        : forPlugin(
-            runExit(effect).then((exit) => {
-              if (Exit.isSuccess(exit)) return exit.value;
-              const error = Cause.squash(exit.cause);
-              const code =
-                typeof error === "object" &&
-                error !== null &&
-                "_tag" in error &&
-                typeof error._tag === "string"
-                  ? error._tag
-                  : "PluginApiFailure";
-              throw new PluginApiCallError(
-                pluginId,
-                code,
-                error instanceof Error ? error.message : "The plugin API call failed.",
-              );
-            }),
-          ),
+    call,
     fork: (effect) => {
       pluginCodeScope.exit(() =>
         Effect.runForkWith(context)(
@@ -159,7 +160,7 @@ export const makeFacadeContext = (input: {
         ),
       );
     },
-    // The plugin pulls, but each pull runs T3's side of the stream, so it leaves the scope too.
+    // The plugin pulls, but each pull runs T3's side of the stream, so it is a call too.
     iterate: (stream) => {
       const iterable = Stream.toAsyncIterableWith(
         stream.pipe(Stream.interruptWhen(abortEffect(activation.controller.signal))),
@@ -169,10 +170,12 @@ export const makeFacadeContext = (input: {
         [Symbol.asyncIterator]: () => {
           const iterator = pluginCodeScope.exit(() => iterable[Symbol.asyncIterator]());
           return {
-            next: () => pluginCodeScope.exit(() => iterator.next()),
+            next: () => call(Effect.promise(() => iterator.next())),
             return: () =>
-              pluginCodeScope.exit(
-                () => iterator.return?.() ?? Promise.resolve({ done: true, value: undefined }),
+              call(
+                Effect.promise(
+                  () => iterator.return?.() ?? Promise.resolve({ done: true, value: undefined }),
+                ),
               ),
           };
         },
