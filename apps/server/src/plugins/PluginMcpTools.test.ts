@@ -179,6 +179,20 @@ it.effect("answer under plg_ names with access checks, and leave the list once s
         ),
       /oneOf at the top of its input schema/,
     );
+    // Every thread's agent reads every enabled plugin's tools.
+    assert.throws(
+      () =>
+        api.mcp.registerTool(
+          {
+            name: "verbose",
+            description: "x".repeat(1001),
+            inputSchema: { type: "object" },
+            access: "read",
+          },
+          () => null,
+        ),
+      /1000 characters/,
+    );
 
     const names = yield* toolNames;
     assert.includeMembers(names, ["plg_mcp-plugin_echo", "plg_mcp-plugin_touch"]);
@@ -224,6 +238,23 @@ it.effect("answer under plg_ names with access checks, and leave the list once s
       Effect.forkChild({ startImmediately: true }),
     );
     yield* Effect.promise(() => reached.promise);
+
+    const offered = (yield* toolNames).filter((name) => name.startsWith("plg_mcp-plugin_"));
+    const extra = {
+      description: "Extra.",
+      inputSchema: { type: "object" },
+      access: "read",
+    } as const;
+    for (let index = offered.length; index < 32; index++) {
+      api.mcp.registerTool({ ...extra, name: `extra-${index}` }, () => null);
+    }
+    assert.throws(
+      () => api.mcp.registerTool({ ...extra, name: "one-more" }, () => null),
+      /at most 32 tools/,
+    );
+    // Replacing a tool doesn't add one.
+    api.mcp.registerTool({ ...extra, name: "caller" }, () => null);
+
     api.activation.controller.abort();
     assert.deepStrictEqual(yield* Fiber.join(hanging), {
       isError: true,

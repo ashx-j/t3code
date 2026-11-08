@@ -29,9 +29,11 @@ export interface PluginApiError extends Error {
   readonly code: string;
 }
 
+/** A plugin registers at most 32 tools, because agents in every thread see them all. */
 export interface PluginMcpTool {
   /** Agents see the tool as `plg_<pluginId>_<name>`. Letters, digits, `_` and `-`. */
   readonly name: string;
+  /** At most 1000 characters. */
   readonly description: string;
   /** JSON Schema for the tool's arguments. */
   readonly inputSchema: JsonObject;

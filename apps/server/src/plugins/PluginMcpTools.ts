@@ -11,6 +11,9 @@ import { abortEffect, errorText } from "./api/facade.ts";
 // MCP clients reject longer tool names.
 const MAX_TOOL_NAME_CHARS = 64;
 const TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
+// Every thread's agent reads every enabled plugin's tools.
+const MAX_TOOLS_PER_PLUGIN = 32;
+const MAX_DESCRIPTION_CHARS = 1000;
 
 const isJson = Schema.is(Schema.Json);
 
@@ -23,6 +26,17 @@ export class PluginMcpToolNameError extends Schema.TaggedError<PluginMcpToolName
   }
 }
 export const isPluginMcpToolNameError = Schema.is(PluginMcpToolNameError);
+
+export class PluginMcpToolLimitError extends Schema.TaggedError<PluginMcpToolLimitError>()(
+  "PluginMcpToolLimitError",
+  { tool: Schema.String, limit: Schema.Literals(["tools", "description"]) },
+) {
+  override get message(): string {
+    return this.limit === "tools"
+      ? `A plugin registers at most ${MAX_TOOLS_PER_PLUGIN} tools, so "${this.tool}" was not added.`
+      : `Tool "${this.tool}" needs a description of at most ${MAX_DESCRIPTION_CHARS} characters.`;
+  }
+}
 
 // `reason` is the plugin's own error text, bounded, so the agent can see why the tool failed.
 export class PluginMcpToolError extends Schema.TaggedError<PluginMcpToolError>()(
@@ -69,7 +83,7 @@ export class PluginMcpTools extends Context.Service<
       ) => Promise<Schema.Json>;
       /** Aborts when the plugin turns off; a call still running then answers that it is disabled. */
       readonly deactivated: AbortSignal;
-    }) => Effect.Effect<void, PluginMcpToolNameError>;
+    }) => Effect.Effect<void, PluginMcpToolNameError | PluginMcpToolLimitError>;
     /** Withdraws the plugin's tools. */
     readonly unregisterPlugin: (pluginId: PluginId) => Effect.Effect<void>;
     /**
@@ -115,9 +129,15 @@ const make = () => {
       if (!TOOL_NAME_PATTERN.test(tool.name) || name.length > MAX_TOOL_NAME_CHARS) {
         return yield* new PluginMcpToolNameError({ pluginId });
       }
+      if (tool.description.length > MAX_DESCRIPTION_CHARS) {
+        return yield* new PluginMcpToolLimitError({ tool: tool.name, limit: "description" });
+      }
+      const names = toolsByPlugin.get(pluginId) ?? new Set();
+      if (!names.has(name) && names.size >= MAX_TOOLS_PER_PLUGIN) {
+        return yield* new PluginMcpToolLimitError({ tool: tool.name, limit: "tools" });
+      }
       const failed = (cause: unknown) =>
         new PluginMcpToolError({ pluginId, tool: tool.name, reason: errorText(cause), cause });
-      const names = toolsByPlugin.get(pluginId) ?? new Set();
       toolsByPlugin.set(pluginId, names.add(name));
       yield* publish({
         name,
