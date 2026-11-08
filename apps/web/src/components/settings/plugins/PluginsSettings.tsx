@@ -4,12 +4,12 @@ import { BlocksIcon } from "lucide-react";
 import { type DragEvent, useState } from "react";
 
 import { cn } from "../../../lib/utils";
+import { pluginUiEnvironmentsAtom } from "../../../plugins/pluginFollow";
 import { droppedFolders } from "../../../plugins/pluginFolders";
 import type { EnvironmentPresentation } from "../../../state/environments";
 import { pluginEnvironment } from "../../../state/plugins";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../../ui/empty";
 import { useSettingsScope } from "../SettingsScopeContext";
-import { settingsScopeEnvironmentLabel } from "../settingsScopeAxis";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "../settingsLayout";
 import {
   AddPluginButton,
@@ -18,12 +18,11 @@ import {
   usePluginInstaller,
 } from "./PluginInstallControls";
 import { PluginList } from "./PluginList";
-import { type PluginTarget, runsPlugins, usePluginUiSource } from "./pluginTargets";
+import { runsPlugins } from "./pluginTargets";
 import { PluginUiEnvironmentRow } from "./PluginUiEnvironmentRow";
 
 export function PluginsSettings() {
-  const { scope, environment, environments } = useSettingsScope();
-  const uiSource = usePluginUiSource();
+  const { scope, environment } = useSettingsScope();
   if (scope.kind === "unavailable") {
     return (
       <SettingsPageContainer>
@@ -33,19 +32,7 @@ export function PluginsSettings() {
       </SettingsPageContainer>
     );
   }
-  // The environment plugin UI loads from comes first: installs start there, see
-  // `usePluginInstaller`.
-  const shown =
-    scope.kind === "all"
-      ? environments.toSorted(
-          (a, b) =>
-            Number(b.environmentId === uiSource.environmentId) -
-            Number(a.environmentId === uiSource.environmentId),
-        )
-      : environment === null
-        ? []
-        : [environment];
-  if (shown.length === 0) {
+  if (environment === null) {
     return (
       <SettingsPageContainer>
         <SettingsSection title="Plugins" variant="plain">
@@ -62,33 +49,22 @@ export function PluginsSettings() {
       </SettingsPageContainer>
     );
   }
-  return <PluginsPage environments={shown} />;
+  return <PluginsPage environment={environment} />;
 }
 
 const NO_INSTALL_PERMISSION = Atom.make(false);
 
-/** Lists the plugins in view. Plugin folders dropped anywhere on it are installed. */
-function PluginsPage({
-  environments,
-}: {
-  readonly environments: ReadonlyArray<EnvironmentPresentation>;
-}) {
-  // Labels tell apart environments with the same name, as the scope picker does.
-  const labelOf = (environment: EnvironmentPresentation) =>
-    settingsScopeEnvironmentLabel(environment, environments);
-  const targets = environments.filter(runsPlugins).map((environment): PluginTarget => ({
-    environmentId: environment.environmentId,
-    label: labelOf(environment),
-  }));
-  const uiSource = usePluginUiSource();
-  const installer = usePluginInstaller(targets, uiSource);
+/** Lists the environment's plugins. Plugin folders dropped anywhere on it are installed. */
+function PluginsPage({ environment }: { readonly environment: EnvironmentPresentation }) {
+  const loadsUi = useAtomValue(pluginUiEnvironmentsAtom).includes(environment.environmentId);
+  const installer = usePluginInstaller(environment, loadsUi);
   const [adding, setAdding] = useState(false);
   const [dragActive, setDragActive] = useState(false);
-  const [main] = targets;
+  const runs = runsPlugins(environment);
   const canInstall = useAtomValue(
-    main === undefined
-      ? NO_INSTALL_PERMISSION
-      : pluginEnvironment.createPluginUploadUrl.permissionAtom(main.environmentId),
+    runs
+      ? pluginEnvironment.createPluginUploadUrl.permissionAtom(environment.environmentId)
+      : NO_INSTALL_PERMISSION,
   );
   const isFileDrag = (event: DragEvent) => event.dataTransfer.types.includes("Files");
   return (
@@ -132,12 +108,8 @@ function PluginsPage({
             .then((installed) => installed && setAdding(false));
         }}
       >
-        {main === undefined ? (
-          <SettingsSection title="Plugins">
-            <PluginsUnavailable environments={environments} />
-          </SettingsSection>
-        ) : (
-          <PluginList main={main} targets={targets}>
+        {runs ? (
+          <PluginList environmentId={environment.environmentId}>
             <SettingsRow
               title="Add a plugin"
               description={
@@ -147,7 +119,7 @@ function PluginsPage({
               }
               control={
                 <AddPluginButton
-                  environmentId={main.environmentId}
+                  environmentId={environment.environmentId}
                   disabled={installer.installing !== null}
                   onClick={() => {
                     installer.clearProblems();
@@ -160,53 +132,28 @@ function PluginsPage({
             </SettingsRow>
             <PluginUiEnvironmentRow />
           </PluginList>
+        ) : (
+          <SettingsSection title="Plugins">
+            <SettingsRow
+              title="Plugins are not available"
+              description={`${environment.label} runs a T3 Code server without plugin support.`}
+            />
+          </SettingsSection>
         )}
-        {main === undefined ? null : (
+        {runs ? (
           <AddPluginDialog
             open={adding}
             onOpenChange={setAdding}
             installer={installer}
             dragActive={dragActive}
             scopeNote={
-              !uiSource.environmentIds.includes(main.environmentId)
-                ? `Installs on ${targets.length > 1 ? "every environment here that runs plugins" : main.label}. This app doesn't load plugin UI from ${main.label}, so a plugin with no server code does nothing there.`
-                : targets.length > 1
-                  ? `Installs on every environment that runs plugins. A plugin with no server code only changes the app, so it goes to ${main.label} only.`
-                  : `Installs on ${main.label}.`
+              loadsUi
+                ? `Installs on ${environment.label}.`
+                : `Installs on ${environment.label}. This app doesn't load plugin UI from ${environment.label}, so a plugin with no server code does nothing there.`
             }
           />
-        )}
+        ) : null}
       </div>
     </SettingsPageContainer>
-  );
-}
-
-function PluginsUnavailable({
-  environments,
-}: {
-  readonly environments: ReadonlyArray<EnvironmentPresentation>;
-}) {
-  const [only, ...others] = environments;
-  if (only === undefined || others.length > 0) {
-    return (
-      <SettingsRow
-        title="Plugins are not available"
-        description="None of these environments runs a T3 Code server with plugin support."
-      />
-    );
-  }
-  if (only.connection.phase !== "connected" || only.serverConfig === null) {
-    return (
-      <SettingsRow
-        title="Environment disconnected"
-        description={`Reconnect ${only.label} to manage its plugins.`}
-      />
-    );
-  }
-  return (
-    <SettingsRow
-      title="Plugins are not available"
-      description={`${only.label} runs a T3 Code server without plugin support.`}
-    />
   );
 }

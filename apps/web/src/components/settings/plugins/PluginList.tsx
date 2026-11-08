@@ -1,119 +1,55 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId } from "@t3tools/contracts";
-import { AsyncResult, Atom } from "effect/reactivity";
+import type { EnvironmentId, PluginState } from "@t3tools/contracts";
+import { AsyncResult } from "effect/reactivity";
 import { type ReactNode, useContext, useEffect } from "react";
 
 import { pluginEnvironment } from "../../../state/plugins";
 import { formatEnvironmentQueryError } from "../../../state/query";
 import { SettingsRow, SettingsSection } from "../settingsLayout";
 import { PluginRow } from "./PluginRow";
-import { type PluginCopy, type PluginTarget, usePluginUiSource } from "./pluginTargets";
-
-// Keyed by the JSON list of environment ids, so one value holds every environment's plugins.
-const pluginListsAtom = Atom.family((environmentIdsKey: string) => {
-  const environmentIds = JSON.parse(environmentIdsKey) as ReadonlyArray<EnvironmentId>;
-  return Atom.make((get) =>
-    environmentIds.map((environmentId) =>
-      get(pluginEnvironment.pluginsLive({ environmentId, input: {} })),
-    ),
-  ).pipe(Atom.withLabel(`web-plugin-lists:${environmentIdsKey}`));
-});
 
 /**
- * Copies of a plugin on different environments share a row. A copy that failed discovery keeps its
- * own. One that another copy with its id shadows is `shadowed`: actions send only the id, so they
- * would reach the copy that is used instead.
+ * A copy that failed discovery while another copy with its id is listed is shadowed: actions send
+ * only the id, so they would reach the copy that is used instead.
  */
-function pluginRows(copies: ReadonlyArray<PluginCopy>) {
-  const rows = new Map<
-    string,
-    { readonly first: PluginCopy; readonly copies: Array<PluginCopy>; readonly shadowed: boolean }
-  >();
-  copies.forEach((copy, index) => {
-    const failedDiscovery = copy.plugin.failure?.stage === "discovery";
-    const key = failedDiscovery
-      ? `${copy.environmentId}:${index}`
-      : `${copy.plugin.id}:${copy.plugin.source}`;
-    const shadowed =
-      failedDiscovery &&
-      copies.some(
-        (other) =>
-          other !== copy &&
-          other.environmentId === copy.environmentId &&
-          other.plugin.id === copy.plugin.id,
-      );
-    const row = rows.get(key);
-    if (row === undefined) rows.set(key, { first: copy, copies: [copy], shadowed });
-    else row.copies.push(copy);
-  });
-  return Array.from(rows, ([key, row]) => ({ key, ...row }));
-}
+const isShadowed = (plugin: PluginState, plugins: ReadonlyArray<PluginState>) =>
+  plugin.failure?.stage === "discovery" &&
+  plugins.some((other) => other !== plugin && other.id === plugin.id);
 
-/**
- * The page's own settings, with `children` first, then each plugin once, however many of `targets`
- * have it. Actions on a row apply to every copy. `main` comes first in `targets` and decides which
- * actions are offered.
- */
+/** The page's own settings, with `children` first, then each plugin the environment has. */
 export function PluginList({
-  main,
-  targets,
+  environmentId,
   children,
 }: {
-  readonly main: PluginTarget;
-  readonly targets: ReadonlyArray<PluginTarget>;
+  readonly environmentId: EnvironmentId;
   readonly children: ReactNode;
 }) {
-  const lists = useAtomValue(
-    pluginListsAtom(JSON.stringify(targets.map((target) => target.environmentId))),
-  );
-  const several = targets.length > 1;
-  const uiSource = usePluginUiSource();
-  const remoteInView = targets.some(
-    (target) => !uiSource.environmentIds.includes(target.environmentId),
-  );
-  const loaded = targets.map((target, index) => {
-    const result = lists[index] ?? AsyncResult.initial(true);
-    return {
-      target,
-      plugins: AsyncResult.getOrElse(result, () => null)?.plugins ?? null,
-      error: result._tag === "Failure" ? formatEnvironmentQueryError(result.cause) : null,
-    };
-  });
-  const copies = loaded.flatMap(({ target, plugins }) =>
-    (plugins ?? []).map((plugin): PluginCopy => ({ ...target, plugin })),
-  );
-  const rows = pluginRows(copies);
-  const errors = loaded.flatMap(({ target, error }) =>
-    error === null ? [] : [several ? `${target.label}: ${error}` : error],
-  );
+  const result = useAtomValue(pluginEnvironment.pluginsLive({ environmentId, input: {} }));
+  const plugins = AsyncResult.getOrElse(result, () => null)?.plugins ?? null;
+  const error = result._tag === "Failure" ? formatEnvironmentQueryError(result.cause) : null;
   return (
     <>
       <SettingsSection title="Plugins">{children}</SettingsSection>
-      {targets.map((target) => (
-        <ScanPluginsFolder key={target.environmentId} environmentId={target.environmentId} />
-      ))}
+      <ScanPluginsFolder environmentId={environmentId} />
       <SettingsSection title="Installed plugins">
-        {errors.map((error) => (
-          <SettingsRow key={error} title="Could not load plugins" description={error} />
-        ))}
-        {loaded.every(({ plugins, error }) => plugins === null && error === null) ? (
+        {error === null ? null : <SettingsRow title="Could not load plugins" description={error} />}
+        {plugins === null && error === null ? (
           <SettingsRow title="Loading plugins…" role="status" />
-        ) : rows.length === 0 && errors.length === 0 ? (
+        ) : plugins?.length === 0 && error === null ? (
           <SettingsRow
             title="No plugins installed"
             description="Drop a plugin folder here to add it."
           />
         ) : (
-          rows.map((row) => (
+          (plugins ?? []).map((plugin, index, all) => (
             <PluginRow
-              key={row.key}
-              environmentId={main.environmentId}
-              first={row.first}
-              copies={row.copies}
-              shadowed={row.shadowed}
-              labelled={several}
-              explainReach={remoteInView}
+              key={
+                plugin.failure?.stage === "discovery" ? `${index}` : `${plugin.id}:${plugin.source}`
+              }
+              environmentId={environmentId}
+              plugin={plugin}
+              shadowed={isShadowed(plugin, all)}
             />
           ))
         )}

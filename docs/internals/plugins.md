@@ -84,7 +84,6 @@ watches `plugins/`: the server reads it at startup, on reload and when Settings 
 Each browser keeps its own choice of the environments it loads plugin UI from, the main one by
 default, because that code runs with every connection's credentials. Right panels show only in their
 environment's threads. Commands have no thread, so only the first chosen environment registers them.
-Settings installs a plugin with no server code there alone.
 
 At startup the app loads only a small stub, [`pluginUi.ts`](../../apps/web/src/plugins/pluginUi.ts).
 Once the app is idle, [`PluginLoaderStarter`](../../apps/web/src/plugins/PluginLoaderStarter.tsx)

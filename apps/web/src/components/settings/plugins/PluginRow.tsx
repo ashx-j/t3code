@@ -1,13 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { pluginSettingsForm } from "@t3tools/client-runtime/plugins/settings-form";
 import type { EnvironmentId, PluginState } from "@t3tools/contracts";
-import {
-  ChevronUpIcon,
-  InfoIcon,
-  RotateCwIcon,
-  SlidersHorizontalIcon,
-  Trash2Icon,
-} from "lucide-react";
+import { ChevronUpIcon, RotateCwIcon, SlidersHorizontalIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
 import {
@@ -21,10 +15,8 @@ import { Button } from "../../ui/button";
 import { Collapsible, CollapsiblePanel } from "../../ui/collapsible";
 import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "../../ui/popover";
 import { Switch } from "../../ui/switch";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
 import { SettingsRow } from "../settingsLayout";
 import { PluginSettingsRows } from "./PluginSettingsRows";
-import type { PluginCopy } from "./pluginTargets";
 
 const FAILURE_STAGES = {
   discovery: "Not found",
@@ -35,117 +27,56 @@ const FAILURE_STAGES = {
   crash: "Stopped the server",
 } as const;
 
-/**
- * Where a plugin that changes the app runs, as the installer decides: with no server code it goes
- * only to the first environment plugin UI loads from.
- */
-const webReach = (plugin: PluginState) =>
-  !plugin.hasServer
-    ? "Changes only this app, so it isn't installed on other servers."
-    : plugin.hasWeb
-      ? "Its web part runs in this app only from the servers chosen in Load plugin UI from."
-      : null;
-
 export function PluginRow({
   environmentId,
-  first,
-  copies,
+  plugin,
   shadowed,
-  labelled,
-  explainReach,
 }: {
-  /** The main environment in view. Its permissions decide which actions are offered. */
   readonly environmentId: EnvironmentId;
-  readonly first: PluginCopy;
-  readonly copies: ReadonlyArray<PluginCopy>;
+  readonly plugin: PluginState;
   /** Another copy of this plugin is used instead, so the row only explains why. */
   readonly shadowed: boolean;
-  /** Problems name their environment, because several are in view. */
-  readonly labelled: boolean;
-  /** Says where app changes run, because a server plugin UI doesn't load from is in view. */
-  readonly explainReach: boolean;
 }) {
-  const { plugin } = first;
   const canManage = useAtomValue(pluginEnvironment.setPluginEnabled.permissionAtom(environmentId));
   const setEnabled = useAtomCommand(pluginEnvironment.setPluginEnabled, "plugin enabled");
   const reload = useAtomCommand(pluginEnvironment.reloadPlugin, "plugin reload");
   const uninstall = useAtomCommand(pluginEnvironment.uninstallPlugin, "plugin removal");
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  // The first copy's panel, which `PluginSettingsRows` says changes that copy alone.
   const customSettings = useAtomValue(
-    pluginSettingsPanelAtom(pluginContributionKey(first.environmentId, plugin.id)),
+    pluginSettingsPanelAtom(pluginContributionKey(environmentId, plugin.id)),
   );
-  const webFailures = useAtomValue(pluginWebFailuresAtom(plugin.id));
+  const webFailure = useAtomValue(pluginWebFailuresAtom(plugin.id)).get(environmentId);
   const hasGeneratedForm = pluginSettingsForm(plugin.settingsSchema).kind !== "none";
   const hasSettings = customSettings !== undefined || hasGeneratedForm;
-  const runOn = async (
-    on: ReadonlyArray<PluginCopy>,
-    action: (copy: PluginCopy) => Promise<unknown>,
-  ) => {
+  const whileBusy = async (action: () => Promise<unknown>) => {
     setBusy(true);
-    await Promise.all(on.map(action));
+    await action();
     setBusy(false);
   };
   // A plugin loaded from its own folder through `devPaths` is unlinked instead; the folder stays.
-  const removeLabel = copies.every((copy) => copy.plugin.source === "dev") ? "Unlink" : "Remove";
-  // Only a shadowed link can be dropped on its own, by its folder; see `pluginRows`.
+  const removeLabel = plugin.source === "dev" ? "Unlink" : "Remove";
+  // Only a shadowed link can be dropped on its own, by its folder; see `isShadowed`.
   const shadowedLink = shadowed && plugin.source === "dev" ? plugin.linkedFolder : undefined;
+  const { failure, serverFailure } = plugin;
   const problems = [
-    ...copies.flatMap(({ label, plugin: { failure } }) =>
-      failure === undefined
-        ? []
-        : [
-            `${labelled ? `${label}: ` : ""}${shadowed ? "Not used" : FAILURE_STAGES[failure.stage]}: ${failure.message}`,
-          ],
-    ),
-    ...copies.flatMap(({ label, plugin: { serverFailure, enabled } }) =>
-      serverFailure === undefined
-        ? []
-        : [
-            `${labelled ? `${label}: ` : ""}Failed while running: ${serverFailure}`,
-            // Turning a plugin off clears its failures on the server, so this one came after.
-            ...(enabled
-              ? []
-              : [
-                  `${labelled ? `${label}: ` : ""}Some of its code is still running. Restarting T3 Code stops it.`,
-                ]),
-          ],
-    ),
-    ...copies.flatMap(({ label, environmentId: copyEnvironmentId }) => {
-      const webFailure = webFailures.get(copyEnvironmentId);
-      return webFailure === undefined
-        ? []
-        : [`${labelled ? `${label}: ` : ""}Web part failed: ${webFailure}`];
-    }),
+    ...(failure === undefined
+      ? []
+      : [`${shadowed ? "Not used" : FAILURE_STAGES[failure.stage]}: ${failure.message}`]),
+    ...(serverFailure === undefined
+      ? []
+      : [
+          `Failed while running: ${serverFailure}`,
+          // Turning a plugin off clears its failures on the server, so this one came after.
+          ...(plugin.enabled
+            ? []
+            : ["Some of its code is still running. Restarting T3 Code stops it."]),
+        ]),
+    ...(webFailure === undefined ? [] : [`Web part failed: ${webFailure}`]),
   ];
-  const reach = explainReach ? webReach(plugin) : null;
   const row = (
     <SettingsRow
-      title={
-        reach === null ? (
-          plugin.name
-        ) : (
-          <span className="inline-flex items-center gap-1">
-            {plugin.name}
-            <Tooltip>
-              <TooltipTrigger
-                delay={200}
-                render={
-                  <Button
-                    size="icon-micro"
-                    variant="ghost-muted"
-                    aria-label={`Where ${plugin.name} runs`}
-                  >
-                    <InfoIcon className="size-3.5" />
-                  </Button>
-                }
-              />
-              <TooltipPopup side="top">{reach}</TooltipPopup>
-            </Tooltip>
-          </span>
-        )
-      }
+      title={plugin.name}
       description={
         <>
           {plugin.description}
@@ -177,9 +108,9 @@ export function PluginRow({
               deletesData={false}
               disabled={busy || !canManage}
               onRemove={() =>
-                runOn([first], (copy) =>
+                whileBusy(() =>
                   uninstall({
-                    environmentId: copy.environmentId,
+                    environmentId,
                     input: { pluginId: plugin.id, linkedFolder: shadowedLink },
                   }),
                 )
@@ -209,9 +140,7 @@ export function PluginRow({
               disabled={busy || !canManage}
               aria-label={`Reload ${plugin.name}`}
               onClick={() =>
-                void runOn(copies, (copy) =>
-                  reload({ environmentId: copy.environmentId, input: { pluginId: plugin.id } }),
-                )
+                void whileBusy(() => reload({ environmentId, input: { pluginId: plugin.id } }))
               }
             >
               <RotateCwIcon className="size-4" />
@@ -223,21 +152,16 @@ export function PluginRow({
               deletesData
               disabled={busy || !canManage}
               onRemove={() =>
-                runOn(copies, (copy) =>
-                  uninstall({ environmentId: copy.environmentId, input: { pluginId: plugin.id } }),
-                )
+                whileBusy(() => uninstall({ environmentId, input: { pluginId: plugin.id } }))
               }
             />
             <Switch
-              checked={copies.every((copy) => copy.plugin.enabled)}
+              checked={plugin.enabled}
               disabled={busy || !canManage}
               aria-label={`Enable ${plugin.name}`}
               onCheckedChange={(enabled) =>
-                void runOn(copies, (copy) =>
-                  setEnabled({
-                    environmentId: copy.environmentId,
-                    input: { pluginId: plugin.id, enabled },
-                  }),
+                void whileBusy(() =>
+                  setEnabled({ environmentId, input: { pluginId: plugin.id, enabled } }),
                 )
               }
             />
@@ -255,11 +179,9 @@ export function PluginRow({
         <CollapsiblePanel>
           <div className="border-t border-border/50 [&>*+*]:border-t [&>*+*]:border-border/50">
             <PluginSettingsRows
-              first={first}
-              copies={copies}
-              labelled={labelled}
+              environmentId={environmentId}
+              plugin={plugin}
               customSettings={customSettings}
-              hasGeneratedForm={hasGeneratedForm}
             />
           </div>
         </CollapsiblePanel>

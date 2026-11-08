@@ -21,11 +21,8 @@ Plugin folders you copy into the `plugins` folder yourself show up, turned off, 
 open **Settings → Plugins**. That folder is `~/.t3/userdata/plugins` on the environment's machine
 by default.
 
-With **All environments** selected, a plugin is installed on every connected environment that can
-run plugins. A plugin with no server code only changes the app, so it goes only to the first
-environment you load plugin UI from (see [Where plugins live](#where-plugins-live)). The list then
-shows each plugin once, and turning it on or off, changing its settings or removing it applies to
-every environment that has it.
+**Settings → Plugins** shows one environment at a time, the main one until you pick another at the
+top of the page. To use a plugin on several environments, add it to each of them.
 
 ## Turn a plugin on or off
 

@@ -157,7 +157,11 @@ function SettingsRouteLayout() {
       search={
         SETTINGS_ENVIRONMENT_ONLY_PATHS.has(pathname) ? { machine: rawSearch.machine } : rawSearch
       }
-      singleEnvironment={pathname === "/settings/providers" || pathname === "/settings/secrets"}
+      singleEnvironment={
+        pathname === "/settings/providers" ||
+        pathname === "/settings/secrets" ||
+        pathname === "/settings/plugins"
+      }
       onChange={(next) => {
         // Send every axis so retain middleware recognizes "all" as an explicit target.
         void navigate({

@@ -1,11 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId, PluginState } from "@t3tools/contracts";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { FolderDownIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { cn } from "../../../lib/utils";
 import { uploadPluginFolder } from "../../../plugins/pluginFiles";
 import { type PluginFolder, pickedFolder } from "../../../plugins/pluginFolders";
+import type { EnvironmentPresentation } from "../../../state/environments";
 import { pluginEnvironment } from "../../../state/plugins";
 import { Button } from "../../ui/button";
 import {
@@ -16,7 +17,6 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../../ui/dialog";
-import type { PluginTarget } from "./pluginTargets";
 
 export function AddPluginButton(props: {
   readonly environmentId: EnvironmentId;
@@ -50,48 +50,17 @@ export function InstallProblems({ problems }: { readonly problems: ReadonlyArray
 }
 
 /**
- * Installs plugins on `targets`, the first one first. A plugin without server code only changes the
- * app, so it is installed on the first one only, and does nothing unless the app loads plugin UI
- * from there.
+ * Installs plugins on `environment`. A plugin without server code only changes the app, so it does
+ * nothing there unless the app loads plugin UI from it, which `loadsUi` says.
  */
 export function usePluginInstaller(
-  targets: ReadonlyArray<PluginTarget>,
-  uiSource: { readonly environmentIds: ReadonlyArray<EnvironmentId> },
+  environment: Pick<EnvironmentPresentation, "environmentId" | "label">,
+  loadsUi: boolean,
 ) {
   const [installing, setInstalling] = useState<string | null>(null);
   const [problems, setProblems] = useState<ReadonlyArray<string>>([]);
 
-  const installOnTargets = async (
-    install: (environmentId: EnvironmentId) => Promise<PluginState>,
-    report: (problem: string) => void,
-  ) => {
-    const [main, ...others] = targets;
-    if (main === undefined) return report("No environment here can run plugins.");
-    const reportFailure = (target: PluginTarget, error: unknown) => {
-      const message = error instanceof Error ? error.message : "Could not install the plugin.";
-      report(targets.length > 1 ? `${target.label}: ${message}` : message);
-    };
-    const plugin = await install(main.environmentId).catch((error: unknown) => {
-      reportFailure(main, error);
-      return null;
-    });
-    if (plugin === null) return;
-    if (!plugin.hasServer) {
-      // Such as when that environment is offline and another one came first.
-      if (!uiSource.environmentIds.includes(main.environmentId)) {
-        report(
-          `${plugin.name} only changes the app, and this app doesn't load plugin UI from ${main.label}, so it does nothing there.`,
-        );
-      }
-      return;
-    }
-    const results = await Promise.allSettled(others.map((target) => install(target.environmentId)));
-    results.forEach((result, index) => {
-      if (result.status === "rejected") reportFailure(others[index]!, result.reason);
-    });
-  };
-
-  // Resolves true when everything installed everywhere it should.
+  // Resolves true when every folder installed with nothing to report.
   const run = async (work: (report: (problem: string) => void) => Promise<void>) => {
     const found: Array<string> = [];
     setProblems([]);
@@ -120,10 +89,17 @@ export function usePluginInstaller(
             return null;
           });
           if (files === null) continue;
-          await installOnTargets(
-            (environmentId) => uploadPluginFolder(environmentId, files),
-            report,
+          const plugin = await uploadPluginFolder(environment.environmentId, files).catch(
+            (error: unknown) => {
+              report(error instanceof Error ? error.message : "Could not install the plugin.");
+              return null;
+            },
           );
+          if (plugin !== null && !plugin.hasServer && !loadsUi) {
+            report(
+              `${plugin.name} only changes the app, and this app doesn't load plugin UI from ${environment.label}, so it does nothing there.`,
+            );
+          }
         }
       });
     },
