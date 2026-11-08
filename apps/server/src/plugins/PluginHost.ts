@@ -283,7 +283,7 @@ const make = Effect.gen(function* () {
           : Effect.succeed(state);
       }),
     );
-  // Records are replaced by id; a shadowed duplicate keeps its own failure entry.
+  // By id, which finds the copy in use: discovery lists it before any duplicate.
   const setRecord = (pluginId: PluginId, update: Omit<PluginRecord, "plugin">) =>
     Ref.update(records, (all) => {
       const index = all.findIndex((record) => record.plugin.id === pluginId);
@@ -485,8 +485,6 @@ const make = Effect.gen(function* () {
       ? { plugin, status: "loading" }
       : { plugin, status: "disabled" };
   };
-  // A shadowed copy keeps its manifest for its row, but started it would take over the record
-  // of the copy in use, which shares its id.
   const startsAtDiscovery = (plugin: DiscoveredPlugin, found: Found) =>
     initialRecord(plugin, found).status === "loading";
 
@@ -548,35 +546,34 @@ const make = Effect.gen(function* () {
     const { plugins, found } = yield* discover(false);
     if (restart !== undefined) yield* stopPlugin(restart);
     const known = yield* Ref.get(records);
-    // A record survives only while discovery still finds the same copy the same way. One whose copy
-    // changed, such as a link that was shadowed until the installed copy went, starts over.
-    const sameCopy = (record: (typeof known)[number], plugin: (typeof plugins)[number]) =>
-      record.plugin.id === plugin.id &&
-      record.plugin.folder === plugin.folder &&
-      "failure" in record.plugin === "failure" in plugin;
-    const next = plugins.map((plugin) => {
-      const kept =
-        plugin.id === restart ? undefined : known.find((record) => sameCopy(record, plugin));
-      return { plugin, kept };
-    });
-    // Copies that are gone or changed stop, or they would keep running unlisted.
+    // A record survives only while discovery still finds its copy, in the same folder and valid.
+    const next = plugins.map((plugin) => ({
+      plugin,
+      kept:
+        plugin.id === restart || "failure" in plugin
+          ? undefined
+          : known.find(
+              (record) =>
+                record.plugin.id === plugin.id &&
+                record.plugin.folder === plugin.folder &&
+                !("failure" in record.plugin),
+            ),
+    }));
+    // Copies that are gone or moved stop, or they would keep running unlisted.
     for (const record of known) {
       if (
         record.plugin.id !== restart &&
-        !next.some(({ kept }) => kept === record) &&
-        !("failure" in record.plugin)
+        !("failure" in record.plugin) &&
+        !next.some(({ kept }) => kept === record)
       ) {
         yield* stopPlugin(record.plugin.id);
       }
     }
-    // In discovery's order, which puts the copy in use before the copies it shadows. A kept copy
-    // that runs nothing takes discovery's reason, which names the copy now in use. Kept records
-    // are read again here: one still starting may have finished while the others stopped.
+    // Kept records are read again here: one still starting may have finished while others stopped.
     yield* Ref.update(records, (current) =>
       next.map(({ plugin, kept }) => {
         if (kept === undefined) return initialRecord(plugin, found);
         const latest = current.find((record) => record.plugin === kept.plugin) ?? kept;
-        if ("failure" in plugin) return { ...latest, plugin, failure: plugin.failure };
         // One that runs nothing takes the files found now, so starting it loads their manifest.
         return latest.status === "active" || latest.status === "loading"
           ? latest
@@ -649,19 +646,7 @@ const make = Effect.gen(function* () {
         ),
       ),
     stop: stopPlugin,
-    forget: Effect.fn("PluginHost.forget")(function* (pluginId, folder) {
-      // Matched by folder rather than identity: stopping replaces the record, and a copy it
-      // shadowed may share its source.
-      yield* Ref.update(records, (all) =>
-        all.filter((entry) => entry.plugin.id !== pluginId || entry.plugin.folder !== folder),
-      );
-      // A copy it shadowed takes its place, found afresh rather than left as the shadow.
-      if ((yield* Ref.get(records)).some((entry) => entry.plugin.id === pluginId)) {
-        yield* rediscover(undefined);
-      } else {
-        yield* publishStates;
-      }
-    }),
+    rescan: rediscover(undefined).pipe(Effect.asVoid),
     reload,
     config: pluginsConfig.current,
     writeConfig: pluginsConfig.write,

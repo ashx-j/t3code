@@ -47,9 +47,8 @@ const failed = (location: PluginLocation, failure: PluginFailure): DiscoveredPlu
 });
 
 /**
- * Lists installed plugins (`<pluginsDir>/<any folder>/t3-plugin.json`) and dev plugins
- * (`devPaths`). Each id is used once: an installed plugin wins over a dev plugin, and a folder
- * named after its plugin's id over other copies. The copies that lose are reported as failed.
+ * Lists installed plugins (`<pluginsDir>/<any folder>/t3-plugin.json`), then dev plugins
+ * (`devPaths`). An id is used once: a later folder with an id already listed is reported as failed.
  */
 export const discoverPlugins = Effect.fn("PluginDiscovery.discover")(function* (input: {
   readonly pluginsDir: string;
@@ -118,7 +117,24 @@ export const discoverPlugins = Effect.fn("PluginDiscovery.discover")(function* (
   });
 
   const plugins: Array<DiscoveredPlugin> = [];
-  const seen = new Set<string>();
+  const firstWithId = new Map<PluginId, DiscoveredPlugin>();
+  // Settings, storage and the switch belong to the id, so two folders with one id cannot both run.
+  const add = (plugin: DiscoveredPlugin) => {
+    const first = firstWithId.get(plugin.id);
+    if (first === undefined) {
+      firstWithId.set(plugin.id, plugin);
+      plugins.push(plugin);
+      return;
+    }
+    // The folder's name only: clients that cannot manage plugins see failures but not paths.
+    const kind = first.source === "dev" ? "linked" : "installed";
+    plugins.push(
+      failed(plugin, {
+        stage: "duplicate",
+        message: `The ${kind} folder "${path.basename(first.folder)}" already has the id ${plugin.id}. Remove or unlink one of them.`,
+      }),
+    );
+  };
   let examined = 0;
   const underLimit = Effect.fnUntraced(function* (location: string) {
     examined += 1;
@@ -134,7 +150,6 @@ export const discoverPlugins = Effect.fn("PluginDiscovery.discover")(function* (
     .readDirectory(input.pluginsDir)
     .pipe(Effect.orElseSucceed((): Array<string> => []));
   // People copy plugin folders in by hand, so the manifest names the plugin, not the folder.
-  const installed: Array<DiscoveredPlugin> = [];
   for (const entry of entries.toSorted()) {
     if (entry.startsWith(".")) continue;
     const folder = path.join(input.pluginsDir, entry);
@@ -146,31 +161,8 @@ export const discoverPlugins = Effect.fn("PluginDiscovery.discover")(function* (
       yield* Effect.logWarning("ignoring plugin folder without a plugin id", { path: folder });
       continue;
     }
-    installed.push(plugin);
+    add(plugin);
   }
-  const namedAfterId = (plugin: DiscoveredPlugin) => path.basename(plugin.folder) === plugin.id;
-  const used = new Map<PluginId, DiscoveredPlugin>();
-  for (const plugin of installed) {
-    const current = used.get(plugin.id);
-    if (current === undefined || (!namedAfterId(current) && namedAfterId(plugin))) {
-      used.set(plugin.id, plugin);
-    }
-  }
-  // Losing copies go last: the host finds a plugin's record by id and takes the first.
-  for (const plugin of installed) {
-    if (used.get(plugin.id) === plugin) plugins.push(plugin);
-  }
-  for (const plugin of installed) {
-    const winner = used.get(plugin.id);
-    if (winner === undefined || winner === plugin) continue;
-    plugins.push(
-      failed(plugin, {
-        stage: "discovery",
-        message: `Another copy of this plugin, in the "${path.basename(winner.folder)}" folder, is used instead.`,
-      }),
-    );
-  }
-  for (const id of used.keys()) seen.add(id);
 
   for (const devPath of input.devPaths) {
     const rootDir = path.resolve(devPath);
@@ -183,18 +175,7 @@ export const discoverPlugins = Effect.fn("PluginDiscovery.discover")(function* (
       });
       continue;
     }
-    if (seen.has(plugin.id)) {
-      plugins.push(
-        failed(plugin, {
-          stage: "discovery",
-          message:
-            "Another plugin with this id is already loaded from the plugins folder or an earlier dev path.",
-        }),
-      );
-      continue;
-    }
-    seen.add(plugin.id);
-    plugins.push(plugin);
+    add(plugin);
   }
 
   return plugins;

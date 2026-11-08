@@ -45,7 +45,7 @@ const harness = Effect.fn(function* () {
         ? Effect.succeed(linkedCopy)
         : Effect.fail(new PluginNotFoundError({ pluginId })),
     stop: () => Effect.void,
-    forget: () => Effect.void,
+    rescan: Effect.void,
     reload: (pluginId) => Effect.fail(new PluginNotFoundError({ pluginId })),
     config: Effect.succeed({}),
     writeConfig: () => Effect.void,

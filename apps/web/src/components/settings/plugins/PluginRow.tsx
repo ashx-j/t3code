@@ -20,6 +20,7 @@ import { pluginSettingsForm } from "./pluginSettingsForm";
 
 const FAILURE_STAGES = {
   discovery: "Not found",
+  duplicate: "Duplicate id",
   manifest: "Invalid manifest",
   compatibility: "Incompatible",
   load: "Failed to load",
@@ -30,12 +31,9 @@ const FAILURE_STAGES = {
 export function PluginRow({
   environmentId,
   plugin,
-  shadowed,
 }: {
   readonly environmentId: EnvironmentId;
   readonly plugin: PluginState;
-  /** Another copy of this plugin is used instead, so the row only explains why. */
-  readonly shadowed: boolean;
 }) {
   const canManage = useAtomValue(pluginEnvironment.setPluginEnabled.permissionAtom(environmentId));
   const setEnabled = useAtomCommand(pluginEnvironment.setPluginEnabled, "plugin enabled");
@@ -54,14 +52,12 @@ export function PluginRow({
     await action();
     setBusy(false);
   };
-  const removeLabel = plugin.source === "dev" ? "Unlink" : "Remove";
-  // Only a shadowed link can be dropped on its own, by its folder; see `isShadowed`.
-  const shadowedLink = shadowed && plugin.source === "dev" ? plugin.linkedFolder : undefined;
-  const { failure, serverFailure } = plugin;
+  const unlink = plugin.source === "dev";
+  // Other actions send only the id, which names the copy in use.
+  const duplicate = plugin.failure?.stage === "duplicate";
+  const { failure, serverFailure, folder } = plugin;
   const problems = [
-    ...(failure === undefined
-      ? []
-      : [`${shadowed ? "Not used" : FAILURE_STAGES[failure.stage]}: ${failure.message}`]),
+    ...(failure === undefined ? [] : [`${FAILURE_STAGES[failure.stage]}: ${failure.message}`]),
     ...(serverFailure === undefined
       ? []
       : [
@@ -98,20 +94,17 @@ export function PluginRow({
         )
       }
       control={
-        shadowed ? (
-          shadowedLink !== undefined ? (
+        duplicate ? (
+          folder !== undefined ? (
             <RemovePluginPopover
               name={plugin.name}
-              unlink
-              linkedFolder={shadowedLink}
+              unlink={unlink}
+              folder={folder}
               deletesData={false}
               disabled={busy || !canManage}
               onRemove={() =>
                 whileBusy(() =>
-                  uninstall({
-                    environmentId,
-                    input: { pluginId: plugin.id, linkedFolder: shadowedLink },
-                  }),
+                  uninstall({ environmentId, input: { pluginId: plugin.id, folder } }),
                 )
               }
             />
@@ -146,8 +139,8 @@ export function PluginRow({
             </Button>
             <RemovePluginPopover
               name={plugin.name}
-              unlink={removeLabel === "Unlink"}
-              linkedFolder={plugin.linkedFolder}
+              unlink={unlink}
+              folder={unlink ? folder : undefined}
               deletesData
               disabled={busy || !canManage}
               onRemove={() =>
@@ -169,7 +162,7 @@ export function PluginRow({
       }
     />
   );
-  if (shadowed || !hasSettings) return row;
+  if (duplicate || !hasSettings) return row;
   return (
     <>
       {row}
@@ -193,15 +186,16 @@ export function PluginRow({
 function RemovePluginPopover({
   name,
   unlink,
-  linkedFolder,
+  folder,
   deletesData,
   disabled,
   onRemove,
 }: {
   readonly name: string;
   readonly unlink: boolean;
-  readonly linkedFolder: string | undefined;
-  /** False for a link that isn't in use: the copy in use keeps the data. */
+  /** Named in the popup: the folder unlinked, or the duplicate's folder deleted. */
+  readonly folder: string | undefined;
+  /** False for a duplicate: the copy in use keeps the data. */
   readonly deletesData: boolean;
   readonly disabled: boolean;
   readonly onRemove: () => Promise<unknown>;
@@ -223,12 +217,13 @@ function RemovePluginPopover({
       </PopoverTrigger>
       <PopoverPopup side="top" align="end" width="md">
         <div className="flex flex-col gap-3">
-          {unlink && linkedFolder !== undefined ? (
+          {folder === undefined ? null : (
             <p className="text-muted-foreground text-xs">
-              Stops loading <span className="break-all font-mono">{linkedFolder}</span>. The folder
-              stays.
+              {unlink ? "Stops loading " : "Deletes "}
+              <span className="break-all font-mono">{folder}</span>
+              {unlink ? ". The folder stays." : "."}
             </p>
-          ) : null}
+          )}
           {deletesData ? (
             <p className="text-muted-foreground text-xs">
               This also deletes its settings, secrets and stored data, and can't be undone.

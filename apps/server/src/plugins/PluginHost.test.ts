@@ -350,80 +350,107 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const { stateDir } = yield* ServerConfig.ServerConfig;
-      const inUse = `${stateDir}/checkout/linked`;
-      const shadow = `${stateDir}/checkout/linked-copy`;
-      yield* writeFile(`${inUse}/t3-plugin.json`, manifestJson("linked"));
-      yield* writeFile(`${shadow}/t3-plugin.json`, manifestJson("linked", { version: "0.2.0" }));
-      yield* writePluginsConfig({ enabled: { linked: true }, devPaths: [inUse, shadow] });
-      const readConfig = fs
-        .readFileString(`${stateDir}/plugins.json`)
-        .pipe(Effect.map((raw): Record<string, unknown> => JSON.parse(raw)));
+      const folder = `${stateDir}/checkout/linked`;
+      yield* writeFile(`${folder}/t3-plugin.json`, manifestJson("linked"));
+      yield* writePluginsConfig({ enabled: { linked: true }, devPaths: [folder] });
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
         const installer = yield* PluginInstaller.PluginInstaller;
-        const linked = PluginId.make("linked");
         yield* waitForStatuses(host, { linked: "active" });
-        const copies = host.list.pipe(
-          Effect.map((states) =>
-            states
-              .filter((state) => state.id === linked)
-              .map(({ linkedFolder, status }) => ({ linkedFolder, status })),
-          ),
-        );
-        assert.deepStrictEqual(yield* copies, [
-          { linkedFolder: inUse, status: "active" },
-          { linkedFolder: shadow, status: "failed" },
-        ]);
-        // A dropped folder cannot replace a linked one, which is the author's own.
+
+        yield* installer.uninstall(PluginId.make("linked"));
+        // Forgotten, not only stopped: a rescan does not find it again.
+        assert.isUndefined(stateOf((yield* host.rescan).plugins, "linked"));
+        const saved = yield* fs.readFileString(`${stateDir}/plugins.json`);
+        assert.deepStrictEqual(JSON.parse(saved), { enabled: {}, devPaths: [] });
+        assert.isTrue(yield* fs.exists(`${folder}/t3-plugin.json`));
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("refuses a dropped folder that would replace a linked plugin", () =>
+    Effect.gen(function* () {
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const folder = `${stateDir}/checkout/linked`;
+      yield* writeFile(`${folder}/t3-plugin.json`, manifestJson("linked"));
+      yield* writePluginsConfig({ devPaths: [folder] });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const installer = yield* PluginInstaller.PluginInstaller;
+        yield* waitForStatuses(host, { linked: "disabled" });
         const refused = yield* installer
           .installFiles([
             { path: "t3-plugin.json", contents: new TextEncoder().encode(manifestJson("linked")) },
           ])
           .pipe(Effect.flip);
-        assert.match(refused.message, /is linked from .+\. Unlink it first\./);
+        assert.strictEqual(refused.message, `linked is linked from ${folder}. Unlink it first.`);
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
 
-        // Unlinking the shadowed copy keeps the one in use running.
-        yield* installer.uninstall(linked, shadow);
-        assert.deepStrictEqual(yield* copies, [{ linkedFolder: inUse, status: "active" }]);
-        assert.deepStrictEqual((yield* readConfig).devPaths, [inUse]);
-        const notLinked = yield* installer
-          .uninstall(linked, `${stateDir}/elsewhere`)
-          .pipe(Effect.flip);
-        assert.strictEqual(
-          notLinked.message,
-          `No copy of linked is linked from ${stateDir}/elsewhere.`,
+  it.effect("refuses a later folder with a plugin's id, and removes or unlinks it alone", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const id = PluginId.make("twice");
+      const installed = `${stateDir}/plugins/twice-copy`;
+      const linked = `${stateDir}/checkout/twice`;
+      yield* writeFile(`${stateDir}/plugins/twice/t3-plugin.json`, manifestJson(id));
+      yield* writeFile(`${installed}/t3-plugin.json`, manifestJson(id, { version: "0.2.0" }));
+      yield* writeFile(`${linked}/t3-plugin.json`, manifestJson(id, { version: "0.3.0" }));
+      yield* writePluginsConfig({ enabled: { [id]: true }, devPaths: [linked] });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const installer = yield* PluginInstaller.PluginInstaller;
+        const storage = yield* PluginStorage.PluginStorage;
+        yield* waitForStatuses(host, { [id]: "active" });
+        yield* storage.set(id, "kept", true);
+        const copies = host.list.pipe(
+          Effect.map((states) =>
+            states
+              .filter((state) => state.id === id)
+              .map((state) => [state.version, state.status, state.failure?.message]),
+          ),
         );
+        const refused =
+          'The installed folder "twice" already has the id twice. Remove or unlink one of them.';
+        assert.deepStrictEqual(yield* copies, [
+          ["0.1.0", "active", undefined],
+          ["0.2.0", "failed", refused],
+          ["0.3.0", "failed", refused],
+        ]);
 
-        yield* installer.uninstall(linked);
-        // Forgotten, not only stopped: a rescan does not find it again.
-        assert.isUndefined(stateOf((yield* host.rescan).plugins, "linked"));
-        assert.deepStrictEqual(yield* readConfig, { enabled: {}, devPaths: [] });
-        assert.isTrue(yield* fs.exists(`${inUse}/t3-plugin.json`));
-        assert.isTrue(yield* fs.exists(`${shadow}/t3-plugin.json`));
+        yield* installer.uninstall(id, linked);
+        yield* installer.uninstall(id, installed);
+        assert.deepStrictEqual(yield* copies, [["0.1.0", "active", undefined]]);
+        assert.isFalse(yield* fs.exists(installed));
+        assert.isTrue(yield* fs.exists(linked));
+        // The copy in use keeps the id's data.
+        assert.deepStrictEqual(yield* storage.get(id, "kept"), Option.some(true));
 
-        // Three copies in the plugins folder, which share a source: removing the one in use lists
-        // the next afresh, and the last one names that copy as the one used instead.
-        const threeCopies = PluginId.make("three-copies");
-        for (const name of ["three-copies", "three-copies-a", "three-copies-b"]) {
-          yield* writeFile(
-            `${stateDir}/plugins/${name}/t3-plugin.json`,
-            JSON.stringify({ id: threeCopies, name, version: "0.1.0", engines: { t3: ">=0.1.0" } }),
-          );
-        }
-        yield* host.rescan;
-        yield* installer.uninstall(threeCopies);
+        const elsewhere = yield* installer.uninstall(id, `${stateDir}/elsewhere`).pipe(Effect.flip);
+        assert.strictEqual(elsewhere.message, `No copy of twice is in ${stateDir}/elsewhere.`);
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("lists a later folder with a removed plugin's id afresh, turned off", () =>
+    Effect.gen(function* () {
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const id = PluginId.make("twice");
+      yield* writeFile(`${stateDir}/plugins/twice/t3-plugin.json`, manifestJson(id));
+      yield* writeFile(`${stateDir}/plugins/twice-copy/t3-plugin.json`, manifestJson(id));
+      yield* writePluginsConfig({ enabled: { [id]: true } });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const installer = yield* PluginInstaller.PluginInstaller;
+        yield* waitForStatuses(host, { [id]: "active" });
+
+        yield* installer.uninstall(id);
+        const left = (yield* host.list).filter((state) => state.id === id);
         assert.deepStrictEqual(
-          (yield* host.list)
-            .filter((state) => state.id === threeCopies)
-            .map((state) => [state.name, state.status, state.failure?.message]),
-          [
-            ["three-copies-a", "disabled", undefined],
-            [
-              "three-copies-b",
-              "failed",
-              'Another copy of this plugin, in the "three-copies-a" folder, is used instead.',
-            ],
-          ],
+          left.map((state) => [state.folder, state.status, state.enabled, state.failure]),
+          [[`${stateDir}/plugins/twice-copy`, "disabled", false, undefined]],
         );
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
@@ -792,9 +819,9 @@ module.exports = { activate() {} };`,
   it.effect("keeps server folder paths from clients that cannot manage plugins", () =>
     Effect.gen(function* () {
       const { stateDir } = yield* ServerConfig.ServerConfig;
-      const linkedFolder = `${stateDir}/checkout/linked`;
-      yield* writeFile(`${linkedFolder}/t3-plugin.json`, manifestJson("linked"));
-      yield* writePluginsConfig({ devPaths: [linkedFolder] });
+      const folder = `${stateDir}/checkout/linked`;
+      yield* writeFile(`${folder}/t3-plugin.json`, manifestJson("linked"));
+      yield* writePluginsConfig({ devPaths: [folder] });
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
         const installer = yield* PluginInstaller.PluginInstaller;
@@ -818,10 +845,10 @@ module.exports = { activate() {} };`,
         };
 
         for (const plugin of yield* listed([AuthOrchestrationReadScope])) {
-          assert.notProperty(plugin, "linkedFolder");
+          assert.notProperty(plugin, "folder");
         }
         const managed = yield* listed([AuthOrchestrationReadScope, AuthSettingsWriteScope]);
-        assert.include(stateOf(managed, "linked"), { linkedFolder });
+        assert.include(stateOf(managed, "linked"), { folder });
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );

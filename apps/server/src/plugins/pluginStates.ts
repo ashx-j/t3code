@@ -39,7 +39,7 @@ export const manifestOf = (plugin: DiscoveredPlugin): PluginManifest | undefined
 
 // Folders on the server are for clients that manage plugins; read access can be a guest's.
 const withoutServerPaths = (state: PluginState): PluginState => {
-  const { linkedFolder: _folder, ...shown } = state;
+  const { folder: _folder, ...shown } = state;
   return shown;
 };
 const managesPlugins = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
@@ -84,7 +84,7 @@ const toState = (
         }),
     permissions: manifest?.permissions ?? [],
     source: record.plugin.source,
-    ...(record.plugin.source === "dev" ? { linkedFolder: record.plugin.folder } : {}),
+    folder: record.plugin.folder,
     enabled: config.enabled?.[id] === true,
     status: record.status,
     ...(record.failure === undefined ? {} : { failure: record.failure }),

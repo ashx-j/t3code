@@ -53,7 +53,7 @@ export const makePluginRpcHandlers = (
     pluginHost.rescan.pipe(Effect.mapError((error) => new PluginError({ message: error.message }))),
   [WS_METHODS.pluginsUninstall]: (input: PluginUninstallInput) =>
     installer
-      .uninstall(input.pluginId, input.linkedFolder)
+      .uninstall(input.pluginId, input.folder)
       .pipe(Effect.as({ pluginId: input.pluginId }), Effect.mapError(toRpcError(input.pluginId))),
   [WS_METHODS.pluginsSettingsGet]: (input: PluginSettingsGetInput) =>
     pluginHost.getSettings(input.pluginId).pipe(

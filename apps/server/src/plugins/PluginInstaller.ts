@@ -50,12 +50,12 @@ export class PluginInstaller extends Context.Service<
     ) => Effect.Effect<PluginState, PluginInstallError | PluginNotFoundError | PluginConfigError>;
     /**
      * Stops a plugin and deletes its folder, settings, secrets and storage; a linked folder is
-     * only forgotten. `linkedFolder` names one linked copy. When another copy with its id is in
-     * use, only that link is forgotten, and the copy in use keeps running with the data.
+     * only forgotten. `folder` picks a copy. A duplicate copy's folder goes alone, and the copy in
+     * use keeps running with the data.
      */
     readonly uninstall: (
       pluginId: PluginId,
-      linkedFolder?: string,
+      folder?: string,
     ) => Effect.Effect<void, PluginInstallError | PluginNotFoundError | PluginConfigError>;
   }
 >()("t3/plugins/PluginInstaller") {}
@@ -67,17 +67,14 @@ export interface PluginInstallerHost {
    * stops waiting and never leaves a plugin half replaced.
    */
   readonly lifecycle: <A, E>(body: Effect.Effect<A, E>) => Effect.Effect<A, E>;
-  /** Every listed copy in discovery's order, which puts the copy in use before its shadows. */
+  /** Every listed copy in discovery's order: an id's first copy is the one in use. */
   readonly copies: Effect.Effect<ReadonlyArray<DiscoveredPlugin>>;
   /** The copy of `pluginId` in use. */
   readonly copyOf: (pluginId: PluginId) => Effect.Effect<DiscoveredPlugin, PluginNotFoundError>;
   /** Stops a plugin; the caller sets what comes next. Only under `lifecycle`. */
   readonly stop: (pluginId: PluginId) => Effect.Effect<void>;
-  /**
-   * Drops the copy of `pluginId` listed from `folder`; a copy it shadowed is found afresh.
-   * Only under `lifecycle`.
-   */
-  readonly forget: (pluginId: PluginId, folder: string) => Effect.Effect<void, PluginConfigError>;
+  /** Rescans the plugin folders without restarting anything. Only under `lifecycle`. */
+  readonly rescan: Effect.Effect<void, PluginConfigError>;
   /** Rescans the plugin folders and restarts the plugin, waiting until it has started. */
   readonly reload: (
     pluginId: PluginId,
@@ -324,46 +321,45 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
       devPaths: (current.devPaths ?? []).filter((entry) => path.resolve(entry) !== folder),
     }));
 
+  // The folder as listed, not `rootDir`: that is the real path, so a symlinked plugin would delete
+  // the user's own folder behind the link. A linked folder is the author's own; only plugins.json
+  // forgets it.
+  const removeFolder = (copy: DiscoveredPlugin) =>
+    copy.source === "dev"
+      ? forgetDevPath(copy.folder)
+      : fs
+          .remove(copy.folder, { recursive: true, force: true })
+          .pipe(Effect.mapError(installFailed(`Could not delete ${copy.folder}.`)));
+
   const uninstall: PluginInstaller["Service"]["uninstall"] = Effect.fn("PluginInstaller.uninstall")(
-    function* (pluginId, linkedFolder) {
-      const plugin = yield* host.copyOf(pluginId);
-      if (linkedFolder !== undefined) {
-        const folder = path.resolve(linkedFolder);
-        const copies = (yield* host.copies).filter((copy) => copy.id === pluginId);
-        const link = copies.findIndex((copy) => copy.source === "dev" && copy.folder === folder);
-        if (link === -1) {
-          return yield* new PluginInstallError({
-            reason: `No copy of ${pluginId} is linked from ${linkedFolder}.`,
-          });
-        }
-        // The first copy is the one in use. It keeps running, with the settings and storage the
-        // other copies share.
-        if (link > 0) {
-          return yield* host.lifecycle(
-            forgetDevPath(folder).pipe(Effect.andThen(host.forget(pluginId, folder))),
-          );
-        }
-      }
-      const { folder, source } = plugin;
-      const settingsSchema = "manifest" in plugin ? plugin.manifest.settingsSchema : undefined;
-      yield* host.lifecycle(
+    (pluginId, folder) =>
+      host.lifecycle(
         Effect.gen(function* () {
-          yield* host.stop(pluginId);
-          if (source === "dev") {
-            // A linked folder is the author's own; only plugins.json forgets it.
-            yield* forgetDevPath(folder);
-          } else {
-            // The folder as listed, not `rootDir`: that is the real path, so a symlinked plugin
-            // would delete the user's own folder behind the link.
-            yield* fs
-              .remove(folder, { recursive: true, force: true })
-              .pipe(Effect.mapError(installFailed(`Could not delete ${folder}.`)));
+          const inUse = yield* host.copyOf(pluginId);
+          const copy =
+            folder === undefined
+              ? inUse
+              : (yield* host.copies).find(
+                  (candidate) =>
+                    candidate.id === pluginId && candidate.folder === path.resolve(folder),
+                );
+          if (copy === undefined) {
+            return yield* new PluginInstallError({
+              reason: `No copy of ${pluginId} is in ${folder}.`,
+            });
           }
+          if (copy !== inUse) {
+            yield* removeFolder(copy);
+            return yield* host.rescan;
+          }
+          yield* host.stop(pluginId);
+          yield* removeFolder(copy);
           yield* removeFromConfig(pluginId);
-          yield* host.forget(pluginId, folder);
+          // Lists a duplicate copy afresh, turned off.
+          yield* host.rescan;
           // Under the lock, or an install that starts meanwhile could lose its new settings.
           yield* settingsStore
-            .clear(pluginId, settingsSchema)
+            .clear(pluginId, "manifest" in copy ? copy.manifest.settingsSchema : undefined)
             .pipe(
               Effect.mapError(installFailed("The plugin is removed, but its settings are not.")),
             );
@@ -371,8 +367,7 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
             .clear(pluginId)
             .pipe(Effect.mapError(installFailed("The plugin is removed, but its storage is not.")));
         }),
-      );
-    },
+      ),
   );
 
   return {

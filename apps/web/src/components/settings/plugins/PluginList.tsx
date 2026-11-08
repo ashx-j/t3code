@@ -1,6 +1,6 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, PluginState } from "@t3tools/contracts";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { type ReactNode, useContext, useEffect } from "react";
 
@@ -8,14 +8,6 @@ import { pluginEnvironment } from "../../../state/plugins";
 import { formatEnvironmentQueryError } from "../../../state/query";
 import { SettingsRow, SettingsSection } from "../settingsLayout";
 import { PluginRow } from "./PluginRow";
-
-/**
- * A copy that failed discovery while another copy with its id is listed is shadowed: actions send
- * only the id, so they would reach the copy that is used instead.
- */
-const isShadowed = (plugin: PluginState, plugins: ReadonlyArray<PluginState>) =>
-  plugin.failure?.stage === "discovery" &&
-  plugins.some((other) => other !== plugin && other.id === plugin.id);
 
 /** The page's own settings, with `children` first, then each plugin the environment has. */
 export function PluginList({
@@ -42,14 +34,14 @@ export function PluginList({
             description="Drop a plugin folder here to add it."
           />
         ) : (
-          (plugins ?? []).map((plugin, index, all) => (
+          (plugins ?? []).map((plugin, index) => (
             <PluginRow
+              // A duplicate shares its id with the copy in use.
               key={
-                plugin.failure?.stage === "discovery" ? `${index}` : `${plugin.id}:${plugin.source}`
+                plugin.failure?.stage === "duplicate" ? `${index}` : `${plugin.id}:${plugin.source}`
               }
               environmentId={environmentId}
               plugin={plugin}
-              shadowed={isShadowed(plugin, all)}
             />
           ))
         )}

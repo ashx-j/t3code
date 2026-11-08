@@ -31,7 +31,7 @@ it.layer(NodeServices.layer)("discoverPlugins", (it) => {
       yield* write(path.join(pluginsDir, "renamed"), manifest("other-name"));
       yield* write(path.join(pluginsDir, "My Plugin"), manifest("spaced"));
       yield* write(path.join(pluginsDir, "Not An Id"), undefined);
-      // Sorts before "valid", but the folder named after the id is the one used.
+      // Sorts before "valid", so it is the copy used.
       yield* write(path.join(pluginsDir, "Copy of valid"), manifest("valid"));
       const devCopy = path.join(root, "dev", "valid");
       yield* write(devCopy, manifest("valid"));
@@ -46,18 +46,22 @@ it.layer(NodeServices.layer)("discoverPlugins", (it) => {
       }));
 
       assert.deepStrictEqual(summary, [
+        { id: "valid", source: "installed", stage: "ok" },
         { id: "spaced", source: "installed", stage: "ok" },
         { id: "empty", source: "installed", stage: "discovery" },
         { id: "invalid", source: "installed", stage: "manifest" },
         { id: "other-name", source: "installed", stage: "ok" },
-        { id: "valid", source: "installed", stage: "ok" },
-        { id: "valid", source: "installed", stage: "discovery" },
-        { id: "valid", source: "dev", stage: "discovery" },
+        { id: "valid", source: "installed", stage: "duplicate" },
+        { id: "valid", source: "dev", stage: "duplicate" },
         { id: "dev-only", source: "dev", stage: "ok" },
       ]);
-      assert.strictEqual(plugins[4]?.folder, path.join(pluginsDir, "valid"));
-      const invalid = plugins.find((plugin) => plugin.id === "invalid");
-      assert.include(invalid && "failure" in invalid ? invalid.failure.message : "", "version");
+      assert.strictEqual(plugins[0]?.folder, path.join(pluginsDir, "Copy of valid"));
+      const failures = plugins.map((plugin) => ("failure" in plugin ? plugin.failure.message : ""));
+      assert.include(failures[3], "version");
+      assert.strictEqual(
+        failures[6],
+        'The installed folder "Copy of valid" already has the id valid. Remove or unlink one of them.',
+      );
     }).pipe(Effect.scoped),
   );
 });

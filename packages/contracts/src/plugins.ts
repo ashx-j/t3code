@@ -80,9 +80,13 @@ export type PluginSource = typeof PluginSource.Type;
 export const PluginStatus = Schema.Literals(["active", "disabled", "failed", "loading"]);
 export type PluginStatus = typeof PluginStatus.Type;
 
-/** `crash` is a plugin that stopped the server, turned off until the user turns it on again. */
+/**
+ * `crash` is a plugin that stopped the server, turned off until the user turns it on again.
+ * `duplicate` is a folder whose id an earlier folder already has.
+ */
 export const PluginFailureStage = Schema.Literals([
   "discovery",
+  "duplicate",
   "manifest",
   "compatibility",
   "load",
@@ -123,8 +127,11 @@ export const PluginState = Schema.Struct({
   styles: Schema.optionalKey(
     Schema.Array(Schema.Struct({ file: Schema.String, revision: Schema.String })),
   ),
-  /** The folder a `dev` plugin loads from, as plugins.json lists it. */
-  linkedFolder: Schema.optionalKey(Schema.String),
+  /**
+   * The folder it loads from: a `dev` plugin's as plugins.json lists it, an installed one's inside
+   * the plugins folder.
+   */
+  folder: Schema.optionalKey(Schema.String),
   hasServer: Schema.Boolean,
   hasWeb: Schema.Boolean,
   /** Why its server code failed outside a call since it last started, such as in a timer. */
@@ -229,10 +236,10 @@ export type PluginRescanInput = typeof PluginRescanInput.Type;
 export const PluginUninstallInput = Schema.Struct({
   pluginId: PluginId,
   /**
-   * A `dev` row's `linkedFolder`: unlinks exactly that folder, even when another copy with the
-   * same id is in use. Unlinking a copy that is not in use keeps the id's data.
+   * A row's `folder`, to remove or unlink that copy. A `duplicate` copy goes alone, and the copy
+   * in use keeps the id's data.
    */
-  linkedFolder: Schema.optionalKey(Schema.String),
+  folder: Schema.optionalKey(Schema.String),
 });
 export type PluginUninstallInput = typeof PluginUninstallInput.Type;
 
