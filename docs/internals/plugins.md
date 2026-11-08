@@ -32,11 +32,11 @@ lists that plugin as failed with its switch off until the user turns it on again
 throws at startup can't stop every start. A failure the guard can't tie to a plugin
 stops the server too.
 
-On Node 24 and later, the host runs plugin code in an `AsyncLocalStorage` scope, which Node carries
-into the timers and callbacks that code starts, so a failure with only Node's frames in its stack
-is still the plugin's. Before Node 24 that tracking slows every promise in the process about 3x, so
-it is off there and the guard goes by plugin API errors and stack frames alone. A plugin's rejection
-with only Node's frames then stops the server. The server still allows Node 22.16+ and 23.11+.
+The host runs plugin code in an `AsyncLocalStorage` scope, which Node carries into the timers and
+callbacks that code starts, so a failure with only Node's frames in its stack is still the plugin's.
+Before Node 24 that scope slows every promise in the process about 3x, so the host fails plugins
+with a server half there as incompatible, though the server still allows Node 22.16+ and 23.11+.
+Plugins without one still run.
 
 ## The API and manifests
 

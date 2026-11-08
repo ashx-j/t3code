@@ -35,22 +35,12 @@ export class PluginCodeError extends Schema.TaggedError<PluginCodeError>()("Plug
   }
 }
 
-interface PluginCodeScope {
-  readonly run: <A>(pluginId: PluginId, run: () => A) => A;
-  readonly exit: <A>(run: () => A) => A;
-  readonly getStore: () => PluginId | undefined;
-}
-
 /**
  * The plugin whose code is running, carried through every timer, promise and Node callback that
- * code starts, so a failure whose stack shows only Node's internals is still the plugin's. Before
- * Node 24 this needs promise hooks that slow every promise in the process about 3x, so there it
- * tracks nothing and the failure guard goes by stacks and API errors alone.
+ * code starts, so a failure whose stack shows only Node's internals is still the plugin's. The host
+ * runs no server code before Node 24, where this needs promise hooks.
  */
-export const pluginCodeScope: PluginCodeScope =
-  Number(process.versions.node.split(".")[0]) >= 24
-    ? new NodeAsyncHooks.AsyncLocalStorage<PluginId>()
-    : { run: (_pluginId, run) => run(), exit: (run) => run(), getStore: () => undefined };
+export const pluginCodeScope = new NodeAsyncHooks.AsyncLocalStorage<PluginId>();
 
 /** What every facade group needs from the activation it belongs to. */
 export interface FacadeContext {

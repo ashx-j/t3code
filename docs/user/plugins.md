@@ -27,7 +27,8 @@ top of the page. To use a plugin on several environments, add it to each of them
 ## Turn a plugin on or off
 
 Use the switch on the plugin's row. A plugin that fails to start shows the reason on its row, for
-example when it needs a newer version of T3 Code. **Reload** restarts a plugin with its current
+example when it needs a newer version of T3 Code. A plugin with server code needs the environment's
+T3 Code server to run on Node 24 or later. The desktop app's server does. **Reload** restarts a plugin with its current
 files. Turning a plugin off doesn't stop code it started on its own, such as a timer. If its row
 says some of its code is still running, restart T3 Code to stop it.
 

@@ -365,6 +365,18 @@ const make = Effect.gen(function* () {
         },
       });
     }
+    // Before Node 24, `pluginCodeScope` slows every promise in the process about 3x, and without
+    // it a plugin's rejection with only Node's frames in its stack stops the server.
+    const node = process.versions.node;
+    if (manifest.server !== undefined && Number(node.split(".")[0]) < 24) {
+      return yield* setRecord(plugin.id, {
+        status: "failed",
+        failure: {
+          stage: "compatibility",
+          message: `Needs Node 24 or later for its server code; this server runs Node ${node}.`,
+        },
+      });
+    }
     const webRevision =
       manifest.web === undefined ? undefined : yield* webFiles.serveWebFiles(plugin, manifest.web);
     const started = {

@@ -131,6 +131,34 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
     }).pipe(Effect.provide(layerConfig())),
   );
 
+  it.effect("fails a plugin with server code below Node 24 and runs one without", () =>
+    Effect.gen(function* () {
+      const styles = PluginId.make("styles-plugin");
+      yield* writePluginsConfig({
+        enabled: { [hello]: true, [styles]: true },
+        devPaths: [`${fixturesDir}hello-plugin`, `${fixturesDir}styles-plugin`],
+      });
+      // As `npx t3` runs on Node 22.
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          const running = process.versions.node;
+          Object.defineProperty(process.versions, "node", { value: "22.16.0" });
+          return running;
+        }),
+        (running) =>
+          Effect.sync(() => Object.defineProperty(process.versions, "node", { value: running })),
+      );
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const states = yield* waitForStatuses(host, { [hello]: "failed", [styles]: "active" });
+        assert.deepStrictEqual(stateOf(states, hello)?.failure, {
+          stage: "compatibility",
+          message: "Needs Node 24 or later for its server code; this server runs Node 22.16.0.",
+        });
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.scoped, Effect.provide(layerConfig())),
+  );
+
   it.effect("runs cleanup on disable and stops serving the plugin", () =>
     Effect.gen(function* () {
       yield* writePluginsConfig({

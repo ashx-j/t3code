@@ -49,7 +49,9 @@ The SDK has no dependencies of its own. What else a plugin needs depends on its 
   `>=0.1.6`. A server outside it refuses to install the plugin or start it, and says why.
 - `permissions` is an optional list of what the plugin says it uses. Settings → Plugins shows it on
   the plugin's row, and T3 Code doesn't enforce it.
-- `server` must be CommonJS ending in `.cjs`. `web` is a single-file ES module.
+- `server` must be CommonJS ending in `.cjs`. `web` is a single-file ES module. A plugin with a
+  `server` runs only on a T3 Code server running Node 24 or later, such as the desktop app's. On
+  an older Node, such as `npx t3` on Node 22, it fails to start and says why.
 - `settingsSchema` is JSON Schema. T3 Code draws a form from it on the Plugins page, and top-level
   string fields with `"format": "t3-secret"` are stored in the server's secret store and never shown
   again. `t3-secret` anywhere else is saved as plain text. The form covers top-level strings,
