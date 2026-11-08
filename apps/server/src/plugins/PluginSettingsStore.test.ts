@@ -144,22 +144,23 @@ it.layer(NodeServices.layer)("PluginSettingsStore", (it) => {
       const secretNames = yield* FileSystem.FileSystem.use((fileSystem) =>
         fileSystem.readDirectory(secretsDir),
       );
-      assert.isFalse(secretNames.some((name) => name.startsWith(`plugin-${hello}-`)));
+      assert.isFalse(secretNames.some((name) => name.startsWith(`plugin-${hello}.`)));
     }).pipe(Effect.provide(layerTest())),
   );
 
   it.effect("clears secrets of fields a plugin renamed, and only its own", () =>
     Effect.gen(function* () {
       const store = yield* PluginSettingsStore.PluginSettingsStore;
-      const { secretsDir } = yield* ServerConfig.ServerConfig;
+      const { secretsDir, stateDir } = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const renamed: Schema.JsonObject = {
         type: "object",
         properties: { apiKey: { type: "string", format: "t3-secret" } },
       };
-      // `hello-world`'s secret names start with `plugin-hello-` too.
       const longerId = PluginId.make("hello-world");
       yield* store.update(hello, settingsSchema, { token: "old-secret" });
-      // This field's encoded name contains a hyphen, like a longer id's secret would.
+      // This field's encoded name contains a hyphen, like a longer id does.
       yield* store.update(
         hello,
         { type: "object", properties: { 密钥: { type: "string", format: "t3-secret" } } },
@@ -167,17 +168,13 @@ it.layer(NodeServices.layer)("PluginSettingsStore", (it) => {
       );
       yield* store.update(hello, renamed, { apiKey: "new-secret" });
       yield* store.update(longerId, settingsSchema, { token: "other-secret" });
+      // A longer id's secrets are kept even when it has no settings folder.
+      yield* fileSystem.remove(path.join(stateDir, "plugin-data", longerId), { recursive: true });
 
       yield* store.clear(hello, renamed);
 
-      const secretNames = yield* FileSystem.FileSystem.use((fileSystem) =>
-        fileSystem.readDirectory(secretsDir),
-      );
-      assert.isFalse(
-        secretNames.some(
-          (name) => name.startsWith(`plugin-${hello}-`) && !name.startsWith(`plugin-${longerId}-`),
-        ),
-      );
+      const secretNames = yield* fileSystem.readDirectory(secretsDir);
+      assert.isFalse(secretNames.some((name) => name.startsWith(`plugin-${hello}.`)));
       assert.deepStrictEqual(yield* store.get(longerId, settingsSchema), { token: "other-secret" });
     }).pipe(Effect.provide(layerTest())),
   );

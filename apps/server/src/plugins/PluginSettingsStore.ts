@@ -162,9 +162,11 @@ const keysOutside = (settingsSchema: Schema.JsonObject | undefined, values: Sche
   return Object.keys(values).filter((key) => !Object.hasOwn(properties, key));
 };
 
-// Secret names become file names, so the field is base64url encoded.
+// Secret names become file names, so the field is base64url encoded. Neither ids nor base64url
+// contain `.`, so `plugin-<id>.` starts only that plugin's secrets.
+const secretPrefix = (pluginId: PluginId) => `plugin-${pluginId}.`;
 const secretName = (pluginId: PluginId, field: string) =>
-  `plugin-${pluginId}-${Buffer.from(field, "utf8").toString("base64url")}`;
+  `${secretPrefix(pluginId)}${Buffer.from(field, "utf8").toString("base64url")}`;
 
 const formatPathSegment = (segment: PropertyKey | { readonly key: PropertyKey }) => {
   const key = Predicate.isObject(segment) ? segment.key : segment;
@@ -389,15 +391,8 @@ const make = Effect.gen(function* () {
       const names = new Set(
         Array.from(secretFields(settingsSchema), (field) => secretName(pluginId, field)),
       );
-      // Also secrets of fields the plugin has since renamed. A longer id can share the prefix
-      // (`foo-bar` for `foo`), and every id with secrets has a settings folder, so those are kept.
-      const prefix = `plugin-${pluginId}-`;
+      // Also secrets of fields the plugin has since renamed.
       if (secretStore.directory !== undefined) {
-        const longerIds = (yield* fileSystem
-          .readDirectory(path.dirname(path.dirname(settingsPath(pluginId))))
-          .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))).filter((id) =>
-          id.startsWith(`${pluginId}-`),
-        );
         const files = yield* fileSystem
           .readDirectory(secretStore.directory)
           .pipe(
@@ -407,12 +402,8 @@ const make = Effect.gen(function* () {
             ),
           );
         for (const file of files) {
-          const name = file.endsWith(".bin") ? file.slice(0, -".bin".length) : "";
-          if (
-            name.startsWith(prefix) &&
-            !longerIds.some((id) => name.startsWith(`plugin-${id}-`))
-          ) {
-            names.add(name);
+          if (file.startsWith(secretPrefix(pluginId)) && file.endsWith(".bin")) {
+            names.add(file.slice(0, -".bin".length));
           }
         }
       }
