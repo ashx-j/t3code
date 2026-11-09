@@ -202,14 +202,19 @@ const replacementsVersionAtom = Atom.make(0).pipe(Atom.keepAlive);
 
 // The plugin whose id sorts first wins, so parallel loading can't change which one draws a part;
 // within one plugin its newest replacement wins.
+const winningEntry = <Entry extends { readonly owner: PluginOwner }>(
+  entries: ReadonlyArray<Entry>,
+) =>
+  entries.reduce<Entry | undefined>(
+    (winner, entry) =>
+      winner === undefined || entry.owner.pluginId <= winner.owner.pluginId ? entry : winner,
+    undefined,
+  );
+
 const replacementAtom = <Part extends PluginPartName>(part: Part) =>
   Atom.make((get) => {
     get(replacementsVersionAtom);
-    return replacements[part].reduce<PluginReplacementEntry<Part> | undefined>(
-      (winner, entry) =>
-        winner === undefined || entry.owner.pluginId <= winner.owner.pluginId ? entry : winner,
-      undefined,
-    );
+    return winningEntry(replacements[part]);
   });
 
 export const pluginReplacementAtoms: {
@@ -278,7 +283,7 @@ export const pluginPartNotesAtom = Atom.family((pluginId: string) =>
     const add = (environmentId: string, note: string) =>
       notes.set(environmentId, (notes.get(environmentId) ?? new Set()).add(note));
     for (const part of Object.keys(replacements) as Array<PluginPartName>) {
-      const winner = get(pluginReplacementAtoms[part])?.owner;
+      const winner = winningEntry<{ readonly owner: PluginOwner }>(replacements[part])?.owner;
       for (const { owner } of replacements[part]) {
         if (owner.pluginId !== pluginId || winner === undefined || winner.pluginId === pluginId) {
           continue;
