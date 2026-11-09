@@ -19,10 +19,6 @@ const whenIdle = (run: () => void) => {
   return () => window.clearTimeout(handle);
 };
 
-/**
- * Follows the plugins of each environment this browser loads plugin UI from, the main one unless
- * the user turned it off.
- */
 export function PluginLoaderStarter() {
   const environmentIds = useAtomValue(pluginUiEnvironmentsAtom);
   return environmentIds.map((environmentId) => (
@@ -30,11 +26,8 @@ export function PluginLoaderStarter() {
   ));
 }
 
-/**
- * Once the app is idle, or with the app when the environment's plugins drew here last time,
- * downloads the web plugin runtime only when an active plugin of the environment has a web part,
- * and the small stylesheet runtime only when one has a `styles` folder.
- */
+// Downloads the web plugin runtime only once a plugin of the environment has an active web part,
+// and the small stylesheet runtime only once one has a `styles` folder.
 function PluginEnvironmentLoader({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const router = useRouter();
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts and stops a runtime that lives outside React

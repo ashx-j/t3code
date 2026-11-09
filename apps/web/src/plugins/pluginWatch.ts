@@ -7,17 +7,12 @@ import { pluginUiEnvironmentsAtom, rememberDrawsPlugins } from "./pluginFollow";
 
 const isPluginOn = (plugin: PluginState) => plugin.enabled && plugin.status === "active";
 
-/** Whether the web runtime should run this plugin's web part. */
 export const isLoadableWebPlugin = (plugin: PluginState) => plugin.hasWeb && isPluginOn(plugin);
 
-/** Whether this plugin has stylesheets for the page now. */
 export const hasLoadableStyles = (plugin: PluginState) =>
   plugin.styles !== undefined && plugin.styles.length > 0 && isPluginOn(plugin);
 
-/**
- * Calls `onFound` once the environment has a plugin that `wanted` accepts; returns the function
- * that stops watching. The runtimes follow the same atom, so they open no second stream.
- */
+// Calls `onFound` once. The runtimes follow the same atom, so they open no second stream.
 export function watchForPlugins(
   environmentId: EnvironmentId,
   wanted: (plugin: PluginState) => boolean,
@@ -36,7 +31,6 @@ export function watchForPlugins(
   );
 }
 
-/** Keeps `drewPluginsLastTime` up to date for the environment until stopped. */
 export const rememberDrawingPlugins = (environmentId: EnvironmentId) =>
   appAtomRegistry.subscribe(
     pluginEnvironment.pluginsLive({ environmentId, input: {} }),
@@ -67,10 +61,7 @@ const appWideEnvironmentsAtom = Atom.make((get) => {
   return owners;
 });
 
-/**
- * Calls `onChange` with the environment's plugins now and after each change, until stopped.
- * `appWide` says whether a plugin's app-wide contributions come from this environment.
- */
+/** `appWide` says whether a plugin's app-wide contributions come from this environment. */
 export function followPlugins(
   environmentId: EnvironmentId,
   onChange: (

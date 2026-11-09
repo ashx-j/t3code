@@ -7,8 +7,6 @@ import { type PluginOwner, setPluginWebFailure } from "./pluginRegistry";
 // Once per plugin start: a panel that breaks on every render would otherwise report each time.
 const reported = new WeakSet<PluginOwner>();
 
-// On the plugin's row in Settings and in a toast, since the fallback quietly takes the plugin's
-// place.
 const reportRenderFailure = (owner: PluginOwner, what: string, error: unknown) => {
   if (reported.has(owner)) return;
   reported.add(owner);
@@ -22,10 +20,7 @@ const reportRenderFailure = (owner: PluginOwner, what: string, error: unknown) =
   });
 };
 
-/**
- * Draws something a plugin contributed, and `fallback` once it throws. `what` names it for
- * people, such as "Its panel Notes".
- */
+/** `what` names the contribution for people, such as "Its panel Notes". */
 export function PluginRenderBoundary(props: {
   readonly owner: PluginOwner;
   readonly what: string;

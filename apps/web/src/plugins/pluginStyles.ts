@@ -8,12 +8,8 @@ import { followPlugins, hasLoadableStyles } from "./pluginWatch";
 const stylesKey = (plugin: PluginState) =>
   (plugin.styles ?? []).map(({ file, revision }) => `${file}@${revision}`).join(",");
 
-/**
- * Adds the stylesheets of the environment's active plugins to the end of the page's head, after
- * T3's own CSS and the theme, and follows plugin state until stopped. Changed files replace a
- * plugin's old ones once all of them have downloaded. A plugin on in several environments adds
- * them from one, as `followPlugins` decides.
- */
+// Sheets go at the end of the head, after T3's own CSS and the theme. Changed files replace a
+// plugin's old ones once all of them have downloaded.
 export function startPluginStyles(environmentId: EnvironmentId): () => void {
   const applied = new Map<
     PluginState["id"],
@@ -108,7 +104,6 @@ export function startPluginStyles(environmentId: EnvironmentId): () => void {
     stopped = true;
     stopFollowing();
     pending.clear();
-    // Deleting the entry a Map or Set iteration is on is safe.
     for (const pluginId of applied.keys()) remove(pluginId);
     for (const pluginId of failed) clearFailure(pluginId);
   };

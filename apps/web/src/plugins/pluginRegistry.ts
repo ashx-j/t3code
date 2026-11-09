@@ -37,10 +37,7 @@ const versionAtom = Atom.make(0).pipe(Atom.keepAlive);
 
 const bump = () => appAtomRegistry.set(versionAtom, appAtomRegistry.get(versionAtom) + 1);
 
-/**
- * Hands back the previous list while it holds the same entries, so a registry change that
- * doesn't touch a reader's list doesn't re-render the component that reads it.
- */
+// Keeps the previous list while its entries match, so a change elsewhere re-renders no reader.
 const stableList = <Entry>() => {
   let previous: ReadonlyArray<Entry> = [];
   return (next: ReadonlyArray<Entry>) => {
@@ -57,7 +54,6 @@ export const pluginContributionKey = (environmentId: EnvironmentId, pluginId: st
 export const pluginRightPanelKey = (environmentId: EnvironmentId, pluginId: string, name: string) =>
   `${pluginContributionKey(environmentId, pluginId)}\u0000${name}`;
 
-/** Adds a plugin right panel; returns the function that removes it. */
 export function registerPluginRightPanel(entry: PluginRightPanelEntry): () => void {
   const key = pluginRightPanelKey(entry.environmentId, entry.pluginId, entry.name);
   if (rightPanels.has(key)) {
@@ -94,7 +90,7 @@ export interface PluginSettingsPanelEntry {
   readonly owner: PluginOwner;
 }
 
-/** Replaces a plugin's generated settings form; returns the function that removes it. */
+/** Replaces the plugin's generated settings form. */
 export function registerPluginSettingsPanel(entry: PluginSettingsPanelEntry): () => void {
   const key = pluginContributionKey(entry.owner.environmentId, entry.owner.pluginId);
   settingsPanels.set(key, entry);
@@ -113,7 +109,6 @@ export const pluginSettingsPanelAtom = Atom.family((key: string) =>
   }),
 );
 
-/** Records why a plugin's web bundle did not load; `undefined` clears it. */
 export function setPluginWebFailure(
   environmentId: EnvironmentId,
   pluginId: string,
@@ -126,7 +121,6 @@ export function setPluginWebFailure(
   bump();
 }
 
-/** Why the plugin's web part failed, by environment, for its row in Settings. */
 export const pluginWebFailuresAtom = Atom.family((pluginId: string) =>
   Atom.make((get): ReadonlyMap<string, string> => {
     get(versionAtom);
@@ -139,7 +133,6 @@ export const pluginWebFailuresAtom = Atom.family((pluginId: string) =>
   }),
 );
 
-/** Records that a plugin's web part finished `activate`; returns the function that clears it. */
 export function markPluginWebLoaded(environmentId: EnvironmentId, pluginId: string): () => void {
   const key = pluginContributionKey(environmentId, pluginId);
   webLoaded.add(key);
@@ -149,7 +142,7 @@ export function markPluginWebLoaded(environmentId: EnvironmentId, pluginId: stri
   };
 }
 
-/** Whether the plugin's web part has loaded, by `pluginContributionKey`. */
+/** Keyed by `pluginContributionKey`. */
 export const pluginWebLoadedAtom = Atom.family((key: string) =>
   Atom.make((get) => {
     get(versionAtom);
@@ -157,7 +150,6 @@ export const pluginWebLoadedAtom = Atom.family((key: string) =>
   }),
 );
 
-/** Adds a plugin command to the command palette; returns the function that removes it. */
 export function registerPluginCommand(entry: PluginCommandEntry): () => void {
   const key = `${entry.environmentId}\u0000${entry.command}`;
   if (commands.has(key)) {
@@ -172,7 +164,6 @@ export function registerPluginCommand(entry: PluginCommandEntry): () => void {
   };
 }
 
-/** A loaded plugin command's name for people, such as in Keybindings settings. */
 export function pluginCommandLabel(command: string): string | undefined {
   for (const entry of commands.values()) {
     if (entry.command === command) return `${entry.pluginName}: ${entry.title}`;
@@ -187,7 +178,6 @@ export const pluginCommandsAtom = Atom.make((get) => {
   return stableCommands([...commands.values()]);
 });
 
-/** The plugin that registered a contribution, so its failures show on that plugin's row. */
 export interface PluginOwner {
   readonly environmentId: EnvironmentId;
   readonly pluginId: string;

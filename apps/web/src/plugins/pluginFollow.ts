@@ -61,10 +61,8 @@ const readDrew = (): ReadonlyArray<string> => {
   }
 };
 
-/**
- * Whether the environment had plugins that draw in this browser when the app last ran. Their
- * plugin UI then starts with the app instead of once it is idle, so the layout settles sooner.
- */
+// Plugins that drew here last time start with the app instead of once it is idle, so the layout
+// they change settles sooner.
 export const drewPluginsLastTime = (environmentId: EnvironmentId) =>
   readDrew().includes(environmentId);
 
@@ -76,18 +74,17 @@ export function rememberDrawsPlugins(environmentId: EnvironmentId, draws: boolea
     if (next.length === 0) pluginStorage()?.removeItem(DREW_KEY);
     else pluginStorage()?.setItem(DREW_KEY, JSON.stringify(next));
   } catch {
-    // A full or blocked storage starts plugin UI once the app is idle, as before.
+    // A full or blocked storage leaves plugin UI to start once the app is idle.
   }
 }
 
-/** Whether plugin UI loads from the environment: the main one unless turned off, others once on. */
 export const loadsPluginUi = (
   choices: PluginUiChoices,
   environmentId: EnvironmentId,
   primaryEnvironmentId: EnvironmentId | null,
 ) => choices.get(environmentId) ?? environmentId === primaryEnvironmentId;
 
-/** `choices` with the environment turned on or off; a choice equal to the default is dropped. */
+/** A choice equal to the default is dropped. */
 export function withPluginUiChoice(
   choices: PluginUiChoices,
   environmentId: EnvironmentId,
@@ -100,7 +97,7 @@ export function withPluginUiChoice(
   return next;
 }
 
-/** The chosen environments in order: the main one first, then the others in the order chosen. */
+/** The main environment first, then the others in the order chosen. */
 export const chosenPluginUiEnvironments = (
   choices: PluginUiChoices,
   primaryEnvironmentId: EnvironmentId | null,
@@ -114,11 +111,6 @@ export const chosenPluginUiEnvironments = (
   ),
 ];
 
-/**
- * The chosen environments that run plugins, in `chosenPluginUiEnvironments` order. Each loads its
- * plugins' web halves and styles; a plugin on in several adds its app-wide contributions from the
- * first of them.
- */
 export const pluginUiEnvironmentsAtom = Atom.make((get): ReadonlyArray<EnvironmentId> => {
   const next = chosenPluginUiEnvironments(
     get(pluginUiChoicesAtom),

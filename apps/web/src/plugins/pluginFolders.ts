@@ -3,7 +3,6 @@ import { PLUGIN_UPLOAD_MAX_BYTES, PLUGIN_UPLOAD_MAX_FILES } from "@t3tools/contr
 const MANIFEST_FILE = "t3-plugin.json";
 const MAX_DEPTH = 32;
 
-/** A plugin folder the user dropped or picked, listed as the files `uploadPluginFolder` sends. */
 export interface PluginFolder {
   readonly name: string;
   /** Rejects with an error meant for the user when the folder is not a plugin or too large. */
@@ -23,7 +22,6 @@ const isLeftOut = (path: string) => path.split("/").some((segment) => LEFT_OUT.h
 const notAPlugin = (name: string) =>
   new Error(`${name} has no ${MANIFEST_FILE}, so it is not a T3 Code plugin.`);
 
-// Names the top-level entry holding the most bytes, which is usually the reason.
 const tooLarge = (name: string, files: ReadonlyArray<PluginFolderFile>) => {
   const bytesByEntry = new Map<string, number>();
   for (const { path, file } of files) {
@@ -89,7 +87,7 @@ async function readDroppedFolder(folder: FileSystemDirectoryEntry) {
   return withinLimits(folder.name, files);
 }
 
-/** The dropped folders. Read during the drop event: the browser empties the transfer after it. */
+/** Call during the drop event: the browser empties the transfer after it. */
 export function droppedFolders(dataTransfer: DataTransfer): ReadonlyArray<PluginFolder> {
   return Array.from(dataTransfer.items).flatMap((item) => {
     const entry = item.kind === "file" ? item.webkitGetAsEntry() : null;
@@ -99,7 +97,6 @@ export function droppedFolders(dataTransfer: DataTransfer): ReadonlyArray<Plugin
   });
 }
 
-/** The folder picked with a `webkitdirectory` file input, from the files it lists. */
 export function pickedFolder(files: ReadonlyArray<File>): PluginFolder | undefined {
   const name = files[0]?.webkitRelativePath.split("/")[0];
   if (name === undefined || name === "") return undefined;

@@ -8,7 +8,6 @@ import { useRightPanelStore } from "../rightPanelStore";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { pluginRightPanelsAtom } from "./pluginRegistry";
 
-/** Plugin right panels that can open in the routed thread, each with its open action. */
 function usePluginPanelEntries(environmentId: EnvironmentId | null) {
   const panels = useAtomValue(pluginRightPanelsAtom(environmentId ?? ""));
   const target = resolveThreadRouteTarget(useParams({ strict: false }));
@@ -26,7 +25,6 @@ function usePluginPanelEntries(environmentId: EnvironmentId | null) {
   }));
 }
 
-/** The add-panel menu's entries for right panels that web plugins registered. */
 export function PluginPanelMenuItems(props: {
   readonly environmentId: EnvironmentId | null;
   readonly onOpen: () => void;
@@ -52,7 +50,6 @@ export function PluginPanelMenuItems(props: {
   );
 }
 
-/** The empty right panel's entries for plugin panels, styled like its built-in rows. */
 export function PluginPanelLauncherItems(props: { readonly environmentId: EnvironmentId | null }) {
   const entries = usePluginPanelEntries(props.environmentId);
   return entries.map((entry) => (

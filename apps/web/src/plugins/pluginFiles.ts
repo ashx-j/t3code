@@ -45,10 +45,8 @@ const isPassingDownloadFailure = (error: unknown) =>
   (error instanceof PluginFileRequestError && [502, 503, 504].includes(error.status));
 const DOWNLOAD_RETRY_DELAYS_MS = [1_000, 5_000, 30_000];
 
-/**
- * Fetches a file the plugin's server serves with the connection's credentials. A file whose URL
- * names its contents, such as the web bundle, is one the server lets browsers cache for good.
- */
+// A file whose URL names its contents, such as the web bundle, is one the server lets browsers
+// cache for good.
 export async function fetchPluginFile(
   environmentId: EnvironmentId,
   plugin: PluginState,
@@ -68,10 +66,7 @@ export async function fetchPluginFile(
   return response;
 }
 
-/**
- * Runs `download` again after a failure that can pass, 1, 5 and then 30 seconds later. Resolves
- * undefined when `cancelled` turns true during a wait.
- */
+/** Resolves undefined when `cancelled` turns true during a wait between tries. */
 export async function withDownloadRetries<A>(
   download: () => Promise<A>,
   cancelled: () => boolean,
@@ -90,10 +85,8 @@ export async function withDownloadRetries<A>(
 
 const decodeMutationResult = Schema.decodeUnknownSync(Schema.fromJsonString(PluginMutationResult));
 
-/**
- * Installs a dropped plugin folder on the environment. The files go over HTTP to a URL the server
- * signs, which needs no other credentials, so a large folder does not hold up the WebSocket.
- */
+// The files go over HTTP to a URL the server signs, which needs no other credentials, so a large
+// folder does not hold up the WebSocket.
 export async function uploadPluginFolder(
   environmentId: EnvironmentId,
   files: ReadonlyArray<PluginFolderFile>,

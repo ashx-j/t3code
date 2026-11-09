@@ -47,10 +47,6 @@ function PluginPanelNotice(props: {
   );
 }
 
-/**
- * The plugin's name, or its id while the list loads or once it is uninstalled, and whether its
- * panel may still register.
- */
 function usePluginPanelState(environmentId: EnvironmentId, pluginId: string) {
   const result = useAtomValue(pluginEnvironment.pluginsLive({ environmentId, input: {} }));
   const loadsUi = loadsPluginUi(
@@ -94,7 +90,6 @@ function PluginNotLoadedNotice(props: {
   );
 }
 
-/** A right panel a web plugin registered, or a notice while it loads or when it is not loaded. */
 export function PluginPanelSurface(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: string;

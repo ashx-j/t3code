@@ -2,15 +2,13 @@ import type { ReactNode } from "react";
 
 import type { PluginRpcMap } from "./shared.ts";
 
-/** `invoke`'s input: optional when the method's input may be undefined. */
 type RpcInputArgs<Input> = undefined extends Input ? [input?: Input] : [input: Input];
 
-/** Anything React can draw: an element, text, or null for nothing. */
 export type WebPluginNode = ReactNode;
 
 /**
- * A React function component. Only React's types are needed: build with
- * `@t3tools/plugin-sdk/vite` so the bundle uses T3's React instead of its own copy.
+ * Only React's types are needed: build with `@t3tools/plugin-sdk/vite` so the bundle uses T3's
+ * React instead of its own copy.
  */
 export type WebPluginComponent<Props = Record<string, never>> = (props: Props) => WebPluginNode;
 
@@ -110,7 +108,6 @@ export interface WebPluginDefinition<Rpc extends PluginRpcMap = PluginRpcMap> {
   readonly activate: (api: WebPluginApi<Rpc>) => void | Promise<void>;
 }
 
-/** Hooks T3 shares with web plugins through `@t3tools/plugin-sdk/atom-react`. */
 export const HOST_ATOM_REACT_EXPORTS = [
   "RegistryContext",
   "useAtomMount",
@@ -120,7 +117,6 @@ export const HOST_ATOM_REACT_EXPORTS = [
   "useAtomValue",
 ] as const;
 
-/** `Atom` functions T3 shares with web plugins through `@t3tools/plugin-sdk/atom`. */
 export const HOST_ATOM_EXPORTS = [
   "family",
   "keepAlive",
@@ -133,7 +129,6 @@ export const HOST_ATOM_EXPORTS = [
   "writable",
 ] as const;
 
-/** Components T3 shares with web plugins through `@t3tools/plugin-sdk/ui`. */
 export const HOST_UI_EXPORTS = [
   "Badge",
   "Button",

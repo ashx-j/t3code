@@ -6,7 +6,6 @@ import { HOST_ATOM_EXPORTS, HOST_ATOM_REACT_EXPORTS, HOST_UI_EXPORTS } from "./w
 
 const HOST_PREFIX = "\0t3-plugin-host:";
 
-/** Imports that T3 provides at runtime, mapped to their key on `globalThis.__t3PluginHost`. */
 const HOST_MODULES: Readonly<Record<string, string>> = {
   react: "react",
   "react-dom": "reactDom",

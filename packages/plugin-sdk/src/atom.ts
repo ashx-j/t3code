@@ -40,7 +40,6 @@ export interface AtomContext {
   addFinalizer(this: AtomContext, cleanup: () => void): void;
 }
 
-/** What a writable atom's write function gets. */
 export interface WriteContext<A> {
   get<T>(this: WriteContext<A>, atom: Atom<T>): T;
   setSelf(this: WriteContext<A>, value: A): void;
@@ -56,9 +55,7 @@ export declare const make: {
   <A>(read: (get: AtomContext) => A): Atom<A>;
   <A>(initialValue: A): Writable<A>;
 };
-/** Makes an atom whose value `read` returns. */
 export declare const readable: <A>(read: (get: AtomContext) => A) => Atom<A>;
-/** Makes an atom whose value `read` returns and whose writes `write` handles. */
 export declare const writable: <R, W>(
   read: (get: AtomContext) => R,
   write: (ctx: WriteContext<R>, value: W) => void,
@@ -82,5 +79,4 @@ export declare const transform: {
 export declare const keepAlive: <T extends Atom<unknown>>(atom: T) => T;
 /** A copy of the atom that keeps its value for `milliseconds` after the last reader leaves. */
 export declare const setIdleTTL: <T extends Atom<unknown>>(atom: T, milliseconds: number) => T;
-/** A copy of the atom with a name for debugging. */
 export declare const withLabel: <T extends Atom<unknown>>(atom: T, name: string) => T;

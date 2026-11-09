@@ -26,6 +26,5 @@ const fromPluginUi = <A>(pick: (ui: PluginUi) => Atom.Atom<A>, none: A) =>
 
 export const pluginCommandsAtom = fromPluginUi((ui) => ui.pluginCommandsAtom, NONE);
 
-/** A loaded plugin command's name for people, such as in Keybindings settings. */
 export const pluginCommandLabel = (command: string) =>
   loadedPluginUi()?.pluginCommandLabel(command);

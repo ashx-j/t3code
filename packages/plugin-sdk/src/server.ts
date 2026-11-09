@@ -16,7 +16,6 @@ export interface PluginRpcContext {
   readonly access: PluginRpcAccess;
 }
 
-/** Answers one method of a `PluginRpcMap`. */
 export type PluginRpcHandler<
   Method extends PluginRpcMap["methods"][string] = PluginRpcMap["methods"][string],
 > = (

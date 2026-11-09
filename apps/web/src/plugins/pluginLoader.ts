@@ -107,7 +107,6 @@ const isWebPluginDefinition = (value: unknown): value is WebPluginDefinition =>
   "activate" in value &&
   typeof value.activate === "function";
 
-// A plugin can throw anything; a thrown string is still its message.
 const errorText = (error: unknown) =>
   (error instanceof Error
     ? error.message
@@ -134,7 +133,6 @@ async function importBundle(code: string) {
   }
 }
 
-/** Runs plugin code from a user action; a failure becomes an error toast. */
 const runReportingFailure = (label: string, run: () => void | Promise<void>) => {
   void Promise.resolve()
     .then(run)
@@ -145,15 +143,10 @@ const runReportingFailure = (label: string, run: () => void | Promise<void>) => 
 
 interface WebPluginApiContext {
   readonly environmentId: EnvironmentId;
-  /** Whether this plugin's app-wide contributions come from this environment; see `followPlugins`. */
   readonly appWide: boolean;
   readonly plugin: PluginState;
-  /**
-   * Keeps a cleanup for unload, or runs it at once when the plugin is already unloaded. Returns the
-   * function that forgets the cleanup without running it.
-   */
+  /** Runs the cleanup at once when the plugin already unloaded. */
   readonly track: (cleanup: () => void) => () => void;
-  /** One dispatcher scope shared by every plugin; commands add and remove their own entries. */
   readonly shortcutHandlers: () => CommandHandlers;
   readonly navigate: (path: string) => void;
   /** False once the plugin unloaded: a timer or callback it left behind must change nothing. */
@@ -191,7 +184,6 @@ function makeWebPluginApi({
           { reportFailure: false },
         );
         if (result._tag === "Success") return result.value.output;
-        // The server's reason, so the plugin's UI can say why its own call failed.
         const failure = squashAtomCommandFailure(result);
         throw new Error(
           failure instanceof Error && failure.message !== ""
@@ -296,7 +288,6 @@ function makeWebPluginApi({
           return objectUrl;
         });
       assetUrls.set(name, url);
-      // A failed fetch is asked again next time instead of failing for the plugin's lifetime.
       url.catch(() => {
         if (assetUrls.get(name) === url) assetUrls.delete(name);
       });
@@ -336,14 +327,12 @@ function makeWebPluginApi({
 }
 
 interface LoadedPlugin {
-  /** Version, start revision and whether it is app-wide here: a change of any loads it again. */
   readonly key: string;
   readonly cleanups: Set<() => void>;
   disposed: boolean;
 }
 
-// The server gives `activate` 30 seconds; a bundle that never loads or settles fails the same way
-// instead of holding up every other plugin behind it.
+// The server gives `activate` 30 seconds too.
 const WEB_PLUGIN_DEADLINE_MS = 30_000;
 
 const withDeadline = async <A>(work: Promise<A>, what: string) => {
@@ -374,12 +363,7 @@ const runCleanups = (cleanups: Iterable<() => void>) => {
   }
 };
 
-/**
- * Loads the environment's active web plugins and follows plugin state until stopped. Each plugin
- * fails alone: a failed fetch, import or activate is recorded for the Plugins page. Several
- * environments load at once, and a plugin on in more than one adds its commands and injected
- * styles from one of them, as `followPlugins` decides.
- */
+/** Each plugin fails alone: a failed fetch, import or activate is recorded for the Plugins page. */
 export function startPluginLoader(
   environmentId: EnvironmentId,
   navigate: (path: string) => void,
@@ -416,8 +400,6 @@ export function startPluginLoader(
     // Cleared here rather than once `activate` resolves, so a part that throws while it awaits
     // keeps its note.
     setPluginWebFailure(environmentId, plugin.id, undefined);
-    // Registrations that arrive after unload, from a slow `activate` or a later callback, are
-    // undone at once instead of outliving the plugin.
     const track = (cleanup: () => void) => {
       if (entry.disposed) runCleanups([cleanup]);
       else entry.cleanups.add(cleanup);
@@ -460,7 +442,6 @@ export function startPluginLoader(
       // A restored panel the plugin did not register stops waiting for it here.
       if (!entry.disposed) track(markPluginWebLoaded(environmentId, plugin.id));
     } catch (error) {
-      // A load that was replaced or stopped meanwhile has nothing to report.
       if (entry.disposed) return;
       entry.disposed = true;
       runCleanups(entry.cleanups);

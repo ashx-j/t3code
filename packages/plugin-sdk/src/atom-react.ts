@@ -12,7 +12,6 @@ export interface Registry {
   /** Keeps the atom alive until the returned function runs. */
   mount<A>(atom: Atom<A>): () => void;
   refresh<A>(atom: Atom<A>): void;
-  /** Returns the function that stops the subscription. */
   subscribe<A>(
     atom: Atom<A>,
     onValue: (value: A) => void,
