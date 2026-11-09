@@ -1,16 +1,20 @@
 import {
   type AuthEnvironmentScope,
   PluginError,
+  type PluginCreateUploadUrlInput,
   type PluginId,
   type PluginListInput,
   type PluginReloadInput,
   type PluginRescanInput,
   type PluginSetEnabledInput,
+  type PluginUninstallInput,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import type * as PluginHost from "./PluginHost.ts";
+import type * as PluginInstaller from "./PluginInstaller.ts";
+import type * as PluginUploads from "./pluginUploads.ts";
 
 const toRpcError = (pluginId: PluginId) => (error: { readonly message: string }) =>
   new PluginError({ message: error.message, pluginId });
@@ -18,6 +22,8 @@ const toRpcError = (pluginId: PluginId) => (error: { readonly message: string })
 /** The `plugins.*` WebSocket handlers. `scopes` are the connected session's. */
 export const makePluginRpcHandlers = (
   pluginHost: PluginHost.PluginHost["Service"],
+  installer: PluginInstaller.PluginInstaller["Service"],
+  uploads: PluginUploads.PluginUploads["Service"],
   scopes: ReadonlyArray<AuthEnvironmentScope>,
 ) => ({
   [WS_METHODS.pluginsList]: (_input: PluginListInput) => pluginHost.listForClient(scopes),
@@ -33,6 +39,12 @@ export const makePluginRpcHandlers = (
       Effect.map((plugin) => ({ plugin })),
       Effect.mapError(toRpcError(input.pluginId)),
     ),
+  [WS_METHODS.pluginsCreateUploadUrl]: (_input: PluginCreateUploadUrlInput) =>
+    uploads.issueUrl.pipe(Effect.mapError((error) => new PluginError({ message: error.message }))),
   [WS_METHODS.pluginsRescan]: (_input: PluginRescanInput) =>
     pluginHost.rescan.pipe(Effect.mapError((error) => new PluginError({ message: error.message }))),
+  [WS_METHODS.pluginsUninstall]: (input: PluginUninstallInput) =>
+    installer
+      .uninstall(input.pluginId, input.folder)
+      .pipe(Effect.as({ pluginId: input.pluginId }), Effect.mapError(toRpcError(input.pluginId))),
 });

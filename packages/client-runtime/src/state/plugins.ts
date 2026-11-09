@@ -39,9 +39,18 @@ export function createPluginEnvironmentAtoms<R, E>(
       label: "environment-data:plugins:reload",
       tag: WS_METHODS.pluginsReload,
     }),
+    // Signs the URL a dropped folder is uploaded to; see `PluginCreateUploadUrlResult`.
+    createPluginUploadUrl: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:plugins:create-upload-url",
+      tag: WS_METHODS.pluginsCreateUploadUrl,
+    }),
     rescanPlugins: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:plugins:rescan",
       tag: WS_METHODS.pluginsRescan,
+    }),
+    uninstallPlugin: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:plugins:uninstall",
+      tag: WS_METHODS.pluginsUninstall,
     }),
     // Plugin stylesheets are plain GETs; over T3 Connect each needs its own DPoP proof.
     pluginFileHeaders: createRuntimeCommand(runtime, {

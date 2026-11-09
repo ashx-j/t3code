@@ -21,7 +21,7 @@ written by hand and need no build.
 - `id` uses lowercase letters, digits and hyphens, starts with a letter and has up to 32
   characters. It names the plugin's folder.
 - `engines.t3` is a version range made of `^`, `>=`, `>`, `<=`, `<`, `=` and `||`, such as
-  `>=0.1.6`. A server outside it refuses to start the plugin, and says why.
+  `>=0.1.6`. A server outside it refuses to install the plugin or start it, and says why.
 - `permissions` is an optional list of what the plugin says it uses. Settings → Plugins shows it on
   the plugin's row, and T3 Code doesn't enforce it.
 - A `themes/` folder of theme JSON files is published while the plugin is active. T3 Code
@@ -67,5 +67,9 @@ parts of your design to survive that. Build each part on the most stable thing T
 ## Developing a plugin
 
 Add the plugin's folder to `devPaths` in `plugins.json` in the T3 Code data directory, turn the
-plugin on in Settings → Plugins, and use **Reload** after each change. A linked folder whose id an
-installed plugin already has fails as a duplicate, so remove the installed copy first.
+plugin on in Settings → Plugins, and use **Reload** after each change. **Unlink** on its row removes
+it from `devPaths` and leaves the folder alone. A linked folder whose id an installed plugin already
+has fails as a duplicate, so remove the installed copy first.
+
+To install a finished plugin, drag its folder onto Settings → Plugins, or use **Add plugin** to
+choose it. Unlink a linked copy first. It installs turned off, so turn it on on its row.

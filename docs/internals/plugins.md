@@ -3,12 +3,14 @@
 A plugin is a folder with a `t3-plugin.json` manifest
 ([schema](../../packages/contracts/src/plugins.ts)).
 [`PluginHost`](../../apps/server/src/plugins/PluginHost.ts) finds plugins, keeps them on or off
-and publishes their themes.
+and publishes their themes, and
+[`PluginInstaller`](../../apps/server/src/plugins/PluginInstaller.ts) installs them.
 
 ## Manifests
 
 Manifests ignore keys they don't know, so a newer manifest key is lost silently on an older T3.
-`engines.t3` is how a plugin requires a newer T3: the server refuses to start a version outside it.
+`engines.t3` is how a plugin requires a newer T3: the server refuses to install or start a version
+outside it.
 
 ## State lives beside T3's
 
@@ -18,11 +20,23 @@ start when a fork's id collides with an upstream one.
 
 ## Installing
 
-Discovery takes the id from the manifest, because people copy plugin folders in by hand. The
-enabled flag belongs to the id, so a later folder with an id already listed fails as a duplicate.
-Installed folders come first, in name order, then dev paths. Discovery also forgets the enabled flag
-of every id no folder has, so a folder copied in later with that id starts off. Nothing watches
-`plugins/`: the server reads it at startup, on reload and when Settings asks.
+Installs copy into `plugin-staging/`, outside `plugins/`, so discovery never sees a half-written
+plugin. Only the swap takes the lifecycle lock, so a slow copy does not block other plugins. The
+old version waits in staging during the swap, and startup puts it back if a crash left it there.
+
+Clients upload a dropped folder's files, never its path, which would mean nothing on a remote
+environment. They post them over HTTP to a URL `plugins.createUploadUrl` signs for 5 minutes,
+because one large WebSocket message holds up every other stream on the socket. As for attachments,
+the signature is the credential, so the upload works the same on every kind of connection. Each URL
+installs once. The server keeps its unused URLs in memory, so a restart refuses those it signed
+before.
+
+Discovery takes the id from the manifest, because people copy plugin folders in by hand. The enabled
+flag belongs to the id, so a later folder with an id already listed fails as a duplicate. Installed
+folders come first, in name order, then dev paths. Removing or unlinking a duplicate deletes only
+its folder or link. Discovery also forgets the enabled flag of every id no folder has, so a folder
+copied in later with that id starts off. Nothing watches `plugins/`: the server reads it at startup,
+on reload and when Settings asks.
 
 ## Clients
 

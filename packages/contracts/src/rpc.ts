@@ -376,7 +376,11 @@ import {
   ScheduledTaskMutationResult,
 } from "./scheduledTask.ts";
 import {
+  PluginCreateUploadUrlInput,
+  PluginCreateUploadUrlResult,
   PluginError,
+  PluginUninstallInput,
+  PluginUninstallResult,
   PluginListInput,
   PluginListResult,
   PluginRescanInput,
@@ -562,7 +566,9 @@ export const WS_METHODS = {
   pluginsSubscribeStates: "plugins.subscribeStates",
   pluginsSetEnabled: "plugins.setEnabled",
   pluginsReload: "plugins.reload",
+  pluginsCreateUploadUrl: "plugins.createUploadUrl",
   pluginsRescan: "plugins.rescan",
+  pluginsUninstall: "plugins.uninstall",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -1994,10 +2000,23 @@ const WsPluginsReloadRpc = Rpc.make(WS_METHODS.pluginsReload, {
   error: PluginRpcError,
 });
 
+/** Signs the URL a client uploads a dropped plugin folder to, over HTTP. */
+const WsPluginsCreateUploadUrlRpc = Rpc.make(WS_METHODS.pluginsCreateUploadUrl, {
+  payload: PluginCreateUploadUrlInput,
+  success: PluginCreateUploadUrlResult,
+  error: PluginRpcError,
+});
+
 /** Looks at the plugins folder again, so plugin folders put there since are listed. */
 const WsPluginsRescanRpc = Rpc.make(WS_METHODS.pluginsRescan, {
   payload: PluginRescanInput,
   success: PluginListResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsUninstallRpc = Rpc.make(WS_METHODS.pluginsUninstall, {
+  payload: PluginUninstallInput,
+  success: PluginUninstallResult,
   error: PluginRpcError,
 });
 
@@ -2090,7 +2109,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsPluginsSubscribeStatesRpc,
   WsPluginsSetEnabledRpc,
   WsPluginsReloadRpc,
+  WsPluginsCreateUploadUrlRpc,
   WsPluginsRescanRpc,
+  WsPluginsUninstallRpc,
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,

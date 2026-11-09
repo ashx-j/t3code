@@ -31,6 +31,7 @@ import * as ServerConfig from "../config.ts";
 import { authenticateRawRouteWithScope } from "../http.ts";
 import { forkParked } from "../serverActivation.ts";
 import { discoverPlugins, type DiscoveredPlugin } from "./pluginDiscovery.ts";
+import * as PluginInstaller from "./PluginInstaller.ts";
 import { makePluginsConfig, type PluginConfigError } from "./pluginsConfig.ts";
 import { makePluginStates, manifestOf, type PluginRecord } from "./pluginStates.ts";
 import { makePluginWebFiles, type PluginWebFile } from "./pluginWebFiles.ts";
@@ -299,9 +300,28 @@ const make = Effect.gen(function* () {
     return { plugins: yield* currentStates };
   });
 
+  const { installer, recoverStaging } = yield* PluginInstaller.make({
+    lifecycle: runLifecycle,
+    copies: Ref.get(records).pipe(Effect.map((all) => all.map((record) => record.plugin))),
+    copyOf: (pluginId) =>
+      findRecord(pluginId).pipe(
+        Effect.flatMap((record) =>
+          record === undefined
+            ? Effect.fail(new PluginNotFoundError({ pluginId }))
+            : Effect.succeed(record.plugin),
+        ),
+      ),
+    stop: stopPlugin,
+    rescan: rediscover(undefined).pipe(Effect.asVoid),
+    reload,
+    config: pluginsConfig.current,
+    writeConfig: pluginsConfig.write,
+  });
+
   const startup = lifecycle
     .withPermits(1)(
       Effect.gen(function* () {
+        yield* recoverStaging;
         const { plugins, found } = yield* discover(true);
         yield* Ref.set(
           records,
@@ -332,9 +352,12 @@ const make = Effect.gen(function* () {
       return yield* webFiles.read(record.webFiles, request.path, request.revision);
     }),
   });
-  return Context.make(PluginHost, service);
+  return Context.make(PluginHost, service).pipe(
+    Context.add(PluginInstaller.PluginInstaller, installer),
+  );
 });
 
+/** Provides the host and the installer it builds. */
 export const layer = Layer.effectContext(make);
 
 const WEB_FILES_ROUTE_PREFIX = "/api/plugins";
