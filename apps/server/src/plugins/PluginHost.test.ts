@@ -927,37 +927,23 @@ module.exports = { activate(api) {
 } };`,
       );
       yield* writePluginsConfig({ enabled: { stubborn: true } });
-      // Every publish that changes the theme folders hands them over, and holds there while `held`
-      // is set.
+      // Every publish that changes the theme folders hands them over. One that starts while `held`
+      // is set holds there until its fiber is interrupted, then finishes.
       const themeFolders: Array<ReadonlyArray<string>> = [];
-      let held:
-        | { readonly reached: Deferred.Deferred<void>; readonly release: Deferred.Deferred<void> }
-        | undefined;
+      let held: Deferred.Deferred<void> | undefined;
       const layerHeldPublish = Layer.mock(EnvironmentTheme.EnvironmentThemeService)({
         setPluginThemeDirectories: (directories) => {
           themeFolders.push(directories);
-          return held === undefined
+          const reached = held;
+          held = undefined;
+          return reached === undefined
             ? Effect.void
-            : Deferred.succeed(held.reached, undefined).pipe(
-                Effect.andThen(Deferred.await(held.release)),
+            : Deferred.succeed(reached, undefined).pipe(
+                Effect.andThen(Effect.interruptible(Effect.never).pipe(Effect.exit)),
+                Effect.asVoid,
               );
         },
       });
-      // A disable's last wait before it stops the plugin is removing the temporary folder of its
-      // plugins.json write. A fork runs only once the disable waits again, which is at that stop.
-      let releaseOnWrite: Deferred.Deferred<void> | undefined;
-      const layerReleaseOnWrite = layerFileSystemWith((fs) => ({
-        remove: (target, options) =>
-          fs
-            .remove(target, options)
-            .pipe(
-              Effect.andThen(
-                releaseOnWrite !== undefined && target.includes("plugins.json.")
-                  ? Effect.forkChild(Deferred.succeed(releaseOnWrite, undefined))
-                  : Effect.void,
-              ),
-            ),
-      }));
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
         const id = PluginId.make("stubborn");
@@ -978,20 +964,16 @@ module.exports = { activate(api) {
 
         // A stop that interrupts a start while it hands over its theme folder still lets that
         // list go out, or the disabled list would match the last one sent and keep the folder.
-        const starting = {
-          reached: yield* Deferred.make<void>(),
-          release: yield* Deferred.make<void>(),
-        };
+        const starting = yield* Deferred.make<void>();
         held = starting;
         const enabling = yield* host
           .setEnabled(id, true)
           .pipe(Effect.forkChild({ startImmediately: true }));
-        yield* Deferred.await(starting.reached);
-        releaseOnWrite = starting.release;
+        yield* Deferred.await(starting);
         assert.include(yield* host.setEnabled(id, false), { status: "disabled" });
         yield* Fiber.join(enabling);
         assert.deepStrictEqual(themeFolders.at(-1), []);
-      }).pipe(Effect.provide(layerHost(layerHeldPublish).pipe(Layer.provide(layerReleaseOnWrite))));
+      }).pipe(Effect.provide(layerHost(layerHeldPublish)));
       Reflect.deleteProperty(globalThis, "__t3PluginHostCleanupStarted");
       Reflect.deleteProperty(globalThis, "__t3PluginHostCleanupGate");
     }).pipe(Effect.provide(layerConfig())),
