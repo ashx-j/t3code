@@ -390,6 +390,7 @@ import {
   PluginReloadInput,
   PluginSetEnabledInput,
   PluginSettingsGetInput,
+  PluginSettingsGetResult,
   PluginSettingsResult,
   PluginSettingsUpdateInput,
   PluginSubscribeInput,
@@ -2033,7 +2034,7 @@ const WsPluginsUninstallRpc = Rpc.make(WS_METHODS.pluginsUninstall, {
 
 const WsPluginsSettingsGetRpc = Rpc.make(WS_METHODS.pluginsSettingsGet, {
   payload: PluginSettingsGetInput,
-  success: PluginSettingsResult,
+  success: PluginSettingsGetResult,
   error: PluginRpcError,
 });
 

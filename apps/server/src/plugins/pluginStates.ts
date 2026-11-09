@@ -87,6 +87,7 @@ const toState = (
     ...(record.revision === undefined ? {} : { revision: record.revision }),
     ...(record.styles === undefined || record.styles.length === 0 ? {} : { styles: record.styles }),
     hasServer: manifest?.server !== undefined,
+    hasSettings: manifest?.settingsSchema !== undefined,
     ...(serverFailure === undefined ? {} : { serverFailure }),
   };
 };

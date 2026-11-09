@@ -33,6 +33,7 @@ const stylesPluginState: PluginState = {
   enabled: true,
   status: "active",
   hasServer: false,
+  hasSettings: false,
 };
 
 describe("startPluginStyles", () => {

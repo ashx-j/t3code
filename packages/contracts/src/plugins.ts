@@ -128,6 +128,8 @@ export const PluginState = Schema.Struct({
   hasServer: Schema.Boolean,
   /** Why its server code failed outside a call since it last started, such as in a timer. */
   serverFailure: Schema.optionalKey(Schema.String),
+  /** True when its manifest has a `settingsSchema`, which `plugins.settings.get` sends. */
+  hasSettings: Schema.Boolean,
 });
 export type PluginState = typeof PluginState.Type;
 
@@ -260,6 +262,13 @@ export const PluginSettingsResult = Schema.Struct({
   settings: Schema.JsonObject,
 });
 export type PluginSettingsResult = typeof PluginSettingsResult.Type;
+
+/** `plugins.settings.get`: the settings with the manifest's schema, for the settings form. */
+export const PluginSettingsGetResult = Schema.Struct({
+  ...PluginSettingsResult.fields,
+  settingsSchema: Schema.optionalKey(Schema.JsonObject),
+});
+export type PluginSettingsGetResult = typeof PluginSettingsGetResult.Type;
 
 export const PluginInvokeInput = Schema.Struct({
   pluginId: PluginId,

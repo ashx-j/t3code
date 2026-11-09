@@ -8,6 +8,7 @@ import {
   AuthOrchestrationReadScope,
   PluginId,
   type PluginListResult,
+  type PluginSettingsGetResult,
   type PluginState,
   type PluginStatesEvent,
 } from "@t3tools/contracts";
@@ -164,10 +165,11 @@ export class PluginHost extends Context.Service<
       { readonly plugins: ReadonlyArray<PluginState> },
       PluginConfigError
     >;
+    /** The settings clients see, with the schema the settings form is drawn from. */
     readonly getSettings: (
       pluginId: PluginId,
     ) => Effect.Effect<
-      Schema.JsonObject,
+      Omit<PluginSettingsGetResult, "pluginId">,
       PluginNotFoundError | PluginNotActiveError | PluginSettingsError
     >;
     readonly updateSettings: (
@@ -699,8 +701,9 @@ const make = Effect.gen(function* () {
     reload,
     rescan: rescan(),
     getSettings: Effect.fn("PluginHost.getSettings")(function* (pluginId) {
-      const manifest = yield* manifestFor(pluginId);
-      return yield* settingsStore.getForClient(pluginId, manifest.settingsSchema);
+      const { settingsSchema } = yield* manifestFor(pluginId);
+      const settings = yield* settingsStore.getForClient(pluginId, settingsSchema);
+      return settingsSchema === undefined ? { settings } : { settings, settingsSchema };
     }),
     updateSettings: Effect.fn("PluginHost.updateSettings")(function* (pluginId, patch) {
       const manifest = yield* manifestFor(pluginId);

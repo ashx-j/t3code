@@ -143,7 +143,8 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
       yield* enableHello;
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
-        yield* waitForStatuses(host, { [hello]: "active" });
+        const states = yield* waitForStatuses(host, { [hello]: "active" });
+        assert.include(stateOf(states, hello), { hasSettings: true });
 
         const changed = yield* host
           .subscribe({ pluginId: hello, channel: "settings" })
@@ -154,6 +155,10 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
           yield* host.invoke({ pluginId: hello, method: "ping", input: "b", scopes: operate }),
           { greeting: "hey" },
         );
+        // The settings form's schema comes with the settings, not on every row.
+        const { settings, settingsSchema } = yield* host.getSettings(hello);
+        assert.deepStrictEqual(settings, { greeting: "hey" });
+        assert.include(settingsSchema, { additionalProperties: false });
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
