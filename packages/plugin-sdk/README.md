@@ -25,7 +25,7 @@ written by hand and need no build.
 ```
 
 - `id` uses lowercase letters, digits and hyphens, starts with a letter and has up to 32
-  characters. It names the plugin's folder.
+  characters. It names the plugin's folder and its agent tools (`plg_<id>_<tool>`).
 - `engines.t3` is a version range made of `^`, `>=`, `>`, `<=`, `<`, `=` and `||`, such as
   `>=0.1.6`. A server outside it refuses to install the plugin or start it, and says why.
 - `permissions` is an optional list of what the plugin says it uses. Settings → Plugins shows it on
@@ -65,9 +65,9 @@ module.exports = {
 };
 ```
 
-`activate` receives the [`PluginApi`](./src/server.ts): settings, storage, and RPC methods and
-channels for clients. `api.settings.get()` reads from memory after its first call, so a handler can
-call it on every request.
+`activate` receives the [`PluginApi`](./src/server.ts): settings, storage, RPC methods and channels
+for clients, and MCP tools for agents. `api.settings.get()` reads from memory after its first call,
+so a handler can call it on every request.
 
 Everything a plugin registers is released when it is disabled, reloaded or uninstalled; add your
 own cleanup with `api.onDeactivate`.
@@ -90,6 +90,33 @@ nothing catches does stop the server. When T3 Code can tell it was your plugin's
 off after the restart until the user turns it on again. That includes a throw in a timer callback
 and an `'error'` event with no listener, so catch errors in callbacks and give every child process,
 socket and stream you create an `'error'` listener.
+
+## Tools for agents
+
+`api.mcp.registerTool(tool, handler)` gives agents a tool, as
+[`fixtures/mcp-plugin`](./fixtures/mcp-plugin) does.
+
+- Agents see the tool as `plg_<id>_<name>`. `name` uses letters, digits, `_` and `-`, and the
+  whole name must fit in 64 characters, because MCP clients refuse longer ones.
+- `access` is `read` or `write`. Any agent can call a `read` tool. A `write` tool runs only for an
+  agent in a thread set to Full access and not in Plan mode, or an outside agent approved with Full
+  access. Other agents, and agents from linked environments, get a refusal. Make every tool that
+  changes something `write`.
+- `inputSchema` is a JSON Schema with `"type": "object"` and no `anyOf`, `oneOf` or `allOf` at its
+  top level, which model APIs refuse. Put alternatives inside a property. An agent can send any
+  JSON object, so check the input before acting on it.
+- The handler's second argument has a `signal`, which aborts when the agent cancels the call or the
+  plugin stops, and the `threadId` of the calling agent's thread, or `null` for an MCP client
+  outside a thread. It returns JSON, and a throw becomes an error the agent reads. A call that
+  hasn't answered within 5 minutes fails the same way, and its `signal` aborts.
+- Every agent in every thread of the environment sees the tools of every plugin that is on, so
+  each tool takes up room in every agent's context. A plugin registers at most 32 tools, each with
+  a description of up to 1,000 characters and an input schema of up to 4,000 characters as JSON.
+  `registerTool` throws when a tool breaks a rule, so a plugin that registers it in `activate` fails
+  to start and says why.
+
+The server API can't read T3's threads, projects or providers. A tool can keep its own data per
+thread in `storage` under the `threadId`, but it can't look that thread up.
 
 ## Keeping a plugin working across T3 updates
 

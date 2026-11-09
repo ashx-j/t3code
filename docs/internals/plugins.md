@@ -47,8 +47,10 @@ T3's contracts, which change between releases.
 `plugins.invoke` and `plugins.subscribe` need only the read scope, so the host checks a method's
 `access` itself: a `write` method needs the caller's operate scope, as T3's own changes do. A call
 fails after 30 seconds and aborts the handler's signal, so a handler that never answers can't hold
-a client's call open. Each subscriber gets its own sliding buffer per channel, so a busy channel or
-a slow subscriber drops only that channel's oldest values.
+a client's call open. An agent's tool call gets 5 minutes, because a tool may do real work, then
+fails the same way with an error the agent reads, so a hung tool can't hold the turn. Each
+subscriber gets its own sliding buffer per channel, so a busy channel or a slow subscriber drops
+only that channel's oldest values.
 
 Manifests ignore keys they don't know, so a newer manifest key is lost silently on an older T3.
 `engines.t3` is how a plugin requires a newer T3: the server refuses to install or start a version
@@ -116,3 +118,9 @@ Plugin themes arrive over the server config stream after the first paint, so the
 in localStorage for the boot script in `index.html`. The server marks plugin themes, so the client
 can show only those of chosen environments. The desktop main process cannot read localStorage, so
 the page sends it the canvas it paints under a light and a dark native theme.
+
+## Agent tools
+
+MCP servers can't remove a tool, so each plugin tool registers with an `EnabledWhen` check that the
+server runs on every list and call. A stopped plugin's tools leave new listings and answer as not
+found.

@@ -29,6 +29,35 @@ export interface PluginApiError extends Error {
   readonly code: string;
 }
 
+/**
+ * A plugin registers at most 32 tools, because agents in every thread see them all. A call that
+ * hasn't answered within 5 minutes fails with an error the agent reads, and its `signal` aborts.
+ */
+export interface PluginMcpTool {
+  /** Agents see the tool as `plg_<pluginId>_<name>`. Letters, digits, `_` and `-`. */
+  readonly name: string;
+  /** At most 1000 characters. */
+  readonly description: string;
+  /** JSON Schema for the tool's arguments, at most 4000 characters as JSON. */
+  readonly inputSchema: JsonObject;
+  /**
+   * Every agent sees the tool. A `write` tool runs only for an agent in a thread set to Full
+   * access and not in Plan mode, or an outside agent approved with Full access; others get a
+   * refusal that says so. Agents from linked environments can't call it.
+   */
+  readonly access: PluginRpcAccess;
+}
+
+export type PluginMcpToolHandler = (
+  input: JsonObject,
+  context: {
+    /** Aborts when the agent cancels the call, the plugin deactivates, or 5 minutes pass. */
+    readonly signal: AbortSignal;
+    /** The thread whose agent called the tool, or null for an MCP client outside a thread. */
+    readonly threadId: string | null;
+  },
+) => JsonValue | Promise<JsonValue>;
+
 export interface PluginLogger {
   readonly debug: (message: string, fields?: JsonObject) => void;
   readonly info: (message: string, fields?: JsonObject) => void;
@@ -83,6 +112,13 @@ export interface PluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
   };
   /** Runs when the plugin is disabled or reloaded, or the server stops; at once if that already happened. */
   readonly onDeactivate: (cleanup: () => void | Promise<void>) => void;
+  readonly mcp: {
+    /**
+     * Offers a tool to agents in every thread until the plugin deactivates. Then it leaves new tool
+     * lists, and a call to it fails as an unknown tool.
+     */
+    readonly registerTool: (tool: PluginMcpTool, handler: PluginMcpToolHandler) => void;
+  };
 }
 
 export interface PluginDefinition<Rpc extends PluginRpcMap = PluginRpcMap> {

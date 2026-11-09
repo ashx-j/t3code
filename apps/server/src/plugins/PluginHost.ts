@@ -52,6 +52,7 @@ import { makePluginFailureGuard } from "./pluginFailureGuard.ts";
 import { makePluginFailures } from "./pluginFailures.ts";
 import { discoverPlugins, type DiscoveredPlugin } from "./pluginDiscovery.ts";
 import * as PluginInstaller from "./PluginInstaller.ts";
+import * as PluginMcpTools from "./PluginMcpTools.ts";
 import { makePluginsConfig, type PluginConfigError } from "./pluginsConfig.ts";
 import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
@@ -249,6 +250,7 @@ const make = Effect.gen(function* () {
   const services: PluginApiServices = {
     settings: yield* PluginSettingsStore.PluginSettingsStore,
     storage: yield* PluginStorage.PluginStorage,
+    mcpTools: yield* PluginMcpTools.PluginMcpTools,
   };
   const settingsStore = services.settings;
 

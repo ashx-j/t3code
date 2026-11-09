@@ -2,7 +2,8 @@ import * as Schema from "effect/Schema";
 
 import { ForwardCompatibleArray, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
-// Lowercase because the id names the plugin's directory on case-insensitive filesystems.
+// Lowercase because the id names the plugin's directory on case-insensitive filesystems. No
+// underscores, so the `plg_<id>_` prefix on plugin MCP tool names belongs to exactly one plugin.
 export const PluginId = TrimmedNonEmptyString.check(
   Schema.isMaxLength(32),
   Schema.isPattern(/^[a-z][a-z0-9-]*$/),

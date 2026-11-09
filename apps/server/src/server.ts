@@ -90,6 +90,7 @@ import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as PluginHost from "./plugins/PluginHost.ts";
 import * as PluginUploads from "./plugins/pluginUploads.ts";
+import * as PluginMcpTools from "./plugins/PluginMcpTools.ts";
 import * as PluginSettingsStore from "./plugins/PluginSettingsStore.ts";
 import * as PluginStorage from "./plugins/PluginStorage.ts";
 import * as Keybindings from "./keybindings.ts";
@@ -685,8 +686,8 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(Layer.mergeAll(NativeAppIconResolver.layer, layerProjectFaviconResolver)),
   Layer.provideMerge(layerRepositoryIdentityResolver),
   Layer.provideMerge(CodexManagedTokenBroker.layer),
-  // The upload route and plugins.createUploadUrl share one set of upload URLs.
-  Layer.provideMerge(PluginUploads.layer),
+  // /mcp and the plugin host share one MCP tool registry and one set of upload URLs.
+  Layer.provideMerge(Layer.mergeAll(PluginMcpTools.layer, PluginUploads.layer)),
   Layer.provideMerge(layerServerEnvironment),
   Layer.provideMerge(layerAuth),
   Layer.provideMerge(ServerSecretStore.layer),
@@ -715,7 +716,7 @@ const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   Layer.provide(NetService.layer),
 );
 
-// The plugin host sits on top of the runtime for its theme service and secret store.
+// The plugin host sits on top of the runtime for its theme service, secret store and registry.
 const layerRuntimeDependenciesWithPlugins = PluginHost.layer.pipe(
   Layer.provide(Layer.mergeAll(PluginSettingsStore.layer, PluginStorage.layer)),
   Layer.provideMerge(layerRuntimeDependencies),
