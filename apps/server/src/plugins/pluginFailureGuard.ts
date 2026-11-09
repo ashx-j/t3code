@@ -86,6 +86,9 @@ export const makePluginFailureGuard = (handlers: {
     return gated;
   };
 
+  // The server always installs the Cursor SDK's listener (CursorSdk.ts). It exits when it listens
+  // alone and leaves a rejection to the others otherwise, so beside a plain listener T3's own
+  // rejections would no longer stop the server. Wrapped, it still sees those, and only those.
   const sync = () => {
     if (!installed || syncing) return;
     syncing = true;
