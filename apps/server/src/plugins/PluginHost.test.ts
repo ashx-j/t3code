@@ -37,7 +37,7 @@ import {
 import * as PluginInstaller from "./PluginInstaller.ts";
 import { makePluginRpcHandlers } from "./pluginRpcHandlers.ts";
 import * as PluginStorage from "./PluginStorage.ts";
-import * as PluginUploads from "./pluginUploads.ts";
+import * as PluginUploads from "./PluginUploads.ts";
 
 const hello = PluginId.make("hello-plugin");
 const broken = PluginId.make("broken-plugin");
@@ -926,7 +926,7 @@ module.exports = { activate() {} };`,
           // Listing never signs an upload URL.
           const uploads = PluginUploads.PluginUploads.of({
             issueUrl: Effect.die("unused"),
-            claim: () => Effect.die("unused"),
+            install: () => Effect.die("unused"),
           });
           const handlers = makePluginRpcHandlers(host, installer, uploads, scopes);
           return handlers[WS_METHODS.pluginsSubscribeStates]({}).pipe(
