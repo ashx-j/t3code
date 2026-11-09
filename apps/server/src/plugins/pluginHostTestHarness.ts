@@ -1,5 +1,6 @@
 // @effect-diagnostics preferSchemaOverJson:off - like the tests, it writes plugins.json as plain JSON.
-// The plugin host with a theme service that records what it publishes, for the host's tests.
+// The plugin host with a theme service that records what it publishes, for its tests and the tests
+// of the modules it builds.
 import type { PluginState } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -11,6 +12,9 @@ import * as Stream from "effect/Stream";
 import * as EnvironmentTheme from "../environmentTheme.ts";
 import * as ServerConfig from "../config.ts";
 import * as PluginHost from "./PluginHost.ts";
+
+export const fixturesDir = new URL("../../../../packages/plugin-sdk/fixtures/", import.meta.url)
+  .pathname;
 
 export const layerConfig = () =>
   Layer.fresh(ServerConfig.layerTest(process.cwd(), { prefix: "t3code-plugin-host-test-" }));

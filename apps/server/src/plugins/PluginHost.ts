@@ -1,5 +1,6 @@
 import {
   type AuthEnvironmentScope,
+  AuthOrchestrationReadScope,
   PluginId,
   type PluginListResult,
   type PluginState,
@@ -18,13 +19,21 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import {
+  HttpRouter,
+  HttpServerRequest,
+  HttpServerRespondable,
+  HttpServerResponse,
+} from "effect/http";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
+import { authenticateRawRouteWithScope } from "../http.ts";
 import { forkParked } from "../serverActivation.ts";
 import { discoverPlugins, type DiscoveredPlugin } from "./pluginDiscovery.ts";
 import { makePluginsConfig, type PluginConfigError } from "./pluginsConfig.ts";
 import { makePluginStates, manifestOf, type PluginRecord } from "./pluginStates.ts";
+import { makePluginWebFiles, type PluginWebFile } from "./pluginWebFiles.ts";
 
 export class PluginNotFoundError extends Schema.TaggedError<PluginNotFoundError>()(
   "PluginNotFoundError",
@@ -67,6 +76,15 @@ export class PluginHost extends Context.Service<
       { readonly plugins: ReadonlyArray<PluginState> },
       PluginConfigError
     >;
+    /**
+     * What an active plugin serves at `/api/plugins/<pluginId><path>`: a file in its `styles/`. A
+     * `revision` that names the file's contents lets it be cached.
+     */
+    readonly readWebFile: (input: {
+      readonly pluginId: string;
+      readonly path: string;
+      readonly revision: string | undefined;
+    }) => Effect.Effect<Option.Option<PluginWebFile>>;
   }
 >()("t3/plugins/PluginHost") {}
 
@@ -82,6 +100,7 @@ const make = Effect.gen(function* () {
 
   const pluginsDir = path.join(config.stateDir, "plugins");
   const pluginsConfig = yield* makePluginsConfig;
+  const webFiles = yield* makePluginWebFiles;
 
   const records = yield* Ref.make<ReadonlyArray<PluginRecord>>([]);
   const lifecycle = yield* Semaphore.make(1);
@@ -124,12 +143,22 @@ const make = Effect.gen(function* () {
         },
       });
     }
-    return yield* setRecord(plugin.id, { status: "active" });
+    const web = yield* webFiles.find(plugin);
+    return yield* setRecord(plugin.id, {
+      status: "active",
+      webFiles: web.folders,
+      styles: web.styles,
+    });
   });
 
-  /** Interrupts a pending activation; the caller sets the plugin's next status. */
+  /**
+   * An active plugin's record stops serving files. The caller sets the plugin's next status.
+   */
   const stopPlugin = Effect.fn("PluginHost.stop")(function* (pluginId: PluginId) {
     yield* FiberMap.remove(activations, pluginId);
+    const record = yield* findRecord(pluginId);
+    if (record?.status !== "active") return;
+    yield* setRecord(pluginId, { status: "disabled" });
   });
 
   const startPlugin = (plugin: DiscoveredPlugin) =>
@@ -297,8 +326,45 @@ const make = Effect.gen(function* () {
     setEnabled,
     reload,
     rescan: rescan(),
+    readWebFile: Effect.fn("PluginHost.readWebFile")(function* (request) {
+      const record = yield* findRecord(request.pluginId);
+      if (record?.status !== "active" || record.webFiles === undefined) return Option.none();
+      return yield* webFiles.read(record.webFiles, request.path, request.revision);
+    }),
   });
   return Context.make(PluginHost, service);
 });
 
 export const layer = Layer.effectContext(make);
+
+const WEB_FILES_ROUTE_PREFIX = "/api/plugins";
+
+/** `GET /api/plugins/<pluginId>/<path>`, answered with what the active plugin serves there. */
+export const layerWebFilesRoute = HttpRouter.add(
+  "GET",
+  `${WEB_FILES_ROUTE_PREFIX}/*`,
+  Effect.gen(function* () {
+    // Same sign-in as reads on the rest of `/api`.
+    yield* authenticateRawRouteWithScope(AuthOrchestrationReadScope);
+    const url = HttpServerRequest.toURL(yield* HttpServerRequest.HttpServerRequest);
+    if (Option.isNone(url)) return HttpServerResponse.text("Bad Request", { status: 400 });
+    const rest = url.value.pathname.slice(`${WEB_FILES_ROUTE_PREFIX}/`.length);
+    const slash = rest.indexOf("/");
+    const host = yield* PluginHost;
+    const file = yield* host.readWebFile({
+      pluginId: slash === -1 ? rest : rest.slice(0, slash),
+      path: slash === -1 ? "/" : rest.slice(slash),
+      revision: url.value.searchParams.get("v") ?? undefined,
+    });
+    return Option.match(file, {
+      onNone: () => HttpServerResponse.text("Not Found", { status: 404 }),
+      onSome: ({ headers, body }) => HttpServerResponse.uint8Array(body, { headers }),
+    });
+  }).pipe(
+    Effect.catchTags({
+      EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
+      EnvironmentInternalError: HttpServerRespondable.toResponse,
+      EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
+    }),
+  ),
+);

@@ -26,10 +26,20 @@ of every id no folder has, so a folder copied in later with that id starts off. 
 
 ## Clients
 
-`plugins.subscribeStates` is a stream of its own because the server config stream would resend the
-whole config on every plugin change. The server starts plugins after it is listening. The mobile
-app shows no plugin settings or themes.
+Each browser keeps its own choice of the environments it loads plugin styles and themes from, the
+main one by default.
+
+With no plugins, the plugin system adds about 5.7 KB of minified JS to the startup chunks of a
+production build, about 2.1 KB gzipped, and no new chunks. Most of it is the plugin contract
+schemas and RPC definitions,
+[`PluginLoaderStarter`](../../apps/web/src/plugins/PluginLoaderStarter.tsx) and `pluginFollow`.
+Once the app is idle, the starter downloads a 1.2 KB watcher and follows `plugins.subscribeStates`
+for each chosen environment, a stream of its own because the server config stream would resend the
+whole config on every plugin change. It downloads a small styles chunk only when an active plugin
+has a `styles/` folder. The server starts plugins after it is listening. The mobile app shows no
+plugin settings, styles or themes.
 
 Plugin themes arrive over the server config stream after the first paint, so the client saves them
-in localStorage for the boot script in `index.html`. The desktop main process cannot read
-localStorage, so the page sends it the canvas it paints under a light and a dark native theme.
+in localStorage for the boot script in `index.html`. The server marks plugin themes, so the client
+can show only those of chosen environments. The desktop main process cannot read localStorage, so
+the page sends it the canvas it paints under a light and a dark native theme.

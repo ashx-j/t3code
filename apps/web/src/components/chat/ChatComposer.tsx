@@ -3185,6 +3185,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       <div className="relative">
         <ComposerSurface.Main
           ref={composerMainSurfaceRef}
+          data-t3-region="composer"
           data-inline-resting-controls="true"
           className={composerProviderState.composerFrameClassName}
         >

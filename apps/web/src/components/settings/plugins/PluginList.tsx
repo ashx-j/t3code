@@ -2,15 +2,21 @@ import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
-import { useContext, useEffect } from "react";
+import { type ReactNode, useContext, useEffect } from "react";
 
 import { pluginEnvironment } from "../../../state/plugins";
 import { formatEnvironmentQueryError } from "../../../state/query";
 import { SettingsRow, SettingsSection } from "../settingsLayout";
 import { PluginRow } from "./PluginRow";
 
-/** Each plugin the environment has. */
-export function PluginList({ environmentId }: { readonly environmentId: EnvironmentId }) {
+/** The page's own settings, with `children` first, then each plugin the environment has. */
+export function PluginList({
+  environmentId,
+  children,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly children: ReactNode;
+}) {
   const result = useAtomValue(pluginEnvironment.pluginsLive({ environmentId, input: {} }));
   const plugins = AsyncResult.getOrElse(result, () => null)?.plugins ?? null;
   const error = result._tag === "Failure" ? formatEnvironmentQueryError(result.cause) : null;
@@ -18,6 +24,7 @@ export function PluginList({ environmentId }: { readonly environmentId: Environm
     <>
       <ScanPluginsFolder environmentId={environmentId} />
       <SettingsSection title="Installed plugins">
+        {children}
         {error === null ? null : <SettingsRow title="Could not load plugins" description={error} />}
         {plugins === null && error === null ? (
           <SettingsRow title="Loading plugins…" role="status" />

@@ -3,6 +3,7 @@ import type { EnvironmentId, PluginState } from "@t3tools/contracts";
 import { RotateCwIcon } from "lucide-react";
 import { useState } from "react";
 
+import { pluginWebFailuresAtom } from "../../../plugins/pluginRegistry";
 import { pluginEnvironment } from "../../../state/plugins";
 import { useAtomCommand } from "../../../state/use-atom-command";
 import { Button } from "../../ui/button";
@@ -27,6 +28,7 @@ export function PluginRow({
   const setEnabled = useAtomCommand(pluginEnvironment.setPluginEnabled, "plugin enabled");
   const reload = useAtomCommand(pluginEnvironment.reloadPlugin, "plugin reload");
   const [busy, setBusy] = useState(false);
+  const webFailure = useAtomValue(pluginWebFailuresAtom(plugin.id)).get(environmentId);
   const whileBusy = async (action: () => Promise<unknown>) => {
     setBusy(true);
     await action();
@@ -35,8 +37,10 @@ export function PluginRow({
   // Actions send only the id, which names the copy in use.
   const duplicate = plugin.failure?.stage === "duplicate";
   const { failure } = plugin;
-  const problems =
-    failure === undefined ? [] : [`${FAILURE_STAGES[failure.stage]}: ${failure.message}`];
+  const problems = [
+    ...(failure === undefined ? [] : [`${FAILURE_STAGES[failure.stage]}: ${failure.message}`]),
+    ...(webFailure === undefined ? [] : [`Styles failed: ${webFailure}`]),
+  ];
   return (
     <SettingsRow
       title={plugin.name}

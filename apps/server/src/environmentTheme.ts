@@ -191,7 +191,7 @@ const make = Effect.gen(function* () {
     const themes: Array<EnvironmentTheme> = [];
     for (const directory of directories) {
       if (!(yield* insideItsPlugin(directory))) continue;
-      themes.push(...(yield* readThemes(directory)));
+      for (const theme of yield* readThemes(directory)) themes.push({ ...theme, fromPlugin: true });
     }
     return themes;
   });

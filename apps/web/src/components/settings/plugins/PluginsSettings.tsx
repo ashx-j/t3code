@@ -6,6 +6,7 @@ import { useSettingsScope } from "../SettingsScopeContext";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "../settingsLayout";
 import { PluginList } from "./PluginList";
 import { runsPlugins } from "./pluginTargets";
+import { PluginUiEnvironmentRow } from "./PluginUiEnvironmentRow";
 
 export function PluginsSettings() {
   const { scope, environment } = useSettingsScope();
@@ -44,7 +45,9 @@ function PluginsPage({ environment }: { readonly environment: EnvironmentPresent
   return (
     <SettingsPageContainer>
       {runs ? (
-        <PluginList environmentId={environment.environmentId} />
+        <PluginList environmentId={environment.environmentId}>
+          <PluginUiEnvironmentRow />
+        </PluginList>
       ) : (
         <SettingsSection title="Plugins">
           <SettingsRow

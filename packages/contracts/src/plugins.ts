@@ -80,6 +80,13 @@ export const PluginState = Schema.Struct({
   status: PluginStatus,
   failure: Schema.optionalKey(PluginFailure),
   /**
+   * The `.css` files in its `styles` folder while it runs, in the order clients apply them. Each
+   * `revision` names the file's contents and is sent as its URL's `v`.
+   */
+  styles: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ file: Schema.String, revision: Schema.String })),
+  ),
+  /**
    * The folder it loads from: a `dev` plugin's as plugins.json lists it, an installed one's inside
    * the plugins folder.
    */

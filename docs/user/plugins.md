@@ -1,8 +1,8 @@
 # Plugins
 
-Plugins change how T3 Code looks, with themes. A plugin belongs to one environment and lives on
-that environment's T3 Code server. A plugin's row lists the permissions it says it uses, but T3
-Code doesn't enforce them.
+Plugins change how T3 Code looks, with themes and styles. A plugin belongs to one environment and
+lives on that environment's T3 Code server. A plugin's row lists the permissions it says it uses,
+but T3 Code doesn't enforce them.
 
 ## Add a plugin
 
@@ -20,10 +20,12 @@ Use the switch on the plugin's row. A plugin that fails to start shows the reaso
 example when it needs a newer version of T3 Code. **Reload** restarts a plugin with its current
 files.
 
-## Themes
+## Themes and styles
 
 A plugin can change how T3 Code looks without running any code. Theme files in its `themes` folder
-show up as themes while the plugin is on. Themes load from the app's main environment (see [Where
+show up as themes while the plugin is on. CSS files in its `styles` folder apply to the app while
+the plugin is on, on top of T3 Code's own styles and your theme. A plugin can be just a `styles`
+folder and its manifest. Themes and styles load from the same environments as plugin UI (see [Where
 plugins live](#where-plugins-live)).
 
 ## Where plugins live
@@ -31,7 +33,11 @@ plugins live](#where-plugins-live)).
 Installed plugins are in the `plugins` folder of the environment's T3 Code data directory, one
 folder per plugin, and `plugins.json` records which ones are enabled.
 
-Plugin themes load in the web and desktop apps, from the app's main environment: the desktop app's
-own server, or the server the web app was opened from. app.t3.codes and a desktop app with its local
-environment turned off have no main environment, so they load no plugin themes. The mobile app
-doesn't show plugin settings or themes.
+Plugin styles and themes load in the web and desktop apps. They load from the app's main
+environment, which is the desktop app's own server or the server the web app was opened from, and
+from any other environment you turn on under **Load plugin UI from** in **Settings → Plugins**. You
+can turn the main environment off there too. app.t3.codes and a desktop app with its local
+environment turned off have no main environment, so no plugin styles or themes load until you
+choose one. The choice applies to this browser only.
+
+The mobile app doesn't show plugin settings, styles or themes.

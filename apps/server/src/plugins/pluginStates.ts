@@ -18,12 +18,15 @@ import * as Stream from "effect/Stream";
 import * as EnvironmentTheme from "../environmentTheme.ts";
 import type { DiscoveredPlugin } from "./pluginDiscovery.ts";
 import type { PluginsConfigFile } from "./pluginsConfig.ts";
+import type { PluginWebFolders } from "./pluginWebFiles.ts";
 
 /** What the host knows about one listed copy of a plugin. */
 export interface PluginRecord {
   readonly plugin: DiscoveredPlugin;
   readonly status: PluginStatus;
   readonly failure?: PluginFailure;
+  readonly styles?: PluginState["styles"];
+  readonly webFiles?: PluginWebFolders;
 }
 
 export const manifestOf = (plugin: DiscoveredPlugin): PluginManifest | undefined =>
@@ -73,6 +76,7 @@ const toState = (record: PluginRecord, config: PluginsConfigFile): PluginState =
     enabled: config.enabled?.[id] === true,
     status: record.status,
     ...(record.failure === undefined ? {} : { failure: record.failure }),
+    ...(record.styles === undefined || record.styles.length === 0 ? {} : { styles: record.styles }),
   };
 };
 
