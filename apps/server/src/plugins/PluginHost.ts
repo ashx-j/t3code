@@ -201,7 +201,7 @@ export class PluginHost extends Context.Service<
     >;
     /**
      * What an active plugin serves at `/api/plugins/<pluginId><path>`: its `web.js`, or a file in
-     * its `styles/`. A `revision` that names the file's contents lets it be cached.
+     * its `assets/` or `styles/`. A `revision` that names the file's contents lets it be cached.
      */
     readonly readWebFile: (input: {
       readonly pluginId: string;

@@ -4,8 +4,11 @@ Types and build helpers for T3 Code plugins. A plugin is a folder with a `t3-plu
 an optional server half that runs inside the T3 Code server, and an optional web half that runs in
 the web and desktop apps. Plugins are trusted code: they run with the same access as T3 Code.
 
-The plugins in [`fixtures/`](./fixtures) back the tests and are small and working too. They are
-written by hand and need no build. `hello-web` has a web half.
+[`examples/quick-notes`](./examples/quick-notes) is a plugin to copy from. It builds its web half
+instead of committing it: run `vp run build:examples` in `packages/plugin-sdk` before adding it to
+T3 Code, which builds it to `dist/web.js` with the Vite preset below. The plugins in
+[`fixtures/`](./fixtures) back the tests and are small and working too. They are written by hand
+and need no build. `hello-web` uses most of the web API.
 
 ## Manifest
 
@@ -26,7 +29,8 @@ written by hand and need no build. `hello-web` has a web half.
 ```
 
 - `id` uses lowercase letters, digits and hyphens, starts with a letter and has up to 32
-  characters. It names the plugin's folder and its agent tools (`plg_<id>_<tool>`).
+  characters. It names the plugin's folder, its agent tools (`plg_<id>_<tool>`) and its keybinding
+  commands (`plugin.<id>.<command>`).
 - `engines.t3` is a version range made of `^`, `>=`, `>`, `<=`, `<`, `=` and `||`, such as
   `>=0.1.6`. A server outside it refuses to install the plugin or start it, and says why.
 - `permissions` is an optional list of what the plugin says it uses. Settings → Plugins shows it on
@@ -42,12 +46,13 @@ written by hand and need no build. `hello-web` has a web half.
   Every save is checked against the schema with the top-level `default`s filled in, so a default
   its own field rejects refuses every save. A schema T3 Code can't validate against fails the
   plugin when T3 Code finds or installs it, and says why.
-- A `themes/` folder of theme JSON files is published while the plugin is active. T3 Code
-  remembers the published themes, so the boot screen and the desktop window start in the active
-  theme's colors. A theme that sets `"sidebarArtwork": true` keeps the nightly and dev artwork in
-  the sidebar, which T3 otherwise swaps for a label; the send button stays plain. `"radius"`, such
-  as `"0.625rem"`, sets T3's corner radius, and `success`, `successForeground`, `info` and
-  `infoForeground` in a theme's `colors` or `variants` set its status colors.
+- A `themes/` folder of theme JSON files is published while the plugin is active, and an `assets/`
+  folder is served to the web half when the plugin has one. T3 Code remembers the published
+  themes, so the boot screen and the desktop window start in the active theme's colors. A theme
+  that sets `"sidebarArtwork": true` keeps the nightly and dev artwork in the sidebar, which T3
+  otherwise swaps for a label; the send button stays plain. `"radius"`, such as `"0.625rem"`, sets
+  T3's corner radius, and `success`, `successForeground`, `info` and `infoForeground` in a theme's
+  `colors` or `variants` set its status colors.
 - A `styles/` folder of `.css` files is added to the page while the plugin is active, in name
   order, after T3's own styles and the theme. A manifest and `styles/` are a whole plugin, with
   no `server` or `web`, as in the `styles-plugin` fixture. Like a web half, styles and themes load
@@ -83,8 +88,9 @@ JSON as input, so check it before acting on it.
 
 `rpc.publish` sends a value to every session that follows the channel, and any session that can
 read the environment may follow one, so never publish secrets. A subscriber gets only the values
-published after it subscribes, so give the web half a method that returns the current value. A
-subscriber that falls behind keeps the latest 64 values of each channel and loses older ones.
+published after it subscribes, so give the web half a method that returns the current value, as
+[`examples/quick-notes`](./examples/quick-notes) does with `list`. A subscriber that falls behind
+keeps the latest 64 values of each channel and loses older ones.
 
 A promise rejection in plugin code that nothing handles, such as in a timer, doesn't stop T3 Code.
 It shows on the plugin's row in Settings → Plugins, and the plugin keeps running. An exception
@@ -133,27 +139,34 @@ export default defineWebPlugin({
       title: "Hello",
       component: () => <Button onClick={() => api.navigate("/settings/plugins")}>Settings</Button>,
     });
+    api.commands.register({
+      id: "say-hello",
+      title: "Say hello",
+      run: () => api.toast({ title: "Hello" }),
+    });
   },
 });
 ```
 
-`activate` receives the [`WebPluginApi`](./src/web.ts): calls into the server half, right panels,
-styles, navigation and toasts.
+`activate` receives the [`WebPluginApi`](./src/web.ts): calls into the server half, right panels, a
+settings panel, palette and keybinding commands, styles, assets, navigation and toasts.
 
 `api.rpc.invoke` and `api.rpc.subscribe` reach the methods and channels the server half adds with
 `rpc.register` and `rpc.publish`. Describe them once as a `PluginRpcMap` type from
 `@t3tools/plugin-sdk/shared`, and pass it to both `definePlugin` and `defineWebPlugin`. Then a
 wrong method name, input or value fails to typecheck in either half.
+[`examples/quick-notes`](./examples/quick-notes) keeps its map in `rpc.ts`.
 
 The app can load web halves from several environments at once. Right panels show only in the threads
-of the environment the plugin runs on, which `api.environmentId` names.
+of the environment the plugin runs on, which `api.environmentId` names. Palette and keybinding
+commands come only from the first of those environments, the main one unless it's turned off.
 
 Register right panels inside `activate`. When the app restores a panel that was open, the panel
 shows that the plugin is loading until `activate` finishes, then "Plugin not active" until a panel
 with its name is registered.
 
-Build it with the Vite preset, which makes the bundle use T3 Code's own React and UI components
-instead of shipping copies:
+Build it with the Vite preset, which makes the bundle use T3 Code's own React, atoms, atom hooks and
+UI components instead of shipping copies:
 
 ```ts
 // vite.config.ts
@@ -165,14 +178,22 @@ export default defineConfig({ plugins: [t3PluginWeb({ entry: "web.tsx", outDir: 
 
 Point the manifest's `web` at `dist/web.js`.
 
+Make atoms with `import * as Atom from "@t3tools/plugin-sdk/atom"` and read them with the hooks in
+`@t3tools/plugin-sdk/atom-react`, such as `useAtomValue`. Both run T3's own copies, so your atoms
+live in T3's registry and the bundle has no effect in it. Their types belong to the SDK, so they
+don't change when T3 upgrades effect. Atoms from `effect` itself or hooks from `@effect/atom-react`
+would bundle a second copy. [`examples/quick-notes`](./examples/quick-notes) keeps its notes in an
+atom.
+
 ## Keeping a plugin working across T3 updates
 
 T3 changes its markup, class names, labels and layout in most releases. You don't need to drop
 parts of your design to survive that. Build each part on the most stable thing T3 offers for it:
 
-- **Style with theme tokens.** Colors, radii and fonts come from the theme. Set them in a theme
-  file in `themes/`, and use `var(--border)`, `var(--radius)` and the other tokens in your own
-  components instead of hex or rgb values.
+- **Style with theme tokens.** A theme file in `themes/` sets T3's colors and corner radius. In your
+  own components, use the CSS variables that `THEME_TOKENS` from `@t3tools/plugin-sdk/web` lists,
+  such as `var(--border)` and `var(--radius)`, instead of hex or rgb values. T3 defines each of
+  them under every theme and keeps them across releases.
 - **Scope CSS to a region.** T3 keeps the `data-t3-region` names of the window's main areas
   across releases: `sidebar`, `main` (everything beside the sidebar), `timeline`, `composer`,
   `thread-details`, `right-panel`, `terminal`, `home`, `pull-requests`, `settings`,

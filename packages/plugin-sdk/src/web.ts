@@ -23,6 +23,19 @@ export interface WebPluginRightPanel {
   readonly component: WebPluginComponent<{ readonly threadId: string }>;
 }
 
+export interface WebPluginCommand {
+  /**
+   * Unique within the plugin: lowercase letters, digits and hyphens. Keybindings name the command
+   * `plugin.<pluginId>.<id>`.
+   */
+  readonly id: string;
+  /** Shown in the command palette. */
+  readonly title: string;
+  /** Extra words the command palette matches. */
+  readonly keywords?: ReadonlyArray<string>;
+  readonly run: () => void | Promise<void>;
+}
+
 /**
  * What a web plugin's `activate` receives. Everything is released when the plugin unloads. `Rpc`
  * types the calls into the plugin's server half.
@@ -55,6 +68,26 @@ export interface WebPluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
   readonly rightPanel: {
     readonly register: (panel: WebPluginRightPanel) => void;
   };
+  readonly settings: {
+    /**
+     * Shows on the Plugins page in place of the generated settings form, in browsers that load
+     * plugin UI from this plugin's environment. Other browsers show the generated form, if the
+     * `settingsSchema` has fields.
+     */
+    readonly registerPanel: (component: WebPluginComponent) => void;
+  };
+  readonly commands: {
+    /**
+     * Adds a command to the command palette that users can also bind to a key. Only the first
+     * environment the app loads plugin UI from adds its plugins' commands.
+     */
+    readonly register: (command: WebPluginCommand) => void;
+  };
+  /**
+   * A URL for a file in the plugin's `assets/` folder, such as `icon.svg`, usable in `src` and
+   * `href`. It stays valid until the plugin unloads.
+   */
+  readonly assetUrl: (name: string) => Promise<string>;
   /**
    * Adds a stylesheet until the plugin unloads. Rules that reach T3's own elements restyle the app
    * and can stop matching when T3 changes its markup.
@@ -75,6 +108,29 @@ export interface WebPluginDefinition<Rpc extends PluginRpcMap = PluginRpcMap> {
   readonly activate: (api: WebPluginApi<Rpc>) => void | Promise<void>;
 }
 
+/** Hooks T3 shares with web plugins through `@t3tools/plugin-sdk/atom-react`. */
+export const HOST_ATOM_REACT_EXPORTS = [
+  "RegistryContext",
+  "useAtomMount",
+  "useAtomRefresh",
+  "useAtomSet",
+  "useAtomSubscribe",
+  "useAtomValue",
+] as const;
+
+/** `Atom` functions T3 shares with web plugins through `@t3tools/plugin-sdk/atom`. */
+export const HOST_ATOM_EXPORTS = [
+  "family",
+  "keepAlive",
+  "make",
+  "map",
+  "readable",
+  "setIdleTTL",
+  "transform",
+  "withLabel",
+  "writable",
+] as const;
+
 /** Components T3 shares with web plugins through `@t3tools/plugin-sdk/ui`. */
 export const HOST_UI_EXPORTS = [
   "Badge",
@@ -90,6 +146,42 @@ export const HOST_UI_EXPORTS = [
   "Switch",
   "Textarea",
 ] as const;
+
+/**
+ * CSS variables T3 defines under every theme and keeps across releases. Themes set them, so a
+ * plugin's own styles that use them, such as `var(--border)`, follow the user's theme.
+ */
+export const THEME_TOKENS = [
+  "--background",
+  "--foreground",
+  "--card",
+  "--card-foreground",
+  "--popover",
+  "--popover-foreground",
+  "--primary",
+  "--primary-foreground",
+  "--secondary",
+  "--secondary-foreground",
+  "--muted",
+  "--muted-foreground",
+  "--accent",
+  "--accent-foreground",
+  "--border",
+  "--input",
+  "--ring",
+  "--destructive",
+  "--destructive-foreground",
+  "--warning",
+  "--warning-foreground",
+  "--success",
+  "--success-foreground",
+  "--info",
+  "--info-foreground",
+  "--radius",
+  "--terminal-background",
+] as const;
+
+export type ThemeToken = (typeof THEME_TOKENS)[number];
 
 /**
  * Types a web plugin. The ESM bundle's default export is the result. Pass the plugin's

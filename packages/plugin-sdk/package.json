@@ -12,6 +12,14 @@
       "types": "./src/web.ts",
       "import": "./src/web.ts"
     },
+    "./atom": {
+      "types": "./src/atom.ts",
+      "import": "./src/atom.ts"
+    },
+    "./atom-react": {
+      "types": "./src/atom-react.ts",
+      "import": "./src/atom-react.ts"
+    },
     "./shared": {
       "types": "./src/shared.ts",
       "import": "./src/shared.ts"
@@ -26,6 +34,7 @@
     }
   },
   "scripts": {
+    "build:examples": "node scripts/build-examples.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

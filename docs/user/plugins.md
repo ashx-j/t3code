@@ -1,9 +1,9 @@
 # Plugins
 
-Plugins add features to T3 Code: right panels, themes, styles and tools for agents. A plugin belongs
-to one environment and runs inside that environment's T3 Code server, with the same access to your
-files, threads and credentials as T3 Code itself. A plugin's row lists the permissions it says it
-uses, but T3 Code doesn't enforce them. Install only plugins you trust.
+Plugins add features to T3 Code: right panels, commands, themes, styles and tools for agents. A
+plugin belongs to one environment and runs inside that environment's T3 Code server, with the same
+access to your files, threads and credentials as T3 Code itself. A plugin's row lists the
+permissions it says it uses, but T3 Code doesn't enforce them. Install only plugins you trust.
 
 ## Add a plugin
 
@@ -84,5 +84,7 @@ choice applies to this browser only. Each chosen environment's plugins run code 
 access to every environment this window is connected to, so choose only environments whose plugins
 you trust.
 
-A plugin's right panels show only in the threads of the plugin's own environment. The mobile app
-doesn't show plugin UI, settings or themes.
+A plugin's right panels show only in the threads of the plugin's own environment. Its command palette
+commands come from only one chosen environment, the main one unless you turn it off. When you choose
+more than one, **Load plugin UI from** says which. The mobile app doesn't show plugin UI, settings or
+themes.

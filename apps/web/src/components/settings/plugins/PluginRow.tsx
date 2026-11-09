@@ -3,7 +3,11 @@ import type { EnvironmentId, PluginState } from "@t3tools/contracts";
 import { ChevronUpIcon, RotateCwIcon, SlidersHorizontalIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
-import { pluginWebFailuresAtom } from "../../../plugins/pluginRegistry";
+import {
+  pluginContributionKey,
+  pluginSettingsPanelAtom,
+  pluginWebFailuresAtom,
+} from "../../../plugins/pluginRegistry";
 import { pluginEnvironment } from "../../../state/plugins";
 import { useAtomCommand } from "../../../state/use-atom-command";
 import { Button } from "../../ui/button";
@@ -11,7 +15,7 @@ import { Collapsible, CollapsiblePanel } from "../../ui/collapsible";
 import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "../../ui/popover";
 import { Switch } from "../../ui/switch";
 import { SettingsRow } from "../settingsLayout";
-import { PluginSettingsEditor } from "./PluginSettingsRows";
+import { PluginSettingsRows } from "./PluginSettingsRows";
 
 const FAILURE_STAGES = {
   discovery: "Not found",
@@ -36,7 +40,11 @@ export function PluginRow({
   const uninstall = useAtomCommand(pluginEnvironment.uninstallPlugin, "plugin removal");
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const customSettings = useAtomValue(
+    pluginSettingsPanelAtom(pluginContributionKey(environmentId, plugin.id)),
+  );
   const webFailure = useAtomValue(pluginWebFailuresAtom(plugin.id)).get(environmentId);
+  const hasSettings = customSettings !== undefined || plugin.hasSettings;
   const whileBusy = async (action: () => Promise<unknown>) => {
     setBusy(true);
     await action();
@@ -101,7 +109,7 @@ export function PluginRow({
           ) : undefined
         ) : (
           <>
-            {plugin.hasSettings ? (
+            {hasSettings ? (
               <Button
                 size="icon-sm"
                 variant="ghost"
@@ -152,7 +160,7 @@ export function PluginRow({
       }
     />
   );
-  if (duplicate || !plugin.hasSettings) return row;
+  if (duplicate || !hasSettings) return row;
   return (
     <>
       {row}
@@ -160,7 +168,11 @@ export function PluginRow({
       <Collapsible open={settingsOpen} onOpenChange={setSettingsOpen} className="contents">
         <CollapsiblePanel>
           <div className="border-t border-border/50 [&>*+*]:border-t [&>*+*]:border-border/50">
-            <PluginSettingsEditor environmentId={environmentId} plugin={plugin} />
+            <PluginSettingsRows
+              environmentId={environmentId}
+              plugin={plugin}
+              customSettings={customSettings}
+            />
           </div>
         </CollapsiblePanel>
       </Collapsible>

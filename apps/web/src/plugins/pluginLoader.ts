@@ -1,11 +1,21 @@
+import {
+  RegistryContext,
+  useAtomMount,
+  useAtomRefresh,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from "@effect/atom-react";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, PluginState } from "@t3tools/contracts";
 import {
+  type HOST_ATOM_EXPORTS,
+  type HOST_ATOM_REACT_EXPORTS,
   type HOST_UI_EXPORTS,
   type WebPluginApi,
   type WebPluginDefinition,
 } from "@t3tools/plugin-sdk/web";
-import { AsyncResult } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import * as React from "react";
 import * as ReactDOM from "react-dom";
 import * as jsxRuntime from "react/jsx-runtime";
@@ -26,10 +36,13 @@ import { Switch } from "../components/ui/switch";
 import { Textarea } from "../components/ui/textarea";
 import { toastManager } from "../components/ui/toast";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { registerCommands, type CommandHandlers } from "../shortcuts/dispatcher";
 import { pluginEnvironment } from "../state/plugins";
 import {
   markPluginWebLoaded,
+  registerPluginCommand,
   registerPluginRightPanel,
+  registerPluginSettingsPanel,
   setPluginWebFailure,
   type PluginOwner,
 } from "./pluginRegistry";
@@ -39,17 +52,38 @@ import { pluginUi } from "./pluginUiParts";
 import { isLoadableWebPlugin } from "./pluginWatch";
 
 const PANEL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
+const COMMAND_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const TOAST_TYPES = new Set(["info", "success", "warning", "error"]);
 
 /**
  * Bundles import React and the UI kit from here instead of shipping their own copies; the SDK's
- * Vite preset rewrites those imports to this object.
+ * Vite preset rewrites those imports to this object. `atomReact` and `atom` list only what the app
+ * already bundles, because a namespace import would keep every export in the startup chunk.
  */
 const installHostModules = () =>
   Reflect.set(globalThis, "__t3PluginHost", {
     react: React,
     reactDom: ReactDOM,
     jsxRuntime,
+    atomReact: {
+      RegistryContext,
+      useAtomMount,
+      useAtomRefresh,
+      useAtomSet,
+      useAtomSubscribe,
+      useAtomValue,
+    } satisfies Record<(typeof HOST_ATOM_REACT_EXPORTS)[number], unknown>,
+    atom: {
+      family: Atom.family,
+      keepAlive: Atom.keepAlive,
+      make: Atom.make,
+      map: Atom.map,
+      readable: Atom.readable,
+      setIdleTTL: Atom.setIdleTTL,
+      transform: Atom.transform,
+      withLabel: Atom.withLabel,
+      writable: Atom.writable,
+    } satisfies Record<(typeof HOST_ATOM_EXPORTS)[number], unknown>,
     ui: {
       Badge,
       Button,
@@ -99,14 +133,27 @@ async function importBundle(code: string) {
   }
 }
 
+/** Runs plugin code from a user action; a failure becomes an error toast. */
+const runReportingFailure = (label: string, run: () => void | Promise<void>) => {
+  void Promise.resolve()
+    .then(run)
+    .catch((error: unknown) => {
+      toastManager.add({ type: "error", title: `${label} failed`, description: errorText(error) });
+    });
+};
+
 interface WebPluginApiContext {
   readonly environmentId: EnvironmentId;
+  /** Whether this environment supplies commands; see `startPluginLoader`. */
+  readonly appWide: boolean;
   readonly plugin: PluginState;
   /**
    * Keeps a cleanup for unload, or runs it at once when the plugin is already unloaded. Returns the
    * function that forgets the cleanup without running it.
    */
   readonly track: (cleanup: () => void) => () => void;
+  /** One dispatcher scope shared by every plugin; commands add and remove their own entries. */
+  readonly shortcutHandlers: () => CommandHandlers;
   readonly navigate: (path: string) => void;
   /** False once the plugin unloaded: a timer or callback it left behind must change nothing. */
   readonly active: () => boolean;
@@ -114,12 +161,15 @@ interface WebPluginApiContext {
 
 function makeWebPluginApi({
   environmentId,
+  appWide,
   plugin,
   track,
+  shortcutHandlers,
   navigate,
   active,
 }: WebPluginApiContext): WebPluginApi {
   const pluginId = plugin.id;
+  const assetUrls = new Map<string, Promise<string>>();
   // Shared by everything the plugin draws, so a render failure reaches its row once.
   const owner: PluginOwner = { environmentId, pluginId, pluginName: plugin.name };
   return {
@@ -185,6 +235,71 @@ function makeWebPluginApi({
           }),
         );
       },
+    },
+    settings: {
+      registerPanel: (component) => {
+        // A replaced start's late panel would take the current start's place, then remove it.
+        if (!active()) return;
+        track(registerPluginSettingsPanel({ component, owner }));
+      },
+    },
+    commands: {
+      register: (command) => {
+        if (
+          !COMMAND_ID.test(command.id) ||
+          typeof command.title !== "string" ||
+          (command.keywords !== undefined &&
+            (!Array.isArray(command.keywords) ||
+              !command.keywords.every((keyword) => typeof keyword === "string")))
+        ) {
+          throw new TypeError(
+            `"${command.id}" needs an id of lowercase letters, digits and hyphens, up to 32, starting with a letter or digit, a text title, and keywords that are text.`,
+          );
+        }
+        if (!appWide) return;
+        const keybindingCommand = `plugin.${pluginId}.${command.id}` as const;
+        const run = () => runReportingFailure(command.title, command.run);
+        track(
+          registerPluginCommand({
+            environmentId,
+            pluginId,
+            pluginName: plugin.name,
+            command: keybindingCommand,
+            title: command.title,
+            keywords: command.keywords ?? [],
+            run,
+          }),
+        );
+        const handlers = shortcutHandlers();
+        handlers[keybindingCommand] = (event) => {
+          event.preventDefault();
+          run();
+        };
+        track(() => {
+          delete handlers[keybindingCommand];
+        });
+      },
+    },
+    assetUrl: (name) => {
+      const cached = assetUrls.get(name);
+      if (cached !== undefined) return cached;
+      const url = fetchPluginFile(
+        environmentId,
+        plugin,
+        `/assets/${name.split("/").map(encodeURIComponent).join("/")}`,
+      )
+        .then((response) => response.blob())
+        .then((blob) => {
+          const objectUrl = URL.createObjectURL(blob);
+          track(() => URL.revokeObjectURL(objectUrl));
+          return objectUrl;
+        });
+      assetUrls.set(name, url);
+      // A failed fetch is asked again next time instead of failing for the plugin's lifetime.
+      url.catch(() => {
+        if (assetUrls.get(name) === url) assetUrls.delete(name);
+      });
+      return url;
     },
     injectStyles: (css) => {
       const style = document.createElement("style");
@@ -258,15 +373,26 @@ const runCleanups = (cleanups: Iterable<() => void>) => {
 
 /**
  * Loads the environment's active web plugins and follows plugin state until stopped. Each plugin
- * fails alone: a failed fetch, import or activate is recorded for the Plugins page.
+ * fails alone: a failed fetch, import or activate is recorded for the Plugins page. Several
+ * environments load at once, and only the `appWide` one registers commands, which have no thread
+ * to tie them to an environment.
  */
 export function startPluginLoader(
   environmentId: EnvironmentId,
   navigate: (path: string) => void,
+  appWide: boolean,
 ): () => void {
   installHostModules();
   // Stays once set: the registries empty out as plugins unload, so their readers draw nothing.
   appAtomRegistry.set(pluginUiAtom, pluginUi);
+  const shortcutHandlers: CommandHandlers = {};
+  // Registered with the first plugin command, so key presses pay nothing until one exists.
+  let stopShortcuts: (() => void) | undefined;
+  const claimShortcutHandlers = () => {
+    // A command registered after stop (a slow `activate`) must not add a scope nobody removes.
+    if (!stopped) stopShortcuts ??= registerCommands(shortcutHandlers);
+    return shortcutHandlers;
+  };
   const loaded = new Map<PluginState["id"], LoadedPlugin>();
   let stopped = false;
 
@@ -314,8 +440,10 @@ export function startPluginLoader(
           definition.activate(
             makeWebPluginApi({
               environmentId,
+              appWide,
               plugin,
               track,
+              shortcutHandlers: claimShortcutHandlers,
               navigate,
               active: () => !stopped && !entry.disposed,
             }),
@@ -369,5 +497,6 @@ export function startPluginLoader(
     stopped = true;
     stopFollowing();
     for (const pluginId of loaded.keys()) unload(pluginId);
+    stopShortcuts?.();
   };
 }
