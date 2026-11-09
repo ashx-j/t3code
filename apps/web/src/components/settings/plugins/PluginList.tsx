@@ -34,15 +34,8 @@ export function PluginList({
             description="Drop a plugin folder here to add it."
           />
         ) : (
-          (plugins ?? []).map((plugin, index) => (
-            <PluginRow
-              // A duplicate shares its id with the copy in use.
-              key={
-                plugin.failure?.stage === "duplicate" ? `${index}` : `${plugin.id}:${plugin.source}`
-              }
-              environmentId={environmentId}
-              plugin={plugin}
-            />
+          (plugins ?? []).map((plugin) => (
+            <PluginRow key={plugin.id} environmentId={environmentId} plugin={plugin} />
           ))
         )}
       </SettingsSection>

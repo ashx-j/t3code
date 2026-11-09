@@ -431,70 +431,37 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
     }).pipe(Effect.provide(layerConfig())),
   );
 
-  it.effect("refuses a later folder with a plugin's id, and removes or unlinks it alone", () =>
+  it.effect("runs no folder of an id two folders have until one of them is gone", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const { stateDir } = yield* ServerConfig.ServerConfig;
       const id = PluginId.make("twice");
-      const installed = `${stateDir}/plugins/twice-copy`;
-      const linked = `${stateDir}/checkout/twice`;
+      const copy = `${stateDir}/plugins/twice-copy`;
       yield* writeFile(`${stateDir}/plugins/twice/t3-plugin.json`, manifestJson(id));
-      yield* writeFile(`${installed}/t3-plugin.json`, manifestJson(id, { version: "0.2.0" }));
-      yield* writeFile(`${linked}/t3-plugin.json`, manifestJson(id, { version: "0.3.0" }));
-      yield* writePluginsConfig({ enabled: { [id]: true }, devPaths: [linked] });
+      yield* writePluginsConfig({ enabled: { [id]: true } });
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
         const installer = yield* PluginInstaller.PluginInstaller;
         const storage = yield* PluginStorage.PluginStorage;
         yield* waitForStatuses(host, { [id]: "active" });
         yield* storage.set(id, "kept", true);
-        const copies = listStates(host).pipe(
-          Effect.map((states) =>
-            states
-              .filter((state) => state.id === id)
-              .map((state) => [state.version, state.status, state.failure?.message]),
-          ),
-        );
-        const refused =
-          'The installed folder "twice" already has the id twice. Remove or unlink one of them.';
-        assert.deepStrictEqual(yield* copies, [
-          ["0.1.0", "active", undefined],
-          ["0.2.0", "failed", refused],
-          ["0.3.0", "failed", refused],
-        ]);
 
-        yield* installer.uninstall(id, linked);
-        yield* installer.uninstall(id, installed);
-        assert.deepStrictEqual(yield* copies, [["0.1.0", "active", undefined]]);
-        assert.isFalse(yield* fs.exists(installed));
-        assert.isTrue(yield* fs.exists(linked));
-        // The copy in use keeps the id's data.
-        assert.deepStrictEqual(yield* storage.get(id, "kept"), Option.some(true));
-
-        const elsewhere = yield* installer.uninstall(id, `${stateDir}/elsewhere`).pipe(Effect.flip);
-        assert.strictEqual(elsewhere.message, `No copy of twice is in ${stateDir}/elsewhere.`);
-      }).pipe(Effect.provide(layerHost()));
-    }).pipe(Effect.provide(layerConfig())),
-  );
-
-  it.effect("lists a later folder with a removed plugin's id afresh, turned off", () =>
-    Effect.gen(function* () {
-      const { stateDir } = yield* ServerConfig.ServerConfig;
-      const id = PluginId.make("twice");
-      yield* writeFile(`${stateDir}/plugins/twice/t3-plugin.json`, manifestJson(id));
-      yield* writeFile(`${stateDir}/plugins/twice-copy/t3-plugin.json`, manifestJson(id));
-      yield* writePluginsConfig({ enabled: { [id]: true } });
-      yield* Effect.gen(function* () {
-        const host = yield* PluginHost.PluginHost;
-        const installer = yield* PluginInstaller.PluginInstaller;
-        yield* waitForStatuses(host, { [id]: "active" });
-
-        yield* installer.uninstall(id);
-        const left = (yield* listStates(host)).filter((state) => state.id === id);
+        yield* writeFile(`${copy}/t3-plugin.json`, manifestJson(id, { version: "0.2.0" }));
+        yield* host.rescan;
+        const duplicate =
+          'The folders "twice" (installed) and "twice-copy" (installed) both have the id twice. Delete one of them, then reload.';
         assert.deepStrictEqual(
-          left.map((state) => [state.folder, state.status, state.enabled, state.failure]),
-          [[`${stateDir}/plugins/twice-copy`, "disabled", false, undefined]],
+          (yield* listStates(host)).map((state) => [state.id, state.status, state.failure]),
+          [[id, "failed", { stage: "duplicate", message: duplicate }]],
         );
+        // Its data belongs to whichever folder is left.
+        const refused = yield* installer.uninstall(id).pipe(Effect.flip);
+        assert.strictEqual(refused.message, duplicate);
+
+        yield* fs.remove(copy, { recursive: true });
+        yield* host.rescan;
+        yield* waitForStatuses(host, { [id]: "active" });
+        assert.deepStrictEqual(yield* storage.get(id, "kept"), Option.some(true));
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );

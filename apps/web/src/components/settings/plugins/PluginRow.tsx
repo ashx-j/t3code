@@ -51,7 +51,7 @@ export function PluginRow({
     setBusy(false);
   };
   const unlink = plugin.source === "dev";
-  // Other actions send only the id, which names the copy in use.
+  // Removing it would delete data the id's other folders use, so its failure says what to delete.
   const duplicate = plugin.failure?.stage === "duplicate";
   const { failure, serverFailure, folder } = plugin;
   const problems = [
@@ -92,75 +92,59 @@ export function PluginRow({
         )
       }
       control={
-        duplicate ? (
-          folder !== undefined ? (
-            <RemovePluginPopover
-              name={plugin.name}
-              unlink={unlink}
-              folder={folder}
-              deletesData={false}
-              disabled={busy || !canManage}
-              onRemove={() =>
-                whileBusy(() =>
-                  uninstall({ environmentId, input: { pluginId: plugin.id, folder } }),
-                )
-              }
-            />
-          ) : undefined
-        ) : (
-          <>
-            {hasSettings ? (
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                aria-label={`Settings for ${plugin.name}`}
-                aria-expanded={settingsOpen}
-                onClick={() => setSettingsOpen((open) => !open)}
-              >
-                {settingsOpen ? (
-                  <ChevronUpIcon className="size-4" />
-                ) : (
-                  <SlidersHorizontalIcon className="size-4" />
-                )}
-              </Button>
-            ) : null}
+        <>
+          {hasSettings ? (
             <Button
               size="icon-sm"
               variant="ghost"
-              disabled={busy || !canManage}
-              aria-label={`Reload ${plugin.name}`}
-              onClick={() =>
-                void whileBusy(() => reload({ environmentId, input: { pluginId: plugin.id } }))
-              }
+              aria-label={`Settings for ${plugin.name}`}
+              aria-expanded={settingsOpen}
+              onClick={() => setSettingsOpen((open) => !open)}
             >
-              <RotateCwIcon className="size-4" />
+              {settingsOpen ? (
+                <ChevronUpIcon className="size-4" />
+              ) : (
+                <SlidersHorizontalIcon className="size-4" />
+              )}
             </Button>
+          ) : null}
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            disabled={busy || !canManage}
+            aria-label={`Reload ${plugin.name}`}
+            onClick={() =>
+              void whileBusy(() => reload({ environmentId, input: { pluginId: plugin.id } }))
+            }
+          >
+            <RotateCwIcon className="size-4" />
+          </Button>
+          {duplicate ? null : (
             <RemovePluginPopover
               name={plugin.name}
               unlink={unlink}
               folder={unlink ? folder : undefined}
-              deletesData
               disabled={busy || !canManage}
               onRemove={() =>
                 whileBusy(() => uninstall({ environmentId, input: { pluginId: plugin.id } }))
               }
             />
-            <Switch
-              checked={plugin.enabled}
-              disabled={busy || !canManage}
-              aria-label={`Enable ${plugin.name}`}
-              onCheckedChange={(enabled) =>
-                void whileBusy(() =>
-                  setEnabled({ environmentId, input: { pluginId: plugin.id, enabled } }),
-                )
-              }
-            />
-          </>
-        )
+          )}
+          <Switch
+            checked={plugin.enabled}
+            disabled={busy || !canManage}
+            aria-label={`Enable ${plugin.name}`}
+            onCheckedChange={(enabled) =>
+              void whileBusy(() =>
+                setEnabled({ environmentId, input: { pluginId: plugin.id, enabled } }),
+              )
+            }
+          />
+        </>
       }
     />
   );
-  if (duplicate || !hasSettings) return row;
+  if (!hasSettings) return row;
   return (
     <>
       {row}
@@ -185,16 +169,13 @@ function RemovePluginPopover({
   name,
   unlink,
   folder,
-  deletesData,
   disabled,
   onRemove,
 }: {
   readonly name: string;
   readonly unlink: boolean;
-  /** Named in the popup: the folder unlinked, or the duplicate's folder deleted. */
+  /** The folder unlinked, named in the popup. */
   readonly folder: string | undefined;
-  /** False for a duplicate: the copy in use keeps the data. */
-  readonly deletesData: boolean;
   readonly disabled: boolean;
   readonly onRemove: () => Promise<unknown>;
 }) {
@@ -217,16 +198,12 @@ function RemovePluginPopover({
         <div className="flex flex-col gap-3">
           {folder === undefined ? null : (
             <p className="text-muted-foreground text-xs">
-              {unlink ? "Stops loading " : "Deletes "}
-              <span className="break-all font-mono">{folder}</span>
-              {unlink ? ". The folder stays." : "."}
+              Stops loading <span className="break-all font-mono">{folder}</span>. The folder stays.
             </p>
           )}
-          {deletesData ? (
-            <p className="text-muted-foreground text-xs">
-              This also deletes its settings, secrets and stored data, and can't be undone.
-            </p>
-          ) : null}
+          <p className="text-muted-foreground text-xs">
+            This also deletes its settings, secrets and stored data, and can't be undone.
+          </p>
           <div className="flex justify-end gap-2">
             <PopoverClose render={<Button size="sm" variant="ghost" disabled={disabled} />}>
               Cancel

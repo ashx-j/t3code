@@ -50,12 +50,10 @@ export class PluginInstaller extends Context.Service<
     ) => Effect.Effect<PluginState, PluginInstallError | PluginNotFoundError | PluginConfigError>;
     /**
      * Stops a plugin and deletes its folder, settings, secrets and storage; a linked folder is
-     * only forgotten. `folder` picks a copy. A duplicate copy's folder goes alone, and the copy in
-     * use keeps running with the data.
+     * only forgotten. Refuses an id more than one folder has, whose data the other folders use.
      */
     readonly uninstall: (
       pluginId: PluginId,
-      folder?: string,
     ) => Effect.Effect<void, PluginInstallError | PluginNotFoundError | PluginConfigError>;
   }
 >()("t3/plugins/PluginInstaller") {}
@@ -67,10 +65,8 @@ export interface PluginInstallerHost {
    * stops waiting and never leaves a plugin half replaced.
    */
   readonly lifecycle: <A, E>(body: Effect.Effect<A, E>) => Effect.Effect<A, E>;
-  /** Every listed copy in discovery's order: an id's first copy is the one in use. */
-  readonly copies: Effect.Effect<ReadonlyArray<DiscoveredPlugin>>;
-  /** The copy of `pluginId` in use. */
-  readonly copyOf: (pluginId: PluginId) => Effect.Effect<DiscoveredPlugin, PluginNotFoundError>;
+  readonly plugins: Effect.Effect<ReadonlyArray<DiscoveredPlugin>>;
+  readonly pluginOf: (pluginId: PluginId) => Effect.Effect<DiscoveredPlugin, PluginNotFoundError>;
   /** Stops a plugin; the caller sets what comes next. Only under `lifecycle`. */
   readonly stop: (pluginId: PluginId) => Effect.Effect<void>;
   /** Rescans the plugin folders without restarting anything. Only under `lifecycle`. */
@@ -93,6 +89,11 @@ const decodeManifestJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Plug
 
 const installFailed = (reason: string) => (cause: unknown) =>
   new PluginInstallError({ reason, cause });
+
+const isDuplicate = (
+  plugin: DiscoveredPlugin,
+): plugin is Extract<DiscoveredPlugin, { readonly failure: unknown }> =>
+  "failure" in plugin && plugin.failure.stage === "duplicate";
 
 /** Builds the installer for the host. `recoverStaging` runs before the host's first discovery. */
 export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginInstallerHost) {
@@ -196,8 +197,11 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
       .lifecycle(
         // Read under the lock, so another install or a removal cannot change them before the swap.
         Effect.gen(function* () {
-          const copies = yield* host.copies;
-          const existing = copies.find((copy) => copy.id === manifest.id);
+          const plugins = yield* host.plugins;
+          const existing = plugins.find((plugin) => plugin.id === manifest.id);
+          if (existing !== undefined && isDuplicate(existing)) {
+            return yield* new PluginInstallError({ reason: existing.failure.message });
+          }
           if (existing?.source === "dev") {
             return yield* new PluginInstallError({
               reason: `${manifest.id} is linked from ${existing.folder}. Unlink it first.`,
@@ -210,7 +214,7 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
             existing === undefined &&
             (yield* fs.exists(target).pipe(Effect.orElseSucceed(() => true)))
           ) {
-            const owner = copies.find((copy) => copy.folder === target);
+            const owner = plugins.find((plugin) => plugin.folder === target);
             return yield* new PluginInstallError({
               reason: `The plugins folder already has a ${manifest.id} folder${owner === undefined ? "" : ` holding ${owner.id}`}. Move it, then install again.`,
             });
@@ -331,38 +335,24 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
   // The folder as listed, not `rootDir`: that is the real path, so a symlinked plugin would delete
   // the user's own folder behind the link. A linked folder is the author's own; only plugins.json
   // forgets it.
-  const removeFolder = (copy: DiscoveredPlugin) =>
-    copy.source === "dev"
-      ? forgetDevPath(copy.folder)
+  const removeFolder = (plugin: DiscoveredPlugin) =>
+    plugin.source === "dev"
+      ? forgetDevPath(plugin.folder)
       : fs
-          .remove(copy.folder, { recursive: true, force: true })
-          .pipe(Effect.mapError(installFailed(`Could not delete ${copy.folder}.`)));
+          .remove(plugin.folder, { recursive: true, force: true })
+          .pipe(Effect.mapError(installFailed(`Could not delete ${plugin.folder}.`)));
 
   const uninstall: PluginInstaller["Service"]["uninstall"] = Effect.fn("PluginInstaller.uninstall")(
-    (pluginId, folder) =>
+    (pluginId) =>
       host.lifecycle(
         Effect.gen(function* () {
-          const inUse = yield* host.copyOf(pluginId);
-          const copy =
-            folder === undefined
-              ? inUse
-              : (yield* host.copies).find(
-                  (candidate) =>
-                    candidate.id === pluginId && candidate.folder === path.resolve(folder),
-                );
-          if (copy === undefined) {
-            return yield* new PluginInstallError({
-              reason: `No copy of ${pluginId} is in ${folder}.`,
-            });
-          }
-          if (copy !== inUse) {
-            yield* removeFolder(copy);
-            return yield* host.rescan;
+          const plugin = yield* host.pluginOf(pluginId);
+          if (isDuplicate(plugin)) {
+            return yield* new PluginInstallError({ reason: plugin.failure.message });
           }
           yield* host.stop(pluginId);
-          yield* removeFolder(copy);
+          yield* removeFolder(plugin);
           yield* removeFromConfig(pluginId);
-          // Lists a duplicate copy afresh, turned off.
           yield* host.rescan;
           // Under the lock, or an install that starts meanwhile could lose its new settings.
           yield* settingsStore

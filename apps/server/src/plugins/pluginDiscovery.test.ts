@@ -39,7 +39,7 @@ it.layer(NodeServices.layer)("discoverPlugins", (it) => {
       );
       yield* write(path.join(pluginsDir, "My Plugin"), manifest("spaced"));
       yield* write(path.join(pluginsDir, "Not An Id"), undefined);
-      // Sorts before "valid", so it is the copy used.
+      // Sorts before "valid", so its folder is the one the row shows.
       yield* write(path.join(pluginsDir, "Copy of valid"), manifest("valid"));
       const devCopy = path.join(root, "dev", "valid");
       yield* write(devCopy, manifest("valid"));
@@ -54,24 +54,22 @@ it.layer(NodeServices.layer)("discoverPlugins", (it) => {
       }));
 
       assert.deepStrictEqual(summary, [
-        { id: "valid", source: "installed", stage: "ok" },
+        { id: "valid", source: "installed", stage: "duplicate" },
         { id: "spaced", source: "installed", stage: "ok" },
         { id: "empty", source: "installed", stage: "discovery" },
         { id: "invalid", source: "installed", stage: "manifest" },
         { id: "other-name", source: "installed", stage: "ok" },
         { id: "unchecked", source: "installed", stage: "manifest" },
-        { id: "valid", source: "installed", stage: "duplicate" },
-        { id: "valid", source: "dev", stage: "duplicate" },
         { id: "dev-only", source: "dev", stage: "ok" },
       ]);
       assert.strictEqual(plugins[0]?.folder, path.join(pluginsDir, "Copy of valid"));
       const failures = plugins.map((plugin) => ("failure" in plugin ? plugin.failure.message : ""));
+      assert.strictEqual(
+        failures[0],
+        'The folders "Copy of valid" (installed), "valid" (installed) and "valid" (linked) all have the id valid. Delete all but one of them, then reload.',
+      );
       assert.include(failures[3], "version");
       assert.include(failures[5], 'Missing definition "no"');
-      assert.strictEqual(
-        failures[7],
-        'The installed folder "Copy of valid" already has the id valid. Remove or unlink one of them.',
-      );
     }).pipe(Effect.scoped),
   );
 });
