@@ -60,66 +60,107 @@ const manifestJson = (
     settingsSchema: options.settingsSchema,
   });
 
+const enableHello = writePluginsConfig({
+  enabled: { [hello]: true },
+  devPaths: [`${fixturesDir}hello-plugin`],
+});
+
+/** A `linked` plugin in a checkout folder, which the plugins folder holds a symlink to. */
+const linkPluginFolder = Effect.fn(function* (entries: {
+  readonly server?: string;
+  readonly web?: string;
+}) {
+  const { stateDir } = yield* ServerConfig.ServerConfig;
+  const fs = yield* FileSystem.FileSystem;
+  const realDir = `${stateDir}/checkout/linked`;
+  yield* writeFile(
+    `${realDir}/t3-plugin.json`,
+    JSON.stringify({
+      id: "linked",
+      name: "Linked",
+      version: "0.1.0",
+      engines: { t3: ">=0.1.0" },
+      ...entries,
+    }),
+  );
+  yield* fs.makeDirectory(`${stateDir}/plugins`, { recursive: true });
+  yield* fs.symlink(realDir, `${stateDir}/plugins/linked`);
+  return realDir;
+});
+
+const leaky = PluginId.make("leaky");
+// Fails outside a call: in a timer a method sets, or in a read a method never awaits.
+const leakyServer = `module.exports = { activate(api) {
+  api.rpc.register("rejectLater", () => { setTimeout(() => { Promise.reject(new Error("rejected in a timer")); }, 0); }, { access: "read" });
+  api.rpc.register("readMissing", () => { void require("node:fs/promises").readFile("/t3-plugin-test-missing-file"); }, { access: "read" });
+} };`;
+
+/** The next failure outside a call that the plugin's row shows. */
+const nextServerFailure = (host: PluginHost.PluginHost["Service"], pluginId: PluginId) =>
+  host.streamStates.pipe(
+    Stream.map((states) => stateOf(states, pluginId)?.serverFailure),
+    Stream.filter((failure) => failure !== undefined),
+    Stream.runHead,
+    Effect.map(Option.getOrThrow),
+  );
+
 it.layer(NodeServices.layer)("PluginHost", (it) => {
-  it.effect("activates an enabled plugin and serves its methods, settings and storage", () =>
+  it.effect("activates an enabled plugin and serves its methods with the caller's access", () =>
     Effect.gen(function* () {
-      yield* writePluginsConfig({
-        enabled: { [hello]: true },
-        devPaths: [`${fixturesDir}hello-plugin`],
-      });
+      yield* enableHello;
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
         const states = yield* waitForStatuses(host, { [hello]: "active" });
-        assert.include(stateOf(states, hello), {
-          source: "dev",
-          hasServer: true,
-          enabled: true,
-          hasSettings: true,
-        });
+        assert.include(stateOf(states, hello), { source: "dev", hasServer: true, enabled: true });
 
-        const ping = (input: string, scopes: ReadonlyArray<AuthEnvironmentScope> = operate) =>
-          host.invoke({ pluginId: hello, method: "ping", input, scopes });
-        assert.deepStrictEqual(yield* ping("a"), { pong: "a", greeting: "hello", access: "write" });
+        const ping = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+          host.invoke({ pluginId: hello, method: "ping", input: "a", scopes });
+        assert.deepStrictEqual(yield* ping(operate), {
+          pong: "a",
+          greeting: "hello",
+          access: "write",
+        });
         // A read method tells a session that can only read from one that can also write.
-        assert.deepStrictEqual(yield* ping("a", [AuthOrchestrationReadScope]), {
+        assert.deepStrictEqual(yield* ping([AuthOrchestrationReadScope]), {
           pong: "a",
           greeting: "hello",
           access: "read",
         });
+
+        const count = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+          host.invoke({ pluginId: hello, method: "count", input: undefined, scopes });
+        const counted = yield* host
+          .subscribe({ pluginId: hello, channel: "counted" })
+          .pipe(Stream.runHead, Effect.forkChild({ startImmediately: true }));
+        assert.strictEqual(yield* count(operate), 1);
+        assert.deepStrictEqual(yield* Fiber.join(counted), Option.some(1));
+        const denied = yield* count([AuthOrchestrationReadScope]).pipe(Effect.flip);
+        assert.strictEqual(denied._tag, "PluginAccessDeniedError");
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("hands an active plugin its saved settings and tells it when they change", () =>
+    Effect.gen(function* () {
+      yield* enableHello;
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const states = yield* waitForStatuses(host, { [hello]: "active" });
+        assert.include(stateOf(states, hello), { hasSettings: true });
+
         const changed = yield* host
           .subscribe({ pluginId: hello, channel: "settings" })
           .pipe(Stream.runHead, Effect.forkChild({ startImmediately: true }));
         yield* host.updateSettings(hello, { greeting: "hey" });
         assert.deepStrictEqual(yield* Fiber.join(changed), Option.some({ greeting: "hey" }));
+        assert.deepInclude(
+          yield* host.invoke({ pluginId: hello, method: "ping", input: "b", scopes: operate }),
+          { greeting: "hey" },
+        );
         // The settings form's schema comes with the settings, not on every row.
         const { settings, settingsSchema } = yield* host.getSettings(hello);
         assert.deepStrictEqual(settings, { greeting: "hey" });
         assert.include(settingsSchema, { additionalProperties: false });
-        assert.deepStrictEqual(yield* ping("b"), { pong: "b", greeting: "hey", access: "write" });
-
-        const counted = yield* host
-          .subscribe({ pluginId: hello, channel: "counted" })
-          .pipe(Stream.runHead, Effect.forkChild({ startImmediately: true }));
-        assert.strictEqual(
-          yield* host.invoke({
-            pluginId: hello,
-            method: "count",
-            input: undefined,
-            scopes: operate,
-          }),
-          1,
-        );
-        assert.deepStrictEqual(yield* Fiber.join(counted), Option.some(1));
-
-        const denied = yield* host
-          .invoke({
-            pluginId: hello,
-            method: "count",
-            input: undefined,
-            scopes: [AuthOrchestrationReadScope],
-          })
-          .pipe(Effect.flip);
-        assert.strictEqual(denied._tag, "PluginAccessDeniedError");
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
@@ -299,24 +340,10 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
 
   it.effect("reload runs new code from a symlinked plugin folder", () =>
     Effect.gen(function* () {
-      const { stateDir } = yield* ServerConfig.ServerConfig;
-      const fs = yield* FileSystem.FileSystem;
-      const realDir = `${stateDir}/checkout/linked`;
+      const realDir = yield* linkPluginFolder({ server: "./server.cjs" });
       const plugin = (version: string) =>
         `module.exports = { activate(api) { api.rpc.register("which", () => "${version}", { access: "read" }); } };`;
-      yield* writeFile(
-        `${realDir}/t3-plugin.json`,
-        JSON.stringify({
-          id: "linked",
-          name: "Linked",
-          version: "0.1.0",
-          engines: { t3: ">=0.1.0" },
-          server: "./server.cjs",
-        }),
-      );
       yield* writeFile(`${realDir}/server.cjs`, plugin("v1"));
-      yield* fs.makeDirectory(`${stateDir}/plugins`, { recursive: true });
-      yield* fs.symlink(realDir, `${stateDir}/plugins/linked`);
       yield* writePluginsConfig({ enabled: { linked: true } });
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
@@ -333,26 +360,25 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         yield* writeFile(`${realDir}/server.cjs`, plugin("v2"));
         yield* host.reload(id);
         assert.strictEqual(yield* which, "v2");
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
 
-        // An `assets` folder linked out of the plugin is not served.
-        yield* writeFile(`${stateDir}/checkout/outside/secret.txt`, "Not the plugin's.");
-        yield* fs.symlink(`${stateDir}/checkout/outside`, `${realDir}/assets`);
-        yield* writeFile(`${realDir}/web.js`, "export default {};");
-        yield* writeFile(
-          `${realDir}/t3-plugin.json`,
-          JSON.stringify({
-            id: "linked",
-            name: "Linked",
-            version: "0.1.0",
-            engines: { t3: ">=0.1.0" },
-            server: "./server.cjs",
-            web: "./web.js",
-          }),
-        );
-        yield* host.reload(id);
+  it.effect("serves no file of an assets folder linked out of a symlinked plugin folder", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const realDir = yield* linkPluginFolder({ web: "./web.js" });
+      yield* writeFile(`${realDir}/web.js`, "export default {};");
+      yield* writeFile(`${stateDir}/checkout/outside/secret.txt`, "Not the plugin's.");
+      yield* fs.symlink(`${stateDir}/checkout/outside`, `${realDir}/assets`);
+      yield* writePluginsConfig({ enabled: { linked: true } });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        yield* waitForStatuses(host, { linked: "active" });
         const served = (path: string) =>
           host
-            .readWebFile({ pluginId: id, path, revision: undefined })
+            .readWebFile({ pluginId: "linked", path, revision: undefined })
             .pipe(Effect.map(Option.isSome));
         assert.isTrue(yield* served("/web.js"));
         assert.isFalse(yield* served("/assets/secret.txt"));
@@ -470,62 +496,80 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
     }).pipe(Effect.provide(layerConfig())),
   );
 
-  it.effect("lists a plugin's rejection nobody handles instead of stopping the server", () =>
+  it.effect("lists a plugin's rejection in a timer on its row instead of stopping the server", () =>
     Effect.gen(function* () {
+      yield* writeInstalledPlugin("leaky", leakyServer);
+      yield* writePluginsConfig({ enabled: { leaky: true } });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        yield* waitForStatuses(host, { leaky: "active" });
+        yield* host.invoke({
+          pluginId: leaky,
+          method: "rejectLater",
+          input: undefined,
+          scopes: operate,
+        });
+        assert.strictEqual(yield* nextServerFailure(host, leaky), "rejected in a timer");
+        assert.include(stateOf(yield* host.list, leaky), { status: "active" });
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("lists a failed read a plugin never awaited, though its stack is all Node's", () =>
+    Effect.gen(function* () {
+      yield* writeInstalledPlugin("leaky", leakyServer);
+      yield* writePluginsConfig({ enabled: { leaky: true } });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        yield* waitForStatuses(host, { leaky: "active" });
+        yield* host.invoke({
+          pluginId: leaky,
+          method: "readMissing",
+          input: undefined,
+          scopes: operate,
+        });
+        assert.include(yield* nextServerFailure(host, leaky), "ENOENT");
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("lists a failure of code a turned-off plugin left running on its row", () =>
+    Effect.gen(function* () {
+      const id = PluginId.make("leftover");
       yield* writeInstalledPlugin(
-        "leaky",
+        id,
         `module.exports = { activate(api) {
-  api.rpc.register("rejectLater", () => { setTimeout(() => { Promise.reject(new Error("rejected in a timer")); }, 0); }, { access: "read" });
-  api.rpc.register("readMissing", () => { void require("node:fs/promises").readFile("/t3-plugin-test-missing-file"); }, { access: "read" });
   api.onDeactivate(() => { setTimeout(() => { Promise.reject(new Error("left running")); }, 0); });
 } };`,
       );
+      yield* writePluginsConfig({ enabled: { [id]: true } });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        yield* waitForStatuses(host, { [id]: "active" });
+        yield* host.setEnabled(id, false);
+        assert.strictEqual(yield* nextServerFailure(host, id), "left running");
+        assert.include(stateOf(yield* host.list, id), { enabled: false, status: "disabled" });
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("clears a failure from a start that failed once the plugin is turned off", () =>
+    Effect.gen(function* () {
+      const id = PluginId.make("leaky-start");
       // A timer it sets while starting fails, then it fails to start.
       yield* writeInstalledPlugin(
-        "leaky-start",
+        id,
         `module.exports = { activate() {
   setTimeout(() => { Promise.reject(new Error("rejected while starting")); }, 0);
   return new Promise((_, reject) => setTimeout(() => reject(new Error("activate failed")), 0));
 } };`,
       );
-      yield* writePluginsConfig({ enabled: { leaky: true, "leaky-start": true } });
+      yield* writePluginsConfig({ enabled: { [id]: true } });
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
-        const id = PluginId.make("leaky");
-        yield* waitForStatuses(host, { leaky: "active", "leaky-start": "failed" });
-        const nextFailure = (previous: string | undefined) =>
-          host.streamStates.pipe(
-            Stream.map((states) => stateOf(states, id)?.serverFailure),
-            Stream.filter((failure) => failure !== undefined && failure !== previous),
-            Stream.runHead,
-            Effect.map(Option.getOrThrow),
-          );
-        const failureAfter = (method: string, previous: string | undefined) =>
-          host
-            .invoke({ pluginId: id, method, input: undefined, scopes: operate })
-            .pipe(Effect.andThen(nextFailure(previous)));
-
-        const rejected = yield* failureAfter("rejectLater", undefined);
-        assert.strictEqual(rejected, "rejected in a timer");
-        // A plugin's failures reach clients at once, then at most every 5 seconds.
-        yield* TestClock.adjust("5 seconds");
-        // A failed read it never awaited lands on the row too, though its stack is all Node's.
-        const read = yield* failureAfter("readMissing", rejected);
-        assert.include(read, "ENOENT");
-        assert.include(stateOf(yield* host.list, id), { status: "active" });
-
-        // Code a turned-off plugin left running still fails onto its row, which says so.
-        yield* TestClock.adjust("5 seconds");
-        const leftover = yield* host.setEnabled(id, false).pipe(Effect.andThen(nextFailure(read)));
-        assert.strictEqual(leftover, "left running");
-        assert.include(stateOf(yield* host.list, id), { enabled: false, status: "disabled" });
-
-        // A failure while starting belongs to that start, so Disable clears it.
-        const starting = PluginId.make("leaky-start");
-        assert.include(stateOf(yield* host.list, starting), {
-          serverFailure: "rejected while starting",
-        });
-        assert.isUndefined((yield* host.setEnabled(starting, false)).serverFailure);
+        yield* waitForStatuses(host, { [id]: "failed" });
+        assert.strictEqual(yield* nextServerFailure(host, id), "rejected while starting");
+        assert.isUndefined((yield* host.setEnabled(id, false)).serverFailure);
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
@@ -731,55 +775,63 @@ module.exports = { activate() {} };`,
     }).pipe(Effect.provide(layerConfig())),
   );
 
-  it.effect("installs a dropped folder or one put in the plugins folder turned off", () =>
+  it.effect("installs a dropped folder turned off, and one dropped again keeps its switch", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const { stateDir } = yield* ServerConfig.ServerConfig;
       const helloFiles = yield* Effect.forEach(["t3-plugin.json", "server.cjs"], (name) =>
         fs
           .readFile(`${fixturesDir}hello-plugin/${name}`)
           .pipe(Effect.map((contents) => ({ path: name, contents }))),
       );
-      const notesManifest = (version: string) =>
-        JSON.stringify({ id: "notes", name: "Notes", version, engines: { t3: ">=0.1.0" } });
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
         const installer = yield* PluginInstaller.PluginInstaller;
         yield* waitForStatuses(host, {});
-        // The docs point people at the plugins folder, so a rescan makes sure it exists.
-        yield* host.rescan;
-        assert.isTrue(yield* fs.exists(`${stateDir}/plugins`));
-
         // Nothing of a new plugin runs until its switch is turned on.
         const installed = yield* installer.installFiles(helloFiles);
         assert.include(installed, { id: hello, status: "disabled", enabled: false });
         const started = yield* host.setEnabled(hello, true);
-        // The same folder dropped again replaces it and keeps it on.
         const replaced = yield* installer.installFiles(helloFiles);
         assert.include(replaced, { status: "active", enabled: true });
         assert.notStrictEqual(replaced.revision, started.revision);
-
-        // Copied in by hand under any name, a plugin is listed on the next rescan, turned off.
-        yield* writeFile(`${stateDir}/plugins/My Notes/t3-plugin.json`, notesManifest("1.0.0"));
-        const { plugins } = yield* host.rescan;
-        assert.include(stateOf(plugins, "notes"), { status: "disabled", enabled: false });
-        // A new version copied over one that is off is what Settings lists and what starts.
-        yield* writeFile(`${stateDir}/plugins/My Notes/t3-plugin.json`, notesManifest("1.0.5"));
-        assert.include(stateOf((yield* host.rescan).plugins, "notes"), { version: "1.0.5" });
-
-        // A dropped folder replaces a plugin copied in by hand, in the folder it was copied to.
-        yield* installer.installFiles([
-          { path: "t3-plugin.json", contents: new TextEncoder().encode(notesManifest("1.1.0")) },
-        ]);
-        assert.include(stateOf(yield* host.list, "notes"), { version: "1.1.0", enabled: false });
-        assert.deepStrictEqual((yield* fs.readDirectory(`${stateDir}/plugins`)).toSorted(), [
-          "My Notes",
-          "hello-plugin",
-        ]);
-        yield* installer.uninstall(PluginId.make("notes"));
-        assert.isFalse(yield* fs.exists(`${stateDir}/plugins/My Notes`));
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect(
+    "lists a folder copied in by hand turned off, and a dropped one replaces it there",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const notesManifest = (version: string) =>
+          JSON.stringify({ id: "notes", name: "Notes", version, engines: { t3: ">=0.1.0" } });
+        yield* Effect.gen(function* () {
+          const host = yield* PluginHost.PluginHost;
+          const installer = yield* PluginInstaller.PluginInstaller;
+          yield* waitForStatuses(host, {});
+          // The docs point people at the plugins folder, so a rescan makes sure it exists.
+          yield* host.rescan;
+          assert.isTrue(yield* fs.exists(`${stateDir}/plugins`));
+
+          // Copied in by hand under any name, a plugin is listed on the next rescan, turned off.
+          yield* writeFile(`${stateDir}/plugins/My Notes/t3-plugin.json`, notesManifest("1.0.0"));
+          const { plugins } = yield* host.rescan;
+          assert.include(stateOf(plugins, "notes"), { status: "disabled", enabled: false });
+          // A new version copied over one that is off is what Settings lists and what starts.
+          yield* writeFile(`${stateDir}/plugins/My Notes/t3-plugin.json`, notesManifest("1.0.5"));
+          assert.include(stateOf((yield* host.rescan).plugins, "notes"), { version: "1.0.5" });
+
+          // A dropped folder replaces a plugin copied in by hand, in the folder it was copied to.
+          yield* installer.installFiles([
+            { path: "t3-plugin.json", contents: new TextEncoder().encode(notesManifest("1.1.0")) },
+          ]);
+          assert.include(stateOf(yield* host.list, "notes"), { version: "1.1.0", enabled: false });
+          assert.deepStrictEqual(yield* fs.readDirectory(`${stateDir}/plugins`), ["My Notes"]);
+          yield* installer.uninstall(PluginId.make("notes"));
+          assert.isFalse(yield* fs.exists(`${stateDir}/plugins/My Notes`));
+        }).pipe(Effect.provide(layerHost()));
+      }).pipe(Effect.provide(layerConfig())),
   );
 
   it.effect("puts the working version back when a new dropped version fails to start", () =>
