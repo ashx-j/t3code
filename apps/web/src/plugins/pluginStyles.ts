@@ -23,7 +23,8 @@ export function startPluginStyles(environmentId: EnvironmentId): () => void {
   >();
   // The download each plugin waits for; one that a newer change replaced is dropped.
   const pending = new Map<PluginState["id"], string>();
-  // Plugins whose row shows a styles failure, which only this module clears.
+  // Plugins whose row shows a styles failure, which only this module clears: the web loader
+  // keeps its own failures on the same row.
   const failed = new Set<PluginState["id"]>();
   let stopped = false;
 
@@ -67,7 +68,7 @@ export function startPluginStyles(environmentId: EnvironmentId): () => void {
       clearFailure(plugin.id);
     } catch (error) {
       if (!current()) return;
-      // Tried again on the next plugin update.
+      // Tried again on the next plugin update, like a web bundle that fails to download.
       pending.delete(plugin.id);
       failed.add(plugin.id);
       setPluginWebFailure(

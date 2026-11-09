@@ -29,6 +29,7 @@ export interface PluginRecord {
   readonly failure?: PluginFailure;
   readonly activation?: PluginActivation;
   readonly revision?: number;
+  readonly webRevision?: string;
   readonly styles?: PluginState["styles"];
   readonly webFiles?: PluginWebFolders;
 }
@@ -85,8 +86,10 @@ const toState = (
     status: record.status,
     ...(record.failure === undefined ? {} : { failure: record.failure }),
     ...(record.revision === undefined ? {} : { revision: record.revision }),
+    ...(record.webRevision === undefined ? {} : { webRevision: record.webRevision }),
     ...(record.styles === undefined || record.styles.length === 0 ? {} : { styles: record.styles }),
     hasServer: manifest?.server !== undefined,
+    hasWeb: manifest?.web !== undefined,
     hasSettings: manifest?.settingsSchema !== undefined,
     ...(serverFailure === undefined ? {} : { serverFailure }),
   };

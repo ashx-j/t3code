@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - stylesheet revisions are sha256 digests.
+// @effect-diagnostics nodeBuiltinImport:off - bundle revisions are sha256 digests.
 import * as NodeCrypto from "node:crypto";
 
 import type { PluginState } from "@t3tools/contracts";
@@ -10,14 +10,16 @@ import * as Path from "effect/Path";
 import type { DiscoveredPlugin } from "./pluginDiscovery.ts";
 
 const WEB_CONTENT_TYPES: Readonly<Record<string, string>> = {
+  ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
 };
 
 const contentRevision = (contents: Uint8Array) =>
   NodeCrypto.createHash("sha256").update(contents).digest("hex").slice(0, 16);
 
-/** What an active plugin serves: the real path of its `styles/`. */
+/** What an active plugin serves: its bundle, and the real path of its `styles/`. */
 export interface PluginWebFolders {
+  readonly bundle: string | undefined;
   readonly styles: string | undefined;
 }
 
@@ -26,7 +28,7 @@ export interface PluginWebFile {
   readonly body: Uint8Array;
 }
 
-/** Finds the stylesheets a starting plugin serves, and reads them for the host. */
+/** Finds what a starting plugin serves to its web half, and reads those files for the host. */
 export const makePluginWebFiles = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -75,17 +77,35 @@ export const makePluginWebFiles = Effect.gen(function* () {
     return styles.flat();
   });
 
-  /** What a starting plugin serves: `styles/`. */
-  const find = Effect.fn("PluginHost.findWebFiles")(function* (plugin: DiscoveredPlugin) {
-    const folders: PluginWebFolders = { styles: yield* folderOf(plugin, "styles") };
+  /** What a starting plugin serves: `entry` if it has a web half, and `styles/`. */
+  const find = Effect.fn("PluginHost.findWebFiles")(function* (
+    plugin: DiscoveredPlugin,
+    entry: string | undefined,
+  ) {
+    const bundle = entry === undefined ? undefined : path.join(plugin.rootDir, entry);
+    const folders: PluginWebFolders = {
+      bundle,
+      styles: yield* folderOf(plugin, "styles"),
+    };
+    // The bundle's contents now, for its URL; one that cannot be served gets no revision.
+    const read = bundle === undefined ? Option.none() : yield* readWithin(plugin.rootDir, bundle);
     const styles: PluginState["styles"] =
       folders.styles === undefined ? [] : yield* stylesIn(folders.styles);
-    return { folders, styles };
+    return {
+      folders,
+      webRevision: Option.isSome(read) ? contentRevision(read.value.body) : undefined,
+      styles,
+    };
   });
 
   // The file `requestPath` names, the folder it has to stay inside, and whether a revision in
   // its URL may name its contents.
-  const locate = (folders: PluginWebFolders, requestPath: string) => {
+  const locate = (rootDir: string, folders: PluginWebFolders, requestPath: string) => {
+    if (requestPath === "/web.js") {
+      return folders.bundle === undefined
+        ? undefined
+        : { file: folders.bundle, within: rootDir, revisioned: true };
+    }
     const [, rest] = /^\/styles\/(.*)$/.exec(requestPath) ?? [];
     const dir = folders.styles;
     if (dir === undefined || rest === undefined) return undefined;
@@ -98,15 +118,16 @@ export const makePluginWebFiles = Effect.gen(function* () {
   };
 
   /**
-   * Reads `/styles/<file>` of an active plugin. A request whose `revision` names the file's
-   * contents may be cached for good. Untraced: the host's lookup has the span.
+   * Reads `/web.js` or `/styles/<file>` of the plugin at `rootDir`. A request whose `revision`
+   * names the file's contents may be cached for good. Untraced: the host's lookup has the span.
    */
   const read = Effect.fnUntraced(function* (
+    rootDir: string,
     folders: PluginWebFolders,
     requestPath: string,
     revision: string | undefined,
   ) {
-    const located = locate(folders, requestPath);
+    const located = locate(rootDir, folders, requestPath);
     if (located === undefined) return Option.none<PluginWebFile>();
     const found = yield* readWithin(located.within, located.file);
     if (Option.isNone(found)) return Option.none<PluginWebFile>();

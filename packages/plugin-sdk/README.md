@@ -1,11 +1,11 @@
 # @t3tools/plugin-sdk
 
-Types for T3 Code plugins. A plugin is a folder with a `t3-plugin.json` manifest, theme files and
-stylesheets that change how T3 Code looks, and an optional server half that runs inside the T3 Code
-server. Plugins are trusted code: they run with the same access as T3 Code.
+Types and build helpers for T3 Code plugins. A plugin is a folder with a `t3-plugin.json` manifest,
+an optional server half that runs inside the T3 Code server, and an optional web half that runs in
+the web and desktop apps. Plugins are trusted code: they run with the same access as T3 Code.
 
 The plugins in [`fixtures/`](./fixtures) back the tests and are small and working too. They are
-written by hand and need no build.
+written by hand and need no build. `hello-web` has a web half.
 
 ## Manifest
 
@@ -17,6 +17,7 @@ written by hand and need no build.
   "description": "Shown on the Plugins page.",
   "engines": { "t3": ">=0.1.6" },
   "server": "./server.cjs",
+  "web": "./web.js",
   "settingsSchema": {
     "type": "object",
     "properties": { "token": { "type": "string", "format": "t3-secret" } }
@@ -30,9 +31,9 @@ written by hand and need no build.
   `>=0.1.6`. A server outside it refuses to install the plugin or start it, and says why.
 - `permissions` is an optional list of what the plugin says it uses. Settings → Plugins shows it on
   the plugin's row, and T3 Code doesn't enforce it.
-- `server` must be CommonJS ending in `.cjs`. A plugin with a `server` runs only on a T3 Code
-  server running Node 24 or later, such as the desktop app's. On an older Node, such as `npx t3` on
-  Node 22, it fails to start and says why.
+- `server` must be CommonJS ending in `.cjs`. `web` is a single-file ES module. A plugin with a
+  `server` runs only on a T3 Code server running Node 24 or later, such as the desktop app's. On
+  an older Node, such as `npx t3` on Node 22, it fails to start and says why.
 - `settingsSchema` is JSON Schema. T3 Code draws a form from it on the Plugins page, and top-level
   string fields with `"format": "t3-secret"` are stored in the server's secret store and never shown
   again. `t3-secret` anywhere else is saved as plain text. The form covers top-level strings,
@@ -48,9 +49,10 @@ written by hand and need no build.
   as `"0.625rem"`, sets T3's corner radius, and `success`, `successForeground`, `info` and
   `infoForeground` in a theme's `colors` or `variants` set its status colors.
 - A `styles/` folder of `.css` files is added to the page while the plugin is active, in name
-  order, after T3's own styles and the theme. A manifest and `styles/` are a whole plugin, as in
-  the `styles-plugin` fixture. Styles and themes load only from the environments turned on under
-  **Load plugin UI from** in Settings → Plugins, which starts with just the main environment.
+  order, after T3's own styles and the theme. A manifest and `styles/` are a whole plugin, with
+  no `server` or `web`, as in the `styles-plugin` fixture. Like a web half, styles and themes load
+  only from the environments turned on under **Load plugin UI from** in Settings → Plugins, which
+  starts with just the main environment.
   **Reload** picks up edits. The page gets each file's text, so a `url()` can't reach the
   plugin's folder; use a `data:` URL for an image.
 
@@ -66,8 +68,8 @@ module.exports = {
 ```
 
 `activate` receives the [`PluginApi`](./src/server.ts): settings, storage, RPC methods and channels
-for clients, and MCP tools for agents. `api.settings.get()` reads from memory after its first call,
-so a handler can call it on every request.
+for the web half, and MCP tools for agents. `api.settings.get()` reads from memory after its first
+call, so a handler can call it on every request.
 
 Everything a plugin registers is released when it is disabled, reloaded or uninstalled; add your
 own cleanup with `api.onDeactivate`.
@@ -81,7 +83,7 @@ JSON as input, so check it before acting on it.
 
 `rpc.publish` sends a value to every session that follows the channel, and any session that can
 read the environment may follow one, so never publish secrets. A subscriber gets only the values
-published after it subscribes, so give subscribers a method that returns the current value. A
+published after it subscribes, so give the web half a method that returns the current value. A
 subscriber that falls behind keeps the latest 64 values of each channel and loses older ones.
 
 A promise rejection in plugin code that nothing handles, such as in a timer, doesn't stop T3 Code.
@@ -118,14 +120,59 @@ socket and stream you create an `'error'` listener.
 The server API can't read T3's threads, projects or providers. A tool can keep its own data per
 thread in `storage` under the `threadId`, but it can't look that thread up.
 
+## Web half
+
+```tsx
+import { Button } from "@t3tools/plugin-sdk/ui";
+import { defineWebPlugin } from "@t3tools/plugin-sdk/web";
+
+export default defineWebPlugin({
+  activate(api) {
+    api.rightPanel.register({
+      name: "hello",
+      title: "Hello",
+      component: () => <Button onClick={() => api.navigate("/settings/plugins")}>Settings</Button>,
+    });
+  },
+});
+```
+
+`activate` receives the [`WebPluginApi`](./src/web.ts): calls into the server half, right panels,
+styles, navigation and toasts.
+
+`api.rpc.invoke` and `api.rpc.subscribe` reach the methods and channels the server half adds with
+`rpc.register` and `rpc.publish`. Describe them once as a `PluginRpcMap` type from
+`@t3tools/plugin-sdk/shared`, and pass it to both `definePlugin` and `defineWebPlugin`. Then a
+wrong method name, input or value fails to typecheck in either half.
+
+The app can load web halves from several environments at once. Right panels show only in the threads
+of the environment the plugin runs on, which `api.environmentId` names.
+
+Register right panels inside `activate`. When the app restores a panel that was open, the panel
+shows that the plugin is loading until `activate` finishes, then "Plugin not active" until a panel
+with its name is registered.
+
+Build it with the Vite preset, which makes the bundle use T3 Code's own React and UI components
+instead of shipping copies:
+
+```ts
+// vite.config.ts
+import { t3PluginWeb } from "@t3tools/plugin-sdk/vite";
+import { defineConfig } from "vite";
+
+export default defineConfig({ plugins: [t3PluginWeb({ entry: "web.tsx", outDir: "dist" })] });
+```
+
+Point the manifest's `web` at `dist/web.js`.
+
 ## Keeping a plugin working across T3 updates
 
 T3 changes its markup, class names, labels and layout in most releases. You don't need to drop
 parts of your design to survive that. Build each part on the most stable thing T3 offers for it:
 
 - **Style with theme tokens.** Colors, radii and fonts come from the theme. Set them in a theme
-  file in `themes/`, and use `var(--border)`, `var(--radius)` and the other tokens in your styles
-  instead of hex or rgb values.
+  file in `themes/`, and use `var(--border)`, `var(--radius)` and the other tokens in your own
+  components instead of hex or rgb values.
 - **Scope CSS to a region.** T3 keeps the `data-t3-region` names of the window's main areas
   across releases: `sidebar`, `main` (everything beside the sidebar), `timeline`, `composer`,
   `thread-details`, `right-panel`, `terminal`, `home`, `pull-requests`, `settings`,
