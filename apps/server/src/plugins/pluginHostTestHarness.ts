@@ -36,11 +36,29 @@ const layerThemes = Layer.mock(EnvironmentTheme.EnvironmentThemeService)({
     }),
 });
 
-/** `themes` replaces the recording theme service, such as to hold a publish where it calls it. */
-export const layerHost = (themes = layerThemes) =>
+/**
+ * `themes` replaces the recording theme service, such as to hold a publish where it calls it, and
+ * `settings` replaces methods of the settings store, such as to hold a save.
+ */
+export const layerHost = (
+  themes = layerThemes,
+  settings: (
+    store: PluginSettingsStore.PluginSettingsStore["Service"],
+  ) => Partial<PluginSettingsStore.PluginSettingsStore["Service"]> = () => ({}),
+) =>
   Layer.fresh(
     PluginHost.layer.pipe(
-      Layer.provideMerge(Layer.mergeAll(PluginSettingsStore.layer, PluginStorage.layer)),
+      Layer.provideMerge(
+        Layer.mergeAll(
+          Layer.effect(
+            PluginSettingsStore.PluginSettingsStore,
+            PluginSettingsStore.PluginSettingsStore.use((store) =>
+              Effect.succeed({ ...store, ...settings(store) }),
+            ),
+          ).pipe(Layer.provide(PluginSettingsStore.layer)),
+          PluginStorage.layer,
+        ),
+      ),
       Layer.provide(ServerSecretStore.layer),
       Layer.provide(themes),
       Layer.provideMerge(PluginMcpTools.layer),

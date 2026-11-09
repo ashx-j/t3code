@@ -746,9 +746,16 @@ const make = Effect.gen(function* () {
       const settings = yield* settingsStore.getForClient(pluginId, settingsSchema);
       return settingsSchema === undefined ? { settings } : { settings, settingsSchema };
     }),
+    // Under the lifecycle lock, so a removal can't delete the plugin between the check and the
+    // save and leave settings behind that no plugin reaches.
     updateSettings: Effect.fn("PluginHost.updateSettings")(function* (pluginId, patch) {
-      const manifest = yield* manifestFor(pluginId);
-      return yield* settingsStore.update(pluginId, manifest.settingsSchema, patch);
+      return yield* runLifecycle(
+        manifestFor(pluginId).pipe(
+          Effect.flatMap((manifest) =>
+            settingsStore.update(pluginId, manifest.settingsSchema, patch),
+          ),
+        ),
+      );
     }),
     invoke: Effect.fn("PluginHost.invoke")(function* (request) {
       yield* Effect.annotateCurrentSpan({
