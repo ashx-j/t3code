@@ -10,7 +10,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as PluginHost from "./PluginHost.ts";
-import { layerConfig, layerHost, waitForStatuses } from "./pluginHostTestHarness.ts";
+import { fixturesDir, layerConfig, layerHost, waitForStatuses } from "./pluginHostTestHarness.ts";
 import * as PluginUploads from "./pluginUploads.ts";
 
 /** Posts `files` to `url` through the upload route, over a running plugin host. */
@@ -41,14 +41,12 @@ const uploader = Effect.fn(function* () {
 
 const issueUrl = PluginUploads.PluginUploads.use((uploads) => uploads.issueUrl);
 
-// A plugin with only a manifest.
-const helloFiles = Effect.succeed({
-  "t3-plugin.json": JSON.stringify({
-    id: "hello-plugin",
-    name: "Hello",
-    version: "0.1.0",
-    engines: { t3: ">=0.1.0" },
-  }),
+const helloFiles = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  return {
+    "t3-plugin.json": yield* fs.readFileString(`${fixturesDir}hello-plugin/t3-plugin.json`),
+    "server.cjs": yield* fs.readFileString(`${fixturesDir}hello-plugin/server.cjs`),
+  };
 });
 
 const withHost = <A, E, R>(body: Effect.Effect<A, E, R>) =>

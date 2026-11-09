@@ -11,6 +11,7 @@ const manifest = {
   version: "0.1.0",
   engines: { t3: ">=0.1.6" },
   server: "./dist/server.cjs",
+  settingsSchema: { type: "object", properties: { greeting: { type: "string" } } },
   permissions: ["Reads thread titles"],
 };
 

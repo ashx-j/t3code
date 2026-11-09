@@ -16,7 +16,11 @@ written by hand and need no build.
   "version": "0.1.0",
   "description": "Shown on the Plugins page.",
   "engines": { "t3": ">=0.1.6" },
-  "server": "./server.cjs"
+  "server": "./server.cjs",
+  "settingsSchema": {
+    "type": "object",
+    "properties": { "token": { "type": "string", "format": "t3-secret" } }
+  }
 }
 ```
 
@@ -29,6 +33,11 @@ written by hand and need no build.
 - `server` must be CommonJS ending in `.cjs`. A plugin with a `server` runs only on a T3 Code
   server running Node 24 or later, such as the desktop app's. On an older Node, such as `npx t3` on
   Node 22, it fails to start and says why.
+- `settingsSchema` is JSON Schema. Top-level string fields with `"format": "t3-secret"` are stored
+  in the server's secret store and never shown again. `t3-secret` anywhere else is saved as plain
+  text. Every save is checked against the schema with the top-level `default`s filled in, so a
+  default its own field rejects refuses every save. A schema T3 Code can't validate against fails
+  the plugin when T3 Code finds or installs it, and says why.
 - A `themes/` folder of theme JSON files is published while the plugin is active. T3 Code
   remembers the published themes, so the boot screen and the desktop window start in the active
   theme's colors. A theme that sets `"sidebarArtwork": true` keeps the nightly and dev artwork in
@@ -53,7 +62,9 @@ module.exports = {
 };
 ```
 
-`activate` receives the [`PluginApi`](./src/server.ts): RPC methods and channels for clients.
+`activate` receives the [`PluginApi`](./src/server.ts): settings, storage, and RPC methods and
+channels for clients. `api.settings.get()` reads from memory after its first call, so a handler can
+call it on every request.
 
 Everything a plugin registers is released when it is disabled, reloaded or uninstalled; add your
 own cleanup with `api.onDeactivate`.

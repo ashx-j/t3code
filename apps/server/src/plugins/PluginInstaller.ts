@@ -19,6 +19,8 @@ import * as ServerConfig from "../config.ts";
 import type { DiscoveredPlugin } from "./pluginDiscovery.ts";
 import type { PluginNotFoundError } from "./PluginHost.ts";
 import { type PluginConfigError, type PluginsConfigFile, withoutCrash } from "./pluginsConfig.ts";
+import * as PluginSettingsStore from "./PluginSettingsStore.ts";
+import * as PluginStorage from "./PluginStorage.ts";
 
 // `reason` is shown to the user as is, so it says what to fix.
 export class PluginInstallError extends Schema.TaggedError<PluginInstallError>()(
@@ -47,8 +49,9 @@ export class PluginInstaller extends Context.Service<
       files: ReadonlyArray<PluginUploadFile>,
     ) => Effect.Effect<PluginState, PluginInstallError | PluginNotFoundError | PluginConfigError>;
     /**
-     * Stops a plugin and deletes its folder; a linked folder is only forgotten. `folder` picks a
-     * copy. A duplicate copy's folder goes alone, and the copy in use keeps running.
+     * Stops a plugin and deletes its folder, settings, secrets and storage; a linked folder is
+     * only forgotten. `folder` picks a copy. A duplicate copy's folder goes alone, and the copy in
+     * use keeps running with the data.
      */
     readonly uninstall: (
       pluginId: PluginId,
@@ -97,6 +100,8 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
+  const settingsStore = yield* PluginSettingsStore.PluginSettingsStore;
+  const storage = yield* PluginStorage.PluginStorage;
   const scope = yield* Effect.scope;
 
   const pluginsDir = path.join(config.stateDir, "plugins");
@@ -159,10 +164,18 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
   });
 
   /** Why this server cannot run `manifest`, checked before anything is stopped or moved. */
-  const refusal = (manifest: PluginManifest) =>
-    satisfiesSemverRange(packageJson.version, manifest.engines.t3)
+  const refusal = (manifest: PluginManifest) => {
+    if (!satisfiesSemverRange(packageJson.version, manifest.engines.t3)) {
+      return `${manifest.name} ${manifest.version} needs T3 Code ${manifest.engines.t3}, and this server is ${packageJson.version}.`;
+    }
+    const schemaProblem =
+      manifest.settingsSchema === undefined
+        ? undefined
+        : PluginSettingsStore.settingsSchemaProblem(manifest.settingsSchema);
+    return schemaProblem === undefined
       ? undefined
-      : `${manifest.name} ${manifest.version} needs T3 Code ${manifest.engines.t3}, and this server is ${packageJson.version}.`;
+      : `${manifest.name} ${manifest.version} has a settingsSchema T3 Code cannot validate: ${schemaProblem}`;
+  };
 
   /**
    * Swaps `<stagingDir>/plugin` into the plugins folder under the lifecycle lock and starts it if it
@@ -351,6 +364,15 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
           yield* removeFromConfig(pluginId);
           // Lists a duplicate copy afresh, turned off.
           yield* host.rescan;
+          // Under the lock, or an install that starts meanwhile could lose its new settings.
+          yield* settingsStore
+            .clear(pluginId)
+            .pipe(
+              Effect.mapError(installFailed("The plugin is removed, but its settings are not.")),
+            );
+          yield* storage
+            .clear(pluginId)
+            .pipe(Effect.mapError(installFailed("The plugin is removed, but its storage is not.")));
         }),
       ),
   );

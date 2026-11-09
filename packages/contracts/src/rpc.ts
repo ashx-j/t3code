@@ -389,6 +389,9 @@ import {
   PluginMutationResult,
   PluginReloadInput,
   PluginSetEnabledInput,
+  PluginSettingsGetInput,
+  PluginSettingsResult,
+  PluginSettingsUpdateInput,
   PluginSubscribeInput,
   PluginSubscriptionEvent,
   PluginStatesEvent,
@@ -573,6 +576,8 @@ export const WS_METHODS = {
   pluginsCreateUploadUrl: "plugins.createUploadUrl",
   pluginsRescan: "plugins.rescan",
   pluginsUninstall: "plugins.uninstall",
+  pluginsSettingsGet: "plugins.settings.get",
+  pluginsSettingsUpdate: "plugins.settings.update",
   pluginsInvoke: "plugins.invoke",
   pluginsSubscribe: "plugins.subscribe",
 
@@ -2026,6 +2031,18 @@ const WsPluginsUninstallRpc = Rpc.make(WS_METHODS.pluginsUninstall, {
   error: PluginRpcError,
 });
 
+const WsPluginsSettingsGetRpc = Rpc.make(WS_METHODS.pluginsSettingsGet, {
+  payload: PluginSettingsGetInput,
+  success: PluginSettingsResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsSettingsUpdateRpc = Rpc.make(WS_METHODS.pluginsSettingsUpdate, {
+  payload: PluginSettingsUpdateInput,
+  success: PluginSettingsResult,
+  error: PluginRpcError,
+});
+
 const WsPluginsInvokeRpc = Rpc.make(WS_METHODS.pluginsInvoke, {
   payload: PluginInvokeInput,
   success: PluginInvokeResult,
@@ -2131,6 +2148,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsPluginsCreateUploadUrlRpc,
   WsPluginsRescanRpc,
   WsPluginsUninstallRpc,
+  WsPluginsSettingsGetRpc,
+  WsPluginsSettingsUpdateRpc,
   WsPluginsInvokeRpc,
   WsPluginsSubscribeRpc,
   WsServerReportClientActivityRpc,

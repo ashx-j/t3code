@@ -1,6 +1,5 @@
 // @effect-diagnostics preferSchemaOverJson:off - like the tests, it writes manifests as plain JSON.
-// The plugin host with a theme service that records what it publishes, for its tests and the tests
-// of the modules it builds.
+// The plugin host with its real stores, for its tests and the tests of the modules it builds.
 import type { PluginState } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -9,9 +8,12 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as EnvironmentTheme from "../environmentTheme.ts";
 import * as ServerConfig from "../config.ts";
 import * as PluginHost from "./PluginHost.ts";
+import * as PluginSettingsStore from "./PluginSettingsStore.ts";
+import * as PluginStorage from "./PluginStorage.ts";
 
 export const fixturesDir = new URL("../../../../packages/plugin-sdk/fixtures/", import.meta.url)
   .pathname;
@@ -30,7 +32,13 @@ const layerThemes = Layer.mock(EnvironmentTheme.EnvironmentThemeService)({
 
 /** `themes` replaces the recording theme service, such as to hold a publish where it calls it. */
 export const layerHost = (themes = layerThemes) =>
-  Layer.fresh(PluginHost.layer.pipe(Layer.provide(themes)));
+  Layer.fresh(
+    PluginHost.layer.pipe(
+      Layer.provideMerge(Layer.mergeAll(PluginSettingsStore.layer, PluginStorage.layer)),
+      Layer.provide(ServerSecretStore.layer),
+      Layer.provide(themes),
+    ),
+  );
 
 /** The real file system with some of its methods replaced, for the host's layer. */
 export const layerFileSystemWith = (

@@ -57,6 +57,11 @@ export const PluginManifest = Schema.Struct({
   description: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(500))),
   engines: Schema.Struct({ t3: PluginEngineRange }),
   server: Schema.optionalKey(PluginServerEntryPath),
+  /**
+   * JSON Schema for the plugin's settings. Top-level string fields with `format: "t3-secret"` are
+   * write-only and kept in the secret store; `t3-secret` anywhere else is saved as plain text.
+   */
+  settingsSchema: Schema.optionalKey(Schema.JsonObject),
   /** Shown to the user before enabling. Not enforced: plugins are trusted code. */
   permissions: Schema.optionalKey(
     Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(200))).check(
@@ -221,7 +226,10 @@ export type PluginRescanInput = typeof PluginRescanInput.Type;
 
 export const PluginUninstallInput = Schema.Struct({
   pluginId: PluginId,
-  /** A row's `folder`, to remove or unlink that copy. A `duplicate` copy goes alone. */
+  /**
+   * A row's `folder`, to remove or unlink that copy. A `duplicate` copy goes alone, and the copy
+   * in use keeps the id's data.
+   */
   folder: Schema.optionalKey(Schema.String),
 });
 export type PluginUninstallInput = typeof PluginUninstallInput.Type;
@@ -234,6 +242,24 @@ export const PluginMutationResult = Schema.Struct({
   plugin: PluginState,
 });
 export type PluginMutationResult = typeof PluginMutationResult.Type;
+
+export const PluginSettingsGetInput = Schema.Struct({
+  pluginId: PluginId,
+});
+export type PluginSettingsGetInput = typeof PluginSettingsGetInput.Type;
+
+export const PluginSettingsUpdateInput = Schema.Struct({
+  pluginId: PluginId,
+  patch: Schema.JsonObject,
+});
+export type PluginSettingsUpdateInput = typeof PluginSettingsUpdateInput.Type;
+
+/** Secret fields read back as the server's redaction marker, never their value. */
+export const PluginSettingsResult = Schema.Struct({
+  pluginId: PluginId,
+  settings: Schema.JsonObject,
+});
+export type PluginSettingsResult = typeof PluginSettingsResult.Type;
 
 export const PluginInvokeInput = Schema.Struct({
   pluginId: PluginId,

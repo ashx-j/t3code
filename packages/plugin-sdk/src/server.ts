@@ -1,4 +1,4 @@
-import type { JsonObject, PluginRpcMap } from "./shared.ts";
+import type { JsonObject, JsonValue, PluginRpcMap } from "./shared.ts";
 
 /** `read` methods need the caller's `orchestration:read` scope, `write` methods `orchestration:operate`. */
 export type PluginRpcAccess = "read" | "write";
@@ -24,6 +24,11 @@ export type PluginRpcHandler<
   context: PluginRpcContext,
 ) => Method["output"] | Promise<Method["output"]>;
 
+/** How every rejected API call fails. `code` names the server's error; treat it as opaque. */
+export interface PluginApiError extends Error {
+  readonly code: string;
+}
+
 export interface PluginLogger {
   readonly debug: (message: string, fields?: JsonObject) => void;
   readonly info: (message: string, fields?: JsonObject) => void;
@@ -45,6 +50,21 @@ export interface PluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
   readonly id: string;
   readonly rootDir: string;
   readonly log: PluginLogger;
+  readonly settings: {
+    /**
+     * The saved settings, secret values included. Fields nobody saved read as the `default` in
+     * the manifest's `settingsSchema`, at the top level and for fields that are not secrets.
+     */
+    readonly get: () => Promise<JsonObject>;
+    /** Yields the settings as `get` reads them after each change, until deactivation. */
+    readonly changes: () => AsyncIterable<JsonObject>;
+  };
+  readonly storage: {
+    readonly get: (key: string) => Promise<JsonValue | undefined>;
+    readonly set: (key: string, value: JsonValue) => Promise<void>;
+    readonly delete: (key: string) => Promise<void>;
+    readonly list: (prefix?: string) => Promise<ReadonlyArray<string>>;
+  };
   readonly rpc: {
     /**
      * Answers `plugins.invoke` calls for `method` from clients. `input` has the type `Rpc` gives

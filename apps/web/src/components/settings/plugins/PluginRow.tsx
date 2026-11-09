@@ -87,6 +87,7 @@ export function PluginRow({
               name={plugin.name}
               unlink={unlink}
               folder={folder}
+              deletesData={false}
               disabled={busy || !canManage}
               onRemove={() =>
                 whileBusy(() =>
@@ -112,6 +113,7 @@ export function PluginRow({
               name={plugin.name}
               unlink={unlink}
               folder={unlink ? folder : undefined}
+              deletesData
               disabled={busy || !canManage}
               onRemove={() =>
                 whileBusy(() => uninstall({ environmentId, input: { pluginId: plugin.id } }))
@@ -139,6 +141,7 @@ function RemovePluginPopover({
   name,
   unlink,
   folder,
+  deletesData,
   disabled,
   onRemove,
 }: {
@@ -146,6 +149,8 @@ function RemovePluginPopover({
   readonly unlink: boolean;
   /** Named in the popup: the folder unlinked, or the duplicate's folder deleted. */
   readonly folder: string | undefined;
+  /** False for a duplicate: the copy in use keeps the data. */
+  readonly deletesData: boolean;
   readonly disabled: boolean;
   readonly onRemove: () => Promise<unknown>;
 }) {
@@ -173,6 +178,11 @@ function RemovePluginPopover({
               {unlink ? ". The folder stays." : "."}
             </p>
           )}
+          {deletesData ? (
+            <p className="text-muted-foreground text-xs">
+              This also deletes its settings, secrets and stored data, and can't be undone.
+            </p>
+          ) : null}
           <div className="flex justify-end gap-2">
             <PopoverClose render={<Button size="sm" variant="ghost" disabled={disabled} />}>
               Cancel
