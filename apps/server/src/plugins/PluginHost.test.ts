@@ -14,6 +14,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -423,6 +424,37 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         const states = yield* waitForStatuses(host, { typo: "disabled" });
         assert.deepStrictEqual(stateOf(states, "typo")?.unknownManifestKeys, ["setingsSchema"]);
       }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("starts a plugin again when its removal fails", () =>
+    Effect.gen(function* () {
+      const rootDir = yield* writeInstalledPlugin("kept", "module.exports = { activate() {} };");
+      yield* writePluginsConfig({ enabled: { kept: true } });
+      const layerUndeletable = layerFileSystemWith((fs) => ({
+        remove: (target, options) =>
+          target === rootDir
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "remove",
+                  pathOrDescriptor: target,
+                }),
+              )
+            : fs.remove(target, options),
+      }));
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const installer = yield* PluginInstaller.PluginInstaller;
+        yield* waitForStatuses(host, { kept: "active" });
+        const failed = yield* installer.uninstall(PluginId.make("kept")).pipe(Effect.flip);
+        assert.strictEqual(failed.message, `Could not delete ${rootDir}.`);
+        assert.include(stateOf(yield* listStates(host), "kept"), {
+          enabled: true,
+          status: "active",
+        });
+      }).pipe(Effect.provide(layerHost().pipe(Layer.provide(layerUndeletable))));
     }).pipe(Effect.provide(layerConfig())),
   );
 
