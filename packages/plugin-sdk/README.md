@@ -59,7 +59,9 @@ The SDK has no dependencies of its own. What else a plugin needs depends on its 
   of any other shape, such as an object or a nullable type, turns the whole form into a JSON box.
   Every save is checked against the schema with the top-level `default`s filled in, so a default
   its own field rejects refuses every save. A schema T3 Code can't validate against fails the
-  plugin when T3 Code finds or installs it, and says why.
+  plugin when T3 Code finds or installs it, and says why. Any session that can read the
+  environment can read the settings, a guest's read-only session included, and only `t3-secret`
+  fields stay hidden, so mark anything sensitive `t3-secret`.
 - A `themes/` folder of theme JSON files is published while the plugin is active, and an `assets/`
   folder is served to the web half when the plugin has one. T3 Code remembers the published
   themes, so the boot screen and the desktop window start in the active theme's colors. A theme
@@ -224,9 +226,10 @@ parts of your design to survive that. Build each part on the most stable thing T
   changes, and list it in the plugin's README with the seam that would replace it.
 - **Leave T3's frame to T3.** The title bar row, the room for the window buttons on Windows and
   Linux, drag areas, phone safe areas and breakpoints are T3's, so don't resize or pad them.
-- **Check `api.version` before using a newer API member.** A member added after version 1 names
-  the version that added it in its doc, so a plugin can skip that feature on an older T3 and keep
-  running. To require a T3 release instead, set `engines.t3`.
+- **Check `api.version` before using a newer API member.** The server half and the web half each
+  have their own `api.version`, which counts that half's additions. A member added after version 1
+  names the version that added it in its doc, so a plugin can skip that feature on an older T3 and
+  keep running. To require a T3 release instead, set `engines.t3`.
 - **Ship what the plugin runs.** Installing a folder leaves out `.git` and `node_modules`, so
   build everything into the files the manifest names.
 - **Ask for a seam.** When T3 doesn't hand over what you need, ask for a region or token on the

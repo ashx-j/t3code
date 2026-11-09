@@ -56,7 +56,8 @@ plugin in use keeps running with its settings, secrets and stored data.
 
 ## Themes and styles
 
-A plugin can change how T3 Code looks without running any code. Theme files in its `themes` folder
+A plugin can change how T3 Code looks with files alone. CSS can still load files from other sites
+and reveal what the page shows to them, so trust a styles-only plugin as you would any other. Theme files in its `themes` folder
 show up as themes while the plugin is on. CSS files in its `styles` folder apply to the app while
 the plugin is on, on top of T3 Code's own styles and your theme. A plugin can be just a `styles`
 folder and its manifest. Themes and styles load from the same environments as plugin UI (see [Where

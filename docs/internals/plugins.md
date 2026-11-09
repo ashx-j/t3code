@@ -64,8 +64,9 @@ the plugin with the reason instead of refusing every save later.
 
 `<stateDir>/plugins.json` holds enabled flags, dev paths and the plugins that stopped the server.
 Settings go in `plugin-data/<id>/` and storage in `plugins.sqlite`. They stay out of
-`settings.json`, whose writer drops keys it doesn't know, and out of `statev2.sqlite`, whose
-numbered migrations refuse to start when a fork's id collides with an upstream one. Settings stay
+`settings.json`, whose writer drops keys it doesn't know, and out of `statev2.sqlite`, which holds
+T3's event-sourced state: plugin data isn't events, has no schema of T3's, and is deleted with its
+plugin. Settings stay
 out of `plugins/<id>/`, so replacing a plugin's files keeps them. Removing a plugin deletes its
 settings, secrets and storage, so nothing is left that no plugin can reach.
 
