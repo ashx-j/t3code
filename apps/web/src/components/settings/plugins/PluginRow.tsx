@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import {
   pluginContributionKey,
+  pluginPartNotesAtom,
   pluginSettingsPanelAtom,
   pluginWebFailuresAtom,
 } from "../../../plugins/pluginRegistry";
@@ -45,6 +46,7 @@ export function PluginRow({
     pluginSettingsPanelAtom(pluginContributionKey(environmentId, plugin.id)),
   );
   const webFailure = useAtomValue(pluginWebFailuresAtom(plugin.id)).get(environmentId);
+  const partNotes = useAtomValue(pluginPartNotesAtom(plugin.id)).get(environmentId) ?? [];
   const hasSettings = customSettings !== undefined || plugin.hasSettings;
   const whileBusy = async (action: () => Promise<unknown>) => {
     setBusy(true);
@@ -85,6 +87,11 @@ export function PluginRow({
               {plugin.unknownManifestKeys.join(", ")}. Check them for typos.
             </span>
           )}
+          {partNotes.map((note) => (
+            <span key={note} className="block">
+              {note}
+            </span>
+          ))}
         </>
       }
       status={
