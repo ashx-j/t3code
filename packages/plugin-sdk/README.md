@@ -168,7 +168,8 @@ export default defineWebPlugin({
 ```
 
 `activate` receives the [`WebPluginApi`](./src/web.ts): calls into the server half, right panels, a
-settings panel, palette and keybinding commands, styles, assets, navigation and toasts.
+settings panel, palette and keybinding commands, redrawn parts, styles, assets, navigation and
+toasts.
 
 `api.rpc.invoke` and `api.rpc.subscribe` reach the methods and channels the server half adds with
 `rpc.register` and `rpc.publish`. Describe them once as a `PluginRpcMap` type from
@@ -184,6 +185,18 @@ it's on there.
 Register right panels inside `activate`. When the app restores a panel that was open, the panel
 shows that the plugin is loading until `activate` finishes, then "Plugin not active" until a panel
 with its name is registered.
+
+`api.ui.replace(part, component)` draws one of T3's own parts your way: the composer's control row
+(`composer.controls`), the frame Settings and Usage open in (`app.pageFrame`) and the sidebar
+(`app.sidebar`). The component receives T3's own controls as ready-made pieces to arrange, plus
+`original`, T3's own drawing of the part; `WebPluginParts` lists them. If your component throws, T3
+draws its own part. `api.composer.setCollapseOnScroll(true)` folds the composer to one line on wide
+screens while the timeline is scrolled up, as it does on phones. Both arrived in API version 2.
+[`examples/classic-composer`](./examples/classic-composer) moves the composer's controls back to
+their layout from before T3's redesign and folds the composer on scroll.
+[`examples/settings-pages`](./examples/settings-pages) shows Settings in place of the thread
+(`app.pageFrame`'s `page`) and lists its sections in the sidebar, with Back at the bottom
+(`app.sidebar`'s `nav` and `back`).
 
 Build it with the Vite preset, which makes the bundle use T3 Code's own React, atoms, atom hooks and
 UI components instead of shipping copies:
@@ -210,6 +223,9 @@ atom.
 T3 changes its markup, class names, labels and layout in most releases. You don't need to drop
 parts of your design to survive that. Build each part on the most stable thing T3 offers for it:
 
+- **Arrange pieces instead of rebuilding T3's controls.** `ui.replace` gives you T3's own controls,
+  already wired up. Place them, wrap them or leave them out. A copied control, with its markup,
+  icons and labels, misses every fix T3 makes to the real one.
 - **Style with theme tokens.** A theme file in `themes/` sets T3's colors and corner radius. In your
   own components, use the CSS variables that `THEME_TOKENS` from `@t3tools/plugin-sdk/web` lists,
   such as `var(--border)` and `var(--radius)`, instead of hex or rgb values. T3 defines each of
@@ -229,15 +245,18 @@ parts of your design to survive that. Build each part on the most stable thing T
   small and in one commented place, prefer one that falls back to T3's own look when the markup
   changes, and list it in the plugin's README with the seam that would replace it.
 - **Leave T3's frame to T3.** The title bar row, the room for the window buttons on Windows and
-  Linux, drag areas, phone safe areas and breakpoints are T3's, so don't resize or pad them.
+  Linux, drag areas, phone safe areas and breakpoints are T3's, so don't resize or pad them. A page
+  shown through `app.pageFrame` gets T3's header with all of that.
+- **Compare ids, not text.** `app.sidebar`'s `page` and `app.pageFrame`'s `kind` are stable ids;
+  labels such as `Settings` can change.
 - **Check `api.version` before using a newer API member.** The server half and the web half each
   have their own `api.version`, which counts that half's additions. A member added after version 1
   names the version that added it in its doc, so a plugin can skip that feature on an older T3 and
   keep running. To require a T3 release instead, set `engines.t3`.
 - **Ship what the plugin runs.** Installing a folder leaves out `.git` and `node_modules`, so
   build everything into the files the manifest names.
-- **Ask for a seam.** When T3 doesn't hand over what you need, ask for a region or token on the
-  T3 Code repository instead of reaching into its markup.
+- **Ask for a seam.** When T3 doesn't hand over what you need, ask for a region, token, piece or
+  part on the T3 Code repository instead of reaching into its markup.
 
 ## Developing a plugin
 

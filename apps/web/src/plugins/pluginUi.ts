@@ -1,3 +1,4 @@
+import type { WebPluginParts } from "@t3tools/plugin-sdk/web";
 import { Atom } from "effect/reactivity";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -25,6 +26,15 @@ const fromPluginUi = <A>(pick: (ui: PluginUi) => Atom.Atom<A>, none: A) =>
   });
 
 export const pluginCommandsAtom = fromPluginUi((ui) => ui.pluginCommandsAtom, NONE);
+
+export const pluginPartReplacedAtom = Atom.family((part: keyof WebPluginParts) =>
+  fromPluginUi((ui) => ui.pluginPartReplacedAtoms[part], false),
+);
+
+export const pluginComposerCollapseOnScrollAtom = fromPluginUi(
+  (ui) => ui.pluginComposerCollapseOnScrollAtom,
+  false,
+);
 
 export const pluginCommandLabel = (command: string) =>
   loadedPluginUi()?.pluginCommandLabel(command);

@@ -35,6 +35,79 @@ export interface WebPluginCommand {
 }
 
 /**
+ * T3's own parts a plugin can draw its own way with `ui.replace`. Each piece is a React element T3
+ * has already wired up: place it, wrap it or leave it out. `original` is T3's own drawing.
+ */
+export interface WebPluginParts {
+  /**
+   * The row under the composer's text box. While no provider is available, `model` offers to open
+   * provider settings and `effort` and `access` draw nothing. Only T3's own row folds the controls
+   * into a menu as it narrows; pieces placed elsewhere keep their full width.
+   */
+  readonly "composer.controls": {
+    readonly original: WebPluginNode;
+    /** The attach button, or null where the composer offers no attachments. */
+    readonly attach: WebPluginNode;
+    /** T3's grouped model, effort and permissions controls. */
+    readonly controls: WebPluginNode;
+    /** A picker that only chooses the model. */
+    readonly model: WebPluginNode;
+    /** The reasoning effort picker; draws nothing when the model has no options. */
+    readonly effort: WebPluginNode;
+    /** The permissions picker, always labelled, and the plan toggle when plan mode is on. */
+    readonly access: WebPluginNode;
+    /** Send, stop and the other primary actions. */
+    readonly actions: WebPluginNode;
+  };
+  /** The frame Settings and Usage open in. T3 draws a large window over the thread. */
+  readonly "app.pageFrame": {
+    readonly original: WebPluginNode;
+    /**
+     * The page itself, with its section list, header and close button. Its close button closes
+     * the page; Esc is up to the frame the plugin draws.
+     */
+    readonly content: WebPluginNode;
+    /**
+     * The page in place of the thread, beside the sidebar, without its section list: draw `nav`
+     * here, or `app.sidebar`'s `nav` in the sidebar. Esc goes back. Its header is the window's
+     * title bar row, with room for the window controls, and its close button hides while the
+     * sidebar beside it shows `app.sidebar`'s `back`.
+     */
+    readonly page: WebPluginNode;
+    /** The page's section list, such as Settings' sections and search; null when it has none. */
+    readonly nav: WebPluginNode;
+    /** Which page this is. Compare this, not `label`, which is text for people. */
+    readonly kind: "settings" | "usage";
+    /** The page's name as shown, such as `Settings`. */
+    readonly label: string;
+    /** Goes back to where the page was opened. */
+    readonly close: () => void;
+  };
+  /**
+   * The sidebar's content, on wide screens and in the phone's sheet. To give a page shown through
+   * `app.pageFrame`'s `page` its own sidebar, draw `nav` in place of `threads` and `back` in place
+   * of `footer`.
+   */
+  readonly "app.sidebar": {
+    readonly original: WebPluginNode;
+    /** The top row: the T3 Code name, back and forward buttons, and the toggle on phones. */
+    readonly header: WebPluginNode;
+    /** The thread list with its search row. */
+    readonly threads: WebPluginNode;
+    /** The bottom row: the Settings, Pull requests and Usage buttons, and T3's update button. */
+    readonly footer: WebPluginNode;
+    /** `footer` with a Back button in place of its Settings, Pull requests and Usage buttons. */
+    readonly back: WebPluginNode;
+    /** T3's update button and update notices alone; `footer` and `back` already have them. */
+    readonly update: WebPluginNode;
+    /** The open page's section list, made for the sidebar, while `page` is `settings`; else null. */
+    readonly nav: WebPluginNode;
+    /** The page shown through `app.pageFrame`'s `page` beside the sidebar, otherwise null. */
+    readonly page: "settings" | "usage" | null;
+  };
+}
+
+/**
  * What a web plugin's `activate` receives. Everything is released when the plugin unloads. `Rpc`
  * types the calls into the plugin's server half.
  */
@@ -81,6 +154,25 @@ export interface WebPluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
      * plugin UI from several environments with this plugin on, only the first of them adds them.
      */
     readonly register: (command: WebPluginCommand) => void;
+  };
+  readonly ui: {
+    /**
+     * Draws one of T3's parts until the plugin unloads. When several plugins replace the same
+     * part, the one whose id sorts first wins. If the component throws, T3 draws its own part.
+     * Added in version 2.
+     */
+    readonly replace: <Part extends keyof WebPluginParts>(
+      part: Part,
+      component: WebPluginComponent<WebPluginParts[Part]>,
+    ) => void;
+  };
+  readonly composer: {
+    /**
+     * While on, the composer on wide screens folds to one line, as on phones, when the user scrolls
+     * the timeline up. A restored position, a jump or keyboard paging doesn't fold it. Focusing it
+     * or scrolling back to the end unfolds it. Added in version 2.
+     */
+    readonly setCollapseOnScroll: (enabled: boolean) => void;
   };
   /**
    * A URL for a file in the plugin's `assets/` folder, such as `icon.svg`, usable in `src` and

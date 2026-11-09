@@ -52,6 +52,7 @@ import { splitTransferredFiles } from "./workspaceFileDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
+  type ComponentProps,
   memo,
   use,
   useEffect,
@@ -110,6 +111,7 @@ import { ComposerStashMenu } from "./ComposerStashMenu";
 import { useComposerTriggerState } from "./useComposerTriggerState";
 import { useComposerMenuItems } from "./useComposerMenuItems";
 import { useComposerMultilinePrompt } from "./useComposerMultilinePrompt";
+import { useComposerCollapseOnScroll } from "./useComposerCollapseOnScroll";
 import {
   reconcileAttachmentContextReferences,
   useRetainedContextPayloads,
@@ -278,6 +280,7 @@ import {
   usePreparingComposerImages,
 } from "./preparingComposerImages";
 import { ComposerControlsBar } from "./ComposerControlsBar";
+import { PluginPart } from "../../plugins/PluginPart";
 import { composerCommandKeyHandler } from "./composerCommandKey";
 
 function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
@@ -1021,10 +1024,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [composerMenuAnchor, setComposerMenuAnchor] = useState<HTMLDivElement | null>(null);
   const [hasWrappedPrompt, observeWrappedPrompt] = useComposerMultilinePrompt();
   const hasMultilinePrompt = prompt.includes("\n") || hasWrappedPrompt;
+  const composerFormRef = useRef<HTMLFormElement>(null);
+  const collapseOnScroll = useComposerCollapseOnScroll({
+    wideScreen: !isMobileViewport,
+    threadRef: routeThreadRef,
+    formRef: composerFormRef,
+    canFold: !forceExpandedOnMobile && !hasMultilinePrompt && pendingUserInputs.length === 0,
+    focused: isComposerFocused,
+  });
   // A pending question stays expanded: its card moves into the banner dock,
   // so collapsing would leave the surface empty and squashed beneath it.
   const isComposerCollapsedMobile =
-    isMobileViewport &&
+    (isMobileViewport || collapseOnScroll.awayFromEnd) &&
     !forceExpandedOnMobile &&
     !isComposerFocused &&
     !hasMultilinePrompt &&
@@ -1032,7 +1043,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const composerEditorRef = useRef<ComposerPromptEditorHandle>(null);
   const pasteAsTextShortcutUntilRef = useRef(0);
-  const composerFormRef = useRef<HTMLFormElement>(null);
   const composerSurfaceRef = useRef<HTMLDivElement>(null);
   const providerInputRejectedRef = useRef(false);
   const composerSelectLockRef = useRef(false);
@@ -2179,6 +2189,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     });
   };
   const expandMobileComposerStable = useStableCallback(expandMobileComposer);
+  // A folded composer hides its editor, so on wide screens a focus request unfolds it first.
+  const focusEditorAtEnd = () => {
+    if (isComposerCollapsedMobile && collapseOnScroll.active) expandMobileComposer();
+    else composerEditorRef.current?.focusAtEnd();
+  };
+  const focusEditorAtEndStable = useStableCallback(focusEditorAtEnd);
 
   const onComposerCommandKey = (key: string, event: KeyboardEvent, isTaskItem?: boolean) =>
     composerCommandKeyHandler({
@@ -2293,8 +2309,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     : composerControlsCollapsed
       ? 0
       : expandedControlsIconOnlyBlockCount;
-  const composerControls = (
+  const composerControlsBar = (piece?: ComponentProps<typeof ComposerControlsBar>["piece"]) => (
     <ComposerControlsBar
+      piece={piece}
       environmentId={environmentId}
       routeKind={routeKind}
       routeThreadRef={routeThreadRef}
@@ -2345,6 +2362,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       getModelDisabledReason={getModelDisabledReason}
     />
   );
+  const composerControls = composerControlsBar();
   // An open question owns the space above the composer. Only a machine problem,
   // which is why an answer could not go through, stays beside it.
   const shelfItems = hasBlockingComposerTopDrawer
@@ -2713,7 +2731,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     handleImplementPlanInNewThreadPrimaryAction,
   );
   const scheduleComposerCollapseCheck = () => {
-    if (!isMobileViewport || mobileComposerExpandInFlightRef.current) {
+    if (!(isMobileViewport || collapseOnScroll.active) || mobileComposerExpandInFlightRef.current) {
       return;
     }
     if (composerBlurFrameRef.current !== null) {
@@ -2780,9 +2798,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   useImperativeHandle(
     composerRef,
     () => ({
-      focusAtEnd: () => {
-        composerEditorRef.current?.focusAtEnd();
-      },
+      focusAtEnd: focusEditorAtEndStable,
       focusAt: (cursor: number) => {
         composerEditorRef.current?.focusAt(cursor);
       },
@@ -3009,6 +3025,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerThreadContexts,
       composerEnvironmentContexts,
       focusComposer,
+      focusEditorAtEndStable,
       environmentId,
       primaryEnvironmentId,
       isChoiceOnlyPendingQuestion,
@@ -3083,12 +3100,80 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         onRemoveFile={removeComposerFileFromDraft}
       />
     ) : null;
+  const composerPrimaryActions = (
+    <ComposerFooterPrimaryActions
+      compact={isComposerPrimaryActionsCompact}
+      canOperateThread={canOperateThread}
+      activeContextWindow={settings.contextWindowMeterEnabled ? activeContextWindow : null}
+      reserveContextWindowMeter={reserveContextWindowMeter}
+      activeThreadModelDisplayName={activeThreadModelDisplayName}
+      pendingAction={pendingPrimaryAction}
+      isRunning={phase === "running"}
+      canInterrupt={canInterrupt}
+      followUpBehavior={followUpBehavior}
+      canSteer={!isCompacting}
+      alternateShortcutLabel={shortcutLabelForCommand(keybindings, "composer.sendAlternate", {
+        context: {
+          composerFocus: true,
+          draftThreadRoute: routeKind === "draft",
+          turnRunning: true,
+          composerRequiresModifier: composerRequiresModifier(settings.sendShortcut, prompt),
+        },
+      })}
+      showPlanFollowUpPrompt={pendingUserInputs.length === 0 && showPlanFollowUpPrompt}
+      promptHasText={prompt.trim().length > 0}
+      isSendBusy={isSendBusy}
+      sendDisabledReason={sendDisabledReason}
+      isEnvironmentUnavailable={
+        environmentUnavailable !== null || noProviderAvailable || projectSelectionRequired
+      }
+      isPreparingWorktree={isPreparingWorktree}
+      hasSendableContent={composerSendState.hasSendableContent}
+      canResume={showResumeAction}
+      preserveComposerFocusOnPointerDown={isMobileViewport}
+      isEditingQueuedMessage={isEditingQueuedMessage}
+      onSubmitMessage={handleSubmitMessageStable}
+      onResume={onResume}
+      onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
+      onInterrupt={handleInterruptPrimaryActionStable}
+      onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryActionStable}
+      compactBeforeSendTokens={props.resumeCompactionTokens}
+      keepFullHistory={props.keepFullHistory}
+      onToggleKeepFullHistory={props.onToggleKeepFullHistory}
+      compactDisabled={compactDisabled || noProviderAvailable || isSendBusy}
+      compactDisabledReason={resolvedCompactDisabledReason}
+      {...(compactCommandAvailable ? { onCompactContext: compactThreadContextStable } : {})}
+    />
+  );
   const composerAttachButton = showComposerAttachAction ? (
     <ComposerAttachButton
       addComposerAttachments={addComposerAttachments}
       focusComposer={focusComposer}
     />
   ) : null;
+  const defaultComposerFooter = (
+    <>
+      {composerAttachButton ? <div className="me-2">{composerAttachButton}</div> : null}
+      <div
+        data-chat-composer-actions="right"
+        data-chat-composer-transition-actions="true"
+        data-chat-composer-primary-actions-compact={
+          isComposerPrimaryActionsCompact ? "true" : "false"
+        }
+        className="flex min-w-0 flex-1 flex-nowrap items-center justify-end gap-2"
+      >
+        <div
+          ref={attachExpandedComposerControls}
+          data-chat-composer-controls="footer"
+          data-chat-composer-footer-controls="true"
+          className="relative flex min-w-0 flex-1 items-center justify-end gap-0.5"
+        >
+          {composerControls}
+        </div>
+        {composerPrimaryActions}
+      </div>
+    </>
+  );
   return (
     <form
       ref={composerFormRef}
@@ -3434,82 +3519,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   showMobilePendingAnswerActions && "hidden sm:flex",
                 )}
               >
-                {composerAttachButton ? <div className="me-2">{composerAttachButton}</div> : null}
-                <div
-                  data-chat-composer-actions="right"
-                  data-chat-composer-transition-actions="true"
-                  data-chat-composer-primary-actions-compact={
-                    isComposerPrimaryActionsCompact ? "true" : "false"
-                  }
-                  className="flex min-w-0 flex-1 flex-nowrap items-center justify-end gap-2"
-                >
-                  <div
-                    ref={attachExpandedComposerControls}
-                    data-chat-composer-controls="footer"
-                    data-chat-composer-footer-controls="true"
-                    className="relative flex min-w-0 flex-1 items-center justify-end gap-0.5"
-                  >
-                    {composerControls}
-                  </div>
-                  <ComposerFooterPrimaryActions
-                    compact={isComposerPrimaryActionsCompact}
-                    canOperateThread={canOperateThread}
-                    activeContextWindow={
-                      settings.contextWindowMeterEnabled ? activeContextWindow : null
-                    }
-                    reserveContextWindowMeter={reserveContextWindowMeter}
-                    activeThreadModelDisplayName={activeThreadModelDisplayName}
-                    pendingAction={pendingPrimaryAction}
-                    isRunning={phase === "running"}
-                    canInterrupt={canInterrupt}
-                    followUpBehavior={followUpBehavior}
-                    canSteer={!isCompacting}
-                    alternateShortcutLabel={shortcutLabelForCommand(
-                      keybindings,
-                      "composer.sendAlternate",
-                      {
-                        context: {
-                          composerFocus: true,
-                          draftThreadRoute: routeKind === "draft",
-                          turnRunning: true,
-                          composerRequiresModifier: composerRequiresModifier(
-                            settings.sendShortcut,
-                            prompt,
-                          ),
-                        },
-                      },
-                    )}
-                    showPlanFollowUpPrompt={
-                      pendingUserInputs.length === 0 && showPlanFollowUpPrompt
-                    }
-                    promptHasText={prompt.trim().length > 0}
-                    isSendBusy={isSendBusy}
-                    sendDisabledReason={sendDisabledReason}
-                    isEnvironmentUnavailable={
-                      environmentUnavailable !== null ||
-                      noProviderAvailable ||
-                      projectSelectionRequired
-                    }
-                    isPreparingWorktree={isPreparingWorktree}
-                    hasSendableContent={composerSendState.hasSendableContent}
-                    canResume={showResumeAction}
-                    preserveComposerFocusOnPointerDown={isMobileViewport}
-                    isEditingQueuedMessage={isEditingQueuedMessage}
-                    onSubmitMessage={handleSubmitMessageStable}
-                    onResume={onResume}
-                    onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
-                    onInterrupt={handleInterruptPrimaryActionStable}
-                    onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryActionStable}
-                    compactBeforeSendTokens={props.resumeCompactionTokens}
-                    keepFullHistory={props.keepFullHistory}
-                    onToggleKeepFullHistory={props.onToggleKeepFullHistory}
-                    compactDisabled={compactDisabled || noProviderAvailable || isSendBusy}
-                    compactDisabledReason={resolvedCompactDisabledReason}
-                    {...(compactCommandAvailable
-                      ? { onCompactContext: compactThreadContextStable }
-                      : {})}
-                  />
-                </div>
+                <PluginPart
+                  part="composer.controls"
+                  pieces={{
+                    original: defaultComposerFooter,
+                    attach: composerAttachButton,
+                    controls: composerControls,
+                    model: composerControlsBar("model"),
+                    effort: composerControlsBar("effort"),
+                    access: composerControlsBar("access"),
+                    actions: composerPrimaryActions,
+                  }}
+                />
               </div>
             )}
             {showInlineRestingControls ? (

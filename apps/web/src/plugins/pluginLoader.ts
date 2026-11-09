@@ -43,7 +43,10 @@ import {
   markPluginWebLoaded,
   registerPluginCommand,
   registerPluginRightPanel,
+  pluginContributionKey,
+  registerPluginReplacement,
   registerPluginSettingsPanel,
+  setPluginComposerCollapseOnScroll,
   setPluginWebFailure,
   type PluginOwner,
 } from "./pluginRegistry";
@@ -166,8 +169,9 @@ function makeWebPluginApi({
   const assetUrls = new Map<string, Promise<string>>();
   // Shared by everything the plugin draws, so a render failure reaches its row once.
   const owner: PluginOwner = { environmentId, pluginId, pluginName: plugin.name };
+  let collapseCleanupTracked = false;
   return {
-    version: 1,
+    version: 2,
     id: pluginId,
     environmentId,
     rpc: {
@@ -271,6 +275,22 @@ function makeWebPluginApi({
         track(() => {
           delete handlers[keybindingCommand];
         });
+      },
+    },
+    ui: {
+      replace: (part, component) => {
+        track(registerPluginReplacement(part, component, owner));
+      },
+    },
+    composer: {
+      setCollapseOnScroll: (enabled) => {
+        if (!active()) return;
+        const key = pluginContributionKey(environmentId, pluginId);
+        setPluginComposerCollapseOnScroll(key, enabled === true);
+        if (!collapseCleanupTracked) {
+          collapseCleanupTracked = true;
+          track(() => setPluginComposerCollapseOnScroll(key, false));
+        }
       },
     },
     assetUrl: (name) => {
