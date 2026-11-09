@@ -384,28 +384,38 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
           .pipe(Effect.mapError(installFailed(`Could not delete ${plugin.folder}.`)));
 
   const uninstall: PluginInstaller["Service"]["uninstall"] = Effect.fn("PluginInstaller.uninstall")(
-    (pluginId) =>
-      host.lifecycle(
-        Effect.gen(function* () {
-          const plugin = yield* host.pluginOf(pluginId);
-          if (isDuplicate(plugin)) {
-            return yield* new PluginInstallError({ reason: plugin.failure.message });
-          }
-          yield* host.stop(pluginId);
-          yield* removeFolder(plugin);
-          yield* removeFromConfig(pluginId);
-          yield* host.rescan;
-          // Under the lock, or an install that starts meanwhile could lose its new settings.
-          yield* settingsStore
-            .clear(pluginId)
-            .pipe(
-              Effect.mapError(installFailed("The plugin is removed, but its settings are not.")),
-            );
-          yield* storage
-            .clear(pluginId)
-            .pipe(Effect.mapError(installFailed("The plugin is removed, but its storage is not.")));
-        }),
-      ),
+    (pluginId) => {
+      let stopped = false;
+      return host
+        .lifecycle(
+          Effect.gen(function* () {
+            const plugin = yield* host.pluginOf(pluginId);
+            if (isDuplicate(plugin)) {
+              return yield* new PluginInstallError({ reason: plugin.failure.message });
+            }
+            stopped = true;
+            yield* host.stop(pluginId);
+            yield* removeFolder(plugin);
+            yield* removeFromConfig(pluginId);
+            yield* host.rescan;
+            // Under the lock, or an install that starts meanwhile could lose its new settings.
+            yield* settingsStore
+              .clear(pluginId)
+              .pipe(
+                Effect.mapError(installFailed("The plugin is removed, but its settings are not.")),
+              );
+            yield* storage
+              .clear(pluginId)
+              .pipe(
+                Effect.mapError(installFailed("The plugin is removed, but its storage is not.")),
+              );
+          }),
+        )
+        .pipe(
+          // As for an install: whatever failed after the stop, what is left starts again if on.
+          Effect.onError(() => (stopped ? host.reload(pluginId).pipe(Effect.ignore) : Effect.void)),
+        );
+    },
   );
 
   return {
