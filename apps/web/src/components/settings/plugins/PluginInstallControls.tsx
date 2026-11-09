@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { FolderDownIcon } from "lucide-react";
 import { useRef, useState } from "react";
@@ -8,6 +9,7 @@ import { uploadPluginFolder } from "../../../plugins/pluginFiles";
 import { type PluginFolder, pickedFolder } from "../../../plugins/pluginFolders";
 import type { EnvironmentPresentation } from "../../../state/environments";
 import { pluginEnvironment } from "../../../state/plugins";
+import { useAtomCommand } from "../../../state/use-atom-command";
 import { Button } from "../../ui/button";
 import {
   Dialog,
@@ -17,6 +19,8 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../../ui/dialog";
+import { Input } from "../../ui/input";
+import { SettingsRow } from "../settingsLayout";
 
 export function AddPluginButton(props: {
   readonly environmentId: EnvironmentId;
@@ -46,6 +50,62 @@ export function InstallProblems({ problems }: { readonly problems: ReadonlyArray
         <li key={problem}>{problem}</li>
       ))}
     </ul>
+  );
+}
+
+/** Loads a plugin folder already on the environment's server where it is, for plugin authors. */
+export function LinkPluginFolderRow({ environmentId }: { readonly environmentId: EnvironmentId }) {
+  const canLink = useAtomValue(pluginEnvironment.linkPlugin.permissionAtom(environmentId));
+  const link = useAtomCommand(pluginEnvironment.linkPlugin, {
+    label: "plugin link",
+    reportFailure: false,
+  });
+  const [folder, setFolder] = useState("");
+  const [linking, setLinking] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const submit = async () => {
+    setLinking(true);
+    setProblem(null);
+    const result = await link({ environmentId, input: { folder: folder.trim() } });
+    setLinking(false);
+    if (result._tag === "Success") return setFolder("");
+    const error = squashAtomCommandFailure(result);
+    setProblem(error instanceof Error ? error.message : "Could not link the folder.");
+  };
+  return (
+    <SettingsRow
+      title="Link a plugin folder"
+      description="Loads a folder on the server where it is, so Reload runs your latest build. Give its absolute path."
+      control={
+        <form
+          className="flex w-full gap-2 @min-[32rem]/settings-row:w-80"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void submit();
+          }}
+        >
+          <Input
+            size="sm"
+            font="mono"
+            aria-label="Plugin folder on the server"
+            placeholder="/path/to/plugin"
+            value={folder}
+            disabled={!canLink || linking}
+            onChange={(event) => setFolder(event.currentTarget.value)}
+          />
+          <Button
+            size="sm"
+            variant="outline"
+            type="submit"
+            disabled={!canLink || linking || folder.trim() === ""}
+          >
+            Link
+          </Button>
+        </form>
+      }
+    >
+      <InstallProblems problems={problem === null ? [] : [problem]} />
+    </SettingsRow>
   );
 }
 

@@ -209,6 +209,12 @@ export type PluginCreateUploadUrlResult = typeof PluginCreateUploadUrlResult.Typ
 export const PluginRescanInput = Schema.Struct({});
 export type PluginRescanInput = typeof PluginRescanInput.Type;
 
+/** A plugin folder on the server, by its absolute path, to load where it is. */
+export const PluginLinkInput = Schema.Struct({
+  folder: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+});
+export type PluginLinkInput = typeof PluginLinkInput.Type;
+
 export const PluginUninstallInput = Schema.Struct({
   pluginId: PluginId,
 });
@@ -217,7 +223,7 @@ export type PluginUninstallInput = typeof PluginUninstallInput.Type;
 export const PluginUninstallResult = Schema.Struct({ pluginId: PluginId });
 export type PluginUninstallResult = typeof PluginUninstallResult.Type;
 
-/** Result of `plugins.setEnabled`, `plugins.reload` and a folder upload. */
+/** Result of `plugins.setEnabled`, `plugins.reload`, `plugins.link` and a folder upload. */
 export const PluginMutationResult = Schema.Struct({
   plugin: PluginState,
 });

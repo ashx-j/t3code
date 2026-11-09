@@ -45,6 +45,10 @@ export function createPluginEnvironmentAtoms<R, E>(
       label: "environment-data:plugins:rescan",
       tag: WS_METHODS.pluginsRescan,
     }),
+    linkPlugin: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:plugins:link",
+      tag: WS_METHODS.pluginsLink,
+    }),
     uninstallPlugin: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:plugins:uninstall",
       tag: WS_METHODS.pluginsUninstall,
