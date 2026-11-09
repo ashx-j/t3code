@@ -13,8 +13,8 @@ bundles run as React code in the page with every connection's credentials, with 
 `permissions` are shown on the plugin's row and not enforced, and `settings.get()` hands plugins
 secret values in plain text. Do not shape the API around a future sandbox.
 
-The host isolates failure instead. A plugin that throws or hangs while starting is marked failed,
-and a throw in a handler fails that call. Node exits on a rejection nobody handles, so every promise
+The host isolates failure instead. A plugin that throws while starting, or whose start doesn't
+settle in 30 seconds, is marked failed, and a throw in a handler fails that call. Node exits on a rejection nobody handles, so every promise
 the API hands a plugin comes from `call` or `refused` in
 [`facade.ts`](../../apps/server/src/plugins/api/facade.ts), which mark it handled.
 
@@ -31,6 +31,12 @@ guard ties one to a plugin, it saves the error to `plugins.json` before Node exi
 lists that plugin as failed with its switch off until the user turns it on again, so a plugin that
 throws at startup can't stop every start. A failure the guard can't tie to a plugin
 stops the server too.
+
+Some failures end the process before any handler runs: `process.exit`, running out of memory, a
+native crash, or a loop that never yields while the plugin starts, which no deadline can interrupt.
+So the host writes a starting mark to `plugins.json` before it loads and activates a plugin, and
+clears it after. A start that finds a mark left behind turns that plugin off and says why.
+`--no-plugins` lists plugins but runs none, so a user can always reach Settings to turn one off.
 
 The host runs plugin code in an `AsyncLocalStorage` scope, which Node carries into the timers and
 callbacks that code starts, so a failure with only Node's frames in its stack is still the plugin's.
@@ -52,7 +58,8 @@ fails the same way with an error the agent reads, so a hung tool can't hold the 
 subscriber gets its own sliding buffer per channel, so a busy channel or a slow subscriber drops
 only that channel's oldest values.
 
-Manifests ignore keys they don't know, so a newer manifest key is lost silently on an older T3.
+Manifests accept keys they don't know, so a newer manifest still loads on an older T3. The
+plugin's row names the keys T3 ignored, so a typo such as `setingsSchema` shows.
 `engines.t3` is how a plugin requires a newer T3: the server refuses to install or start a version
 outside it. `api.version` is how a plugin detects newer API members and still runs on older
 releases, so a change that adds a member raises it and names that version in the member's doc.
@@ -62,7 +69,8 @@ the plugin with the reason instead of refusing every save later.
 
 ## State lives beside T3's
 
-`<stateDir>/plugins.json` holds enabled flags, dev paths and the plugins that stopped the server.
+`<stateDir>/plugins.json` holds enabled flags, dev paths, the plugins that stopped the server and
+starting marks.
 Settings go in `plugin-data/<id>/` and storage in `plugins.sqlite`. They stay out of
 `settings.json`, whose writer drops keys it doesn't know, and out of `statev2.sqlite`, which holds
 T3's event-sourced state: plugin data isn't events, has no schema of T3's, and is deleted with its
@@ -90,10 +98,12 @@ before.
 
 Discovery takes the id from the manifest, because people copy plugin folders in by hand. Settings,
 storage and the enabled flag belong to the id, so a later folder with an id already listed fails as
-a duplicate. Installed folders come first, in name order, then dev paths. Removing or unlinking a
-duplicate deletes only its folder or link, and the copy in use keeps the data. Discovery also
-forgets the enabled flag and crash record of every id no folder has, so a folder copied in later
-with that id starts off. Nothing watches `plugins/`: the server reads it at startup, on reload and
+a duplicate. An id that several folders share is one failed row naming each folder, and no copy
+runs until the user deletes the extras. It has no Remove, because removal deletes the id's data,
+which the copy kept would need. After a discovery that read every folder, the host forgets the
+enabled flag and crash record of every id no folder has, so a folder copied in later with that id
+starts off. A folder it can't read, such as one on a drive that isn't mounted, keeps its flag and
+gets a failed row. Nothing watches `plugins/`: the server reads it at startup, on reload and
 when Settings asks.
 
 ## Clients
@@ -104,8 +114,10 @@ environment's threads. Commands and styles have no thread, so a plugin on in sev
 environments adds them from the first, and the next takes over when it's turned off there.
 
 Rows carry `hasSettings` rather than the settings schema. Every client, read-only ones and the
-idle watcher included, gets a plugin's row again on each status change, and only the settings
-form needs the schema, which it fetches with `plugins.settings.get`.
+idle watcher included, gets the whole list again on each status change, and only the settings
+form needs the schema, which it fetches with `plugins.settings.get`. The list decodes row by row,
+so a row an older client can't read, such as one with a newer failure stage, is left out and the
+rest still shows.
 
 With no plugins, the plugin system adds about 11 KB of minified JS to the startup chunks of a
 production build, about 4.5 KB gzipped, in 5 more chunks. Most of it is the plugin contract

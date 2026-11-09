@@ -106,7 +106,9 @@ JSON as input, so check it before acting on it.
 read the environment may follow one, so never publish secrets. A subscriber gets only the values
 published after it subscribes, so give the web half a method that returns the current value, as
 [`examples/quick-notes`](./examples/quick-notes) does with `list`. A subscriber that falls behind
-keeps the latest 64 values of each channel and loses older ones.
+keeps the latest 64 values of each channel and loses older ones. A method's result and a published
+value can each be at most 256 KB as JSON, because one large WebSocket message holds up everything
+else on the connection. A bigger result fails the call, and `publish` throws.
 
 A promise rejection in plugin code that nothing handles, such as in a timer, doesn't stop T3 Code.
 It shows on the plugin's row in Settings → Plugins, and the plugin keeps running. An exception
@@ -135,7 +137,8 @@ socket and stream you create an `'error'` listener.
   hasn't answered within 5 minutes fails the same way, and its `signal` aborts.
 - Every agent in every thread of the environment sees the tools of every plugin that is on, so
   each tool takes up room in every agent's context. A plugin registers at most 32 tools, each with
-  a description of up to 1,000 characters and an input schema of up to 4,000 characters as JSON.
+  a description of up to 1,000 characters and an input schema of up to 4,000 characters as JSON,
+  and its tools' names, descriptions and schemas together take at most 24,000 characters.
   `registerTool` throws when a tool breaks a rule, so a plugin that registers it in `activate` fails
   to start and says why.
 
@@ -238,10 +241,11 @@ parts of your design to survive that. Build each part on the most stable thing T
 
 ## Developing a plugin
 
-Add the plugin's folder to `devPaths` in `plugins.json` in the T3 Code data directory, turn the
-plugin on in Settings → Plugins, and use **Reload** after each change. **Unlink** on its row removes
-it from `devPaths` and leaves the folder alone. A linked folder whose id an installed plugin already
-has fails as a duplicate, so remove the installed copy first.
+Enter the plugin's folder path in **Link a plugin folder** in Settings → Plugins, turn the plugin on
+on its row, and use **Reload** after each change. The path is on the environment's machine. Linking
+adds the folder to `devPaths` in `plugins.json`, and **Unlink** on its row removes it and leaves the
+folder alone. Linking refuses a folder whose id is already listed, so remove the installed copy
+first.
 
 To install a finished plugin, drag its folder onto Settings → Plugins, or use **Add plugin** to
 choose it. Unlink a linked copy first. It installs turned off, so turn it on on its row.

@@ -29,8 +29,9 @@ export interface PluginApiError extends Error {
 }
 
 /**
- * A plugin registers at most 32 tools, because agents in every thread see them all. A call that
- * hasn't answered within 5 minutes fails with an error the agent reads, and its `signal` aborts.
+ * A plugin registers at most 32 tools, whose names, descriptions and schemas take at most 24,000
+ * characters together, because agents in every thread see them all. A call that hasn't answered
+ * within 5 minutes fails with an error the agent reads, and its `signal` aborts.
  */
 export interface PluginMcpTool {
   /** Agents see the tool as `plg_<pluginId>_<name>`. Letters, digits, `_` and `-`. */
@@ -104,7 +105,11 @@ export interface PluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
       handler: PluginRpcHandler<Rpc["methods"][Method]>,
       options: { readonly access: PluginRpcAccess },
     ) => void;
-    /** Sends `value` to every `plugins.subscribe` caller on `channel`. Any session that can read this environment may subscribe, so never publish secrets. */
+    /**
+     * Sends `value` to every `plugins.subscribe` caller on `channel`. Any session that can read
+     * this environment may subscribe, so never publish secrets. Throws when `value` is over 256 KB
+     * as JSON, the limit a method's result has too.
+     */
     readonly publish: <Channel extends Extract<keyof Rpc["channels"], string>>(
       channel: Channel,
       value: Rpc["channels"][Channel],

@@ -19,8 +19,11 @@ of T3 Code, or whose settings T3 Code can't check, isn't installed, and T3 Code 
 
 Plugin folders you copy into the `plugins` folder yourself show up, turned off, the next time you
 open **Settings → Plugins**. That folder is `~/.t3/userdata/plugins` on the environment's machine
-by default. A folder with the same plugin id as one you already have doesn't run, and its row names
-the folder that has that id. Remove one of them.
+by default. Two folders with the same plugin id don't run until you delete one of them, and the
+plugin's row names both.
+
+To load a plugin from a folder on the environment's machine without copying it, such as one you're
+building, enter the folder's path in **Link a plugin folder**. **Reload** then runs its latest files.
 
 **Settings → Plugins** shows one environment at a time, the main one until you pick another at the
 top of the page. To use a plugin on several environments, add it to each of them.
@@ -33,8 +36,10 @@ T3 Code server to run on Node 24 or later, as the desktop app's does. **Reload**
 with its current files. Turning a plugin off doesn't stop code it started on its own, such as a
 timer. If its row says some of its code is still running, restart T3 Code to stop it.
 
-A plugin can stop T3 Code's server with an error. When the server starts again, that plugin stays
-off and its row says it stopped the server. To try it again, turn it back on.
+A plugin can stop T3 Code's server. When the server starts again, a plugin that stopped it while
+starting, or with an error T3 Code could trace to it, is off, and its row says why. To try it again, turn it back on. If T3 Code still
+won't start, run its server with `t3 --no-plugins`, which lists your plugins but runs none, and turn
+the plugin off.
 
 ## Plugin settings
 
@@ -50,9 +55,6 @@ settings, secrets and stored data, and this can't be undone. Reinstalling it lat
 
 A plugin loaded from its own folder shows **Unlink** instead. Unlinking stops loading it and deletes
 its settings, secrets and stored data the same way, but leaves the folder where it is.
-
-On a duplicate's row, **Remove** deletes only that folder and **Unlink** only stops loading it. The
-plugin in use keeps running with its settings, secrets and stored data.
 
 ## Themes and styles
 
