@@ -9,11 +9,14 @@ A plugin is a folder with a `t3-plugin.json` manifest
 ## Trust and failure
 
 Plugins are trusted code the user chose to install. Server entries run in the server process, with
-no sandbox. Manifest `permissions` are shown on the plugin's row and not enforced. Do not shape the
-API around a future sandbox.
+no sandbox. Manifest `permissions` are shown on the plugin's row and not enforced, and
+`settings.get()` hands plugins secret values in plain text. Do not shape the API around a future
+sandbox.
 
 The host isolates failure instead. A plugin that throws or hangs while starting is marked failed,
-and a throw in a handler fails that call.
+and a throw in a handler fails that call. Node exits on a rejection nobody handles, so every promise
+the API hands a plugin comes from `call` or `refused` in
+[`facade.ts`](../../apps/server/src/plugins/api/facade.ts), which mark it handled.
 
 Plugin code can still fail where nothing T3 runs is waiting, such as in a timer or a child process
 with no `'error'` listener. The [failure guard](../../apps/server/src/plugins/pluginFailureGuard.ts)
@@ -38,8 +41,8 @@ Plugins without one still run.
 ## The API and manifests
 
 The server bundle inlines `effect`, so plugins never share the host's Effect runtime or `Schema`
-instances. They get Promises, `AbortSignal` and the SDK's own types, never T3's contracts, which
-change between releases.
+instances. They get Promises, `AsyncIterable` streams, `AbortSignal` and the SDK's own types, never
+T3's contracts, which change between releases.
 
 `plugins.invoke` and `plugins.subscribe` need only the read scope, so the host checks a method's
 `access` itself: a `write` method needs the caller's operate scope, as T3's own changes do. A call
@@ -52,12 +55,22 @@ Manifests ignore keys they don't know, so a newer manifest key is lost silently 
 outside it. `api.version` is how a plugin detects newer API members and still runs on older
 releases, so a change that adds a member raises it and names that version in the member's doc.
 
+Discovery and install compile the manifest's `settingsSchema`, so a schema T3 can't validate fails
+the plugin with the reason instead of refusing every save later.
+
 ## State lives beside T3's
 
 `<stateDir>/plugins.json` holds enabled flags, dev paths and the plugins that stopped the server.
-They stay out of `settings.json`, whose writer drops keys it doesn't know, and out of
-`statev2.sqlite`, whose numbered migrations refuse to start when a fork's id collides with an
-upstream one.
+Settings go in `plugin-data/<id>/` and storage in `plugins.sqlite`. They stay out of
+`settings.json`, whose writer drops keys it doesn't know, and out of `statev2.sqlite`, whose
+numbered migrations refuse to start when a fork's id collides with an upstream one. Settings stay
+out of `plugins/<id>/`, so replacing a plugin's files keeps them. Removing a plugin deletes its
+settings, secrets and storage, so nothing is left that no plugin can reach.
+
+All of a plugin's secrets share one secret store entry, because a keychain can't list names and
+removal must also find the secrets of fields a plugin has since renamed. The settings store keeps
+each plugin's files in memory after the first read and changes them only through its own writes,
+so a hand edit to `settings.json` shows after a restart.
 
 ## Installing
 
@@ -72,12 +85,13 @@ the signature is the credential, so the upload works the same on every kind of c
 installs once. The server keeps its unused URLs in memory, so a restart refuses those it signed
 before.
 
-Discovery takes the id from the manifest, because people copy plugin folders in by hand. The enabled
-flag belongs to the id, so a later folder with an id already listed fails as a duplicate. Installed
-folders come first, in name order, then dev paths. Removing or unlinking a duplicate deletes only
-its folder or link. Discovery also forgets the enabled flag and crash record of every id no folder
-has, so a folder copied in later with that id starts off. Nothing watches `plugins/`: the server
-reads it at startup, on reload and when Settings asks.
+Discovery takes the id from the manifest, because people copy plugin folders in by hand. Settings,
+storage and the enabled flag belong to the id, so a later folder with an id already listed fails as
+a duplicate. Installed folders come first, in name order, then dev paths. Removing or unlinking a
+duplicate deletes only its folder or link, and the copy in use keeps the data. Discovery also
+forgets the enabled flag and crash record of every id no folder has, so a folder copied in later
+with that id starts off. Nothing watches `plugins/`: the server reads it at startup, on reload and
+when Settings asks.
 
 ## Clients
 

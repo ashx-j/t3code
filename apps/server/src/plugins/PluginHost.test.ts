@@ -24,6 +24,7 @@ import * as ServerConfig from "../config.ts";
 import * as EnvironmentTheme from "../environmentTheme.ts";
 import * as PluginHost from "./PluginHost.ts";
 import {
+  fixturesDir,
   layerConfig,
   layerFileSystemWith,
   layerHost,
@@ -36,21 +37,34 @@ import {
 } from "./pluginHostTestHarness.ts";
 import * as PluginInstaller from "./PluginInstaller.ts";
 import { makePluginRpcHandlers } from "./pluginRpcHandlers.ts";
+import * as PluginStorage from "./PluginStorage.ts";
 import * as PluginUploads from "./pluginUploads.ts";
 
 const hello = PluginId.make("hello-plugin");
+const broken = PluginId.make("broken-plugin");
 const operate = [AuthOrchestrationReadScope, AuthOrchestrationOperateScope] as const;
 
 const manifestJson = (
   id: string,
-  options: { readonly name?: string; readonly version?: string; readonly engines?: string } = {},
+  options: {
+    readonly name?: string;
+    readonly version?: string;
+    readonly engines?: string;
+    readonly settingsSchema?: object;
+  } = {},
 ) =>
   JSON.stringify({
     id,
     name: options.name ?? id,
     version: options.version ?? "0.1.0",
     engines: { t3: options.engines ?? ">=0.1.0" },
+    settingsSchema: options.settingsSchema,
   });
+
+const enableHello = writePluginsConfig({
+  enabled: { [hello]: true },
+  devPaths: [`${fixturesDir}hello-plugin`],
+});
 
 /** A `linked` plugin in a checkout folder, which the plugins folder holds a symlink to. */
 const linkPluginFolder = Effect.fn(function* (entries: { readonly server?: string }) {
@@ -89,6 +103,138 @@ const nextServerFailure = (host: PluginHost.PluginHost["Service"], pluginId: Plu
   );
 
 it.layer(NodeServices.layer)("PluginHost", (it) => {
+  it.effect("activates an enabled plugin and serves its methods with the caller's access", () =>
+    Effect.gen(function* () {
+      yield* enableHello;
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const states = yield* waitForStatuses(host, { [hello]: "active" });
+        assert.include(stateOf(states, hello), { source: "dev", hasServer: true, enabled: true });
+
+        const ping = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+          host.invoke({ pluginId: hello, method: "ping", input: "a", scopes });
+        assert.deepStrictEqual(yield* ping(operate), {
+          pong: "a",
+          greeting: "hello",
+          access: "write",
+        });
+        // A read method tells a session that can only read from one that can also write.
+        assert.deepStrictEqual(yield* ping([AuthOrchestrationReadScope]), {
+          pong: "a",
+          greeting: "hello",
+          access: "read",
+        });
+
+        const count = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+          host.invoke({ pluginId: hello, method: "count", input: undefined, scopes });
+        const counted = yield* host
+          .subscribe({ pluginId: hello, channel: "counted" })
+          .pipe(Stream.runHead, Effect.forkChild({ startImmediately: true }));
+        assert.strictEqual(yield* count(operate), 1);
+        assert.deepStrictEqual(yield* Fiber.join(counted), Option.some(1));
+        const denied = yield* count([AuthOrchestrationReadScope]).pipe(Effect.flip);
+        assert.strictEqual(denied._tag, "PluginAccessDeniedError");
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("hands an active plugin its saved settings and tells it when they change", () =>
+    Effect.gen(function* () {
+      yield* enableHello;
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        yield* waitForStatuses(host, { [hello]: "active" });
+
+        const changed = yield* host
+          .subscribe({ pluginId: hello, channel: "settings" })
+          .pipe(Stream.runHead, Effect.forkChild({ startImmediately: true }));
+        yield* host.updateSettings(hello, { greeting: "hey" });
+        assert.deepStrictEqual(yield* Fiber.join(changed), Option.some({ greeting: "hey" }));
+        assert.deepInclude(
+          yield* host.invoke({ pluginId: hello, method: "ping", input: "b", scopes: operate }),
+          { greeting: "hey" },
+        );
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("marks a plugin that throws in activate as failed and keeps the others running", () =>
+    Effect.gen(function* () {
+      yield* writePluginsConfig({
+        enabled: { [hello]: true, [broken]: true },
+        devPaths: [`${fixturesDir}broken-plugin`, `${fixturesDir}hello-plugin`],
+      });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const states = yield* waitForStatuses(host, { [broken]: "failed", [hello]: "active" });
+        assert.deepStrictEqual(stateOf(states, broken)?.failure, {
+          stage: "activate",
+          message: "broken-plugin refuses to start",
+        });
+        const missing = yield* host
+          .invoke({ pluginId: broken, method: "ping", input: undefined, scopes: operate })
+          .pipe(Effect.flip);
+        assert.strictEqual(missing._tag, "PluginNotActiveError");
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("fails a plugin with server code below Node 24 and runs one without", () =>
+    Effect.gen(function* () {
+      const styles = PluginId.make("styles-plugin");
+      yield* writePluginsConfig({
+        enabled: { [hello]: true, [styles]: true },
+        devPaths: [`${fixturesDir}hello-plugin`, `${fixturesDir}styles-plugin`],
+      });
+      // As `npx t3` runs on Node 22.
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          const running = process.versions.node;
+          Object.defineProperty(process.versions, "node", { value: "22.16.0" });
+          return running;
+        }),
+        (running) =>
+          Effect.sync(() => Object.defineProperty(process.versions, "node", { value: running })),
+      );
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const states = yield* waitForStatuses(host, { [hello]: "failed", [styles]: "active" });
+        assert.deepStrictEqual(stateOf(states, hello)?.failure, {
+          stage: "compatibility",
+          message: "Needs Node 24 or later for its server code; this server runs Node 22.16.0.",
+        });
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.scoped, Effect.provide(layerConfig())),
+  );
+
+  it.effect("runs cleanup on disable and stops serving the plugin", () =>
+    Effect.gen(function* () {
+      yield* writePluginsConfig({
+        enabled: { [hello]: true },
+        devPaths: [`${fixturesDir}hello-plugin`],
+      });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const storage = yield* PluginStorage.PluginStorage;
+        yield* waitForStatuses(host, { [hello]: "active" });
+
+        const disabled = yield* host.setEnabled(hello, false);
+        assert.include(disabled, { status: "disabled", enabled: false });
+        assert.deepStrictEqual(yield* storage.get(hello, "deactivated"), Option.some(true));
+        const error = yield* host
+          .invoke({ pluginId: hello, method: "ping", input: undefined, scopes: operate })
+          .pipe(Effect.flip);
+        assert.strictEqual(error._tag, "PluginNotActiveError");
+
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const saved = yield* FileSystem.FileSystem.use((fs) =>
+          fs.readFileString(`${stateDir}/plugins.json`),
+        );
+        assert.deepStrictEqual(JSON.parse(saved).enabled, { [hello]: false });
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
   it.effect("publishes the theme folders of plugins that are on", () =>
     Effect.gen(function* () {
       const { stateDir } = yield* ServerConfig.ServerConfig;
@@ -291,7 +437,9 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
         const installer = yield* PluginInstaller.PluginInstaller;
+        const storage = yield* PluginStorage.PluginStorage;
         yield* waitForStatuses(host, { [id]: "active" });
+        yield* storage.set(id, "kept", true);
         const copies = host.list.pipe(
           Effect.map((states) =>
             states
@@ -312,6 +460,8 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         assert.deepStrictEqual(yield* copies, [["0.1.0", "active", undefined]]);
         assert.isFalse(yield* fs.exists(installed));
         assert.isTrue(yield* fs.exists(linked));
+        // The copy in use keeps the id's data.
+        assert.deepStrictEqual(yield* storage.get(id, "kept"), Option.some(true));
 
         const elsewhere = yield* installer.uninstall(id, `${stateDir}/elsewhere`).pipe(Effect.flip);
         assert.strictEqual(elsewhere.message, `No copy of twice is in ${stateDir}/elsewhere.`);
@@ -622,22 +772,23 @@ module.exports = { activate() {} };`,
 
   it.effect("installs a dropped folder turned off, and one dropped again keeps its switch", () =>
     Effect.gen(function* () {
-      const helloFiles = (version: string) => [
-        {
-          path: "t3-plugin.json",
-          contents: new TextEncoder().encode(manifestJson(hello, { version })),
-        },
-      ];
+      const fs = yield* FileSystem.FileSystem;
+      const helloFiles = yield* Effect.forEach(["t3-plugin.json", "server.cjs"], (name) =>
+        fs
+          .readFile(`${fixturesDir}hello-plugin/${name}`)
+          .pipe(Effect.map((contents) => ({ path: name, contents }))),
+      );
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
         const installer = yield* PluginInstaller.PluginInstaller;
         yield* waitForStatuses(host, {});
         // Nothing of a new plugin runs until its switch is turned on.
-        const installed = yield* installer.installFiles(helloFiles("0.1.0"));
+        const installed = yield* installer.installFiles(helloFiles);
         assert.include(installed, { id: hello, status: "disabled", enabled: false });
-        yield* host.setEnabled(hello, true);
-        const replaced = yield* installer.installFiles(helloFiles("0.1.1"));
-        assert.include(replaced, { status: "active", enabled: true, version: "0.1.1" });
+        const started = yield* host.setEnabled(hello, true);
+        const replaced = yield* installer.installFiles(helloFiles);
+        assert.include(replaced, { status: "active", enabled: true });
+        assert.notStrictEqual(replaced.revision, started.revision);
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
@@ -765,20 +916,16 @@ module.exports = { activate() {} };`,
 
   it.effect("sends a client only the plugins that changed after the first list", () =>
     Effect.gen(function* () {
-      const { stateDir } = yield* ServerConfig.ServerConfig;
-      const changing = PluginId.make("changing");
-      yield* writeFile(`${stateDir}/checkout/steady/t3-plugin.json`, manifestJson("steady"));
-      yield* writeFile(`${stateDir}/checkout/changing/t3-plugin.json`, manifestJson(changing));
       yield* writePluginsConfig({
-        enabled: { [changing]: true },
-        devPaths: [`${stateDir}/checkout/steady`, `${stateDir}/checkout/changing`],
+        enabled: { [hello]: true },
+        devPaths: [`${fixturesDir}broken-plugin`, `${fixturesDir}hello-plugin`],
       });
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
-        yield* waitForStatuses(host, { [changing]: "active", steady: "disabled" });
+        yield* waitForStatuses(host, { [hello]: "active", [broken]: "disabled" });
         const disabled = (event: PluginStatesEvent) =>
           event._tag === "changed" &&
-          event.rows.some(({ plugin }) => plugin.id === changing && plugin.status === "disabled");
+          event.rows.some(({ plugin }) => plugin.id === hello && plugin.status === "disabled");
         const events = yield* host
           .streamForClient(operate)
           .pipe(
@@ -786,13 +933,13 @@ module.exports = { activate() {} };`,
             Stream.runCollect,
             Effect.forkChild({ startImmediately: true }),
           );
-        yield* host.setEnabled(changing, false);
+        yield* host.setEnabled(hello, false);
         const [first, ...changes] = yield* Fiber.join(events);
         assert.strictEqual(first?._tag, "snapshot");
         for (const change of changes) {
           assert.deepStrictEqual(
             change._tag === "changed" ? change.rows.map(({ plugin }) => plugin.id) : [],
-            [changing],
+            [hello],
           );
         }
         const folded = [first!, ...changes].reduce(applyPluginStatesEvent, { plugins: [] });
@@ -803,7 +950,10 @@ module.exports = { activate() {} };`,
 
   it.effect("refuses a dropped folder this server can't run and keeps the old one", () =>
     Effect.gen(function* () {
-      const upgrade = (version: string, options: { readonly engines?: string } = {}) => [
+      const upgrade = (
+        version: string,
+        options: { readonly engines?: string; readonly settingsSchema?: object } = {},
+      ) => [
         {
           path: "t3-plugin.json",
           contents: new TextEncoder().encode(
@@ -824,6 +974,18 @@ module.exports = { activate() {} };`,
           refused.message,
           `Upgrade 2.0.0 needs T3 Code >=999.0.0, and this server is ${packageJson.version}.`,
         );
+        const unchecked = yield* installer
+          .installFiles(
+            upgrade("2.0.0", {
+              settingsSchema: { type: "object", properties: { count: { $ref: "#/$defs/no" } } },
+            }),
+          )
+          .pipe(Effect.flip);
+        assert.include(
+          unchecked.message,
+          "Upgrade 2.0.0 has a settingsSchema T3 Code cannot validate",
+        );
+        assert.include(unchecked.message, 'Missing definition "no"');
         assert.include(stateOf(yield* host.list, "upgrade"), {
           version: "1.0.0",
           status: "active",

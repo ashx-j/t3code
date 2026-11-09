@@ -90,6 +90,8 @@ import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as PluginHost from "./plugins/PluginHost.ts";
 import * as PluginUploads from "./plugins/pluginUploads.ts";
+import * as PluginSettingsStore from "./plugins/PluginSettingsStore.ts";
+import * as PluginStorage from "./plugins/PluginStorage.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerOwnership from "./serverOwnership.ts";
@@ -713,8 +715,9 @@ const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   Layer.provide(NetService.layer),
 );
 
-// The plugin host sits on top of the runtime for its theme service.
+// The plugin host sits on top of the runtime for its theme service and secret store.
 const layerRuntimeDependenciesWithPlugins = PluginHost.layer.pipe(
+  Layer.provide(Layer.mergeAll(PluginSettingsStore.layer, PluginStorage.layer)),
   Layer.provideMerge(layerRuntimeDependencies),
 );
 

@@ -40,13 +40,20 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import { authenticateRawRouteWithScope } from "../http.ts";
 import { forkParked } from "../serverActivation.ts";
-import { makePluginActivation, makePluginApi, type PluginActivation } from "./PluginApi.ts";
+import {
+  makePluginActivation,
+  makePluginApi,
+  type PluginActivation,
+  type PluginApiServices,
+} from "./PluginApi.ts";
 import { errorText, PluginCodeError, pluginCodeScope } from "./api/facade.ts";
 import { makePluginFailureGuard } from "./pluginFailureGuard.ts";
 import { makePluginFailures } from "./pluginFailures.ts";
 import { discoverPlugins, type DiscoveredPlugin } from "./pluginDiscovery.ts";
 import * as PluginInstaller from "./PluginInstaller.ts";
 import { makePluginsConfig, type PluginConfigError } from "./pluginsConfig.ts";
+import * as PluginSettingsStore from "./PluginSettingsStore.ts";
+import * as PluginStorage from "./PluginStorage.ts";
 import { makePluginStates, manifestOf, type PluginRecord } from "./pluginStates.ts";
 import { makePluginWebFiles, type PluginWebFile } from "./pluginWebFiles.ts";
 
@@ -157,6 +164,19 @@ export class PluginHost extends Context.Service<
       { readonly plugins: ReadonlyArray<PluginState> },
       PluginConfigError
     >;
+    readonly getSettings: (
+      pluginId: PluginId,
+    ) => Effect.Effect<
+      Schema.JsonObject,
+      PluginNotFoundError | PluginNotActiveError | PluginSettingsError
+    >;
+    readonly updateSettings: (
+      pluginId: PluginId,
+      patch: Schema.JsonObject,
+    ) => Effect.Effect<
+      Schema.JsonObject,
+      PluginNotFoundError | PluginNotActiveError | PluginSettingsError
+    >;
     /**
      * `scopes` are the caller's; methods the plugin registered as writes need the operate scope. A
      * handler that has not answered within 30 seconds is aborted.
@@ -196,6 +216,11 @@ export class PluginHost extends Context.Service<
   }
 >()("t3/plugins/PluginHost") {}
 
+type PluginSettingsError =
+  | PluginSettingsStore.PluginSettingsPersistenceError
+  | PluginSettingsStore.PluginSettingsSchemaError
+  | PluginSettingsStore.PluginSettingsValidationError;
+
 const isJson = Schema.is(Schema.Json);
 
 /** What plugins.json says about the plugins a discovery found. */
@@ -219,6 +244,11 @@ const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const context = yield* Effect.context<never>();
+  const services: PluginApiServices = {
+    settings: yield* PluginSettingsStore.PluginSettingsStore,
+    storage: yield* PluginStorage.PluginStorage,
+  };
+  const settingsStore = services.settings;
 
   const pluginsDir = path.join(config.stateDir, "plugins");
   const pluginsConfig = yield* makePluginsConfig;
@@ -293,8 +323,8 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  // Aborts first so handlers stop. Teardown also runs where interruption is off, so the deadline
-  // gets an interruptible region to cut.
+  // Aborts first so handlers and iterators stop. Teardown also runs where interruption is off, so
+  // the deadline gets an interruptible region to cut.
   const teardown = Effect.fn("PluginHost.teardown")(function* (
     pluginId: PluginId,
     activation: PluginActivation,
@@ -384,8 +414,10 @@ const make = Effect.gen(function* () {
     const api = makePluginApi({
       id: plugin.id,
       rootDir: plugin.rootDir,
+      settingsSchema: manifest.settingsSchema,
       activation,
       context,
+      services,
     });
     // Only `activate` can be interrupted. A stop that lands after it waits until the record holds
     // the activation, so `stopPlugin` always finds what to tear down.
@@ -583,6 +615,16 @@ const make = Effect.gen(function* () {
   });
 
   // Lookups inside an operation that already has its span.
+  const manifestFor = Effect.fnUntraced(function* (pluginId: PluginId) {
+    const record = yield* findRecord(pluginId);
+    if (record === undefined) return yield* new PluginNotFoundError({ pluginId });
+    const manifest = manifestOf(record.plugin);
+    if (manifest === undefined) {
+      return yield* new PluginNotActiveError({ pluginId, status: record.status });
+    }
+    return manifest;
+  });
+
   const activeRecord = Effect.fnUntraced(function* (pluginId: PluginId) {
     const record = yield* findRecord(pluginId);
     if (record === undefined) return yield* new PluginNotFoundError({ pluginId });
@@ -656,6 +698,14 @@ const make = Effect.gen(function* () {
     setEnabled,
     reload,
     rescan: rescan(),
+    getSettings: Effect.fn("PluginHost.getSettings")(function* (pluginId) {
+      const manifest = yield* manifestFor(pluginId);
+      return yield* settingsStore.getForClient(pluginId, manifest.settingsSchema);
+    }),
+    updateSettings: Effect.fn("PluginHost.updateSettings")(function* (pluginId, patch) {
+      const manifest = yield* manifestFor(pluginId);
+      return yield* settingsStore.update(pluginId, manifest.settingsSchema, patch);
+    }),
     invoke: Effect.fn("PluginHost.invoke")(function* (request) {
       yield* Effect.annotateCurrentSpan({
         "plugin.id": request.pluginId,

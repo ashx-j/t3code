@@ -8,6 +8,8 @@ import {
   type PluginReloadInput,
   type PluginRescanInput,
   type PluginSetEnabledInput,
+  type PluginSettingsGetInput,
+  type PluginSettingsUpdateInput,
   type PluginSubscribeInput,
   type PluginUninstallInput,
   WS_METHODS,
@@ -53,6 +55,16 @@ export const makePluginRpcHandlers = (
     installer
       .uninstall(input.pluginId, input.folder)
       .pipe(Effect.as({ pluginId: input.pluginId }), Effect.mapError(toRpcError(input.pluginId))),
+  [WS_METHODS.pluginsSettingsGet]: (input: PluginSettingsGetInput) =>
+    pluginHost.getSettings(input.pluginId).pipe(
+      Effect.map((settings) => ({ pluginId: input.pluginId, settings })),
+      Effect.mapError(toRpcError(input.pluginId)),
+    ),
+  [WS_METHODS.pluginsSettingsUpdate]: (input: PluginSettingsUpdateInput) =>
+    pluginHost.updateSettings(input.pluginId, input.patch).pipe(
+      Effect.map((settings) => ({ pluginId: input.pluginId, settings })),
+      Effect.mapError(toRpcError(input.pluginId)),
+    ),
   [WS_METHODS.pluginsInvoke]: (input: PluginInvokeInput) =>
     pluginHost
       .invoke({ pluginId: input.pluginId, method: input.method, input: input.input, scopes })

@@ -2,7 +2,7 @@
 import type { PluginId } from "@t3tools/contracts";
 import * as Predicate from "effect/Predicate";
 
-import { pluginCodeScope } from "./api/facade.ts";
+import { PluginApiCallError, pluginCodeScope } from "./api/facade.ts";
 
 const REJECTION = "unhandledRejection";
 type Listener = (...args: ReadonlyArray<unknown>) => unknown;
@@ -29,6 +29,7 @@ export const makePluginFailureGuard = (handlers: {
   const pluginOf = (error: unknown): PluginId | undefined => {
     const running = pluginCodeScope.getStore();
     if (running !== undefined) return running;
+    if (error instanceof PluginApiCallError) return error.pluginId;
     let stack: unknown;
     try {
       stack = Predicate.isObject(error) ? error.stack : undefined;

@@ -6,7 +6,11 @@ import type { PluginId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+
+import type { PluginActivation } from "../PluginApi.ts";
 
 const MAX_ERROR_CHARS = 500;
 
@@ -40,16 +44,89 @@ export const pluginCodeScope = new NodeAsyncHooks.AsyncLocalStorage<PluginId>();
 
 /** What every facade group needs from the activation it belongs to. */
 export interface FacadeContext {
+  /**
+   * Runs an effect as a Promise that rejects with an `Error` carrying the failure's `_tag` as `code`.
+   * Map results inside the effect: a `.then` on the Promise is a new one that nothing handles.
+   */
+  readonly call: <A, E>(effect: Effect.Effect<A, E>) => Promise<A>;
   /** Runs an effect in the background for the plugin; failures are logged, not thrown. */
   readonly fork: <A, E>(effect: Effect.Effect<A, E>) => void;
+  /** Exposes a stream as an iterable that ends when the plugin deactivates. */
+  readonly iterate: <A, E>(stream: Stream.Stream<A, E>) => AsyncIterable<A>;
 }
+
+/**
+ * Hands a plugin a promise whose failure only the plugin sees: one it never awaits must not be an
+ * unhandled rejection, which stops the server.
+ */
+const forPlugin = <A>(promise: Promise<A>): Promise<A> => {
+  promise.catch(() => undefined);
+  return promise;
+};
+
+/** A plugin API call refused before it ran, such as one with a bad argument. */
+export const refused = (error: Error): Promise<never> => forPlugin(Promise.reject(error));
+
+/** Carries its plugin, so a failure no plugin code handles is still the plugin's. */
+export class PluginApiCallError extends Error {
+  readonly code: string;
+  readonly pluginId: PluginId;
+  constructor(pluginId: PluginId, code: string, message: string) {
+    super(message);
+    this.name = "PluginApiError";
+    this.code = code;
+    this.pluginId = pluginId;
+  }
+}
+
+/** Completes when `signal` aborts, at once if it already has. */
+const abortEffect = (signal: AbortSignal) =>
+  Effect.callback<void>((resume) => {
+    const onAbort = () => resume(Effect.void);
+    if (signal.aborted) return onAbort();
+    signal.addEventListener("abort", onAbort, { once: true });
+    return Effect.sync(() => signal.removeEventListener("abort", onAbort));
+  });
 
 export const makeFacadeContext = (input: {
   readonly pluginId: PluginId;
+  readonly activation: PluginActivation;
   readonly context: Context.Context<never>;
 }): FacadeContext => {
-  const { context, pluginId } = input;
+  const { activation, context, pluginId } = input;
+  // T3's work for a call is not the plugin's code, so it leaves the plugin's scope.
+  const runExit = <A, E>(effect: Effect.Effect<A, E>) =>
+    pluginCodeScope.exit(() => Effect.runPromiseExitWith(context)(effect));
+  // Cleanups may still save state; afterwards a disabled plugin's leftovers cannot act.
+  const call: FacadeContext["call"] = (effect) =>
+    activation.ended.signal.aborted
+      ? refused(
+          new PluginApiCallError(
+            pluginId,
+            "PluginDeactivated",
+            "This plugin activation has ended.",
+          ),
+        )
+      : forPlugin(
+          runExit(effect).then((exit) => {
+            if (Exit.isSuccess(exit)) return exit.value;
+            const error = Cause.squash(exit.cause);
+            const code =
+              typeof error === "object" &&
+              error !== null &&
+              "_tag" in error &&
+              typeof error._tag === "string"
+                ? error._tag
+                : "PluginApiFailure";
+            throw new PluginApiCallError(
+              pluginId,
+              code,
+              error instanceof Error ? error.message : "The plugin API call failed.",
+            );
+          }),
+        );
   return {
+    call,
     fork: (effect) => {
       pluginCodeScope.exit(() =>
         Effect.runForkWith(context)(
@@ -63,6 +140,27 @@ export const makeFacadeContext = (input: {
           ),
         ),
       );
+    },
+    // The plugin pulls, but each pull runs T3's side of the stream, so it is a call too.
+    iterate: (stream) => {
+      const iterable = Stream.toAsyncIterableWith(
+        stream.pipe(Stream.interruptWhen(abortEffect(activation.controller.signal))),
+        context,
+      );
+      return {
+        [Symbol.asyncIterator]: () => {
+          const iterator = pluginCodeScope.exit(() => iterable[Symbol.asyncIterator]());
+          return {
+            next: () => call(Effect.promise(() => iterator.next())),
+            return: () =>
+              call(
+                Effect.promise(
+                  () => iterator.return?.() ?? Promise.resolve({ done: true, value: undefined }),
+                ),
+              ),
+          };
+        },
+      };
     },
   };
 };

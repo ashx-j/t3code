@@ -10,6 +10,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import { settingsSchemaProblem } from "./PluginSettingsStore.ts";
+
 const PLUGIN_MANIFEST_FILE = "t3-plugin.json";
 
 // Discovery runs at startup and on every reload, so a plugins folder full of unrelated
@@ -96,13 +98,16 @@ export const discoverPlugins = Effect.fn("PluginDiscovery.discover")(function* (
     }
     const decoded = decodeManifest(manifest.raw);
     if (decoded._tag === "Success") {
-      return {
-        id: decoded.value.id,
-        rootDir,
-        folder: location,
-        source,
-        manifest: decoded.value,
-      } as const;
+      const copy = { id: decoded.value.id, rootDir, folder: location, source };
+      const { settingsSchema } = decoded.value;
+      const schemaProblem =
+        settingsSchema === undefined ? undefined : settingsSchemaProblem(settingsSchema);
+      return schemaProblem === undefined
+        ? { ...copy, manifest: decoded.value }
+        : failed(copy, {
+            stage: "manifest",
+            message: `T3 Code cannot validate its settingsSchema: ${schemaProblem}`,
+          });
     }
     const looseId = decodeLooseId(manifest.raw);
     const id = looseId._tag === "Some" ? looseId.value.id : fallbackId;
@@ -118,7 +123,7 @@ export const discoverPlugins = Effect.fn("PluginDiscovery.discover")(function* (
 
   const plugins: Array<DiscoveredPlugin> = [];
   const firstWithId = new Map<PluginId, DiscoveredPlugin>();
-  // The switch belongs to the id, so two folders with one id cannot both run.
+  // Settings, storage and the switch belong to the id, so two folders with one id cannot both run.
   const add = (plugin: DiscoveredPlugin) => {
     const first = firstWithId.get(plugin.id);
     if (first === undefined) {
