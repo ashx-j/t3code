@@ -1,0 +1,108 @@
+import { PluginRpcName, type PluginId } from "@t3tools/contracts";
+import type { PluginApi, PluginRpcAccess, PluginRpcHandler } from "@t3tools/plugin-sdk/server";
+import type * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import type * as Cause from "effect/Cause";
+import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
+
+import { makeFacadeContext, pluginCodeScope } from "./api/facade.ts";
+
+const isJson = Schema.is(Schema.Json);
+const isPluginRpcName = Schema.is(PluginRpcName);
+const isPluginRpcAccess = Schema.is(Schema.Literals(["read", "write"]));
+
+/** Everything one activation registered. The host routes calls through it and tears it down. */
+export interface PluginActivation {
+  readonly methods: Map<
+    string,
+    { readonly handler: PluginRpcHandler; readonly access: PluginRpcAccess }
+  >;
+  readonly cleanups: Array<() => void | Promise<void>>;
+  /** Aborted when deactivation starts; handler signals follow it. */
+  readonly controller: AbortController;
+  /** Aborted once the cleanups have run; channels end then. */
+  readonly ended: AbortController;
+  /**
+   * Each subscriber's buffer, by channel, so a busy channel or a slow subscriber drops only its
+   * own values. The host ends them when `ended` aborts.
+   */
+  readonly channels: Map<string, Set<Queue.Queue<Schema.Json, Cause.Done>>>;
+}
+
+export const makePluginActivation = (): PluginActivation => ({
+  methods: new Map(),
+  cleanups: [],
+  controller: new AbortController(),
+  ended: new AbortController(),
+  channels: new Map(),
+});
+
+const assertActive = (activation: PluginActivation) => {
+  if (activation.controller.signal.aborted) {
+    throw new Error("This plugin activation has ended.");
+  }
+};
+
+/** Builds the object a plugin's `activate` receives. Effect stays on this side. */
+export const makePluginApi = (input: {
+  readonly id: PluginId;
+  readonly rootDir: string;
+  readonly activation: PluginActivation;
+  readonly context: Context.Context<never>;
+}): PluginApi => {
+  const { id, activation, context } = input;
+  const facade = makeFacadeContext({ pluginId: id, context });
+  const log =
+    (level: "Debug" | "Info" | "Warn" | "Error") => (message: string, fields?: Schema.JsonObject) =>
+      facade.fork(
+        Effect.logWithLevel(level)(message, fields ?? {}).pipe(
+          Effect.annotateLogs({ pluginId: id }),
+        ),
+      );
+
+  return {
+    version: 1,
+    id,
+    rootDir: input.rootDir,
+    log: { debug: log("Debug"), info: log("Info"), warn: log("Warn"), error: log("Error") },
+    rpc: {
+      register: (method, handler, options) => {
+        assertActive(activation);
+        if (!isPluginRpcName(method))
+          throw new TypeError(`"${method}" is not a valid method name.`);
+        // Plugins are untyped JavaScript, and a misspelled access level must not open a write.
+        if (!isPluginRpcAccess(options.access)) {
+          throw new TypeError(`Method "${method}" needs access "read" or "write".`);
+        }
+        if (activation.methods.has(method)) {
+          throw new Error(`Method "${method}" is already registered.`);
+        }
+        activation.methods.set(method, { handler, access: options.access });
+      },
+      publish: (channel, value) => {
+        assertActive(activation);
+        if (!isPluginRpcName(channel)) {
+          throw new TypeError(`"${channel}" is not a valid channel name.`);
+        }
+        if (!isJson(value)) throw new TypeError("Published values must be JSON.");
+        // Waking a subscriber schedules T3's work, which must not run in the plugin's scope.
+        pluginCodeScope.exit(() => {
+          for (const queue of activation.channels.get(channel) ?? []) {
+            Queue.offerUnsafe(queue, value);
+          }
+        });
+      },
+    },
+    // Something created after deactivation has nothing left to wait for, so it cleans up now.
+    onDeactivate: (cleanup) => {
+      if (activation.controller.signal.aborted) {
+        void Promise.resolve()
+          .then(cleanup)
+          .catch(() => undefined);
+        return;
+      }
+      activation.cleanups.push(cleanup);
+    },
+  };
+};

@@ -142,6 +142,10 @@ it.layer(NodeServices.layer)("PluginWebFiles", (it) => {
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
         yield* waitForStatuses(host, { [stylesPlugin]: "active" });
+        const call = yield* host
+          .invoke({ pluginId: stylesPlugin, method: "ping", input: undefined, scopes: [] })
+          .pipe(Effect.flip);
+        assert.strictEqual(call._tag, "PluginNoServerError");
         // In name order, which is the order clients apply them in.
         const styles = stateOf(yield* host.list, stylesPlugin)?.styles ?? [];
         assert.deepStrictEqual(

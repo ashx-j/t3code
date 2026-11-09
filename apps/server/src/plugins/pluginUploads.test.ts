@@ -99,7 +99,7 @@ it.layer(NodeServices.layer)("PluginUploads", (it) => {
         assert.strictEqual((yield* upload(expiring, files)).status, 404);
         assert.deepStrictEqual(yield* host.list, []);
 
-        // It installs a plugin, so a URL that leaked after its upload installs nothing more.
+        // It installs code, so a URL that leaked after its upload installs nothing more.
         const { relativeUrl } = yield* issueUrl;
         assert.strictEqual((yield* upload(relativeUrl, files)).status, 200);
         assert.strictEqual((yield* upload(relativeUrl, files)).status, 404);

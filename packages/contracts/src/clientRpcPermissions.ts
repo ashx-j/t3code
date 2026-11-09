@@ -57,7 +57,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.scheduledTasksUpsert]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksSetEnabled]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksDelete]: AuthOrchestrationOperateScope,
-  // Enabling a plugin changes what every client of the environment shows, such as its themes.
+  // Enabling a plugin runs its code in the server, like pointing a provider at a binary.
   [WS_METHODS.pluginsSetEnabled]: AuthSettingsWriteScope,
   [WS_METHODS.pluginsReload]: AuthSettingsWriteScope,
   [WS_METHODS.pluginsCreateUploadUrl]: AuthSettingsWriteScope,

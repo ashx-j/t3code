@@ -38,6 +38,16 @@ const isInsidePluginDirectory = Schema.makeFilter(
     path.split("/").every((segment) => segment !== ".."),
   { expected: "a relative path inside the plugin directory" },
 );
+const PluginEntryPath = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(256),
+  isInsidePluginDirectory,
+);
+
+// The packaged server is a Node single executable that can only `require` plugin code, and a
+// `.js` file under a `"type": "module"` package.json would load as ESM.
+const PluginServerEntryPath = PluginEntryPath.check(
+  Schema.isPattern(/\.cjs$/, { expected: "a CommonJS file ending in .cjs" }),
+);
 
 /** `t3-plugin.json` at the root of a plugin directory. */
 export const PluginManifest = Schema.Struct({
@@ -46,7 +56,8 @@ export const PluginManifest = Schema.Struct({
   version: PluginVersion,
   description: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(500))),
   engines: Schema.Struct({ t3: PluginEngineRange }),
-  /** Shown to the user before enabling. Not enforced. */
+  server: Schema.optionalKey(PluginServerEntryPath),
+  /** Shown to the user before enabling. Not enforced: plugins are trusted code. */
   permissions: Schema.optionalKey(
     Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(200))).check(
       Schema.isMaxLength(32),
@@ -62,12 +73,18 @@ export type PluginSource = typeof PluginSource.Type;
 export const PluginStatus = Schema.Literals(["active", "disabled", "failed", "loading"]);
 export type PluginStatus = typeof PluginStatus.Type;
 
-/** `duplicate` is a folder whose id an earlier folder already has. */
+/**
+ * `crash` is a plugin that stopped the server, turned off until the user turns it on again.
+ * `duplicate` is a folder whose id an earlier folder already has.
+ */
 export const PluginFailureStage = Schema.Literals([
   "discovery",
   "duplicate",
   "manifest",
   "compatibility",
+  "load",
+  "activate",
+  "crash",
 ]);
 export type PluginFailureStage = typeof PluginFailureStage.Type;
 
@@ -89,6 +106,8 @@ export const PluginState = Schema.Struct({
   enabled: Schema.Boolean,
   status: PluginStatus,
   failure: Schema.optionalKey(PluginFailure),
+  /** Changes each time the plugin starts. */
+  revision: Schema.optionalKey(Schema.Number),
   /**
    * The `.css` files in its `styles` folder while it runs, in the order clients apply them. Each
    * `revision` names the file's contents and is sent as its URL's `v`.
@@ -101,8 +120,18 @@ export const PluginState = Schema.Struct({
    * the plugins folder.
    */
   folder: Schema.optionalKey(Schema.String),
+  hasServer: Schema.Boolean,
+  /** Why its server code failed outside a call since it last started, such as in a timer. */
+  serverFailure: Schema.optionalKey(Schema.String),
 });
 export type PluginState = typeof PluginState.Type;
+
+/** Name of a method or channel a plugin registered for `plugins.invoke` and `plugins.subscribe`. */
+export const PluginRpcName = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(64),
+  Schema.isPattern(/^[a-zA-Z][a-zA-Z0-9._-]*$/),
+);
+export type PluginRpcName = typeof PluginRpcName.Type;
 
 export const PluginListInput = Schema.Struct({});
 export type PluginListInput = typeof PluginListInput.Type;
@@ -205,6 +234,29 @@ export const PluginMutationResult = Schema.Struct({
   plugin: PluginState,
 });
 export type PluginMutationResult = typeof PluginMutationResult.Type;
+
+export const PluginInvokeInput = Schema.Struct({
+  pluginId: PluginId,
+  method: PluginRpcName,
+  input: Schema.optionalKey(Schema.Json),
+});
+export type PluginInvokeInput = typeof PluginInvokeInput.Type;
+
+export const PluginInvokeResult = Schema.Struct({
+  output: Schema.Json,
+});
+export type PluginInvokeResult = typeof PluginInvokeResult.Type;
+
+export const PluginSubscribeInput = Schema.Struct({
+  pluginId: PluginId,
+  channel: PluginRpcName,
+});
+export type PluginSubscribeInput = typeof PluginSubscribeInput.Type;
+
+export const PluginSubscriptionEvent = Schema.Struct({
+  value: Schema.Json,
+});
+export type PluginSubscriptionEvent = typeof PluginSubscriptionEvent.Type;
 
 export class PluginError extends Schema.TaggedError<PluginError>()("PluginError", {
   message: Schema.String,

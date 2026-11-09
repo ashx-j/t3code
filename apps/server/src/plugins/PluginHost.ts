@@ -1,13 +1,22 @@
+// @effect-diagnostics nodeBuiltinImport:off - plugins load through Node's CommonJS loader, which
+// the FileSystem service does not wrap.
+import * as NodeModule from "node:module";
+
 import {
-  type AuthEnvironmentScope,
+  AuthEnvironmentScope,
+  AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   PluginId,
   type PluginListResult,
   type PluginState,
   type PluginStatesEvent,
 } from "@t3tools/contracts";
+import type { PluginDefinition } from "@t3tools/plugin-sdk/server";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
+import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FiberMap from "effect/FiberMap";
@@ -15,6 +24,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -30,11 +40,23 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import { authenticateRawRouteWithScope } from "../http.ts";
 import { forkParked } from "../serverActivation.ts";
+import { makePluginActivation, makePluginApi, type PluginActivation } from "./PluginApi.ts";
+import { errorText, PluginCodeError, pluginCodeScope } from "./api/facade.ts";
+import { makePluginFailureGuard } from "./pluginFailureGuard.ts";
+import { makePluginFailures } from "./pluginFailures.ts";
 import { discoverPlugins, type DiscoveredPlugin } from "./pluginDiscovery.ts";
 import * as PluginInstaller from "./PluginInstaller.ts";
 import { makePluginsConfig, type PluginConfigError } from "./pluginsConfig.ts";
 import { makePluginStates, manifestOf, type PluginRecord } from "./pluginStates.ts";
 import { makePluginWebFiles, type PluginWebFile } from "./pluginWebFiles.ts";
+
+// Plugin code that never settles must not keep a plugin loading, a client's call open, or Disable
+// and Reload waiting, forever. The cleanup deadline covers all of a plugin's cleanups together.
+const ACTIVATE_DEADLINE = Duration.seconds(30);
+const INVOKE_DEADLINE = Duration.seconds(30);
+const CLEANUP_DEADLINE = Duration.seconds(5);
+// Values of one channel a subscriber has not taken yet; past this the oldest go.
+const CHANNEL_BUFFER = 64;
 
 export class PluginNotFoundError extends Schema.TaggedError<PluginNotFoundError>()(
   "PluginNotFoundError",
@@ -42,6 +64,64 @@ export class PluginNotFoundError extends Schema.TaggedError<PluginNotFoundError>
 ) {
   override get message(): string {
     return `Plugin ${this.pluginId} is not installed.`;
+  }
+}
+
+export class PluginNotActiveError extends Schema.TaggedError<PluginNotActiveError>()(
+  "PluginNotActiveError",
+  { pluginId: PluginId, status: Schema.String },
+) {
+  override get message(): string {
+    return `Plugin ${this.pluginId} is ${this.status}.`;
+  }
+}
+
+export class PluginNoServerError extends Schema.TaggedError<PluginNoServerError>()(
+  "PluginNoServerError",
+  { pluginId: PluginId },
+) {
+  override get message(): string {
+    return `Plugin ${this.pluginId} has no server half, so it has no methods or channels.`;
+  }
+}
+
+export class PluginMethodNotFoundError extends Schema.TaggedError<PluginMethodNotFoundError>()(
+  "PluginMethodNotFoundError",
+  { pluginId: PluginId, method: Schema.String, methods: Schema.Array(Schema.String) },
+) {
+  // The methods it has, since nothing else lists them.
+  override get message(): string {
+    return `Plugin ${this.pluginId} has no method ${this.method}. Its methods: ${this.methods.join(", ") || "none"}.`;
+  }
+}
+
+export class PluginAccessDeniedError extends Schema.TaggedError<PluginAccessDeniedError>()(
+  "PluginAccessDeniedError",
+  { pluginId: PluginId, method: Schema.String, requiredScope: AuthEnvironmentScope },
+) {
+  override get message(): string {
+    return `Calling ${this.method} on plugin ${this.pluginId} needs the ${this.requiredScope} scope.`;
+  }
+}
+export const isPluginAccessDeniedError = Schema.is(PluginAccessDeniedError);
+
+// `reason` is the plugin's own error text, bounded. Plugins are trusted code, and their UI needs
+// to show why its own call failed.
+export class PluginHandlerError extends Schema.TaggedError<PluginHandlerError>()(
+  "PluginHandlerError",
+  { pluginId: PluginId, method: Schema.String, reason: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Plugin ${this.pluginId} failed in ${this.method}: ${this.reason}`;
+  }
+}
+
+export class PluginHandlerTimeoutError extends Schema.TaggedError<PluginHandlerTimeoutError>()(
+  "PluginHandlerTimeoutError",
+  { pluginId: PluginId, method: Schema.String },
+) {
+  override get message(): string {
+    return `Plugin ${this.pluginId} did not answer ${this.method} within ${Duration.toSeconds(INVOKE_DEADLINE)} seconds.`;
   }
 }
 
@@ -64,7 +144,7 @@ export class PluginHost extends Context.Service<
       pluginId: PluginId,
       enabled: boolean,
     ) => Effect.Effect<PluginState, PluginNotFoundError | PluginConfigError>;
-    /** Rescans the plugin folders and restarts this plugin from its files. */
+    /** Rescans the plugin folders and restarts this plugin with fresh code. */
     readonly reload: (
       pluginId: PluginId,
     ) => Effect.Effect<PluginState, PluginNotFoundError | PluginConfigError>;
@@ -78,6 +158,25 @@ export class PluginHost extends Context.Service<
       PluginConfigError
     >;
     /**
+     * `scopes` are the caller's; methods the plugin registered as writes need the operate scope. A
+     * handler that has not answered within 30 seconds is aborted.
+     */
+    readonly invoke: (input: {
+      readonly pluginId: PluginId;
+      readonly method: string;
+      readonly input: Schema.Json | undefined;
+      readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+    }) => Effect.Effect<
+      Schema.Json,
+      | PluginNotFoundError
+      | PluginNotActiveError
+      | PluginNoServerError
+      | PluginMethodNotFoundError
+      | PluginAccessDeniedError
+      | PluginHandlerError
+      | PluginHandlerTimeoutError
+    >;
+    /**
      * What an active plugin serves at `/api/plugins/<pluginId><path>`: a file in its `styles/`. A
      * `revision` that names the file's contents lets it be cached.
      */
@@ -86,29 +185,60 @@ export class PluginHost extends Context.Service<
       readonly path: string;
       readonly revision: string | undefined;
     }) => Effect.Effect<Option.Option<PluginWebFile>>;
+    /** Values the plugin publishes on `channel` until it deactivates. */
+    readonly subscribe: (input: {
+      readonly pluginId: PluginId;
+      readonly channel: string;
+    }) => Stream.Stream<
+      Schema.Json,
+      PluginNotFoundError | PluginNotActiveError | PluginNoServerError
+    >;
   }
 >()("t3/plugins/PluginHost") {}
+
+const isJson = Schema.is(Schema.Json);
 
 /** What plugins.json says about the plugins a discovery found. */
 interface Found {
   readonly enabled: Readonly<Record<string, boolean>>;
+  readonly crashed: Readonly<Record<string, string>>;
 }
+
+// One loader for the packaged single executable and plain Node: a require created from an
+// absolute path loads files from disk in both, and plugin code resolves its own imports.
+const requireFromDisk = NodeModule.createRequire(process.execPath);
+
+const isPluginDefinition = (value: unknown): value is PluginDefinition =>
+  typeof value === "object" &&
+  value !== null &&
+  "activate" in value &&
+  typeof value.activate === "function";
 
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const context = yield* Effect.context<never>();
 
   const pluginsDir = path.join(config.stateDir, "plugins");
   const pluginsConfig = yield* makePluginsConfig;
   const webFiles = yield* makePluginWebFiles;
 
   const records = yield* Ref.make<ReadonlyArray<PluginRecord>>([]);
+  // Changes on every start, so a client can tell a restarted plugin from one that kept running.
+  // Seeded with the clock so a restarted server never repeats a revision a client already saw.
+  let revision = yield* Clock.currentTimeMillis;
+  const nextRevision = () => ++revision;
   const lifecycle = yield* Semaphore.make(1);
   const activations = yield* FiberMap.make<PluginId>();
   const hostScope = yield* Effect.scope;
 
-  const pluginStates = yield* makePluginStates({ records, config: pluginsConfig.current });
+  const failures = yield* makePluginFailures;
+  const pluginStates = yield* makePluginStates({
+    records,
+    config: pluginsConfig.current,
+    failures,
+  });
   const currentStates = pluginStates.current;
   const publishStates = pluginStates.publish;
   const findRecord = (pluginId: string) =>
@@ -132,6 +262,81 @@ const make = Effect.gen(function* () {
       return next;
     }).pipe(Effect.andThen(publishStates));
 
+  // Untraced: a plugin's timer can fail every few milliseconds.
+  const recordServerFailure = Effect.fnUntraced(function* (pluginId: PluginId, error: unknown) {
+    const record = yield* findRecord(pluginId);
+    if (yield* failures.recordServer(pluginId, record?.revision, error)) yield* publishStates;
+  });
+  // Recorded at once and outside the plugin's scope, where the guard hears of it, and in the
+  // host's scope, so a publish still waiting ends with the host.
+  const reportServerFailure = (pluginId: PluginId, error: unknown) =>
+    pluginCodeScope.exit(() => {
+      Effect.runForkWith(context)(
+        Effect.forkIn(recordServerFailure(pluginId, error), hostScope, { startImmediately: true }),
+      );
+    });
+  const failureGuard = makePluginFailureGuard({
+    onRejection: reportServerFailure,
+    onCrash: (pluginId, error) => pluginsConfig.recordCrash(pluginId, errorText(error)),
+  });
+  // Added before the teardown finalizer, so it runs after plugin cleanups.
+  yield* Effect.addFinalizer(() => Effect.sync(failureGuard.uninstall));
+
+  const runCleanup = (pluginId: PluginId, cleanup: () => void | Promise<void>) =>
+    Effect.tryPromise({
+      try: () => pluginCodeScope.run(pluginId, () => Promise.resolve().then(cleanup)),
+      catch: (cause) => new PluginCodeError({ cause }),
+    }).pipe(
+      Effect.catchTags({
+        PluginCodeError: (error) =>
+          Effect.logWarning("plugin cleanup failed", { pluginId, reason: error.message }),
+      }),
+    );
+
+  // Aborts first so handlers stop. Teardown also runs where interruption is off, so the deadline
+  // gets an interruptible region to cut.
+  const teardown = Effect.fn("PluginHost.teardown")(function* (
+    pluginId: PluginId,
+    activation: PluginActivation,
+  ) {
+    activation.controller.abort();
+    const timedOut = yield* Effect.forEach(
+      activation.cleanups.toReversed(),
+      (cleanup) => runCleanup(pluginId, cleanup),
+      { discard: true },
+    ).pipe(Effect.interruptible, Effect.timeoutOption(CLEANUP_DEADLINE), Effect.map(Option.isNone));
+    if (timedOut) yield* Effect.logWarning("plugin cleanup timed out", { pluginId });
+    // In one step with the abort, so a subscriber that joins meanwhile sees one or the other.
+    activation.ended.abort();
+    for (const queues of activation.channels.values()) {
+      for (const queue of queues) Queue.endUnsafe(queue);
+    }
+  });
+
+  const loadDefinition = (plugin: DiscoveredPlugin, entry: string) =>
+    Effect.try({
+      try: () => {
+        const entryPath = path.join(plugin.rootDir, entry);
+        // Drop every cached module under the plugin so reload runs current code. Node still
+        // holds the old instances until the server restarts.
+        const prefix = `${plugin.rootDir}${path.sep}`;
+        for (const cached of Object.keys(requireFromDisk.cache)) {
+          if (cached.startsWith(prefix)) Reflect.deleteProperty(requireFromDisk.cache, cached);
+        }
+        const exported: unknown = pluginCodeScope.run(plugin.id, () => requireFromDisk(entryPath));
+        // Bundlers that compile `export default` to CommonJS put the definition on `default`.
+        const definition =
+          typeof exported === "object" && exported !== null && "default" in exported
+            ? exported.default
+            : exported;
+        if (!isPluginDefinition(definition)) {
+          throw new Error("The server entry does not export a plugin with an activate function.");
+        }
+        return definition;
+      },
+      catch: (cause) => new PluginCodeError({ cause }),
+    });
+
   const activatePlugin = Effect.fn("PluginHost.activate")(function* (plugin: DiscoveredPlugin) {
     const manifest = manifestOf(plugin);
     if (manifest === undefined) return;
@@ -144,29 +349,104 @@ const make = Effect.gen(function* () {
         },
       });
     }
+    // Before Node 24, `pluginCodeScope` slows every promise in the process about 3x, and without
+    // it a plugin's rejection with only Node's frames in its stack stops the server.
+    const node = process.versions.node;
+    if (manifest.server !== undefined && Number(node.split(".")[0]) < 24) {
+      return yield* setRecord(plugin.id, {
+        status: "failed",
+        failure: {
+          stage: "compatibility",
+          message: `Needs Node 24 or later for its server code; this server runs Node ${node}.`,
+        },
+      });
+    }
     const web = yield* webFiles.find(plugin);
-    return yield* setRecord(plugin.id, {
-      status: "active",
+    const started = {
+      status: "active" as const,
       webFiles: web.folders,
       styles: web.styles,
+    };
+    if (manifest.server === undefined) {
+      return yield* setRecord(plugin.id, { ...started, revision: nextRevision() });
+    }
+    yield* setRecord(plugin.id, { status: "loading" });
+    // Before loading, since a module can start timers as it loads.
+    failureGuard.watch(`${plugin.rootDir}${path.sep}`, plugin.id);
+    const definition = yield* Effect.exit(loadDefinition(plugin, manifest.server));
+    if (definition._tag === "Failure") {
+      return yield* setRecord(plugin.id, {
+        status: "failed",
+        failure: { stage: "load", message: errorText(Cause.squash(definition.cause)) },
+      });
+    }
+    const activation = makePluginActivation();
+    const api = makePluginApi({
+      id: plugin.id,
+      rootDir: plugin.rootDir,
+      activation,
+      context,
     });
+    // Only `activate` can be interrupted. A stop that lands after it waits until the record holds
+    // the activation, so `stopPlugin` always finds what to tear down.
+    yield* Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        const activated = yield* restore(
+          Effect.tryPromise({
+            try: () =>
+              pluginCodeScope.run(plugin.id, () =>
+                Promise.resolve().then(() => definition.value.activate(api)),
+              ),
+            catch: (cause) => new PluginCodeError({ cause }),
+          }).pipe(Effect.timeoutOption(ACTIVATE_DEADLINE)),
+        ).pipe(Effect.exit);
+        if (activated._tag === "Success" && Option.isSome(activated.value)) {
+          yield* setRecord(plugin.id, { ...started, activation, revision: nextRevision() });
+          return yield* Effect.logInfo("plugin activated", { pluginId: plugin.id });
+        }
+        yield* teardown(plugin.id, activation);
+        // Whatever stopped the activation sets the plugin's next status.
+        if (activated._tag === "Failure" && Cause.hasInterruptsOnly(activated.cause)) return;
+        yield* setRecord(plugin.id, {
+          status: "failed",
+          failure: {
+            stage: "activate",
+            message:
+              activated._tag === "Failure"
+                ? errorText(Cause.squash(activated.cause))
+                : `activate did not finish within ${Duration.toSeconds(ACTIVATE_DEADLINE)} seconds.`,
+          },
+        });
+      }),
+    );
   });
 
   /**
-   * An active plugin's record stops serving files. The caller sets the plugin's next status.
+   * An active plugin's record stops routing calls and serving files before cleanups run. The caller
+   * sets the plugin's next status.
    */
   const stopPlugin = Effect.fn("PluginHost.stop")(function* (pluginId: PluginId) {
     yield* FiberMap.remove(activations, pluginId);
+    // A failure from before the stop, even one while loading, which has no revision, belongs to
+    // that start; failures of code left running after it are recorded again.
+    yield* failures.clearServer(pluginId);
+    // A plugin without server code is active with no activation.
     const record = yield* findRecord(pluginId);
     if (record?.status !== "active") return;
     yield* setRecord(pluginId, { status: "disabled" });
+    if (record.activation !== undefined) yield* teardown(pluginId, record.activation);
   });
 
   const startPlugin = (plugin: DiscoveredPlugin) =>
     FiberMap.run(activations, plugin.id, activatePlugin(plugin));
 
+  // A plugin that stopped the server was turned off then, or the restart would only crash again.
   const initialRecord = (plugin: DiscoveredPlugin, found: Found): PluginRecord => {
     if ("failure" in plugin) return { plugin, status: "failed", failure: plugin.failure };
+    const crashed = found.crashed[plugin.id];
+    if (crashed !== undefined) {
+      return { plugin, status: "failed", failure: { stage: "crash", message: crashed } };
+    }
     return found.enabled[plugin.id] === true
       ? { plugin, status: "loading" }
       : { plugin, status: "disabled" };
@@ -189,7 +469,7 @@ const make = Effect.gen(function* () {
             : Effect.fail(error),
       }),
     );
-    const found: Found = { enabled: current.enabled ?? {} };
+    const found: Found = { enabled: current.enabled ?? {}, crashed: current.crashed ?? {} };
     return { plugins, found };
   });
 
@@ -232,8 +512,10 @@ const make = Effect.gen(function* () {
     },
   );
 
-  /** Rescans the plugin folders and lists what appeared; `restart` also restarts from new files. */
+  /** Rescans the plugin folders and lists what appeared; `restart` also restarts with new code. */
   const rediscover = Effect.fn("PluginHost.rediscover")(function* (restart: PluginId | undefined) {
+    // Reloading a plugin that stopped the server clears that failure; it stays off until turned on.
+    if (restart !== undefined) yield* pluginsConfig.clearCrash(restart);
     const { plugins, found } = yield* discover(false);
     if (restart !== undefined) yield* stopPlugin(restart);
     const known = yield* Ref.get(records);
@@ -249,7 +531,7 @@ const make = Effect.gen(function* () {
                 !("failure" in record.plugin),
             ),
     }));
-    // Copies that are gone or moved stop.
+    // Copies that are gone or moved stop, or they would keep running unlisted.
     for (const record of known) {
       if (
         record.plugin.id !== restart &&
@@ -300,6 +582,20 @@ const make = Effect.gen(function* () {
     return { plugins: yield* currentStates };
   });
 
+  // Lookups inside an operation that already has its span.
+  const activeRecord = Effect.fnUntraced(function* (pluginId: PluginId) {
+    const record = yield* findRecord(pluginId);
+    if (record === undefined) return yield* new PluginNotFoundError({ pluginId });
+    const manifest = manifestOf(record.plugin);
+    if (manifest !== undefined && manifest.server === undefined) {
+      return yield* new PluginNoServerError({ pluginId });
+    }
+    if (record.status !== "active" || record.activation === undefined) {
+      return yield* new PluginNotActiveError({ pluginId, status: record.status });
+    }
+    return record.activation;
+  });
+
   const { installer, recoverStaging } = yield* PluginInstaller.make({
     lifecycle: runLifecycle,
     copies: Ref.get(records).pipe(Effect.map((all) => all.map((record) => record.plugin))),
@@ -337,6 +633,20 @@ const make = Effect.gen(function* () {
     .pipe(Effect.withSpan("PluginHost.startup"));
 
   yield* forkParked(startup);
+  yield* Effect.addFinalizer(() =>
+    Ref.get(records).pipe(
+      Effect.flatMap((all) =>
+        Effect.forEach(
+          all,
+          (record) =>
+            record.activation === undefined
+              ? Effect.void
+              : teardown(record.plugin.id, record.activation),
+          { concurrency: "unbounded", discard: true },
+        ),
+      ),
+    ),
+  );
 
   const service = PluginHost.of({
     list: currentStates,
@@ -346,11 +656,102 @@ const make = Effect.gen(function* () {
     setEnabled,
     reload,
     rescan: rescan(),
+    invoke: Effect.fn("PluginHost.invoke")(function* (request) {
+      yield* Effect.annotateCurrentSpan({
+        "plugin.id": request.pluginId,
+        "plugin.method": request.method,
+      });
+      const activation = yield* activeRecord(request.pluginId);
+      const registered = activation.methods.get(request.method);
+      if (registered === undefined) {
+        return yield* new PluginMethodNotFoundError({
+          pluginId: request.pluginId,
+          method: request.method,
+          methods: [...activation.methods.keys()],
+        });
+      }
+      const access = request.scopes.includes(AuthOrchestrationOperateScope) ? "write" : "read";
+      if (registered.access === "write" && access !== "write") {
+        return yield* new PluginAccessDeniedError({
+          pluginId: request.pluginId,
+          method: request.method,
+          requiredScope: AuthOrchestrationOperateScope,
+        });
+      }
+      const handlerError = (cause: unknown) =>
+        new PluginHandlerError({
+          pluginId: request.pluginId,
+          method: request.method,
+          reason: errorText(cause),
+          cause,
+        });
+      const deactivated = activation.controller.signal;
+      const answered = yield* Effect.raceFirst(
+        // The deadline interrupts the call, which aborts the handler's signal.
+        Effect.tryPromise({
+          try: (signal) =>
+            pluginCodeScope.run(request.pluginId, () =>
+              Promise.resolve().then(() =>
+                registered.handler(request.input, {
+                  signal: AbortSignal.any([signal, deactivated]),
+                  access,
+                }),
+              ),
+            ),
+          catch: handlerError,
+        }).pipe(Effect.timeoutOption(INVOKE_DEADLINE)),
+        // A handler that ignores its abort signal must not hold the call open after disable.
+        Effect.callback<never, PluginNotActiveError>((resume) => {
+          const onAbort = () =>
+            resume(
+              Effect.fail(
+                new PluginNotActiveError({ pluginId: request.pluginId, status: "disabled" }),
+              ),
+            );
+          if (deactivated.aborted) return onAbort();
+          deactivated.addEventListener("abort", onAbort, { once: true });
+          return Effect.sync(() => deactivated.removeEventListener("abort", onAbort));
+        }),
+      );
+      if (Option.isNone(answered)) {
+        return yield* new PluginHandlerTimeoutError({
+          pluginId: request.pluginId,
+          method: request.method,
+        });
+      }
+      const output = answered.value;
+      if (output === undefined) return null;
+      if (!isJson(output)) {
+        return yield* handlerError(new TypeError("The method returned a value that is not JSON."));
+      }
+      return output;
+    }),
     readWebFile: Effect.fn("PluginHost.readWebFile")(function* (request) {
       const record = yield* findRecord(request.pluginId);
       if (record?.status !== "active" || record.webFiles === undefined) return Option.none();
       return yield* webFiles.read(record.webFiles, request.path, request.revision);
     }),
+    subscribe: (request) =>
+      Stream.unwrap(
+        Effect.gen(function* () {
+          const activation = yield* activeRecord(request.pluginId);
+          const queue = yield* Queue.sliding<Schema.Json, Cause.Done>(CHANNEL_BUFFER);
+          yield* Effect.acquireRelease(
+            Effect.sync(() => {
+              if (activation.ended.signal.aborted) return Queue.endUnsafe(queue);
+              const queues = activation.channels.get(request.channel) ?? new Set();
+              activation.channels.set(request.channel, queues.add(queue));
+            }),
+            () =>
+              Effect.sync(() => {
+                const queues = activation.channels.get(request.channel);
+                queues?.delete(queue);
+                if (queues?.size === 0) activation.channels.delete(request.channel);
+              }),
+          );
+          return Stream.fromQueue(queue);
+        }),
+      ),
   });
   return Context.make(PluginHost, service).pipe(
     Context.add(PluginInstaller.PluginInstaller, installer),

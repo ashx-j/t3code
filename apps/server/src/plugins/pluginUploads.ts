@@ -72,7 +72,7 @@ export class PluginUploads extends Context.Service<
     readonly issueUrl: Effect.Effect<PluginCreateUploadUrlResult, PluginUploadUrlError>;
     /**
      * Whether `token` is a URL this server signed that is unexpired and unused. A valid one is used
-     * up, because it installs a plugin.
+     * up, because it installs code.
      */
     readonly claim: (token: string) => Effect.Effect<boolean>;
   }

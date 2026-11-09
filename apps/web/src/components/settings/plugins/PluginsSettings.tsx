@@ -149,7 +149,7 @@ function PluginsPage({ environment }: { readonly environment: EnvironmentPresent
             scopeNote={
               loadsUi
                 ? `Installs on ${environment.label}.`
-                : `Installs on ${environment.label}. This app doesn't load plugin UI from ${environment.label}, so a plugin does nothing there.`
+                : `Installs on ${environment.label}. This app doesn't load plugin UI from ${environment.label}, so a plugin with no server code does nothing there.`
             }
           />
         ) : null}
