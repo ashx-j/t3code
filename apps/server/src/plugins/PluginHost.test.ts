@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -37,6 +38,7 @@ import {
 } from "./pluginHostTestHarness.ts";
 import * as PluginInstaller from "./PluginInstaller.ts";
 import { makePluginRpcHandlers } from "./pluginRpcHandlers.ts";
+import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
 import * as PluginUploads from "./PluginUploads.ts";
 
@@ -455,6 +457,60 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           status: "active",
         });
       }).pipe(Effect.provide(layerHost().pipe(Layer.provide(layerUndeletable))));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("does not save settings for a plugin a removal deletes meanwhile", () =>
+    Effect.gen(function* () {
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const rootDir = `${stateDir}/plugins/tidy`;
+      yield* writeFile(
+        `${rootDir}/t3-plugin.json`,
+        manifestJson("tidy", {
+          settingsSchema: { type: "object", properties: { note: { type: "string" } } },
+        }),
+      );
+      const id = PluginId.make("tidy");
+      // The removal waits as it deletes the folder, and a save waits until the settings are gone.
+      const removing = {
+        reached: yield* Deferred.make<void>(),
+        release: yield* Deferred.make<void>(),
+      };
+      const cleared = yield* Deferred.make<void>();
+      const layerHeldRemoval = layerFileSystemWith((fs) => ({
+        remove: (target, options) =>
+          target === rootDir
+            ? Deferred.succeed(removing.reached, undefined).pipe(
+                Effect.andThen(Deferred.await(removing.release)),
+                Effect.andThen(fs.remove(target, options)),
+              )
+            : fs.remove(target, options),
+      }));
+      const heldSaves = (store: PluginSettingsStore.PluginSettingsStore["Service"]) => ({
+        update: (...args: Parameters<typeof store.update>) =>
+          Deferred.await(cleared).pipe(Effect.andThen(store.update(...args))),
+        clear: (pluginId: PluginId) =>
+          store.clear(pluginId).pipe(Effect.andThen(Deferred.succeed(cleared, undefined))),
+      });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const installer = yield* PluginInstaller.PluginInstaller;
+        const settings = yield* PluginSettingsStore.PluginSettingsStore;
+        yield* waitForStatuses(host, { tidy: "disabled" });
+        const removal = yield* installer
+          .uninstall(id)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(removing.reached);
+        const save = yield* host
+          .updateSettings(id, { note: "late" })
+          .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.succeed(removing.release, undefined);
+        yield* Fiber.join(removal);
+        assert.isTrue(Exit.isFailure(yield* Fiber.join(save)));
+        assert.deepStrictEqual(yield* settings.getForClient(id, undefined), {});
+      }).pipe(
+        Effect.provide(layerHost(undefined, heldSaves).pipe(Layer.provide(layerHeldRemoval))),
+      );
     }).pipe(Effect.provide(layerConfig())),
   );
 
