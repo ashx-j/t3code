@@ -10,7 +10,6 @@ import {
   type PluginListResult,
   type PluginSettingsGetResult,
   type PluginState,
-  type PluginStatesEvent,
 } from "@t3tools/contracts";
 import type { PluginDefinition } from "@t3tools/plugin-sdk/server";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
@@ -144,10 +143,10 @@ export class PluginHost extends Context.Service<
     readonly listForClient: (
       scopes: ReadonlyArray<AuthEnvironmentScope>,
     ) => Effect.Effect<PluginListResult>;
-    /** `listForClient` now, then the rows that differ after every change. */
+    /** `listForClient` now, then again after every change. */
     readonly streamForClient: (
       scopes: ReadonlyArray<AuthEnvironmentScope>,
-    ) => Stream.Stream<PluginStatesEvent>;
+    ) => Stream.Stream<PluginListResult>;
     /** Persists the flag, then waits for activation or deactivation to finish. */
     readonly setEnabled: (
       pluginId: PluginId,

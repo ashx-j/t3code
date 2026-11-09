@@ -151,37 +151,12 @@ export type PluginRpcName = typeof PluginRpcName.Type;
 export const PluginListInput = Schema.Struct({});
 export type PluginListInput = typeof PluginListInput.Type;
 
+// A row a newer server sends with a status or failure stage this client doesn't know is dropped,
+// so the rest of the list still shows.
 export const PluginListResult = Schema.Struct({
   plugins: ForwardCompatibleArray(PluginState),
 });
 export type PluginListResult = typeof PluginListResult.Type;
-
-/**
- * `plugins.subscribeStates`: the whole list first, then only the rows that differ from the event
- * before, by position, so a change to one plugin does not resend every row.
- */
-export const PluginStatesEvent = Schema.Union([
-  Schema.TaggedStruct("snapshot", {
-    plugins: Schema.Array(PluginState),
-  }),
-  Schema.TaggedStruct("changed", {
-    /** How many plugins the list has now; rows past it are gone. */
-    length: Schema.Number,
-    rows: Schema.Array(Schema.Struct({ index: Schema.Number, plugin: PluginState })),
-  }),
-]);
-export type PluginStatesEvent = typeof PluginStatesEvent.Type;
-
-/** The list after `event`, from the list before it. Rows the event leaves out keep their value. */
-export const applyPluginStatesEvent = (
-  current: PluginListResult,
-  event: PluginStatesEvent,
-): PluginListResult => {
-  if (event._tag === "snapshot") return { plugins: event.plugins };
-  const plugins = current.plugins.slice(0, event.length);
-  for (const { index, plugin } of event.rows) plugins[index] = plugin;
-  return { plugins };
-};
 
 export const PluginSetEnabledInput = Schema.Struct({
   pluginId: PluginId,
