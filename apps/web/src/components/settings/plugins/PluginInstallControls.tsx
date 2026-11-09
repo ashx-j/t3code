@@ -17,7 +17,6 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../../ui/dialog";
-import { toastManager } from "../../ui/toast";
 
 export function AddPluginButton(props: {
   readonly environmentId: EnvironmentId;
@@ -96,13 +95,6 @@ export function usePluginInstaller(
             },
           );
           if (plugin === null) continue;
-          if (!plugin.enabled) {
-            toastManager.add({
-              type: "success",
-              title: `Installed ${plugin.name}`,
-              description: "Turn it on to run it.",
-            });
-          }
           if (!plugin.hasServer && !loadsUi) {
             report(
               `${plugin.name} only changes the app, and this app doesn't load plugin UI from ${environment.label}, so it does nothing there.`,
