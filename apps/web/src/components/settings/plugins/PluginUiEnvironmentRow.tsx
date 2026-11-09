@@ -1,10 +1,11 @@
-import { useAtom } from "@effect/atom-react";
+import { useAtom, useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { ChevronDownIcon } from "lucide-react";
 
 import {
   loadsPluginUi,
   pluginUiChoicesAtom,
+  pluginUiEnvironmentsAtom,
   withPluginUiChoice,
 } from "../../../plugins/pluginFollow";
 import {
@@ -26,6 +27,7 @@ export function PluginUiEnvironmentRow() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
   const [choices, setChoices] = useAtom(pluginUiChoicesAtom);
+  const [appWideEnvironmentId, ...others] = useAtomValue(pluginUiEnvironmentsAtom);
   const isOn = (environmentId: EnvironmentId) =>
     loadsPluginUi(choices, environmentId, primaryEnvironmentId);
   // A chosen environment stays listed while it is offline, so it can be turned off.
@@ -41,10 +43,15 @@ export function PluginUiEnvironmentRow() {
   const labelOf = (environment: EnvironmentPresentation) =>
     settingsScopeEnvironmentLabel(environment, environments);
   const chosenLabels = options.filter((option) => isOn(option.environmentId)).map(labelOf);
+  const appWide = options.find((option) => option.environmentId === appWideEnvironmentId);
   return (
     <SettingsRow
       title="Load plugin UI from"
-      description="The chosen servers' plugins run code in this window."
+      description={
+        appWide === undefined || others.length === 0
+          ? "The chosen servers' plugins run code in this window."
+          : `The chosen servers' plugins run code in this window. Commands come from ${labelOf(appWide)}.`
+      }
       control={
         <Menu>
           <MenuTrigger

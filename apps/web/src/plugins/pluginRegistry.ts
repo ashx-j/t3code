@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, PLUGIN_COMMAND_PATTERN } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import type { ComponentType } from "react";
 
@@ -13,12 +13,24 @@ export interface PluginRightPanelEntry {
   readonly owner: PluginOwner;
 }
 
+export interface PluginCommandEntry {
+  readonly environmentId: EnvironmentId;
+  readonly pluginId: string;
+  readonly pluginName: string;
+  readonly command: typeof PLUGIN_COMMAND_PATTERN.Type;
+  readonly title: string;
+  readonly keywords: ReadonlyArray<string>;
+  readonly run: () => void;
+}
+
 // Plain maps with one list-level version: readers re-render on the version alone, so a plugin never
-// adds a subscription per panel. App code outside the plugin runtime and lazy routes reads them
-// through `pluginUi.ts`, so this stays out of startup.
+// adds a subscription per panel or command. App code outside the plugin runtime and lazy routes
+// reads them through `pluginUi.ts`, so this stays out of startup.
 const rightPanels = new Map<string, PluginRightPanelEntry>();
+const settingsPanels = new Map<string, PluginSettingsPanelEntry>();
 const webFailures = new Map<string, string>();
 const webLoaded = new Set<string>();
+const commands = new Map<string, PluginCommandEntry>();
 
 // Reads go through atoms derived from the version, so React Compiler cannot cache a stale lookup.
 const versionAtom = Atom.make(0).pipe(Atom.keepAlive);
@@ -77,6 +89,30 @@ export const pluginRightPanelsAtom = Atom.family((environmentId: string) => {
   });
 });
 
+export interface PluginSettingsPanelEntry {
+  readonly component: ComponentType;
+  readonly owner: PluginOwner;
+}
+
+/** Replaces a plugin's generated settings form; returns the function that removes it. */
+export function registerPluginSettingsPanel(entry: PluginSettingsPanelEntry): () => void {
+  const key = pluginContributionKey(entry.owner.environmentId, entry.owner.pluginId);
+  settingsPanels.set(key, entry);
+  bump();
+  return () => {
+    if (settingsPanels.get(key) !== entry) return;
+    settingsPanels.delete(key);
+    bump();
+  };
+}
+
+export const pluginSettingsPanelAtom = Atom.family((key: string) =>
+  Atom.make((get) => {
+    get(versionAtom);
+    return settingsPanels.get(key);
+  }),
+);
+
 /** Records why a plugin's web bundle did not load; `undefined` clears it. */
 export function setPluginWebFailure(
   environmentId: EnvironmentId,
@@ -120,6 +156,37 @@ export const pluginWebLoadedAtom = Atom.family((key: string) =>
     return webLoaded.has(key);
   }),
 );
+
+/** Adds a plugin command to the command palette; returns the function that removes it. */
+export function registerPluginCommand(entry: PluginCommandEntry): () => void {
+  const key = `${entry.environmentId}\u0000${entry.command}`;
+  if (commands.has(key)) {
+    throw new Error(`Command "${entry.command}" is already registered.`);
+  }
+  commands.set(key, entry);
+  bump();
+  return () => {
+    if (commands.get(key) !== entry) return;
+    commands.delete(key);
+    bump();
+  };
+}
+
+/** A loaded plugin command's name for people, such as in Keybindings settings. */
+export function pluginCommandLabel(command: string): string | undefined {
+  for (const entry of commands.values()) {
+    if (entry.command === command) return `${entry.pluginName}: ${entry.title}`;
+  }
+  return undefined;
+}
+
+export const pluginCommandsAtom = Atom.family((environmentId: string) => {
+  const stable = stableList<PluginCommandEntry>();
+  return Atom.make((get) => {
+    get(versionAtom);
+    return stable([...commands.values()].filter((entry) => entry.environmentId === environmentId));
+  });
+});
 
 /** The plugin that registered a contribution, so its failures show on that plugin's row. */
 export interface PluginOwner {

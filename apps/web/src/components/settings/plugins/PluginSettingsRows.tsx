@@ -3,14 +3,53 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import type { EnvironmentId, PluginState } from "@t3tools/contracts";
 import type * as Schema from "effect/Schema";
 
+import { PluginRenderBoundary } from "../../../plugins/PluginRenderBoundary";
+import type { PluginSettingsPanelEntry } from "../../../plugins/pluginRegistry";
 import { pluginEnvironment } from "../../../state/plugins";
 import { useEnvironmentQuery } from "../../../state/query";
 import { useAtomCommand } from "../../../state/use-atom-command";
 import { JsonSchemaSettingsForm } from "../JsonSchemaSettingsForm";
 import { SettingsRow } from "../settingsLayout";
 
-/** A plugin's settings under its row, as rows drawn from its schema. */
-export function PluginSettingsEditor({
+/** A plugin's settings under its row: the plugin's own panel, or rows from its schema. */
+export function PluginSettingsRows({
+  environmentId,
+  plugin,
+  customSettings,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly plugin: PluginState;
+  readonly customSettings: PluginSettingsPanelEntry | undefined;
+}) {
+  if (customSettings === undefined) {
+    return <PluginSettingsEditor environmentId={environmentId} plugin={plugin} />;
+  }
+  return <PluginCustomSettings entry={customSettings} />;
+}
+
+/** A settings panel the plugin's web bundle drew instead of the generated form. */
+function PluginCustomSettings(props: { readonly entry: PluginSettingsPanelEntry }) {
+  const Panel = props.entry.component;
+  return (
+    // Padded as a settings row, so a panel drawn as one lines up with the rows around it.
+    <div className="px-3 py-3 sm:px-4">
+      <PluginRenderBoundary
+        owner={props.entry.owner}
+        what="Its settings panel"
+        resetKeys={[props.entry]}
+        fallback={
+          <p className="text-xs text-destructive">
+            This plugin's settings panel stopped with an error.
+          </p>
+        }
+      >
+        <Panel />
+      </PluginRenderBoundary>
+    </div>
+  );
+}
+
+function PluginSettingsEditor({
   environmentId,
   plugin,
 }: {

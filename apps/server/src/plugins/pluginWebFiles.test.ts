@@ -133,6 +133,12 @@ it.layer(NodeServices.layer)("PluginWebFiles", (it) => {
         publishedThemeDirectories.length = 0;
         yield* host.reload(helloWeb);
         assert.deepStrictEqual(publishedThemeDirectories, [[themes]]);
+        const asset = yield* served(host, helloWeb, "/assets/hello.txt");
+        assert.strictEqual(asset?.headers["content-type"], "text/plain; charset=utf-8");
+        // A path out of the assets folder names no asset; it is not the plugin's failure.
+        for (const path of ["/assets/..%2Fserver.cjs", "/assets/%E0%A4%A", "/assets/"]) {
+          assert.isUndefined(yield* served(host, helloWeb, path));
+        }
 
         yield* host.setEnabled(helloWeb, false);
         assert.isUndefined(yield* served(host, helloWeb, "/web.js"));

@@ -66,7 +66,10 @@ const enableHello = writePluginsConfig({
 });
 
 /** A `linked` plugin in a checkout folder, which the plugins folder holds a symlink to. */
-const linkPluginFolder = Effect.fn(function* (entries: { readonly server?: string }) {
+const linkPluginFolder = Effect.fn(function* (entries: {
+  readonly server?: string;
+  readonly web?: string;
+}) {
   const { stateDir } = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const realDir = `${stateDir}/checkout/linked`;
@@ -357,6 +360,28 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         yield* writeFile(`${realDir}/server.cjs`, plugin("v2"));
         yield* host.reload(id);
         assert.strictEqual(yield* which, "v2");
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("serves no file of an assets folder linked out of a symlinked plugin folder", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const realDir = yield* linkPluginFolder({ web: "./web.js" });
+      yield* writeFile(`${realDir}/web.js`, "export default {};");
+      yield* writeFile(`${stateDir}/checkout/outside/secret.txt`, "Not the plugin's.");
+      yield* fs.symlink(`${stateDir}/checkout/outside`, `${realDir}/assets`);
+      yield* writePluginsConfig({ enabled: { linked: true } });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        yield* waitForStatuses(host, { linked: "active" });
+        const served = (path: string) =>
+          host
+            .readWebFile({ pluginId: "linked", path, revision: undefined })
+            .pipe(Effect.map(Option.isSome));
+        assert.isTrue(yield* served("/web.js"));
+        assert.isFalse(yield* served("/assets/secret.txt"));
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );

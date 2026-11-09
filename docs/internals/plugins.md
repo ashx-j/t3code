@@ -99,14 +99,14 @@ when Settings asks.
 
 Each browser keeps its own choice of the environments it loads plugin UI from, the main one by
 default, because that code runs with every connection's credentials. Right panels show only in their
-environment's threads.
+environment's threads. Commands have no thread, so only the first chosen environment registers them.
 
 Rows carry `hasSettings` rather than the settings schema. Every client, read-only ones and the
 idle watcher included, gets a plugin's row again on each status change, and only the settings
 form needs the schema, which it fetches with `plugins.settings.get`.
 
-With no plugins, the plugin system adds about 9.2 KB of minified JS to the startup chunks of a
-production build, about 3.5 KB gzipped, in 3 more chunks. Most of it is the plugin contract
+With no plugins, the plugin system adds about 11 KB of minified JS to the startup chunks of a
+production build, about 4.5 KB gzipped, in 5 more chunks. Most of it is the plugin contract
 schemas and RPC definitions,
 [`PluginLoaderStarter`](../../apps/web/src/plugins/PluginLoaderStarter.tsx), `pluginFollow` and
 the [`pluginUi.ts`](../../apps/web/src/plugins/pluginUi.ts) stub that app code reads plugin parts
@@ -120,8 +120,13 @@ A bare `import(url)` cannot send credentials, so the loader fetches each bundle 
 connection's credentials and imports it from a `blob:` URL, which the desktop CSP allows. Mobile
 release builds cannot load code, so the mobile app shows no plugin UI, settings or themes.
 
-Bundles get React and the UI kit from `globalThis.__t3PluginHost`, because a second React would
-not share T3's renderer.
+Bundles get React, the UI kit, `Atom` functions and atom hooks from `globalThis.__t3PluginHost`,
+because a second React or effect would not share T3's renderer or atom registry. The SDK declares
+its own atom types, so a plugin needs no `effect` and T3's effect upgrades don't break its
+typecheck. No type check compares those types with effect's. Instead the `hello-web` fixture
+typechecks against the SDK's types, and `pluginLoader.browser.test.ts` runs its settings panel on
+effect's functions, so an effect upgrade that changes one the fixture uses fails there. A change to
+a shared function or hook needs a matching change in the SDK's `atom.ts` or `atom-react.ts`.
 
 Plugin themes arrive over the server config stream after the first paint, so the client saves them
 in localStorage for the boot script in `index.html`. The server marks plugin themes, so the client

@@ -12,14 +12,24 @@ import type { DiscoveredPlugin } from "./pluginDiscovery.ts";
 const WEB_CONTENT_TYPES: Readonly<Record<string, string>> = {
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
+  ".json": "application/json",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".woff2": "font/woff2",
+  ".txt": "text/plain; charset=utf-8",
 };
 
 const contentRevision = (contents: Uint8Array) =>
   NodeCrypto.createHash("sha256").update(contents).digest("hex").slice(0, 16);
 
-/** What an active plugin serves: its bundle, and the real path of its `styles/`. */
+/** What an active plugin serves: its bundle, and the real paths of its `assets/` and `styles/`. */
 export interface PluginWebFolders {
   readonly bundle: string | undefined;
+  readonly assets: string | undefined;
   readonly styles: string | undefined;
 }
 
@@ -49,7 +59,10 @@ export const makePluginWebFiles = Effect.gen(function* () {
   });
 
   // The real path of the plugin's `name` folder, unless a link takes it out of the plugin.
-  const folderOf = Effect.fnUntraced(function* (plugin: DiscoveredPlugin, name: "styles") {
+  const folderOf = Effect.fnUntraced(function* (
+    plugin: DiscoveredPlugin,
+    name: "assets" | "styles",
+  ) {
     const dir = yield* fs.realPath(path.join(plugin.rootDir, name)).pipe(Effect.option);
     return Option.isSome(dir) && dir.value.startsWith(`${plugin.rootDir}${path.sep}`)
       ? dir.value
@@ -77,7 +90,7 @@ export const makePluginWebFiles = Effect.gen(function* () {
     return styles.flat();
   });
 
-  /** What a starting plugin serves: `entry` if it has a web half, and `styles/`. */
+  /** What a starting plugin serves: `entry` and `assets/` if it has a web half, and `styles/`. */
   const find = Effect.fn("PluginHost.findWebFiles")(function* (
     plugin: DiscoveredPlugin,
     entry: string | undefined,
@@ -85,6 +98,7 @@ export const makePluginWebFiles = Effect.gen(function* () {
     const bundle = entry === undefined ? undefined : path.join(plugin.rootDir, entry);
     const folders: PluginWebFolders = {
       bundle,
+      assets: bundle === undefined ? undefined : yield* folderOf(plugin, "assets"),
       styles: yield* folderOf(plugin, "styles"),
     };
     // The bundle's contents now, for its URL; one that cannot be served gets no revision.
@@ -106,11 +120,15 @@ export const makePluginWebFiles = Effect.gen(function* () {
         ? undefined
         : { file: folders.bundle, within: rootDir, revisioned: true };
     }
-    const [, rest] = /^\/styles\/(.*)$/.exec(requestPath) ?? [];
-    const dir = folders.styles;
+    const [, name, rest] = /^\/(assets|styles)\/(.*)$/.exec(requestPath) ?? [];
+    const dir = name === "assets" ? folders.assets : name === "styles" ? folders.styles : undefined;
     if (dir === undefined || rest === undefined) return undefined;
     try {
-      return { file: path.join(dir, decodeURIComponent(rest)), within: dir, revisioned: true };
+      return {
+        file: path.join(dir, decodeURIComponent(rest)),
+        within: dir,
+        revisioned: name === "styles",
+      };
     } catch {
       // A malformed escape names no file.
       return undefined;
@@ -118,8 +136,9 @@ export const makePluginWebFiles = Effect.gen(function* () {
   };
 
   /**
-   * Reads `/web.js` or `/styles/<file>` of the plugin at `rootDir`. A request whose `revision`
-   * names the file's contents may be cached for good. Untraced: the host's lookup has the span.
+   * Reads `/web.js`, `/assets/<file>` or `/styles/<file>` of the plugin at `rootDir`. A request
+   * whose `revision` names the file's contents may be cached for good. Untraced: the host's
+   * lookup has the span.
    */
   const read = Effect.fnUntraced(function* (
     rootDir: string,

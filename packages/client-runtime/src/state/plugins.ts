@@ -74,7 +74,7 @@ export function createPluginEnvironmentAtoms<R, E>(
       // A restart ends the server's stream, so the reloaded web half needs a new one, not this one.
       idleTtlMs: 0,
     }),
-    // Plugin bundles and stylesheets are plain GETs; over T3 Connect each needs its own DPoP proof.
+    // Plugin bundles and assets are plain GETs; over T3 Connect each needs its own DPoP proof.
     pluginFileHeaders: createRuntimeCommand(runtime, {
       label: "environment-data:plugins:file-headers",
       execute: (input: {
