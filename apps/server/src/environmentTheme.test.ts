@@ -127,6 +127,11 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
           path.join(pluginThemes, "shared-light.json"),
           encodeThemeFile({ ...SHARED_THEME, name: "Shared Light Edited" }),
         );
+        // Only setting the folders reads them, so a client connecting doesn't read every plugin's.
+        assert.deepEqual(
+          (yield* currentThemes).map((theme) => theme.name),
+          ["Nightfall", "Shared Light"],
+        );
         yield* environmentTheme.setPluginThemeDirectories([pluginThemes]);
         assert.deepEqual(
           (yield* Queue.take(seen)).map((theme) => theme.name),

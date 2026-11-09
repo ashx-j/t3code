@@ -56,8 +56,8 @@ export class EnvironmentThemeService extends Context.Service<
     /**
      * Theme folders of active plugins, each `<plugin folder>/themes`, read after the environment's
      * own folder; one linked out of its plugin folder is skipped. The first theme with an id wins,
-     * so a plugin cannot replace a theme the user published. Every call reads the folders again,
-     * so a plugin that restarts with edited files publishes them.
+     * so a plugin cannot replace a theme the user published. Each call reads the folders, so a
+     * plugin that restarts with edited files publishes them, and nothing else reads them again.
      */
     readonly setPluginThemeDirectories: (directories: ReadonlyArray<string>) => Effect.Effect<void>;
   }
@@ -166,7 +166,7 @@ const make = Effect.gen(function* () {
   const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  // Untraced: it runs for each plugin inside every refresh.
+  // Untraced: it runs for each plugin each time the folders are set.
   const insideItsPlugin = Effect.fnUntraced(function* (directory: string) {
     const real = yield* fs.realPath(directory).pipe(Effect.option);
     const root = yield* fs.realPath(path.dirname(directory)).pipe(Effect.option);
@@ -179,40 +179,44 @@ const make = Effect.gen(function* () {
   // Sequence numbers let subscribers drop queued events older than their initial snapshot.
   const changes = yield* PubSub.sliding<PublishedThemes>(1);
   const published = yield* Ref.make<PublishedThemes>({ seq: 0, themes: [] });
-  const pluginDirectories = yield* Ref.make<ReadonlyArray<string>>([]);
+  const pluginThemes = yield* Ref.make<ReadonlyArray<EnvironmentTheme>>([]);
   // Serialize read/compare/publish so slow older reads cannot publish with newer sequence numbers.
   const refreshSemaphore = yield* Semaphore.make(1);
   const watcherScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(watcherScope, Exit.void));
 
-  const refresh = refreshSemaphore.withPermits(1)(
-    Effect.gen(function* () {
-      const themes: Array<EnvironmentTheme> = [];
-      const ids = new Set<string>();
-      for (const directory of [environmentThemesDir, ...(yield* Ref.get(pluginDirectories))]) {
-        if (directory !== environmentThemesDir && !(yield* insideItsPlugin(directory))) continue;
-        const found = yield* readPublishedThemes(directory).pipe(
-          Effect.provideService(FileSystem.FileSystem, fs),
-        );
-        for (const theme of found) {
-          if (ids.has(theme.id)) continue;
-          ids.add(theme.id);
-          themes.push(directory === environmentThemesDir ? theme : { ...theme, fromPlugin: true });
-        }
-      }
-      // Compare the whole value so new fields cannot silently miss republishes.
-      const [changed, next] = yield* Ref.modify(
-        published,
-        (previous): readonly [readonly [boolean, PublishedThemes], PublishedThemes] => {
-          if (Equal.equals(previous.themes, themes)) return [[false, previous], previous];
-          const updated: PublishedThemes = { seq: previous.seq + 1, themes };
-          return [[true, updated], updated];
-        },
-      );
-      if (changed) yield* PubSub.publish(changes, next).pipe(Effect.asVoid);
-      return next;
-    }),
-  );
+  const readThemes = (directory: string) =>
+    readPublishedThemes(directory).pipe(Effect.provideService(FileSystem.FileSystem, fs));
+  const readPluginThemes = Effect.fnUntraced(function* (directories: ReadonlyArray<string>) {
+    const themes: Array<EnvironmentTheme> = [];
+    for (const directory of directories) {
+      if (!(yield* insideItsPlugin(directory))) continue;
+      for (const theme of yield* readThemes(directory)) themes.push({ ...theme, fromPlugin: true });
+    }
+    return themes;
+  });
+
+  const publishUnlocked = Effect.gen(function* () {
+    const themes = yield* readThemes(environmentThemesDir);
+    const ids = new Set(themes.map((theme) => theme.id));
+    for (const theme of yield* Ref.get(pluginThemes)) {
+      if (ids.has(theme.id)) continue;
+      ids.add(theme.id);
+      themes.push(theme);
+    }
+    // Compare the whole value so new fields cannot silently miss republishes.
+    const [changed, next] = yield* Ref.modify(
+      published,
+      (previous): readonly [readonly [boolean, PublishedThemes], PublishedThemes] => {
+        if (Equal.equals(previous.themes, themes)) return [[false, previous], previous];
+        const updated: PublishedThemes = { seq: previous.seq + 1, themes };
+        return [[true, updated], updated];
+      },
+    );
+    if (changed) yield* PubSub.publish(changes, next).pipe(Effect.asVoid);
+    return next;
+  });
+  const refresh = refreshSemaphore.withPermits(1)(publishUnlocked);
 
   yield* fs
     .makeDirectory(environmentThemesDir, { recursive: true })
@@ -232,8 +236,12 @@ const make = Effect.gen(function* () {
     current: Effect.map(refresh, (state) => state.themes),
     setPluginThemeDirectories: Effect.fn("EnvironmentThemeService.setPluginThemeDirectories")(
       function* (directories) {
-        yield* Ref.set(pluginDirectories, directories);
-        yield* refresh;
+        yield* refreshSemaphore.withPermits(1)(
+          readPluginThemes(directories).pipe(
+            Effect.flatMap((themes) => Ref.set(pluginThemes, themes)),
+            Effect.andThen(publishUnlocked),
+          ),
+        );
       },
     ),
     get streamChanges() {
