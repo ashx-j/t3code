@@ -66,6 +66,7 @@ export const writeFile = Effect.fn(function* (filePath: string, contents: string
 export const writePluginsConfig = Effect.fn(function* (config: {
   readonly enabled?: Record<string, boolean>;
   readonly devPaths?: ReadonlyArray<string>;
+  readonly starting?: ReadonlyArray<string>;
 }) {
   const { stateDir } = yield* ServerConfig.ServerConfig;
   yield* writeFile(`${stateDir}/plugins.json`, JSON.stringify(config));

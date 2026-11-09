@@ -25,6 +25,7 @@ const FAILURE_STAGES = {
   load: "Failed to load",
   activate: "Failed to start",
   crash: "Stopped the server",
+  skipped: "Not started",
 } as const;
 
 export function PluginRow({

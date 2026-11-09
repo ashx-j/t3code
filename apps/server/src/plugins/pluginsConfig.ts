@@ -10,6 +10,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import * as ServerConfig from "../config.ts";
 
@@ -29,6 +30,11 @@ const PluginsConfigFile = Schema.StructWithRest(
     devPaths: Schema.optionalKey(Schema.Array(Schema.String)),
     /** Why each plugin stopped the server, kept until the user turns it on again or reloads it. */
     crashed: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+    /**
+     * Plugins whose server code is loading or activating. One still here at the next start ended
+     * the server in a way the failure guard can't see, such as `process.exit`.
+     */
+    starting: Schema.optionalKey(Schema.Array(Schema.String)),
   }),
   [Schema.Record(Schema.String, Schema.Json)],
 );
@@ -37,6 +43,9 @@ const decodeConfig = Schema.decodeUnknownEffect(Schema.fromJsonString(PluginsCon
 const encodeConfig = Schema.encodeEffect(fromJsonStringPretty(PluginsConfigFile));
 const decodeConfigSync = Schema.decodeUnknownSync(Schema.fromJsonString(PluginsConfigFile));
 const encodeConfigSync = Schema.encodeSync(fromJsonStringPretty(PluginsConfigFile));
+
+const STOPPED_WHILE_STARTING =
+  "T3 Code stopped while this plugin was starting, such as from process.exit, running out of memory or a loop that never ended.";
 
 export const withoutCrash = (current: PluginsConfigFile, pluginId: PluginId): PluginsConfigFile => {
   if (current.crashed?.[pluginId] === undefined) return current;
@@ -51,6 +60,8 @@ export const makePluginsConfig = Effect.gen(function* () {
   const path = yield* Path.Path;
   const configPath = path.join(config.stateDir, "plugins.json");
   const current = yield* Ref.make<PluginsConfigFile>({});
+  // Plugins mark their own starts from separate fibers, and each write rewrites the whole file.
+  const writeLock = yield* Semaphore.make(1);
 
   const read = Effect.gen(function* () {
     const exists = yield* fs.exists(configPath);
@@ -75,7 +86,7 @@ export const makePluginsConfig = Effect.gen(function* () {
       Effect.mapError((cause) => new PluginConfigError({ path: configPath, cause })),
     );
     yield* Ref.set(current, next);
-  });
+  }, writeLock.withPermits(1));
 
   const emptyConfig: PluginsConfigFile = {};
   return {
@@ -124,6 +135,29 @@ export const makePluginsConfig = Effect.gen(function* () {
         ),
       );
     },
+    /** Adds or removes the plugin's `starting` mark. */
+    markStarting: (pluginId: PluginId, starting: boolean) =>
+      write((last) => {
+        const { starting: marked = [], ...rest } = last;
+        const others = marked.filter((id) => id !== pluginId);
+        const next = starting ? [...others, pluginId] : others;
+        return next.length === 0 ? rest : { ...rest, starting: next };
+      }),
+    /** At startup, records every plugin a start left marked as one that stopped the server. */
+    recoverStarting: read.pipe(
+      Effect.flatMap((latest) =>
+        latest.starting === undefined
+          ? Effect.void
+          : write(({ starting: marked = [], ...rest }) => ({
+              ...rest,
+              enabled: { ...rest.enabled, ...Object.fromEntries(marked.map((id) => [id, false])) },
+              crashed: {
+                ...rest.crashed,
+                ...Object.fromEntries(marked.map((id) => [id, STOPPED_WHILE_STARTING])),
+              },
+            })),
+      ),
+    ),
     /** Forgets that the plugin crashed the server, writing only if it had. */
     clearCrash: (pluginId: PluginId) =>
       read.pipe(
