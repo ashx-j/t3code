@@ -639,6 +639,78 @@ module.exports = { activate() {} };`,
     }).pipe(Effect.provide(layerConfig())),
   );
 
+  it.effect("marks a plugin in plugins.json while it starts, and turns off one still marked", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const configPath = `${stateDir}/plugins.json`;
+      yield* writeInstalledPlugin(
+        "marked",
+        `const seen = JSON.parse(require("node:fs").readFileSync(${JSON.stringify(configPath)}, "utf8"));
+module.exports = { activate(api) { api.rpc.register("seen", () => seen.starting, { access: "read" }); } };`,
+      );
+      yield* writeInstalledPlugin("exited", "module.exports = { activate() {} };");
+      // As a start that process.exit or an out-of-memory kill ended leaves it.
+      yield* writePluginsConfig({ enabled: { marked: true, exited: true }, starting: ["exited"] });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const marked = PluginId.make("marked");
+        const states = yield* waitForStatuses(host, { marked: "active", exited: "failed" });
+        assert.deepInclude(stateOf(states, "exited"), {
+          enabled: false,
+          failure: {
+            stage: "crash",
+            message:
+              "T3 Code stopped while this plugin was starting, such as from process.exit, running out of memory or a loop that never ended.",
+          },
+        });
+        assert.deepStrictEqual(
+          yield* host.invoke({
+            pluginId: marked,
+            method: "seen",
+            input: undefined,
+            scopes: operate,
+          }),
+          ["marked"],
+        );
+        // Waits for its start to end.
+        yield* host.setEnabled(marked, true);
+        assert.notProperty(JSON.parse(yield* fs.readFileString(configPath)), "starting");
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("runs no plugin code with --no-plugins and lists the plugins it skipped", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const rootDir = yield* writeInstalledPlugin(
+        "skipped",
+        `require("node:fs").writeFileSync(__dirname + "/loaded", "");
+module.exports = { activate() {} };`,
+      );
+      yield* writePluginsConfig({ enabled: { skipped: true } });
+      const layerNoPlugins = Layer.effect(
+        ServerConfig.ServerConfig,
+        ServerConfig.ServerConfig.use((config) => Effect.succeed({ ...config, noPlugins: true })),
+      );
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const id = PluginId.make("skipped");
+        const skipped = {
+          stage: "skipped",
+          message:
+            "T3 Code started with --no-plugins, so no plugin runs until it restarts without it.",
+        } as const;
+        const states = yield* waitForStatuses(host, { skipped: "disabled" });
+        assert.deepInclude(stateOf(states, id), { enabled: true, failure: skipped });
+        assert.deepInclude(yield* host.reload(id), { status: "disabled", failure: skipped });
+        // Turning it off still works, so the plugin that stopped the server can stay off.
+        assert.include(yield* host.setEnabled(id, false), { enabled: false, status: "disabled" });
+        assert.isFalse(yield* fs.exists(`${rootDir}/loaded`));
+      }).pipe(Effect.provide(layerHost().pipe(Layer.provide(layerNoPlugins))));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
   it.effect("keeps a quiet channel's value while a busy channel overflows its buffer", () =>
     Effect.gen(function* () {
       yield* writeInstalledPlugin(

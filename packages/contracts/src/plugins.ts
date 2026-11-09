@@ -82,7 +82,8 @@ export type PluginStatus = typeof PluginStatus.Type;
 
 /**
  * `crash` is a plugin that stopped the server, turned off until the user turns it on again.
- * `duplicate` is an id more than one folder has; none of them runs until one is left.
+ * `duplicate` is an id more than one folder has; none of them runs until one is left. `skipped` is
+ * a plugin that is on while the server runs with `--no-plugins`.
  */
 export const PluginFailureStage = Schema.Literals([
   "discovery",
@@ -92,6 +93,7 @@ export const PluginFailureStage = Schema.Literals([
   "load",
   "activate",
   "crash",
+  "skipped",
 ]);
 export type PluginFailureStage = typeof PluginFailureStage.Type;
 

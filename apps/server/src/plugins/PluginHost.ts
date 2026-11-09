@@ -316,6 +316,15 @@ const make = Effect.gen(function* () {
   // Added before the teardown finalizer, so it runs after plugin cleanups.
   yield* Effect.addFinalizer(() => Effect.sync(failureGuard.uninstall));
 
+  // A safety net, so a plugins.json that can't be written doesn't stop a plugin from starting.
+  const markStarting = (pluginId: PluginId, starting: boolean) =>
+    pluginsConfig.markStarting(pluginId, starting).pipe(
+      Effect.catchTags({
+        PluginConfigError: (error) =>
+          Effect.logWarning("could not update plugins.json", { path: error.path }),
+      }),
+    );
+
   const runCleanup = (pluginId: PluginId, cleanup: () => void | Promise<void>) =>
     Effect.tryPromise({
       try: () => pluginCodeScope.run(pluginId, () => Promise.resolve().then(cleanup)),
@@ -406,55 +415,65 @@ const make = Effect.gen(function* () {
       return yield* setRecord(plugin.id, { ...started, revision: nextRevision() });
     }
     yield* setRecord(plugin.id, { status: "loading" });
-    // Before loading, since a module can start timers as it loads.
-    failureGuard.watch(`${plugin.rootDir}${path.sep}`, plugin.id);
-    const definition = yield* Effect.exit(loadDefinition(plugin, manifest.server));
-    if (definition._tag === "Failure") {
-      return yield* setRecord(plugin.id, {
-        status: "failed",
-        failure: { stage: "load", message: errorText(Cause.squash(definition.cause)) },
-      });
-    }
-    const activation = makePluginActivation();
-    const api = makePluginApi({
-      id: plugin.id,
-      rootDir: plugin.rootDir,
-      settingsSchema: manifest.settingsSchema,
-      activation,
-      context,
-      services,
-    });
-    // Only `activate` can be interrupted. A stop that lands after it waits until the record holds
-    // the activation, so `stopPlugin` always finds what to tear down.
-    yield* Effect.uninterruptibleMask((restore) =>
-      Effect.gen(function* () {
-        const activated = yield* restore(
-          Effect.tryPromise({
-            try: () =>
-              pluginCodeScope.run(plugin.id, () =>
-                Promise.resolve().then(() => definition.value.activate(api)),
-              ),
-            catch: (cause) => new PluginCodeError({ cause }),
-          }).pipe(Effect.timeoutOption(ACTIVATE_DEADLINE)),
-        ).pipe(Effect.exit);
-        if (activated._tag === "Success" && Option.isSome(activated.value)) {
-          yield* setRecord(plugin.id, { ...started, activation, revision: nextRevision() });
-          return yield* Effect.logInfo("plugin activated", { pluginId: plugin.id });
-        }
-        yield* teardown(plugin.id, activation);
-        // Whatever stopped the activation sets the plugin's next status.
-        if (activated._tag === "Failure" && Cause.hasInterruptsOnly(activated.cause)) return;
-        yield* setRecord(plugin.id, {
-          status: "failed",
-          failure: {
-            stage: "activate",
-            message:
-              activated._tag === "Failure"
-                ? errorText(Cause.squash(activated.cause))
-                : `activate did not finish within ${Duration.toSeconds(ACTIVATE_DEADLINE)} seconds.`,
-          },
-        });
-      }),
+    const server = manifest.server;
+    // Marked while its code loads and activates, so a start that ends the server, such as with
+    // process.exit, leaves the mark for the next start to find.
+    yield* Effect.acquireUseRelease(
+      markStarting(plugin.id, true),
+      () =>
+        Effect.gen(function* () {
+          // Before loading, since a module can start timers as it loads.
+          failureGuard.watch(`${plugin.rootDir}${path.sep}`, plugin.id);
+          const definition = yield* Effect.exit(loadDefinition(plugin, server));
+          if (definition._tag === "Failure") {
+            return yield* setRecord(plugin.id, {
+              status: "failed",
+              failure: { stage: "load", message: errorText(Cause.squash(definition.cause)) },
+            });
+          }
+          const activation = makePluginActivation();
+          const api = makePluginApi({
+            id: plugin.id,
+            rootDir: plugin.rootDir,
+            settingsSchema: manifest.settingsSchema,
+            activation,
+            context,
+            services,
+          });
+          // Only `activate` can be interrupted. A stop that lands after it waits until the record
+          // holds the activation, so `stopPlugin` always finds what to tear down.
+          yield* Effect.uninterruptibleMask((restore) =>
+            Effect.gen(function* () {
+              const activated = yield* restore(
+                Effect.tryPromise({
+                  try: () =>
+                    pluginCodeScope.run(plugin.id, () =>
+                      Promise.resolve().then(() => definition.value.activate(api)),
+                    ),
+                  catch: (cause) => new PluginCodeError({ cause }),
+                }).pipe(Effect.timeoutOption(ACTIVATE_DEADLINE)),
+              ).pipe(Effect.exit);
+              if (activated._tag === "Success" && Option.isSome(activated.value)) {
+                yield* setRecord(plugin.id, { ...started, activation, revision: nextRevision() });
+                return yield* Effect.logInfo("plugin activated", { pluginId: plugin.id });
+              }
+              yield* teardown(plugin.id, activation);
+              // Whatever stopped the activation sets the plugin's next status.
+              if (activated._tag === "Failure" && Cause.hasInterruptsOnly(activated.cause)) return;
+              yield* setRecord(plugin.id, {
+                status: "failed",
+                failure: {
+                  stage: "activate",
+                  message:
+                    activated._tag === "Failure"
+                      ? errorText(Cause.squash(activated.cause))
+                      : `activate did not finish within ${Duration.toSeconds(ACTIVATE_DEADLINE)} seconds.`,
+                },
+              });
+            }),
+          );
+        }),
+      () => markStarting(plugin.id, false),
     );
   });
 
@@ -475,7 +494,16 @@ const make = Effect.gen(function* () {
   });
 
   const startPlugin = (plugin: DiscoveredPlugin) =>
-    FiberMap.run(activations, plugin.id, activatePlugin(plugin));
+    config.noPlugins === true
+      ? setRecord(plugin.id, {
+          status: "disabled",
+          failure: {
+            stage: "skipped",
+            message:
+              "T3 Code started with --no-plugins, so no plugin runs until it restarts without it.",
+          },
+        })
+      : FiberMap.run(activations, plugin.id, activatePlugin(plugin)).pipe(Effect.asVoid);
 
   // A plugin that stopped the server was turned off then, or the restart would only crash again.
   const initialRecord = (plugin: DiscoveredPlugin, found: Found): PluginRecord => {
@@ -672,6 +700,12 @@ const make = Effect.gen(function* () {
     .withPermits(1)(
       Effect.gen(function* () {
         yield* recoverStaging;
+        yield* pluginsConfig.recoverStarting.pipe(
+          Effect.catchTags({
+            PluginConfigError: (error) =>
+              Effect.logWarning("could not update plugins.json", { path: error.path }),
+          }),
+        );
         const { plugins, found } = yield* discover(true);
         yield* Ref.set(
           records,
