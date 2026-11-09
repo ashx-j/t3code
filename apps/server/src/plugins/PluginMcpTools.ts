@@ -17,6 +17,9 @@ const MAX_TOOLS_PER_PLUGIN = 32;
 const MAX_DESCRIPTION_CHARS = 1000;
 // Measured as the JSON clients receive.
 const MAX_INPUT_SCHEMA_CHARS = 4000;
+// Names, descriptions and input schemas together. Per plugin, so whether one plugin's tools fit
+// never depends on which other plugins started first.
+const MAX_DEFINITION_CHARS_PER_PLUGIN = 24_000;
 // Longer than a client's call, because a tool may do real work, but a hung one frees the turn.
 const TOOL_CALL_DEADLINE = Duration.minutes(5);
 
@@ -35,12 +38,17 @@ export const isPluginMcpToolNameError = Schema.is(PluginMcpToolNameError);
 
 export class PluginMcpToolLimitError extends Schema.TaggedError<PluginMcpToolLimitError>()(
   "PluginMcpToolLimitError",
-  { tool: Schema.String, limit: Schema.Literals(["tools", "description", "inputSchema"]) },
+  {
+    tool: Schema.String,
+    limit: Schema.Literals(["tools", "definitions", "description", "inputSchema"]),
+  },
 ) {
   override get message(): string {
     switch (this.limit) {
       case "tools":
         return `A plugin registers at most ${MAX_TOOLS_PER_PLUGIN} tools, so "${this.tool}" was not added.`;
+      case "definitions":
+        return `A plugin's tools take at most ${MAX_DEFINITION_CHARS_PER_PLUGIN.toLocaleString("en-US")} characters of names, descriptions and input schemas together, so "${this.tool}" was not added.`;
       case "description":
         return `Tool "${this.tool}" needs a description of at most ${MAX_DESCRIPTION_CHARS} characters.`;
       case "inputSchema":
@@ -127,7 +135,8 @@ export class PluginMcpTools extends Context.Service<
 const make = () => {
   // Every change runs synchronously, so plugin activation can register a tool and return.
   const tools = new Map<string, PluginMcpToolEntry>();
-  const toolsByPlugin = new Map<PluginId, Set<string>>();
+  // Each plugin's tools by name, with the characters each one's definition takes.
+  const toolsByPlugin = new Map<PluginId, Map<string, number>>();
   const publishers = new Set<(tool: PluginMcpToolEntry) => Effect.Effect<void>>();
   // Inside `register` or `unregisterPlugin`, which have their spans.
   const publish = Effect.fnUntraced(function* (entry: PluginMcpToolEntry) {
@@ -155,16 +164,23 @@ const make = () => {
       if (tool.description.length > MAX_DESCRIPTION_CHARS) {
         return yield* new PluginMcpToolLimitError({ tool: tool.name, limit: "description" });
       }
-      if (encodeJson(tool.inputSchema).length > MAX_INPUT_SCHEMA_CHARS) {
+      const schemaChars = encodeJson(tool.inputSchema).length;
+      if (schemaChars > MAX_INPUT_SCHEMA_CHARS) {
         return yield* new PluginMcpToolLimitError({ tool: tool.name, limit: "inputSchema" });
       }
-      const names = toolsByPlugin.get(pluginId) ?? new Set();
-      if (!names.has(name) && names.size >= MAX_TOOLS_PER_PLUGIN) {
+      const sizes = toolsByPlugin.get(pluginId) ?? new Map<string, number>();
+      if (!sizes.has(name) && sizes.size >= MAX_TOOLS_PER_PLUGIN) {
         return yield* new PluginMcpToolLimitError({ tool: tool.name, limit: "tools" });
+      }
+      const size = name.length + tool.description.length + schemaChars;
+      let others = 0;
+      for (const [other, otherSize] of sizes) if (other !== name) others += otherSize;
+      if (others + size > MAX_DEFINITION_CHARS_PER_PLUGIN) {
+        return yield* new PluginMcpToolLimitError({ tool: tool.name, limit: "definitions" });
       }
       const failed = (cause: unknown) =>
         new PluginMcpToolError({ pluginId, tool: tool.name, reason: errorText(cause), cause });
-      toolsByPlugin.set(pluginId, names.add(name));
+      toolsByPlugin.set(pluginId, sizes.set(name, size));
       yield* publish({
         name,
         description: tool.description,
@@ -200,9 +216,9 @@ const make = () => {
       });
     }),
     unregisterPlugin: Effect.fn("PluginMcpTools.unregisterPlugin")(function* (pluginId) {
-      const names = toolsByPlugin.get(pluginId);
+      const sizes = toolsByPlugin.get(pluginId);
       toolsByPlugin.delete(pluginId);
-      for (const name of names ?? []) yield* withdraw(name);
+      for (const name of sizes?.keys() ?? []) yield* withdraw(name);
     }),
     isOffered: (name) => tools.has(name),
     attach: Effect.fn("PluginMcpTools.attach")((publisher) =>

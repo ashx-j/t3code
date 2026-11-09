@@ -295,3 +295,31 @@ it.effect("answer under plg_ names with access checks, and leave the list once s
     yield* assertGone("plg_mcp-plugin_echo");
   }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect("refuses a tool past its plugin's 24,000 characters of definitions, not another's", () =>
+  Effect.gen(function* () {
+    const tools = yield* PluginMcpTools.PluginMcpTools;
+    // About 5,000 characters each, with its name and schema.
+    const register = (pluginId: PluginId, name: string, description = "x".repeat(1000)) =>
+      tools.register({
+        pluginId,
+        tool: {
+          name,
+          description,
+          inputSchema: { type: "object", description: "x".repeat(3900) },
+          access: "read",
+        },
+        handler: () => Promise.resolve(null),
+        deactivated: new AbortController().signal,
+      });
+    const budget = PluginId.make("budget");
+    const other = PluginId.make("other");
+    for (const name of ["a", "b", "c", "d"]) yield* register(budget, name);
+    const refused = yield* register(budget, "e").pipe(Effect.flip);
+    assert.include(refused.message, "at most 24,000 characters");
+    for (const name of ["a", "b", "c", "d"]) yield* register(other, name);
+    // A tool replaced by a smaller one leaves room for another.
+    yield* register(budget, "d", "Short.");
+    yield* register(budget, "e");
+  }).pipe(Effect.provide(PluginMcpTools.layer)),
+);
