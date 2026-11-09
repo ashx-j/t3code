@@ -3,7 +3,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { pluginEnvironment } from "../state/plugins";
-import { pluginUiEnvironmentsAtom } from "./pluginFollow";
+import { pluginUiEnvironmentsAtom, rememberDrawsPlugins } from "./pluginFollow";
 
 const isPluginOn = (plugin: PluginState) => plugin.enabled && plugin.status === "active";
 
@@ -35,6 +35,22 @@ export function watchForPlugins(
     { immediate: true },
   );
 }
+
+/** Keeps `drewPluginsLastTime` up to date for the environment until stopped. */
+export const rememberDrawingPlugins = (environmentId: EnvironmentId) =>
+  appAtomRegistry.subscribe(
+    pluginEnvironment.pluginsLive({ environmentId, input: {} }),
+    (result) => {
+      if (!AsyncResult.isSuccess(result)) return;
+      rememberDrawsPlugins(
+        environmentId,
+        result.value.plugins.some(
+          (plugin) => isLoadableWebPlugin(plugin) || hasLoadableStyles(plugin),
+        ),
+      );
+    },
+    { immediate: true },
+  );
 
 // App-wide contributions, such as commands and styles, have no thread to tie them to an
 // environment, so a plugin on in several chosen environments takes them from the first. An

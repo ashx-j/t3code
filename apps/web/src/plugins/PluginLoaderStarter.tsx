@@ -3,7 +3,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 import { useEffect } from "react";
 
-import { pluginUiEnvironmentsAtom } from "./pluginFollow";
+import { drewPluginsLastTime, pluginUiEnvironmentsAtom } from "./pluginFollow";
 
 // Module level: React Compiler cannot compile a component that calls import() itself.
 const loadPluginWatch = () => import("./pluginWatch");
@@ -31,8 +31,9 @@ export function PluginLoaderStarter() {
 }
 
 /**
- * Once the app is idle, downloads the web plugin runtime only when an active plugin of the
- * environment has a web part, and the small stylesheet runtime only when one has a `styles` folder.
+ * Once the app is idle, or with the app when the environment's plugins drew here last time,
+ * downloads the web plugin runtime only when an active plugin of the environment has a web part,
+ * and the small stylesheet runtime only when one has a `styles` folder.
  */
 function PluginEnvironmentLoader({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const router = useRouter();
@@ -40,30 +41,36 @@ function PluginEnvironmentLoader({ environmentId }: { readonly environmentId: En
   useEffect(() => {
     let cancelled = false;
     const stops: Array<() => void> = [];
-    const cancelIdle = whenIdle(() => {
-      void loadPluginWatch().then(({ watchForPlugins, isLoadableWebPlugin, hasLoadableStyles }) => {
-        if (cancelled) return;
-        stops.push(
-          watchForPlugins(environmentId, isLoadableWebPlugin, () => {
-            void loadPluginLoader().then((module) => {
-              if (cancelled) return;
-              stops.push(
-                module.startPluginLoader(environmentId, (path) => router.history.push(path)),
-              );
-            });
-          }),
-          watchForPlugins(environmentId, hasLoadableStyles, () => {
-            void loadPluginStyles().then((module) => {
-              if (cancelled) return;
-              stops.push(module.startPluginStyles(environmentId));
-            });
-          }),
-        );
-      });
-    });
+    const start = () => {
+      void loadPluginWatch().then(
+        ({ watchForPlugins, isLoadableWebPlugin, hasLoadableStyles, rememberDrawingPlugins }) => {
+          if (cancelled) return;
+          stops.push(
+            rememberDrawingPlugins(environmentId),
+            watchForPlugins(environmentId, isLoadableWebPlugin, () => {
+              void loadPluginLoader().then((module) => {
+                if (cancelled) return;
+                stops.push(
+                  module.startPluginLoader(environmentId, (path) => router.history.push(path)),
+                );
+              });
+            }),
+            watchForPlugins(environmentId, hasLoadableStyles, () => {
+              void loadPluginStyles().then((module) => {
+                if (cancelled) return;
+                stops.push(module.startPluginStyles(environmentId));
+              });
+            }),
+          );
+        },
+      );
+    };
+    let cancelIdle: (() => void) | undefined;
+    if (drewPluginsLastTime(environmentId)) start();
+    else cancelIdle = whenIdle(start);
     return () => {
       cancelled = true;
-      cancelIdle();
+      cancelIdle?.();
       for (const stop of stops) stop();
     };
   }, [environmentId, router]);

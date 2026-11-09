@@ -12,8 +12,9 @@ type PluginUiChoices = ReadonlyMap<EnvironmentId, boolean>;
 const CHOICES_KEY = "t3.plugins.uiEnvironments";
 const isEnvironmentId = Schema.is(EnvironmentId);
 
-// Reading localStorage throws where the browser blocks storage; only the main environment loads.
-const choicesStorage = () => {
+// Reading localStorage throws where the browser blocks storage; only the main environment loads,
+// once the app is idle.
+const pluginStorage = () => {
   try {
     return window.localStorage;
   } catch {
@@ -23,7 +24,7 @@ const choicesStorage = () => {
 
 const readChoices = (): PluginUiChoices => {
   try {
-    const stored: unknown = JSON.parse(choicesStorage()?.getItem(CHOICES_KEY) ?? "{}");
+    const stored: unknown = JSON.parse(pluginStorage()?.getItem(CHOICES_KEY) ?? "{}");
     if (typeof stored !== "object" || stored === null) return new Map();
     return new Map(
       Object.entries(stored).flatMap(([environmentId, on]) =>
@@ -41,13 +42,43 @@ const readChoices = (): PluginUiChoices => {
  */
 export const pluginUiChoicesAtom = Atom.writable(readChoices, (ctx, choices: PluginUiChoices) => {
   try {
-    if (choices.size === 0) choicesStorage()?.removeItem(CHOICES_KEY);
-    else choicesStorage()?.setItem(CHOICES_KEY, JSON.stringify(Object.fromEntries(choices)));
+    if (choices.size === 0) pluginStorage()?.removeItem(CHOICES_KEY);
+    else pluginStorage()?.setItem(CHOICES_KEY, JSON.stringify(Object.fromEntries(choices)));
   } catch {
     // A full or blocked storage keeps the choice for this page only.
   }
   ctx.setSelf(choices);
 }).pipe(Atom.keepAlive, Atom.withLabel("web-plugin-ui-choices"));
+
+const DREW_KEY = "t3.plugins.drewEnvironments";
+
+const readDrew = (): ReadonlyArray<string> => {
+  try {
+    const stored: unknown = JSON.parse(pluginStorage()?.getItem(DREW_KEY) ?? "[]");
+    return Array.isArray(stored) ? stored.filter((id) => typeof id === "string") : [];
+  } catch {
+    return [];
+  }
+};
+
+/**
+ * Whether the environment had plugins that draw in this browser when the app last ran. Their
+ * plugin UI then starts with the app instead of once it is idle, so the layout settles sooner.
+ */
+export const drewPluginsLastTime = (environmentId: EnvironmentId) =>
+  readDrew().includes(environmentId);
+
+export function rememberDrawsPlugins(environmentId: EnvironmentId, draws: boolean) {
+  const drew = readDrew();
+  if (drew.includes(environmentId) === draws) return;
+  const next = draws ? [...drew, environmentId] : drew.filter((id) => id !== environmentId);
+  try {
+    if (next.length === 0) pluginStorage()?.removeItem(DREW_KEY);
+    else pluginStorage()?.setItem(DREW_KEY, JSON.stringify(next));
+  } catch {
+    // A full or blocked storage starts plugin UI once the app is idle, as before.
+  }
+}
 
 /** Whether plugin UI loads from the environment: the main one unless turned off, others once on. */
 export const loadsPluginUi = (

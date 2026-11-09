@@ -54,8 +54,9 @@ vi.mock(import("./pluginFollow"), async (original) => ({
 }));
 
 import { AppAtomRegistryProvider, appAtomRegistry } from "../rpc/atomRegistry";
+import { PluginLoaderStarter } from "./PluginLoaderStarter";
 import { PluginPanelSurface } from "./PluginPanelSurface";
-import { pluginUiChoicesAtom } from "./pluginFollow";
+import { drewPluginsLastTime, pluginUiChoicesAtom, rememberDrawsPlugins } from "./pluginFollow";
 import { startPluginLoader } from "./pluginLoader";
 import {
   pluginCommandsAtom,
@@ -414,5 +415,38 @@ describe("startPluginLoader", () => {
         },
       }),
     );
+  });
+});
+
+describe("PluginLoaderStarter", () => {
+  it("starts with the app where plugins drew last time, and remembers whether they do", async () => {
+    const environmentId = EnvironmentId.make("environment:plugin-loader-starter");
+    setup([environmentId]);
+    using fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response("export default { activate() {} };"));
+    using _memory = { [Symbol.dispose]: () => rememberDrawsPlugins(environmentId, false) };
+    appAtomRegistry.set(
+      state.live(environmentId),
+      AsyncResult.success({ plugins: [webPlugin("eager-web")] }),
+    );
+    // Idle comes at once on the first start and never on the second.
+    using idle = vi.spyOn(window, "requestIdleCallback").mockImplementation((run) => {
+      run({ didTimeout: false, timeRemaining: () => 0 });
+      return 0;
+    });
+    const starter = () =>
+      createElement(AppAtomRegistryProvider, null, createElement(PluginLoaderStarter));
+    await using screen = await render(starter());
+    await vi.waitFor(() => expect(drewPluginsLastTime(environmentId)).toBe(true));
+
+    await screen.rerender(null);
+    idle.mockReturnValue(0);
+    const fetches = fetchSpy.mock.calls.length;
+    await screen.rerender(starter());
+    await vi.waitFor(() => expect(fetchSpy.mock.calls.length).toBeGreaterThan(fetches));
+
+    appAtomRegistry.set(state.live(environmentId), AsyncResult.success({ plugins: [] }));
+    await vi.waitFor(() => expect(drewPluginsLastTime(environmentId)).toBe(false));
   });
 });
