@@ -10,7 +10,13 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as PluginHost from "./PluginHost.ts";
-import { fixturesDir, layerConfig, layerHost, waitForStatuses } from "./pluginHostTestHarness.ts";
+import {
+  fixturesDir,
+  layerConfig,
+  layerHost,
+  listStates,
+  waitForStatuses,
+} from "./pluginHostTestHarness.ts";
 import * as PluginUploads from "./pluginUploads.ts";
 
 /** Posts `files` to `url` through the upload route, over a running plugin host. */
@@ -95,7 +101,7 @@ it.layer(NodeServices.layer)("PluginUploads", (it) => {
         assert.strictEqual((yield* upload(forged, files)).status, 404);
         yield* TestClock.adjust("6 minutes");
         assert.strictEqual((yield* upload(expiring, files)).status, 404);
-        assert.deepStrictEqual(yield* host.list, []);
+        assert.deepStrictEqual(yield* listStates(host), []);
 
         // It installs code, so a URL that leaked after its upload installs nothing more.
         const { relativeUrl } = yield* issueUrl;
@@ -119,7 +125,7 @@ it.layer(NodeServices.layer)("PluginUploads", (it) => {
           status: 413,
           text: "A plugin folder can have up to 1000 files and 25 MB.",
         });
-        assert.deepStrictEqual(yield* host.list, []);
+        assert.deepStrictEqual(yield* listStates(host), []);
       }),
     ),
   );

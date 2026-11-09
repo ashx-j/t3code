@@ -87,7 +87,6 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverRefreshUsageRates]: "server",
   [WS_METHODS.serverSignalProcess]: "server",
   [WS_METHODS.serverReportClientActivity]: "server",
-  [WS_METHODS.pluginsList]: "plugins",
   [WS_METHODS.pluginsSubscribeStates]: "plugins",
   [WS_METHODS.pluginsSetEnabled]: "plugins",
   [WS_METHODS.pluginsReload]: "plugins",
