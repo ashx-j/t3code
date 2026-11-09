@@ -78,9 +78,7 @@ const toState = (
       : {
           version: manifest.version,
           ...(manifest.description === undefined ? {} : { description: manifest.description }),
-          ...(manifest.settingsSchema === undefined
-            ? {}
-            : { settingsSchema: manifest.settingsSchema }),
+          ...(manifest.settingsSchema === undefined ? {} : { hasSettings: true }),
         }),
     permissions: manifest?.permissions ?? [],
     source: record.plugin.source,

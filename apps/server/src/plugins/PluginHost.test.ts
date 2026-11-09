@@ -70,7 +70,12 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
         const states = yield* waitForStatuses(host, { [hello]: "active" });
-        assert.include(stateOf(states, hello), { source: "dev", hasServer: true, enabled: true });
+        assert.include(stateOf(states, hello), {
+          source: "dev",
+          hasServer: true,
+          enabled: true,
+          hasSettings: true,
+        });
 
         const ping = (input: string, scopes: ReadonlyArray<AuthEnvironmentScope> = operate) =>
           host.invoke({ pluginId: hello, method: "ping", input, scopes });
@@ -86,6 +91,10 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
           .pipe(Stream.runHead, Effect.forkChild({ startImmediately: true }));
         yield* host.updateSettings(hello, { greeting: "hey" });
         assert.deepStrictEqual(yield* Fiber.join(changed), Option.some({ greeting: "hey" }));
+        // The settings form's schema comes with the settings, not on every row.
+        const { settings, settingsSchema } = yield* host.getSettings(hello);
+        assert.deepStrictEqual(settings, { greeting: "hey" });
+        assert.include(settingsSchema, { additionalProperties: false });
         assert.deepStrictEqual(yield* ping("b"), { pong: "b", greeting: "hey", access: "write" });
 
         const counted = yield* host

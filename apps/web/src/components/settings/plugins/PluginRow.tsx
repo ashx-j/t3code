@@ -16,7 +16,6 @@ import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "../../ui/po
 import { Switch } from "../../ui/switch";
 import { SettingsRow } from "../settingsLayout";
 import { PluginSettingsRows } from "./PluginSettingsRows";
-import { pluginSettingsForm } from "./pluginSettingsForm";
 
 const FAILURE_STAGES = {
   discovery: "Not found",
@@ -45,8 +44,7 @@ export function PluginRow({
     pluginSettingsPanelAtom(pluginContributionKey(environmentId, plugin.id)),
   );
   const webFailure = useAtomValue(pluginWebFailuresAtom(plugin.id)).get(environmentId);
-  const hasGeneratedForm = pluginSettingsForm(plugin.settingsSchema).kind !== "none";
-  const hasSettings = customSettings !== undefined || hasGeneratedForm;
+  const hasSettings = customSettings !== undefined || plugin.hasSettings === true;
   const whileBusy = async (action: () => Promise<unknown>) => {
     setBusy(true);
     await action();

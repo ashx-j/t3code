@@ -65,6 +65,7 @@ function PluginSettingsEditor({
     <PluginSettingsFormView
       environmentId={environmentId}
       plugin={plugin}
+      schema={query.data.settingsSchema}
       initialSettings={query.data.settings}
     />
   );
@@ -73,10 +74,12 @@ function PluginSettingsEditor({
 function PluginSettingsFormView({
   environmentId,
   plugin,
+  schema,
   initialSettings,
 }: {
   readonly environmentId: EnvironmentId;
   readonly plugin: PluginState;
+  readonly schema: Schema.JsonObject | undefined;
   readonly initialSettings: Schema.JsonObject;
 }) {
   const update = useAtomCommand(pluginEnvironment.updatePluginSettings, {
@@ -90,7 +93,7 @@ function PluginSettingsFormView({
     <JsonSchemaSettingsForm
       idPrefix={`plugin-setting-${plugin.id}`}
       label={plugin.name}
-      schema={plugin.settingsSchema}
+      schema={schema}
       settings={initialSettings}
       canSave={canSave}
       onSave={async (patch) => {
