@@ -46,7 +46,7 @@ it.layer(NodeServices.layer)("discoverPlugins", (it) => {
       const devOnly = path.join(root, "dev", "workbench");
       yield* write(devOnly, manifest("dev-only"));
 
-      const plugins = yield* discoverPlugins({ pluginsDir, devPaths: [devCopy, devOnly] });
+      const { plugins } = yield* discoverPlugins({ pluginsDir, devPaths: [devCopy, devOnly] });
       const summary = plugins.map((plugin) => ({
         id: plugin.id,
         source: plugin.source,

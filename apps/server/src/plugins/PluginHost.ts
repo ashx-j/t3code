@@ -494,18 +494,25 @@ const make = Effect.gen(function* () {
   // Startup tolerates an unreadable plugins.json; an explicit reload reports it instead.
   const discover = Effect.fn("PluginHost.discover")(function* (lenient: boolean) {
     const current = yield* pluginsConfig.reread(lenient);
-    const plugins = yield* discoverPlugins({ pluginsDir, devPaths: current.devPaths ?? [] }).pipe(
+    const { plugins, complete } = yield* discoverPlugins({
+      pluginsDir,
+      devPaths: current.devPaths ?? [],
+    }).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
     );
-    yield* pluginsConfig.forgetMissing(new Set(plugins.map((plugin) => plugin.id))).pipe(
-      Effect.catchTags({
-        PluginConfigError: (error) =>
-          lenient
-            ? Effect.logWarning("could not update plugins.json", { path: error.path })
-            : Effect.fail(error),
-      }),
-    );
+    // Only folders that are gone: one it could not read, such as on a drive mounted later, would
+    // otherwise come back turned off.
+    if (complete) {
+      yield* pluginsConfig.forgetMissing(new Set(plugins.map((plugin) => plugin.id))).pipe(
+        Effect.catchTags({
+          PluginConfigError: (error) =>
+            lenient
+              ? Effect.logWarning("could not update plugins.json", { path: error.path })
+              : Effect.fail(error),
+        }),
+      );
+    }
     const found: Found = { enabled: current.enabled ?? {}, crashed: current.crashed ?? {} };
     return { plugins, found };
   });
