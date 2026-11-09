@@ -9,6 +9,7 @@ import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import { buildEnvironmentAuthHeaders } from "./environmentHttpAuth.ts";
 import {
   createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
   createRuntimeCommand,
 } from "./runtime.ts";
@@ -31,6 +32,12 @@ export function createPluginEnvironmentAtoms<R, E>(
           Stream.filter((list) => list !== NO_PLUGINS),
         ),
     }),
+    pluginSettings: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:plugins:settings",
+      tag: WS_METHODS.pluginsSettingsGet,
+      // Dropped when the editor closes, so reopening it shows the saved values.
+      idleTtlMs: 0,
+    }),
     setPluginEnabled: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:plugins:set-enabled",
       tag: WS_METHODS.pluginsSetEnabled,
@@ -51,6 +58,10 @@ export function createPluginEnvironmentAtoms<R, E>(
     uninstallPlugin: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:plugins:uninstall",
       tag: WS_METHODS.pluginsUninstall,
+    }),
+    updatePluginSettings: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:plugins:update-settings",
+      tag: WS_METHODS.pluginsSettingsUpdate,
     }),
     // Plugin stylesheets are plain GETs; over T3 Connect each needs its own DPoP proof.
     pluginFileHeaders: createRuntimeCommand(runtime, {

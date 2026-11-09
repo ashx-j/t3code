@@ -98,6 +98,10 @@ when Settings asks.
 Each browser keeps its own choice of the environments it loads plugin styles and themes from, the
 main one by default.
 
+Rows carry `hasSettings` rather than the settings schema. Every client, read-only ones and the
+idle watcher included, gets a plugin's row again on each status change, and only the settings
+form needs the schema, which it fetches with `plugins.settings.get`.
+
 With no plugins, the plugin system adds about 5.7 KB of minified JS to the startup chunks of a
 production build, about 2.1 KB gzipped, and no new chunks. Most of it is the plugin contract
 schemas and RPC definitions,

@@ -1,15 +1,17 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, PluginState } from "@t3tools/contracts";
-import { RotateCwIcon, Trash2Icon } from "lucide-react";
+import { ChevronUpIcon, RotateCwIcon, SlidersHorizontalIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
 import { pluginWebFailuresAtom } from "../../../plugins/pluginRegistry";
 import { pluginEnvironment } from "../../../state/plugins";
 import { useAtomCommand } from "../../../state/use-atom-command";
 import { Button } from "../../ui/button";
+import { Collapsible, CollapsiblePanel } from "../../ui/collapsible";
 import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "../../ui/popover";
 import { Switch } from "../../ui/switch";
 import { SettingsRow } from "../settingsLayout";
+import { PluginSettingsEditor } from "./PluginSettingsRows";
 
 const FAILURE_STAGES = {
   discovery: "Not found",
@@ -33,6 +35,7 @@ export function PluginRow({
   const reload = useAtomCommand(pluginEnvironment.reloadPlugin, "plugin reload");
   const uninstall = useAtomCommand(pluginEnvironment.uninstallPlugin, "plugin removal");
   const [busy, setBusy] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const webFailure = useAtomValue(pluginWebFailuresAtom(plugin.id)).get(environmentId);
   const whileBusy = async (action: () => Promise<unknown>) => {
     setBusy(true);
@@ -56,7 +59,7 @@ export function PluginRow({
         ]),
     ...(webFailure === undefined ? [] : [`Styles failed: ${webFailure}`]),
   ];
-  return (
+  const row = (
     <SettingsRow
       title={plugin.name}
       description={
@@ -98,6 +101,21 @@ export function PluginRow({
           ) : undefined
         ) : (
           <>
+            {plugin.hasSettings ? (
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label={`Settings for ${plugin.name}`}
+                aria-expanded={settingsOpen}
+                onClick={() => setSettingsOpen((open) => !open)}
+              >
+                {settingsOpen ? (
+                  <ChevronUpIcon className="size-4" />
+                ) : (
+                  <SlidersHorizontalIcon className="size-4" />
+                )}
+              </Button>
+            ) : null}
             <Button
               size="icon-sm"
               variant="ghost"
@@ -133,6 +151,20 @@ export function PluginRow({
         )
       }
     />
+  );
+  if (duplicate || !plugin.hasSettings) return row;
+  return (
+    <>
+      {row}
+      {/* `contents`, so the card's line between rows falls inside the panel and slides in with it. */}
+      <Collapsible open={settingsOpen} onOpenChange={setSettingsOpen} className="contents">
+        <CollapsiblePanel>
+          <div className="border-t border-border/50 [&>*+*]:border-t [&>*+*]:border-border/50">
+            <PluginSettingsEditor environmentId={environmentId} plugin={plugin} />
+          </div>
+        </CollapsiblePanel>
+      </Collapsible>
+    </>
   );
 }
 
