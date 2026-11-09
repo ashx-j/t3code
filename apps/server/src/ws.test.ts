@@ -81,7 +81,7 @@ import * as ReviewService from "./review/ReviewService.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as PluginHost from "./plugins/PluginHost.ts";
 import * as PluginInstaller from "./plugins/PluginInstaller.ts";
-import * as PluginUploads from "./plugins/pluginUploads.ts";
+import * as PluginUploads from "./plugins/PluginUploads.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";

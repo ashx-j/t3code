@@ -21,7 +21,7 @@ import * as Stream from "effect/Stream";
 import { rpcAuthorizationError } from "../auth/RpcAuthorization.ts";
 import * as PluginHost from "./PluginHost.ts";
 import type * as PluginInstaller from "./PluginInstaller.ts";
-import type * as PluginUploads from "./pluginUploads.ts";
+import type * as PluginUploads from "./PluginUploads.ts";
 
 const toRpcError = (pluginId: PluginId) => (error: { readonly message: string }) =>
   PluginHost.isPluginAccessDeniedError(error)

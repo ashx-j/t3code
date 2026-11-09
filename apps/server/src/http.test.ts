@@ -18,7 +18,7 @@ import { HttpClient, HttpClientRequest, HttpRouter, HttpServerResponse } from "e
 import { ASSET_ROUTE_PREFIX } from "./assets/AssetAccess.ts";
 import { ATTACHMENT_UPLOAD_ROUTE_PREFIX } from "./assets/AttachmentUpload.ts";
 import { openMediaFile } from "./assets/MediaFile.ts";
-import { PLUGIN_UPLOAD_ROUTE_PREFIX } from "./plugins/pluginUploads.ts";
+import { PLUGIN_UPLOAD_ROUTE_PREFIX } from "./plugins/PluginUploads.ts";
 
 import {
   injectMcpAppCsp,

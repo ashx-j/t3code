@@ -295,16 +295,20 @@ const make = Effect.gen(function* () {
     const record = yield* findRecord(pluginId);
     if (yield* failures.recordServer(pluginId, record?.revision, error)) yield* publishStates;
   });
-  // Recorded at once and outside the plugin's scope, where the guard hears of it, and in the
-  // host's scope, so a publish still waiting ends with the host.
-  const reportServerFailure = (pluginId: PluginId, error: unknown) =>
-    pluginCodeScope.exit(() => {
-      Effect.runForkWith(context)(
-        Effect.forkIn(recordServerFailure(pluginId, error), hostScope, { startImmediately: true }),
-      );
-    });
+  // The guard hears of a failure in Node's own callback, so it queues it for a fiber in the host's
+  // scope. Each one records in its own fiber, as one may wait out the publish interval.
+  const serverFailures = yield* Queue.unbounded<readonly [PluginId, unknown]>();
+  yield* Queue.take(serverFailures).pipe(
+    Effect.flatMap(([pluginId, error]) =>
+      Effect.forkIn(recordServerFailure(pluginId, error), hostScope),
+    ),
+    Effect.forever,
+    Effect.forkIn(hostScope),
+  );
   const failureGuard = makePluginFailureGuard({
-    onRejection: reportServerFailure,
+    // Outside the plugin's scope, so the work it wakes is T3's, which the guard never blames on it.
+    onRejection: (pluginId, error) =>
+      pluginCodeScope.exit(() => Queue.offerUnsafe(serverFailures, [pluginId, error])),
     onCrash: (pluginId, error) => pluginsConfig.recordCrash(pluginId, errorText(error)),
   });
   // Added before the teardown finalizer, so it runs after plugin cleanups.

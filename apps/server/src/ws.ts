@@ -123,7 +123,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as PluginHost from "./plugins/PluginHost.ts";
 import * as PluginInstaller from "./plugins/PluginInstaller.ts";
-import * as PluginUploads from "./plugins/pluginUploads.ts";
+import * as PluginUploads from "./plugins/PluginUploads.ts";
 import { makePluginRpcHandlers } from "./plugins/pluginRpcHandlers.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";

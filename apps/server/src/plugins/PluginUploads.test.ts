@@ -17,7 +17,7 @@ import {
   listStates,
   waitForStatuses,
 } from "./pluginHostTestHarness.ts";
-import * as PluginUploads from "./pluginUploads.ts";
+import * as PluginUploads from "./PluginUploads.ts";
 
 /** Posts `files` to `url` through the upload route, over a running plugin host. */
 const uploader = Effect.fn(function* () {
@@ -58,7 +58,8 @@ const helloFiles = Effect.gen(function* () {
 const withHost = <A, E, R>(body: Effect.Effect<A, E, R>) =>
   body.pipe(
     Effect.provide(
-      Layer.merge(layerHost(), PluginUploads.layer).pipe(
+      PluginUploads.layer.pipe(
+        Layer.provideMerge(layerHost()),
         Layer.provide(ServerSecretStore.layer),
         Layer.provideMerge(layerConfig()),
       ),

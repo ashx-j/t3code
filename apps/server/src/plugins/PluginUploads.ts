@@ -3,6 +3,8 @@ import {
   PLUGIN_UPLOAD_MAX_FILES,
   type PluginCreateUploadUrlResult,
   PluginMutationResult,
+  type PluginState,
+  type PluginUploadFile,
   PluginUploadFiles,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -22,7 +24,9 @@ import {
   timingSafeEqualBase64Url,
 } from "../auth/utils.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import type { PluginNotFoundError } from "./PluginHost.ts";
 import * as PluginInstaller from "./PluginInstaller.ts";
+import type { PluginConfigError } from "./pluginsConfig.ts";
 
 /**
  * A client installs a dropped plugin folder by uploading it here, to a URL `plugins.createUploadUrl`
@@ -65,22 +69,43 @@ export class PluginUploadUrlError extends Schema.TaggedError<PluginUploadUrlErro
   }
 }
 
+export class PluginUploadUnusableUrlError extends Schema.TaggedError<PluginUploadUnusableUrlError>()(
+  "PluginUploadUnusableUrlError",
+  {},
+) {
+  override get message(): string {
+    return "The upload URL is not one this server signed, or it expired or was used.";
+  }
+}
+
 export class PluginUploads extends Context.Service<
   PluginUploads,
   {
     /** Signs a URL that installs one uploaded folder within 5 minutes. */
     readonly issueUrl: Effect.Effect<PluginCreateUploadUrlResult, PluginUploadUrlError>;
     /**
-     * Whether `token` is a URL this server signed that is unexpired and unused. A valid one is used
-     * up, because it installs code.
+     * Installs `files` like `PluginInstaller.installFiles` if `token` is a URL this server signed
+     * that is unexpired and unused, which it then uses up because it installs code. `files` runs
+     * only after that check, so a bad URL never has the server read a body.
      */
-    readonly claim: (token: string) => Effect.Effect<boolean>;
+    readonly install: <E>(input: {
+      readonly token: string;
+      readonly files: Effect.Effect<ReadonlyArray<PluginUploadFile>, E>;
+    }) => Effect.Effect<
+      PluginState,
+      | E
+      | PluginUploadUnusableUrlError
+      | PluginInstaller.PluginInstallError
+      | PluginNotFoundError
+      | PluginConfigError
+    >;
   }
->()("t3/plugins/pluginUploads") {}
+>()("t3/plugins/PluginUploads") {}
 
 const make = Effect.gen(function* () {
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const crypto = yield* Crypto.Crypto;
+  const installer = yield* PluginInstaller.PluginInstaller;
   const loadSigningSecret = secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32);
   // Unused URLs by nonce, with when each expires. A restart forgets them, which only refuses more.
   const unused = new Map<string, number>();
@@ -106,7 +131,8 @@ const make = Effect.gen(function* () {
     return result;
   });
 
-  const claim = Effect.fn("PluginUploads.claim")(function* (token: string) {
+  // Inside `install`'s span.
+  const claim = Effect.fnUntraced(function* (token: string) {
     const [payload, signature, unexpected] = token.split(".");
     if (!payload || !signature || unexpected !== undefined) return false;
     const secret = yield* loadSigningSecret.pipe(
@@ -128,7 +154,14 @@ const make = Effect.gen(function* () {
     return unused.delete(claims.value.nonce);
   });
 
-  return PluginUploads.of({ issueUrl: issueUrl(), claim });
+  const install: PluginUploads["Service"]["install"] = Effect.fn("PluginUploads.install")(
+    function* ({ token, files }) {
+      if (!(yield* claim(token))) return yield* new PluginUploadUnusableUrlError();
+      return yield* installer.installFiles(yield* files);
+    },
+  );
+
+  return PluginUploads.of({ issueUrl: issueUrl(), install });
 });
 
 export const layer = Layer.effect(PluginUploads, make);
@@ -143,8 +176,18 @@ const UPLOAD_LIMITS = Multipart.limitsServices({
   fieldMimeTypes: [],
 });
 
+const NOT_AN_UPLOAD = "The request is not a plugin folder.";
 const text = (body: string, status: number) => HttpServerResponse.text(body, { status });
-const notAnUpload = text("The request is not a plugin folder.", 400);
+
+// Why the route refused an upload's body, with the status it answers.
+class PluginUploadBodyError extends Schema.TaggedError<PluginUploadBodyError>()(
+  "PluginUploadBodyError",
+  { status: Schema.Literals([400, 413]), reason: Schema.String },
+) {
+  override get message(): string {
+    return this.reason;
+  }
+}
 
 // A part named with a malformed escape names no file.
 const decodePath = (name: string) => {
@@ -163,48 +206,51 @@ export const layerRoute = HttpRouter.add(
     const request = yield* HttpServerRequest.HttpServerRequest;
     const url = HttpServerRequest.toURL(request);
     if (Option.isNone(url)) return text("Bad Request", 400);
-    const uploads = yield* PluginUploads;
-    // An expired, forged or used URL looks like no route at all.
-    if (
-      !(yield* uploads.claim(url.value.pathname.slice(`${PLUGIN_UPLOAD_ROUTE_PREFIX}/`.length)))
-    ) {
-      return text("Not Found", 404);
-    }
     // In memory, as `installFiles` takes them.
-    const received = yield* request.multipartStream.pipe(
-      Stream.filter(Multipart.isFile),
-      Stream.mapEffect((file) =>
-        file.contentEffect.pipe(
-          Effect.map((contents) =>
-            Option.map(decodePath(file.name), (path) => ({ path, contents })),
+    const files = Effect.gen(function* () {
+      const received = yield* request.multipartStream.pipe(
+        Stream.filter(Multipart.isFile),
+        Stream.mapEffect((file) =>
+          file.contentEffect.pipe(
+            Effect.map((contents) =>
+              Option.map(decodePath(file.name), (path) => ({ path, contents })),
+            ),
           ),
         ),
-      ),
-      Stream.runCollect,
-      Effect.provideContext(UPLOAD_LIMITS),
-      Effect.result,
-    );
-    if (received._tag === "Failure") {
-      return received.failure.reason._tag === "Parse" ||
-        received.failure.reason._tag === "InternalError"
-        ? notAnUpload
-        : text(
-            `A plugin folder can have up to ${PLUGIN_UPLOAD_MAX_FILES} files and ${PLUGIN_UPLOAD_MAX_BYTES / 1024 / 1024} MB.`,
-            413,
-          );
-    }
-    const named = Option.all(received.success);
-    if (Option.isNone(named)) return notAnUpload;
-    const files = yield* decodeUploadFiles(named.value).pipe(Effect.result);
-    if (files._tag === "Failure") return text(files.failure.message, 400);
-    const installer = yield* PluginInstaller.PluginInstaller;
-    return yield* installer.installFiles(files.success).pipe(
-      Effect.flatMap((plugin) => mutationResponse({ plugin }).pipe(Effect.orDie)),
-      Effect.catchTags({
-        PluginInstallError: (error) => Effect.succeed(text(error.message, 400)),
-        PluginNotFoundError: (error) => Effect.succeed(text(error.message, 404)),
-        PluginConfigError: (error) => Effect.succeed(text(error.message, 500)),
-      }),
-    );
+        Stream.runCollect,
+        Effect.provideContext(UPLOAD_LIMITS),
+        Effect.mapError((error) =>
+          error.reason._tag === "Parse" || error.reason._tag === "InternalError"
+            ? new PluginUploadBodyError({ status: 400, reason: NOT_AN_UPLOAD })
+            : new PluginUploadBodyError({
+                status: 413,
+                reason: `A plugin folder can have up to ${PLUGIN_UPLOAD_MAX_FILES} files and ${PLUGIN_UPLOAD_MAX_BYTES / 1024 / 1024} MB.`,
+              }),
+        ),
+      );
+      const named = Option.all(received);
+      if (Option.isNone(named)) {
+        return yield* new PluginUploadBodyError({ status: 400, reason: NOT_AN_UPLOAD });
+      }
+      return yield* decodeUploadFiles(named.value).pipe(
+        Effect.mapError(
+          (error) => new PluginUploadBodyError({ status: 400, reason: error.message }),
+        ),
+      );
+    });
+    const uploads = yield* PluginUploads;
+    return yield* uploads
+      .install({ token: url.value.pathname.slice(`${PLUGIN_UPLOAD_ROUTE_PREFIX}/`.length), files })
+      .pipe(
+        Effect.flatMap((plugin) => mutationResponse({ plugin }).pipe(Effect.orDie)),
+        Effect.catchTags({
+          // An expired, forged or used URL looks like no route at all.
+          PluginUploadUnusableUrlError: () => Effect.succeed(text("Not Found", 404)),
+          PluginUploadBodyError: (error) => Effect.succeed(text(error.reason, error.status)),
+          PluginInstallError: (error) => Effect.succeed(text(error.message, 400)),
+          PluginNotFoundError: (error) => Effect.succeed(text(error.message, 404)),
+          PluginConfigError: (error) => Effect.succeed(text(error.message, 500)),
+        }),
+      );
   }),
 );

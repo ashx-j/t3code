@@ -48,7 +48,7 @@ import {
   failEnvironmentInternal,
 } from "./auth/http.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
-import { PLUGIN_UPLOAD_ROUTE_PREFIX } from "./plugins/pluginUploads.ts";
+import { PLUGIN_UPLOAD_ROUTE_PREFIX } from "./plugins/PluginUploads.ts";
 import { WEBHOOK_ROUTE_PREFIX } from "./scheduledTasks/ScheduledTaskService.ts";
 import {
   browserApiCorsAllowedHeaders,
