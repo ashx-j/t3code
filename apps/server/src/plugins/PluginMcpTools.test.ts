@@ -2,9 +2,11 @@ import { assert, it } from "@effect/vitest";
 import { EnvironmentId, PluginId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type { PluginApi, PluginDefinition } from "@t3tools/plugin-sdk/server";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import { McpSchema, McpServer } from "effect/ai";
 
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
@@ -232,8 +234,10 @@ it.effect("answer under plg_ names with access checks, and leave the list once s
       text: "Plugin mcp-plugin failed in fail: boom",
     });
 
-    // A call to a handler that ignores its abort signal ends when the plugin turns off.
-    const reached = Promise.withResolvers<void>();
+    // A call to a handler that ignores its abort signal ends at the deadline, which aborts the
+    // signal, or when the plugin turns off.
+    const signals: Array<AbortSignal> = [];
+    let reached = Promise.withResolvers<void>();
     api.mcp.registerTool(
       {
         name: "hang",
@@ -241,11 +245,24 @@ it.effect("answer under plg_ names with access checks, and leave the list once s
         inputSchema: { type: "object" },
         access: "read",
       },
-      () => {
+      (_input, { signal }) => {
+        signals.push(signal);
         reached.resolve();
         return new Promise(() => undefined);
       },
     );
+    const timedOut = yield* call("plg_mcp-plugin_hang", threadCaller).pipe(
+      Effect.forkChild({ startImmediately: true }),
+    );
+    yield* Effect.promise(() => reached.promise);
+    yield* TestClock.adjust(Duration.minutes(5));
+    assert.deepStrictEqual(yield* Fiber.join(timedOut), {
+      isError: true,
+      text: "Plugin mcp-plugin did not answer hang within 5 minutes.",
+    });
+    assert.isTrue(signals[0]?.aborted);
+
+    reached = Promise.withResolvers<void>();
     const hanging = yield* call("plg_mcp-plugin_hang", threadCaller).pipe(
       Effect.forkChild({ startImmediately: true }),
     );

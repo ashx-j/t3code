@@ -1,6 +1,7 @@
 import { PluginId } from "@t3tools/contracts";
 import type { PluginMcpTool, PluginRpcAccess } from "@t3tools/plugin-sdk/server";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -16,6 +17,8 @@ const MAX_TOOLS_PER_PLUGIN = 32;
 const MAX_DESCRIPTION_CHARS = 1000;
 // Measured as the JSON clients receive.
 const MAX_INPUT_SCHEMA_CHARS = 4000;
+// Longer than a client's call, because a tool may do real work, but a hung one frees the turn.
+const TOOL_CALL_DEADLINE = Duration.minutes(5);
 
 const isJson = Schema.is(Schema.Json);
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.JsonObject));
@@ -56,6 +59,15 @@ export class PluginMcpToolError extends Schema.TaggedError<PluginMcpToolError>()
   }
 }
 
+export class PluginMcpToolTimeoutError extends Schema.TaggedError<PluginMcpToolTimeoutError>()(
+  "PluginMcpToolTimeoutError",
+  { pluginId: PluginId, tool: Schema.String },
+) {
+  override get message(): string {
+    return `Plugin ${this.pluginId} did not answer ${this.tool} within ${Duration.toMinutes(TOOL_CALL_DEADLINE)} minutes.`;
+  }
+}
+
 export class PluginMcpToolDisabledError extends Schema.TaggedError<PluginMcpToolDisabledError>()(
   "PluginMcpToolDisabledError",
   { pluginId: PluginId },
@@ -74,7 +86,10 @@ export interface PluginMcpToolEntry {
   readonly call: (
     input: Schema.JsonObject,
     caller: { readonly threadId: string | null },
-  ) => Effect.Effect<Schema.Json, PluginMcpToolError | PluginMcpToolDisabledError>;
+  ) => Effect.Effect<
+    Schema.Json,
+    PluginMcpToolError | PluginMcpToolTimeoutError | PluginMcpToolDisabledError
+  >;
 }
 
 export class PluginMcpTools extends Context.Service<
@@ -84,7 +99,7 @@ export class PluginMcpTools extends Context.Service<
     readonly register: (input: {
       readonly pluginId: PluginId;
       readonly tool: PluginMcpTool;
-      /** `signal` aborts when the agent cancels the call. */
+      /** `signal` aborts when the agent cancels the call or the deadline passes. */
       readonly handler: (
         input: Schema.JsonObject,
         context: { readonly signal: AbortSignal; readonly threadId: string | null },
@@ -161,6 +176,12 @@ const make = () => {
               try: (signal) => handler(input, { signal, threadId: caller.threadId }),
               catch: failed,
             }).pipe(
+              // The deadline interrupts the call, which aborts the handler's signal.
+              Effect.timeoutOrElse({
+                duration: TOOL_CALL_DEADLINE,
+                orElse: () =>
+                  Effect.fail(new PluginMcpToolTimeoutError({ pluginId, tool: tool.name })),
+              }),
               Effect.flatMap((output: unknown) =>
                 output === undefined
                   ? Effect.succeed(null)

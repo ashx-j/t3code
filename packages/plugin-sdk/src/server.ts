@@ -29,7 +29,10 @@ export interface PluginApiError extends Error {
   readonly code: string;
 }
 
-/** A plugin registers at most 32 tools, because agents in every thread see them all. */
+/**
+ * A plugin registers at most 32 tools, because agents in every thread see them all. A call that
+ * hasn't answered within 5 minutes fails with an error the agent reads, and its `signal` aborts.
+ */
 export interface PluginMcpTool {
   /** Agents see the tool as `plg_<pluginId>_<name>`. Letters, digits, `_` and `-`. */
   readonly name: string;
@@ -48,6 +51,7 @@ export interface PluginMcpTool {
 export type PluginMcpToolHandler = (
   input: JsonObject,
   context: {
+    /** Aborts when the agent cancels the call, the plugin deactivates, or 5 minutes pass. */
     readonly signal: AbortSignal;
     /** The thread whose agent called the tool, or null for an MCP client outside a thread. */
     readonly threadId: string | null;
