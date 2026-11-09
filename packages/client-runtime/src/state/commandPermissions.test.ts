@@ -98,10 +98,13 @@ describe("command permissions", () => {
 
   it.effect.each([
     WS_METHODS.serverRunStorageCleanup,
-    // Enabling, reloading or rescanning plugins changes what every client shows.
+    // Installing, removing, enabling, reloading or rescanning plugins changes what every client
+    // shows.
     WS_METHODS.pluginsSetEnabled,
     WS_METHODS.pluginsReload,
+    WS_METHODS.pluginsCreateUploadUrl,
     WS_METHODS.pluginsRescan,
+    WS_METHODS.pluginsUninstall,
   ])("requires the destination settings grant for %s", (method) =>
     Effect.scoped(
       Effect.gen(function* () {

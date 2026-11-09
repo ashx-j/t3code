@@ -22,14 +22,17 @@ export function PluginList({
   const error = result._tag === "Failure" ? formatEnvironmentQueryError(result.cause) : null;
   return (
     <>
+      <SettingsSection title="Plugins">{children}</SettingsSection>
       <ScanPluginsFolder environmentId={environmentId} />
       <SettingsSection title="Installed plugins">
-        {children}
         {error === null ? null : <SettingsRow title="Could not load plugins" description={error} />}
         {plugins === null && error === null ? (
           <SettingsRow title="Loading plugins…" role="status" />
         ) : plugins?.length === 0 && error === null ? (
-          <SettingsRow title="No plugins installed" />
+          <SettingsRow
+            title="No plugins installed"
+            description="Drop a plugin folder here to add it."
+          />
         ) : (
           (plugins ?? []).map((plugin, index) => (
             <PluginRow

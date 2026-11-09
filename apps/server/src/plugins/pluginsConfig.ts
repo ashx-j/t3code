@@ -80,6 +80,7 @@ export const makePluginsConfig = Effect.gen(function* () {
           )
         : read
       ).pipe(Effect.tap((next) => Ref.set(current, next))),
+    write,
     writeEnabled: (pluginId: PluginId, enabled: boolean) =>
       write((current) => ({
         ...current,

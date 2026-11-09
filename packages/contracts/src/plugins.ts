@@ -29,6 +29,16 @@ const PluginEngineRange = TrimmedNonEmptyString.check(
   }),
 );
 
+// Lexical check only. Code that reads or serves the file still resolves symlinks.
+const isInsidePluginDirectory = Schema.makeFilter(
+  (path: string) =>
+    !path.startsWith("/") &&
+    !path.includes("\\") &&
+    !/^[a-zA-Z]:/.test(path) &&
+    path.split("/").every((segment) => segment !== ".."),
+  { expected: "a relative path inside the plugin directory" },
+);
+
 /** `t3-plugin.json` at the root of a plugin directory. */
 export const PluginManifest = Schema.Struct({
   id: PluginId,
@@ -140,10 +150,57 @@ export const PluginReloadInput = Schema.Struct({
 });
 export type PluginReloadInput = typeof PluginReloadInput.Type;
 
+/** Limits on a plugin folder a client uploads to the URL `plugins.createUploadUrl` returns. */
+export const PLUGIN_UPLOAD_MAX_FILES = 1_000;
+export const PLUGIN_UPLOAD_MAX_BYTES = 25 * 1024 * 1024;
+
+/** One file of a plugin folder dropped into a client, by its path inside that folder. */
+export const PluginUploadFile = Schema.Struct({
+  path: TrimmedNonEmptyString.check(Schema.isMaxLength(1024), isInsidePluginDirectory),
+  contents: Schema.Uint8Array,
+});
+export type PluginUploadFile = typeof PluginUploadFile.Type;
+
+/** The files of an uploaded plugin folder, which the server checks before it installs them. */
+export const PluginUploadFiles = Schema.Array(PluginUploadFile).check(
+  Schema.isMaxLength(PLUGIN_UPLOAD_MAX_FILES, {
+    message: `A plugin folder can have up to ${PLUGIN_UPLOAD_MAX_FILES} files.`,
+  }),
+  Schema.makeFilter(
+    (files) =>
+      files.reduce((total, file) => total + file.contents.byteLength, 0) <= PLUGIN_UPLOAD_MAX_BYTES,
+    { message: `A plugin folder can have up to ${PLUGIN_UPLOAD_MAX_BYTES / 1024 / 1024} MB.` },
+  ),
+);
+
+export const PluginCreateUploadUrlInput = Schema.Struct({});
+export type PluginCreateUploadUrlInput = typeof PluginCreateUploadUrlInput.Type;
+
+/**
+ * A signed URL, relative to the environment, that takes one plugin folder as multipart form data:
+ * a `file` part per file, named with its path through `encodeURIComponent`. It answers with a
+ * `PluginMutationResult`, or a status and the reason as text.
+ */
+export const PluginCreateUploadUrlResult = Schema.Struct({
+  relativeUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+  expiresAt: Schema.Number,
+});
+export type PluginCreateUploadUrlResult = typeof PluginCreateUploadUrlResult.Type;
+
 export const PluginRescanInput = Schema.Struct({});
 export type PluginRescanInput = typeof PluginRescanInput.Type;
 
-/** Result of `plugins.setEnabled` and `plugins.reload`. */
+export const PluginUninstallInput = Schema.Struct({
+  pluginId: PluginId,
+  /** A row's `folder`, to remove or unlink that copy. A `duplicate` copy goes alone. */
+  folder: Schema.optionalKey(Schema.String),
+});
+export type PluginUninstallInput = typeof PluginUninstallInput.Type;
+
+export const PluginUninstallResult = Schema.Struct({ pluginId: PluginId });
+export type PluginUninstallResult = typeof PluginUninstallResult.Type;
+
+/** Result of `plugins.setEnabled`, `plugins.reload` and a folder upload. */
 export const PluginMutationResult = Schema.Struct({
   plugin: PluginState,
 });

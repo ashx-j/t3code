@@ -2,14 +2,24 @@
 
 Plugins change how T3 Code looks, with themes and styles. A plugin belongs to one environment and
 lives on that environment's T3 Code server. A plugin's row lists the permissions it says it uses,
-but T3 Code doesn't enforce them.
+but T3 Code doesn't enforce them. Install only plugins you trust.
 
 ## Add a plugin
+
+Open **Settings → Plugins** and drag a plugin's folder onto the page. **Add plugin** also lets you
+choose the folder in a file window.
+
+T3 Code copies a plugin folder into the environment's `plugins` folder, so later changes to your
+copy do not affect the installed plugin. To update it, add the new version's folder the same way.
+A new plugin is installed turned off, so none of it runs until you have read its row and turned it
+on. A new version of a plugin stays on or off as the old one was. If a new version fails to install,
+you keep the version you had, and T3 Code says why. A plugin that needs a newer version of T3 Code
+isn't installed, and T3 Code says why.
 
 Plugin folders you copy into the `plugins` folder yourself show up, turned off, the next time you
 open **Settings → Plugins**. That folder is `~/.t3/userdata/plugins` on the environment's machine
 by default. A folder with the same plugin id as one you already have doesn't run, and its row names
-the folder that has that id.
+the folder that has that id. Remove one of them.
 
 **Settings → Plugins** shows one environment at a time, the main one until you pick another at the
 top of the page. To use a plugin on several environments, add it to each of them.
@@ -19,6 +29,16 @@ top of the page. To use a plugin on several environments, add it to each of them
 Use the switch on the plugin's row. A plugin that fails to start shows the reason on its row, for
 example when it needs a newer version of T3 Code. **Reload** restarts a plugin with its current
 files.
+
+## Remove a plugin
+
+Choose **Remove** on the plugin's row and confirm in the popup.
+
+A plugin loaded from its own folder shows **Unlink** instead. Unlinking stops loading it and leaves
+the folder where it is.
+
+On a duplicate's row, **Remove** deletes only that folder and **Unlink** only stops loading it. The
+plugin in use keeps running.
 
 ## Themes and styles
 
