@@ -5,6 +5,7 @@ import { useRef, useState } from "react";
 import { cn } from "../../lib/utils";
 import {
   getCustomThemes,
+  asImportedThemeCopy,
   installCustomTheme,
   parseThemeFile,
   removeCustomTheme,
@@ -270,7 +271,8 @@ function ThemeImportBody({
     if (!isCurrentRequest(requestId)) return;
     const installed: ThemeDefinition[] = [];
     const conflicting: ThemeDefinition[] = [];
-    for (const theme of pairVsCodeThemes(resolveThemeLabelCollisions(parsed))) {
+    for (const pairedTheme of pairVsCodeThemes(resolveThemeLabelCollisions(parsed))) {
+      const theme = asImportedThemeCopy(pairedTheme);
       if (getCustomThemes().some((existing) => existing.id === theme.id)) {
         conflicting.push(theme);
         continue;
@@ -398,9 +400,9 @@ function ThemeImportBody({
     }
     try {
       const parsed: unknown = JSON.parse(json);
-      const theme = isVsCodeThemeFile(parsed)
-        ? parseVsCodeThemeFile(parsed)
-        : parseThemeFile(parsed);
+      const theme = asImportedThemeCopy(
+        isVsCodeThemeFile(parsed) ? parseVsCodeThemeFile(parsed) : parseThemeFile(parsed),
+      );
       if (getCustomThemes().some((existing) => existing.id === theme.id)) {
         setError(null);
         setConflicts([theme]);

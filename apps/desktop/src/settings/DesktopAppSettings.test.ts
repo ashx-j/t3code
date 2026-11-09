@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { DesktopWindowBackgroundSchema } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -34,6 +35,7 @@ const DesktopSettingsPatch = Schema.Struct({
   wslMode: Schema.optionalKey(Schema.Literals(["local", "wsl"])),
   wslDistro: Schema.optionalKey(Schema.NullOr(Schema.String)),
   wslOnly: Schema.optionalKey(Schema.Boolean),
+  windowCanvases: Schema.optionalKey(DesktopWindowBackgroundSchema),
 });
 
 const decodeDesktopSettingsPatch = Schema.decodeEffect(Schema.fromJsonString(DesktopSettingsPatch));
@@ -186,6 +188,7 @@ describe("DesktopSettings", () => {
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
+          windowBackground: null,
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
     ),
@@ -218,6 +221,11 @@ describe("DesktopSettings", () => {
 
         yield* settings.setMainWindowBounds({ x: -1200, y: 40, width: 1440, height: 960 }, true);
         yield* settings.setServerExposureMode("network-accessible");
+        const windowBackground = {
+          light: { appearance: "light", color: "#f4f4f4" },
+          dark: { appearance: "dark", color: "#151515" },
+        } as const;
+        yield* settings.setWindowBackground(windowBackground);
 
         const persisted = yield* decodeDesktopSettingsPatch(
           yield* fileSystem.readFileString(environment.desktopSettingsPath),
@@ -226,7 +234,9 @@ describe("DesktopSettings", () => {
           mainWindowBounds: { x: -1200, y: 40, width: 1440, height: 960 },
           mainWindowMaximized: true,
           serverExposureMode: "network-accessible",
+          windowCanvases: windowBackground,
         } satisfies typeof DesktopSettingsPatch.Type);
+        assert.deepEqual((yield* settings.load).windowBackground, windowBackground);
       }),
     ),
   );
@@ -281,6 +291,7 @@ describe("DesktopSettings", () => {
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
+          windowBackground: null,
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
       { appVersion: "0.0.17-nightly.20260415.1" },
@@ -310,6 +321,7 @@ describe("DesktopSettings", () => {
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
+          windowBackground: null,
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
       { appVersion: "0.0.17-nightly.20260415.1" },
