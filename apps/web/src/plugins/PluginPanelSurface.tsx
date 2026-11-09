@@ -17,10 +17,11 @@ import {
 } from "../components/ui/empty";
 import { loadsPluginUi, pluginUiChoicesAtom } from "./pluginFollow";
 import {
+  pluginContributionKey,
   pluginRightPanelAtom,
   pluginRightPanelKey,
-  pluginRightPanelsAtom,
   pluginWebFailuresAtom,
+  pluginWebLoadedAtom,
 } from "./pluginRegistry";
 
 function PluginPanelNotice(props: {
@@ -48,7 +49,8 @@ function PluginPanelNotice(props: {
 
 /**
  * The plugin's name, or its id while the list loads or once it is uninstalled, and whether its
- * panel may still register: the list is loading, or its web part is starting in this browser.
+ * panel may still register: the list is loading, or its web part is starting in this browser and
+ * has neither loaded nor failed.
  */
 function usePluginPanelState(environmentId: EnvironmentId, pluginId: string) {
   const result = useAtomValue(pluginEnvironment.pluginsLive({ environmentId, input: {} }));
@@ -58,10 +60,7 @@ function usePluginPanelState(environmentId: EnvironmentId, pluginId: string) {
     useAtomValue(primaryEnvironmentIdAtom),
   );
   const webFailed = useAtomValue(pluginWebFailuresAtom(pluginId)).has(environmentId);
-  // A plugin that registered another panel has loaded, so this one is not coming.
-  const loaded = useAtomValue(pluginRightPanelsAtom(environmentId)).some(
-    (entry) => entry.pluginId === pluginId,
-  );
+  const loaded = useAtomValue(pluginWebLoadedAtom(pluginContributionKey(environmentId, pluginId)));
   const plugin = AsyncResult.isSuccess(result)
     ? result.value.plugins.find((candidate) => candidate.id === pluginId)
     : undefined;

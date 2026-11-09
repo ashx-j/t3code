@@ -29,6 +29,7 @@ export interface PluginCommandEntry {
 const rightPanels = new Map<string, PluginRightPanelEntry>();
 const settingsPanels = new Map<string, PluginSettingsPanelEntry>();
 const webFailures = new Map<string, string>();
+const webLoaded = new Set<string>();
 const commands = new Map<string, PluginCommandEntry>();
 
 // Reads go through atoms derived from the version, so React Compiler cannot cache a stale lookup.
@@ -135,6 +136,24 @@ export const pluginWebFailuresAtom = Atom.family((pluginId: string) =>
         key.endsWith(suffix) ? [[key.slice(0, -suffix.length), message] as const] : [],
       ),
     );
+  }),
+);
+
+/** Records that a plugin's web part finished `activate`; returns the function that clears it. */
+export function markPluginWebLoaded(environmentId: EnvironmentId, pluginId: string): () => void {
+  const key = pluginContributionKey(environmentId, pluginId);
+  webLoaded.add(key);
+  bump();
+  return () => {
+    if (webLoaded.delete(key)) bump();
+  };
+}
+
+/** Whether the plugin's web part has loaded, by `pluginContributionKey`. */
+export const pluginWebLoadedAtom = Atom.family((key: string) =>
+  Atom.make((get) => {
+    get(versionAtom);
+    return webLoaded.has(key);
   }),
 );
 

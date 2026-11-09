@@ -39,6 +39,8 @@ vi.mock(import("../state/plugins"), () => ({
 }));
 
 import { AppAtomRegistryProvider, appAtomRegistry } from "../rpc/atomRegistry";
+import { PluginPanelSurface } from "./PluginPanelSurface";
+import { pluginUiChoicesAtom } from "./pluginFollow";
 import { startPluginLoader } from "./pluginLoader";
 import {
   pluginCommandsAtom,
@@ -282,6 +284,36 @@ describe("startPluginLoader", () => {
     expect(appAtomRegistry.get(pluginRightPanelsAtom(environmentA))).toEqual([]);
     // A command has no thread to say which environment it belongs to.
     expect(appAtomRegistry.get(pluginCommandsAtom(environmentB))).toEqual([]);
+  });
+
+  it("ends a restored panel's wait once its plugin loads without that panel", async () => {
+    setup();
+    using _fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response("export default { activate() {} };"));
+    const environmentId = EnvironmentId.make("environment:plugin-loader-no-panel");
+    appAtomRegistry.set(pluginUiChoicesAtom, new Map([[environmentId, true]]));
+    using _choices = {
+      [Symbol.dispose]: () => appAtomRegistry.set(pluginUiChoicesAtom, new Map()),
+    };
+    appAtomRegistry.set(state.live, AsyncResult.success({ plugins: [webPlugin("quiet-web")] }));
+    await using screen = await render(
+      createElement(
+        AppAtomRegistryProvider,
+        null,
+        createElement(PluginPanelSurface, {
+          environmentId,
+          threadId: "thread-1",
+          pluginId: "quiet-web",
+          panel: "notes",
+          onClose: () => {},
+        }),
+      ),
+    );
+    await expect.element(screen.getByText("Loading plugin")).toBeVisible();
+
+    using _loader = { [Symbol.dispose]: startPluginLoader(environmentId, vi.fn(), true) };
+    await expect.element(screen.getByText("Plugin not active")).toBeVisible();
   });
 
   it("starts a channel the plugin subscribes to and hands it the values", async () => {

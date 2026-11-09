@@ -39,6 +39,7 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { registerCommands, type CommandHandlers } from "../shortcuts/dispatcher";
 import { pluginEnvironment } from "../state/plugins";
 import {
+  markPluginWebLoaded,
   registerPluginCommand,
   registerPluginRightPanel,
   registerPluginSettingsPanel,
@@ -450,6 +451,8 @@ export function startPluginLoader(
         ),
         "Starting the web half",
       );
+      // A restored panel the plugin did not register stops waiting for it here.
+      if (!entry.disposed) track(markPluginWebLoaded(environmentId, plugin.id));
     } catch (error) {
       // A load that was replaced or stopped meanwhile has nothing to report.
       if (entry.disposed) return;
