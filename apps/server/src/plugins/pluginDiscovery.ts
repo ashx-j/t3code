@@ -8,6 +8,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import { settingsSchemaProblem } from "./PluginSettingsStore.ts";
@@ -68,9 +69,13 @@ const failed = (location: PluginLocation, failure: PluginFailure): DiscoveredPlu
   failure: { ...failure, message: failure.message.slice(0, MAX_FAILURE_MESSAGE_CHARS) },
 });
 
+const isGone = (error: PlatformError.PlatformError) => error.reason._tag === "NotFound";
+
 /**
  * Lists installed plugins (`<pluginsDir>/<any folder>/t3-plugin.json`), then dev plugins
- * (`devPaths`). An id more than one folder has is listed once, as failed.
+ * (`devPaths`). An id more than one folder has is listed once, as failed. `complete` is false when
+ * a folder could not be read, such as a link into a drive that isn't mounted, so a plugin missing
+ * from the list may still be there.
  */
 export const discoverPlugins = Effect.fn("PluginDiscovery.discover")(function* (input: {
   readonly pluginsDir: string;
@@ -79,20 +84,30 @@ export const discoverPlugins = Effect.fn("PluginDiscovery.discover")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
+  let complete = true;
+  const unreadable = (folder: string, error: PlatformError.PlatformError) => {
+    complete = false;
+    return `Could not read the folder "${path.basename(folder)}" (${error.reason._tag}). It keeps its switch; reload once the folder is back.`;
+  };
+
   // The helpers below run for every plugin folder inside the discovery span.
   const readManifest = Effect.fnUntraced(function* (rootDir: string) {
     const manifestPath = path.join(rootDir, PLUGIN_MANIFEST_FILE);
-    const info = yield* fs.stat(manifestPath).pipe(Effect.option);
-    if (info._tag === "None" || info.value.type !== "File") {
-      return { _tag: "Missing" } as const;
+    const info = yield* fs.stat(manifestPath).pipe(Effect.result);
+    if (info._tag === "Failure") {
+      return isGone(info.failure)
+        ? ({ _tag: "Missing" } as const)
+        : ({ _tag: "Unreadable", message: unreadable(rootDir, info.failure) } as const);
     }
-    if (Number(info.value.size) > MAX_MANIFEST_BYTES) {
+    if (info.success.type !== "File") return { _tag: "Missing" } as const;
+    if (Number(info.success.size) > MAX_MANIFEST_BYTES) {
       return { _tag: "TooLarge" } as const;
     }
-    const raw = yield* fs.readFileString(manifestPath).pipe(Effect.option);
-    return raw._tag === "None"
+    const raw = yield* fs.readFileString(manifestPath).pipe(Effect.result);
+    if (raw._tag === "Success") return { _tag: "Read", raw: raw.success } as const;
+    return isGone(raw.failure)
       ? ({ _tag: "Missing" } as const)
-      : ({ _tag: "Read", raw: raw.value } as const);
+      : ({ _tag: "Unreadable", message: unreadable(rootDir, raw.failure) } as const);
   });
 
   // Node caches modules by real path, so reload can only find a plugin's modules by its real root.
@@ -112,7 +127,9 @@ export const discoverPlugins = Effect.fn("PluginDiscovery.discover")(function* (
           message:
             manifest._tag === "Missing"
               ? `No ${PLUGIN_MANIFEST_FILE} in the plugin folder.`
-              : `${PLUGIN_MANIFEST_FILE} is larger than ${MAX_MANIFEST_BYTES} bytes.`,
+              : manifest._tag === "Unreadable"
+                ? manifest.message
+                : `${PLUGIN_MANIFEST_FILE} is larger than ${MAX_MANIFEST_BYTES} bytes.`,
         },
       );
     }
@@ -180,17 +197,40 @@ export const discoverPlugins = Effect.fn("PluginDiscovery.discover")(function* (
     return false;
   });
 
-  const entries = yield* fs
-    .readDirectory(input.pluginsDir)
-    .pipe(Effect.orElseSucceed((): Array<string> => []));
+  const entries = yield* fs.readDirectory(input.pluginsDir).pipe(
+    Effect.catchTags({
+      PlatformError: (error) => {
+        if (isGone(error)) return Effect.succeed([]);
+        complete = false;
+        return Effect.logWarning("could not read the plugins folder", {
+          path: input.pluginsDir,
+          reason: error.reason._tag,
+        }).pipe(Effect.as([]));
+      },
+    }),
+  );
   // People copy plugin folders in by hand, so the manifest names the plugin, not the folder.
   for (const entry of entries.toSorted()) {
     if (entry.startsWith(".")) continue;
     const folder = path.join(input.pluginsDir, entry);
-    const info = yield* fs.stat(folder).pipe(Effect.option);
-    if (info._tag === "None" || info.value.type !== "Directory") continue;
+    const info = yield* fs.stat(folder).pipe(Effect.result);
+    if (info._tag === "Success" && info.success.type !== "Directory") continue;
     if (!(yield* underLimit(input.pluginsDir))) break;
-    const plugin = yield* inspect(folder, "installed", isPluginId(entry) ? entry : undefined);
+    const fallbackId = isPluginId(entry) ? entry : undefined;
+    let plugin: DiscoveredPlugin | undefined;
+    if (info._tag === "Success") {
+      plugin = yield* inspect(folder, "installed", fallbackId);
+    } else {
+      // Listed but unreadable, such as a link into a drive that isn't mounted, so not gone.
+      const message = unreadable(folder, info.failure);
+      plugin =
+        fallbackId === undefined
+          ? undefined
+          : failed(
+              { id: fallbackId, rootDir: folder, folder, source: "installed" },
+              { stage: "discovery", message },
+            );
+    }
     if (plugin === undefined) {
       yield* Effect.logWarning("ignoring plugin folder without a plugin id", { path: folder });
       continue;
@@ -212,5 +252,5 @@ export const discoverPlugins = Effect.fn("PluginDiscovery.discover")(function* (
     add(plugin);
   }
 
-  return [...copiesById.values()].map(listOnce);
+  return { plugins: [...copiesById.values()].map(listOnce), complete };
 });

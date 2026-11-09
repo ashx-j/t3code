@@ -1082,6 +1082,31 @@ module.exports = { activate(api) {
     }).pipe(Effect.provide(layerConfig())),
   );
 
+  it.effect("keeps the switch of a plugin whose folder can't be read, and says why", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      // A link into a drive that isn't mounted yet.
+      const drive = `${stateDir}/drive/mounted`;
+      yield* fs.makeDirectory(`${stateDir}/plugins`, { recursive: true });
+      yield* fs.symlink(drive, `${stateDir}/plugins/mounted`);
+      yield* writePluginsConfig({ enabled: { mounted: true } });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const { plugins } = yield* host.rescan;
+        assert.deepStrictEqual(stateOf(plugins, "mounted")?.failure, {
+          stage: "discovery",
+          message:
+            'Could not read the folder "mounted" (NotFound). It keeps its switch; reload once the folder is back.',
+        });
+
+        yield* writeFile(`${drive}/t3-plugin.json`, manifestJson("mounted"));
+        yield* host.rescan;
+        yield* waitForStatuses(host, { mounted: "active" });
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
   it.effect("does not load a disabled plugin at startup", () =>
     Effect.gen(function* () {
       const rootDir = yield* writeInstalledPlugin(
