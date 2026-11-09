@@ -1,4 +1,4 @@
-// @effect-diagnostics preferSchemaOverJson:off - like the tests, it writes plugins.json as plain JSON.
+// @effect-diagnostics preferSchemaOverJson:off - like the tests, it writes manifests as plain JSON.
 // The plugin host with a theme service that records what it publishes, for its tests and the tests
 // of the modules it builds.
 import type { PluginState } from "@t3tools/contracts";
@@ -28,7 +28,9 @@ const layerThemes = Layer.mock(EnvironmentTheme.EnvironmentThemeService)({
     }),
 });
 
-export const layerHost = () => Layer.fresh(PluginHost.layer.pipe(Layer.provide(layerThemes)));
+/** `themes` replaces the recording theme service, such as to hold a publish where it calls it. */
+export const layerHost = (themes = layerThemes) =>
+  Layer.fresh(PluginHost.layer.pipe(Layer.provide(themes)));
 
 /** The real file system with some of its methods replaced, for the host's layer. */
 export const layerFileSystemWith = (
@@ -52,6 +54,24 @@ export const writePluginsConfig = Effect.fn(function* (config: {
 }) {
   const { stateDir } = yield* ServerConfig.ServerConfig;
   yield* writeFile(`${stateDir}/plugins.json`, JSON.stringify(config));
+});
+
+/** A plugin written for one test, under `<stateDir>/plugins/<id>`. */
+export const writeInstalledPlugin = Effect.fn(function* (id: string, serverSource: string) {
+  const { stateDir } = yield* ServerConfig.ServerConfig;
+  const rootDir = `${stateDir}/plugins/${id}`;
+  yield* writeFile(
+    `${rootDir}/t3-plugin.json`,
+    JSON.stringify({
+      id,
+      name: id,
+      version: "0.1.0",
+      engines: { t3: ">=0.1.0" },
+      server: "./server.cjs",
+    }),
+  );
+  yield* writeFile(`${rootDir}/server.cjs`, serverSource);
+  return rootDir;
 });
 
 export const stateOf = (states: ReadonlyArray<PluginState>, id: string) =>

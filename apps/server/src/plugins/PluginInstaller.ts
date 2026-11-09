@@ -18,7 +18,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import type { DiscoveredPlugin } from "./pluginDiscovery.ts";
 import type { PluginNotFoundError } from "./PluginHost.ts";
-import type { PluginConfigError, PluginsConfigFile } from "./pluginsConfig.ts";
+import { type PluginConfigError, type PluginsConfigFile, withoutCrash } from "./pluginsConfig.ts";
 
 // `reason` is shown to the user as is, so it says what to fix.
 export class PluginInstallError extends Schema.TaggedError<PluginInstallError>()(
@@ -166,8 +166,9 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
 
   /**
    * Swaps `<stagingDir>/plugin` into the plugins folder under the lifecycle lock and starts it if it
-   * is on. The replaced version waits in `<stagingDir>/previous` during the swap, so startup
-   * restores it if a crash leaves it there. `stagingDir` is removed afterwards.
+   * is on. The replaced version waits in `<stagingDir>/previous` and goes back if the new one fails
+   * to start. `stagingDir` is removed unless it holds a version's only copy, which startup then
+   * restores.
    */
   const swapIn = Effect.fn("PluginInstaller.swapIn")(function* (
     manifest: PluginManifest,
@@ -176,8 +177,9 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
     const staged = path.join(stagingDir, "plugin");
     const previous = path.join(stagingDir, "previous");
     let stopped = false;
-    yield* Effect.addFinalizer(() => removeStaging(stagingDir));
-    yield* host
+    let stranded = false;
+    yield* Effect.addFinalizer(() => (stranded ? Effect.void : removeStaging(stagingDir)));
+    const swapped = yield* host
       .lifecycle(
         // Read under the lock, so another install or a removal cannot change them before the swap.
         Effect.gen(function* () {
@@ -225,6 +227,14 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
             ...current,
             enabled: { ...current.enabled, [manifest.id]: enabled },
           }));
+          return {
+            target,
+            hadPrevious,
+            replacedVersion:
+              existing !== undefined && "manifest" in existing
+                ? existing.manifest.version
+                : undefined,
+          };
         }),
       )
       .pipe(
@@ -233,7 +243,31 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
           stopped ? host.reload(manifest.id).pipe(Effect.ignore) : Effect.void,
         ),
       );
-    return yield* host.reload(manifest.id);
+    const started = yield* host.reload(manifest.id);
+    if (!swapped.hadPrevious || started.status !== "failed") return started;
+    yield* host
+      .lifecycle(
+        Effect.gen(function* () {
+          yield* host.stop(manifest.id);
+          yield* fs
+            .rename(swapped.target, path.join(stagingDir, "failed"))
+            .pipe(Effect.mapError(installFailed("Could not move the failed version aside.")));
+          yield* fs.rename(previous, swapped.target).pipe(
+            Effect.tapError(() =>
+              Effect.sync(() => {
+                stranded = true;
+              }),
+            ),
+            Effect.mapError(
+              installFailed("Could not put the previous version back. Restart T3 Code to finish."),
+            ),
+          );
+        }),
+      )
+      .pipe(Effect.ensuring(host.reload(manifest.id).pipe(Effect.ignore)));
+    return yield* new PluginInstallError({
+      reason: `${manifest.name} ${manifest.version} failed to start, so ${swapped.replacedVersion ?? "the previous version"} is back. It failed with: ${started.failure?.message ?? "an unknown error"}`,
+    });
   }, Effect.scoped);
 
   /** Copies `origin` into a new staging folder and returns the folder and what it holds. */
@@ -272,7 +306,7 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
   const removeFromConfig = (pluginId: PluginId) =>
     host.writeConfig((current) => {
       const { [pluginId]: _removed, ...enabled } = current.enabled ?? {};
-      return { ...current, enabled };
+      return { ...withoutCrash(current, pluginId), enabled };
     });
 
   const forgetDevPath = (folder: string) =>

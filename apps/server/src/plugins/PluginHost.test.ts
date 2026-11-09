@@ -17,9 +17,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
+import * as EnvironmentTheme from "../environmentTheme.ts";
 import * as PluginHost from "./PluginHost.ts";
 import {
   layerConfig,
@@ -29,6 +31,7 @@ import {
   stateOf,
   waitForStatuses,
   writeFile,
+  writeInstalledPlugin,
   writePluginsConfig,
 } from "./pluginHostTestHarness.ts";
 import * as PluginInstaller from "./PluginInstaller.ts";
@@ -49,43 +52,43 @@ const manifestJson = (
     engines: { t3: options.engines ?? ">=0.1.0" },
   });
 
-it.layer(NodeServices.layer)("PluginHost", (it) => {
-  it.effect("saves plugins turned on and off, reloads a changed manifest and rescans folders", () =>
-    Effect.gen(function* () {
-      const { stateDir } = yield* ServerConfig.ServerConfig;
-      const manifestPath = (id: string) => `${stateDir}/plugins/${id}/t3-plugin.json`;
-      yield* writeFile(manifestPath("reloading"), manifestJson("reloading"));
-      yield* writeFile(manifestPath("goes"), manifestJson("goes"));
-      yield* writePluginsConfig({ enabled: { goes: true } });
-      yield* Effect.gen(function* () {
-        const host = yield* PluginHost.PluginHost;
-        const fs = yield* FileSystem.FileSystem;
-        const reloading = PluginId.make("reloading");
-        yield* waitForStatuses(host, { reloading: "disabled", goes: "active" });
-        assert.include(yield* host.setEnabled(reloading, true), { status: "active" });
-        yield* host.setEnabled(PluginId.make("goes"), false);
-        assert.deepStrictEqual(JSON.parse(yield* fs.readFileString(`${stateDir}/plugins.json`)), {
-          enabled: { goes: false, reloading: true },
-        });
+/** A `linked` plugin in a checkout folder, which the plugins folder holds a symlink to. */
+const linkPluginFolder = Effect.fn(function* (entries: { readonly server?: string }) {
+  const { stateDir } = yield* ServerConfig.ServerConfig;
+  const fs = yield* FileSystem.FileSystem;
+  const realDir = `${stateDir}/checkout/linked`;
+  yield* writeFile(
+    `${realDir}/t3-plugin.json`,
+    JSON.stringify({
+      id: "linked",
+      name: "Linked",
+      version: "0.1.0",
+      engines: { t3: ">=0.1.0" },
+      ...entries,
+    }),
+  );
+  yield* fs.makeDirectory(`${stateDir}/plugins`, { recursive: true });
+  yield* fs.symlink(realDir, `${stateDir}/plugins/linked`);
+  return realDir;
+});
 
-        const reloaded = manifestJson("reloading", { version: "0.2.0" });
-        yield* writeFile(manifestPath("reloading"), reloaded);
-        assert.include(yield* host.reload(reloading), { status: "active", version: "0.2.0" });
+const leaky = PluginId.make("leaky");
+// Fails outside a call: in a timer a method sets, or in a read a method never awaits.
+const leakyServer = `module.exports = { activate(api) {
+  api.rpc.register("rejectLater", () => { setTimeout(() => { Promise.reject(new Error("rejected in a timer")); }, 0); }, { access: "read" });
+  api.rpc.register("readMissing", () => { void require("node:fs/promises").readFile("/t3-plugin-test-missing-file"); }, { access: "read" });
+} };`;
 
-        // A rescan lists a folder copied in since, turned off, and drops one that was removed.
-        yield* writeFile(manifestPath("arrives"), manifestJson("arrives"));
-        yield* fs.remove(`${stateDir}/plugins/goes`, { recursive: true });
-        const { plugins } = yield* host.rescan;
-        assert.include(stateOf(plugins, "arrives"), { status: "disabled", enabled: false });
-        assert.isUndefined(stateOf(plugins, "goes"));
-        // plugins.json forgets the switch of a folder that is gone.
-        assert.deepStrictEqual(JSON.parse(yield* fs.readFileString(`${stateDir}/plugins.json`)), {
-          enabled: { reloading: true },
-        });
-      }).pipe(Effect.provide(layerHost()));
-    }).pipe(Effect.provide(layerConfig())),
+/** The next failure outside a call that the plugin's row shows. */
+const nextServerFailure = (host: PluginHost.PluginHost["Service"], pluginId: PluginId) =>
+  host.streamStates.pipe(
+    Stream.map((states) => stateOf(states, pluginId)?.serverFailure),
+    Stream.filter((failure) => failure !== undefined),
+    Stream.runHead,
+    Effect.map(Option.getOrThrow),
   );
 
+it.layer(NodeServices.layer)("PluginHost", (it) => {
   it.effect("publishes the theme folders of plugins that are on", () =>
     Effect.gen(function* () {
       const { stateDir } = yield* ServerConfig.ServerConfig;
@@ -106,6 +109,128 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
         assert.deepStrictEqual(publishedThemeDirectories, [[themes]]);
         yield* host.setEnabled(PluginId.make("themed"), false);
         assert.deepStrictEqual(publishedThemeDirectories.at(-1), []);
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("reload picks up a changed manifest and changed code", () =>
+    Effect.gen(function* () {
+      const rootDir = yield* writeInstalledPlugin(
+        "reloading",
+        `module.exports = { activate(api) { api.rpc.register("which", () => "v1", { access: "read" }); } };`,
+      );
+      yield* writePluginsConfig({ enabled: { reloading: true } });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const id = PluginId.make("reloading");
+        yield* waitForStatuses(host, { reloading: "active" });
+        const which = host.invoke({
+          pluginId: id,
+          method: "which",
+          input: undefined,
+          scopes: operate,
+        });
+        assert.strictEqual(yield* which, "v1");
+
+        yield* writeFile(
+          `${rootDir}/t3-plugin.json`,
+          JSON.stringify({
+            id: "reloading",
+            name: "Reloaded",
+            version: "0.2.0",
+            engines: { t3: ">=0.1.0" },
+            server: "./server.cjs",
+          }),
+        );
+        yield* writeFile(
+          `${rootDir}/server.cjs`,
+          `module.exports = { activate(api) { api.rpc.register("which", () => "v2", { access: "read" }); } };`,
+        );
+        const reloaded = yield* host.reload(id);
+        assert.include(reloaded, { status: "active", version: "0.2.0", name: "Reloaded" });
+        assert.strictEqual(yield* which, "v2");
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("fails a plugin that registers a method with an unknown access level", () =>
+    Effect.gen(function* () {
+      const rootDir = yield* writeInstalledPlugin(
+        "typo",
+        `module.exports = { activate(api) { api.rpc.register("go", () => 1, { access: "Write" }); } };`,
+      );
+      yield* writeFile(`${rootDir}/styles/base.css`, "body {}");
+      yield* writePluginsConfig({ enabled: { typo: true } });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const states = yield* waitForStatuses(host, { typo: "failed" });
+        assert.deepStrictEqual(stateOf(states, "typo")?.failure, {
+          stage: "activate",
+          message: 'Method "go" needs access "read" or "write".',
+        });
+        // Nor does it serve its files.
+        const served = yield* host.readWebFile({
+          pluginId: "typo",
+          path: "/styles/base.css",
+          revision: undefined,
+        });
+        assert.isTrue(Option.isNone(served));
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("reload stops a plugin whose folder was removed", () =>
+    Effect.gen(function* () {
+      const stays = yield* writeInstalledPlugin("stays", `module.exports = { activate() {} };`);
+      const goes = yield* writeInstalledPlugin(
+        "goes",
+        `const marker = require("node:path").join(__dirname, "..", "..", "goes-cleaned");
+module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").writeFileSync(marker, "")); } };`,
+      );
+      yield* writePluginsConfig({ enabled: { stays: true, goes: true } });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const fs = yield* FileSystem.FileSystem;
+        yield* waitForStatuses(host, { stays: "active", goes: "active" });
+        yield* fs.remove(goes, { recursive: true });
+
+        yield* host.reload(PluginId.make("stays"));
+
+        assert.isTrue(yield* fs.exists(`${stays}/../../goes-cleaned`));
+        assert.isUndefined(stateOf(yield* host.list, "goes"));
+
+        // A folder copied in later with its id is a plugin the user hasn't seen, so it starts off,
+        // and reloading the gone plugin still lists it.
+        yield* writeInstalledPlugin("goes", `module.exports = { activate() {} };`);
+        const missing = yield* host.reload(PluginId.make("arrives")).pipe(Effect.flip);
+        assert.strictEqual(missing._tag, "PluginNotFoundError");
+        assert.include(stateOf(yield* host.list, "goes"), { status: "disabled", enabled: false });
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("reload runs new code from a symlinked plugin folder", () =>
+    Effect.gen(function* () {
+      const realDir = yield* linkPluginFolder({ server: "./server.cjs" });
+      const plugin = (version: string) =>
+        `module.exports = { activate(api) { api.rpc.register("which", () => "${version}", { access: "read" }); } };`;
+      yield* writeFile(`${realDir}/server.cjs`, plugin("v1"));
+      yield* writePluginsConfig({ enabled: { linked: true } });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const id = PluginId.make("linked");
+        const which = host.invoke({
+          pluginId: id,
+          method: "which",
+          input: undefined,
+          scopes: operate,
+        });
+        yield* waitForStatuses(host, { linked: "active" });
+        assert.strictEqual(yield* which, "v1");
+
+        yield* writeFile(`${realDir}/server.cjs`, plugin("v2"));
+        yield* host.reload(id);
+        assert.strictEqual(yield* which, "v2");
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
@@ -216,6 +341,285 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
     }).pipe(Effect.provide(layerConfig())),
   );
 
+  it.effect("lists a plugin's rejection in a timer on its row instead of stopping the server", () =>
+    Effect.gen(function* () {
+      yield* writeInstalledPlugin("leaky", leakyServer);
+      yield* writePluginsConfig({ enabled: { leaky: true } });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        yield* waitForStatuses(host, { leaky: "active" });
+        yield* host.invoke({
+          pluginId: leaky,
+          method: "rejectLater",
+          input: undefined,
+          scopes: operate,
+        });
+        assert.strictEqual(yield* nextServerFailure(host, leaky), "rejected in a timer");
+        assert.include(stateOf(yield* host.list, leaky), { status: "active" });
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("lists a failed read a plugin never awaited, though its stack is all Node's", () =>
+    Effect.gen(function* () {
+      yield* writeInstalledPlugin("leaky", leakyServer);
+      yield* writePluginsConfig({ enabled: { leaky: true } });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        yield* waitForStatuses(host, { leaky: "active" });
+        yield* host.invoke({
+          pluginId: leaky,
+          method: "readMissing",
+          input: undefined,
+          scopes: operate,
+        });
+        assert.include(yield* nextServerFailure(host, leaky), "ENOENT");
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("lists a failure of code a turned-off plugin left running on its row", () =>
+    Effect.gen(function* () {
+      const id = PluginId.make("leftover");
+      yield* writeInstalledPlugin(
+        id,
+        `module.exports = { activate(api) {
+  api.onDeactivate(() => { setTimeout(() => { Promise.reject(new Error("left running")); }, 0); });
+} };`,
+      );
+      yield* writePluginsConfig({ enabled: { [id]: true } });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        yield* waitForStatuses(host, { [id]: "active" });
+        yield* host.setEnabled(id, false);
+        assert.strictEqual(yield* nextServerFailure(host, id), "left running");
+        assert.include(stateOf(yield* host.list, id), { enabled: false, status: "disabled" });
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("clears a failure from a start that failed once the plugin is turned off", () =>
+    Effect.gen(function* () {
+      const id = PluginId.make("leaky-start");
+      // A timer it sets while starting fails, then it fails to start.
+      yield* writeInstalledPlugin(
+        id,
+        `module.exports = { activate() {
+  setTimeout(() => { Promise.reject(new Error("rejected while starting")); }, 0);
+  return new Promise((_, reject) => setTimeout(() => reject(new Error("activate failed")), 0));
+} };`,
+      );
+      yield* writePluginsConfig({ enabled: { [id]: true } });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        yield* waitForStatuses(host, { [id]: "failed" });
+        assert.strictEqual(yield* nextServerFailure(host, id), "rejected while starting");
+        assert.isUndefined((yield* host.setEnabled(id, false)).serverFailure);
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("does not start a plugin that stopped the server until it is turned on again", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const rootDir = yield* writeInstalledPlugin(
+        "crashing",
+        `require("node:fs").writeFileSync(__dirname + "/loaded", "");
+module.exports = { activate() {} };`,
+      );
+      yield* writePluginsConfig({ enabled: { crashing: true } });
+      const id = PluginId.make("crashing");
+      const thrown = new Error("thrown in a timer");
+      thrown.stack = `Error: thrown in a timer\n    at ${yield* fs.realPath(rootDir)}/server.cjs:1:1`;
+      yield* Effect.gen(function* () {
+        yield* waitForStatuses(yield* PluginHost.PluginHost, { crashing: "active" });
+        // As Node reports an uncaught exception, just before it exits.
+        process.emit("uncaughtExceptionMonitor", thrown);
+      }).pipe(Effect.provide(layerHost()));
+      yield* fs.remove(`${rootDir}/loaded`);
+
+      // The next start lists it as failed and leaves its code unloaded.
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const states = yield* waitForStatuses(host, { crashing: "failed" });
+        // Its switch shows it off, so turning it on is how the user retries it.
+        assert.deepInclude(stateOf(states, id), {
+          enabled: false,
+          failure: { stage: "crash", message: "thrown in a timer" },
+        });
+        assert.isFalse(yield* fs.exists(`${rootDir}/loaded`));
+        assert.include(yield* host.setEnabled(id, true), { status: "active" });
+      }).pipe(Effect.provide(layerHost()));
+      // Turned on again, it starts with the server again.
+      yield* Effect.gen(function* () {
+        yield* waitForStatuses(yield* PluginHost.PluginHost, { crashing: "active" });
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("keeps a quiet channel's value while a busy channel overflows its buffer", () =>
+    Effect.gen(function* () {
+      yield* writeInstalledPlugin(
+        "channels",
+        `module.exports = { activate(api) {
+  api.rpc.register("wake", () => api.rpc.publish("quiet", "wake"), { access: "read" });
+  api.rpc.register("burst", () => {
+    for (let index = 0; index < 100; index++) api.rpc.publish("busy", index);
+    api.rpc.publish("quiet", "after");
+  }, { access: "read" });
+} };`,
+      );
+      yield* writePluginsConfig({ enabled: { channels: true } });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const id = PluginId.make("channels");
+        const call = (method: string) =>
+          host.invoke({ pluginId: id, method, input: undefined, scopes: operate });
+        yield* waitForStatuses(host, { channels: "active" });
+        // A subscriber still busy with its first value, as one whose socket is slow to send.
+        const reached = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const quiet = yield* host.subscribe({ pluginId: id, channel: "quiet" }).pipe(
+          Stream.mapEffect((value) =>
+            Deferred.succeed(reached, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+              Effect.as(value),
+            ),
+          ),
+          Stream.take(2),
+          Stream.runCollect,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* call("wake");
+        yield* Deferred.await(reached);
+        yield* call("burst");
+        yield* Deferred.succeed(release, undefined);
+        assert.deepStrictEqual(yield* Fiber.join(quiet), ["wake", "after"]);
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("gives up on a method that does not answer within 30 seconds, and aborts it", () =>
+    Effect.gen(function* () {
+      const started = Promise.withResolvers<void>();
+      const aborted = Promise.withResolvers<void>();
+      Reflect.set(globalThis, "__t3PluginHostInvokeStarted", started.resolve);
+      Reflect.set(globalThis, "__t3PluginHostInvokeAborted", aborted.resolve);
+      yield* writeInstalledPlugin(
+        "hangs",
+        `module.exports = { activate(api) {
+  api.rpc.register("wait", (_input, { signal }) => new Promise(() => {
+    signal.addEventListener("abort", () => globalThis.__t3PluginHostInvokeAborted());
+    globalThis.__t3PluginHostInvokeStarted();
+  }), { access: "read" });
+} };`,
+      );
+      yield* writePluginsConfig({ enabled: { hangs: true } });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const id = PluginId.make("hangs");
+        yield* waitForStatuses(host, { hangs: "active" });
+        const call = yield* host
+          .invoke({ pluginId: id, method: "wait", input: undefined, scopes: operate })
+          .pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+        yield* Effect.promise(() => started.promise);
+        yield* TestClock.adjust("30 seconds");
+        assert.strictEqual(
+          (yield* Fiber.join(call)).message,
+          "Plugin hangs did not answer wait within 30 seconds.",
+        );
+        yield* Effect.promise(() => aborted.promise);
+        assert.include(stateOf(yield* host.list, id), { status: "active" });
+      }).pipe(Effect.provide(layerHost()));
+      Reflect.deleteProperty(globalThis, "__t3PluginHostInvokeStarted");
+      Reflect.deleteProperty(globalThis, "__t3PluginHostInvokeAborted");
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("finishes disabling a plugin when the caller gives up, or while it starts", () =>
+    Effect.gen(function* () {
+      const started = Promise.withResolvers<void>();
+      const gate = Promise.withResolvers<void>();
+      Reflect.set(globalThis, "__t3PluginHostCleanupStarted", started.resolve);
+      Reflect.set(globalThis, "__t3PluginHostCleanupGate", gate.promise);
+      yield* writeInstalledPlugin(
+        "stubborn",
+        `module.exports = { activate(api) {
+  api.rpc.register("ping", () => "pong", { access: "read" });
+  api.onDeactivate(() => { globalThis.__t3PluginHostCleanupStarted(); return globalThis.__t3PluginHostCleanupGate; });
+} };`,
+      );
+      yield* writePluginsConfig({ enabled: { stubborn: true } });
+      // Every publish that changes the theme folders hands them over, and holds there while `held`
+      // is set.
+      const themeFolders: Array<ReadonlyArray<string>> = [];
+      let held:
+        | { readonly reached: Deferred.Deferred<void>; readonly release: Deferred.Deferred<void> }
+        | undefined;
+      const layerHeldPublish = Layer.mock(EnvironmentTheme.EnvironmentThemeService)({
+        setPluginThemeDirectories: (directories) => {
+          themeFolders.push(directories);
+          return held === undefined
+            ? Effect.void
+            : Deferred.succeed(held.reached, undefined).pipe(
+                Effect.andThen(Deferred.await(held.release)),
+              );
+        },
+      });
+      // A disable's last wait before it stops the plugin is removing the temporary folder of its
+      // plugins.json write. A fork runs only once the disable waits again, which is at that stop.
+      let releaseOnWrite: Deferred.Deferred<void> | undefined;
+      const layerReleaseOnWrite = layerFileSystemWith((fs) => ({
+        remove: (target, options) =>
+          fs
+            .remove(target, options)
+            .pipe(
+              Effect.andThen(
+                releaseOnWrite !== undefined && target.includes("plugins.json.")
+                  ? Effect.forkChild(Deferred.succeed(releaseOnWrite, undefined))
+                  : Effect.void,
+              ),
+            ),
+      }));
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const id = PluginId.make("stubborn");
+        yield* waitForStatuses(host, { stubborn: "active" });
+
+        const disabling = yield* host
+          .setEnabled(id, false)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.promise(() => started.promise);
+        yield* Fiber.interrupt(disabling);
+        gate.resolve();
+
+        yield* waitForStatuses(host, { stubborn: "disabled" });
+        const error = yield* host
+          .invoke({ pluginId: id, method: "ping", input: undefined, scopes: operate })
+          .pipe(Effect.flip);
+        assert.strictEqual(error._tag, "PluginNotActiveError");
+
+        // A stop that interrupts a start while it hands over its theme folder still lets that
+        // list go out, or the disabled list would match the last one sent and keep the folder.
+        const starting = {
+          reached: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
+        held = starting;
+        const enabling = yield* host
+          .setEnabled(id, true)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(starting.reached);
+        releaseOnWrite = starting.release;
+        assert.include(yield* host.setEnabled(id, false), { status: "disabled" });
+        yield* Fiber.join(enabling);
+        assert.deepStrictEqual(themeFolders.at(-1), []);
+      }).pipe(Effect.provide(layerHost(layerHeldPublish).pipe(Layer.provide(layerReleaseOnWrite))));
+      Reflect.deleteProperty(globalThis, "__t3PluginHostCleanupStarted");
+      Reflect.deleteProperty(globalThis, "__t3PluginHostCleanupGate");
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
   it.effect("installs a dropped folder turned off, and one dropped again keeps its switch", () =>
     Effect.gen(function* () {
       const helloFiles = (version: string) => [
@@ -272,6 +676,54 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
           assert.isFalse(yield* fs.exists(`${stateDir}/plugins/My Notes`));
         }).pipe(Effect.provide(layerHost()));
       }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("puts the working version back when a new dropped version fails to start", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const encode = (text: string) => new TextEncoder().encode(text);
+      const upgrade = (version: string, activate = "") => [
+        {
+          path: "t3-plugin.json",
+          contents: encode(
+            JSON.stringify({
+              id: "upgrade",
+              name: "Upgrade",
+              version,
+              engines: { t3: ">=0.1.0" },
+              server: "./server.cjs",
+            }),
+          ),
+        },
+        {
+          path: "server.cjs",
+          contents: encode(`module.exports = { activate() { ${activate} } };`),
+        },
+      ];
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const installer = yield* PluginInstaller.PluginInstaller;
+        yield* waitForStatuses(host, {});
+        yield* installer.installFiles(upgrade("1.0.0"));
+        yield* host.setEnabled(PluginId.make("upgrade"), true);
+        const failed = yield* installer
+          .installFiles(upgrade("2.0.0", `throw new Error("2.0.0 refuses to start");`))
+          .pipe(Effect.flip);
+        assert.strictEqual(
+          failed.message,
+          "Upgrade 2.0.0 failed to start, so 1.0.0 is back. It failed with: 2.0.0 refuses to start",
+        );
+        assert.include(stateOf(yield* host.list, "upgrade"), {
+          version: "1.0.0",
+          status: "active",
+        });
+        assert.notInclude(
+          yield* fs.readFileString(`${stateDir}/plugins/upgrade/server.cjs`),
+          "refuses to start",
+        );
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
   );
 
   it.effect("keeps server folder paths from clients that cannot manage plugins", () =>
@@ -435,5 +887,77 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
         assert.deepStrictEqual(yield* Fiber.join(lists), [[], ["late"]]);
       }).pipe(Effect.provide(layerHost().pipe(Layer.provide(layerHeldStartup))));
     }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("does not load a disabled plugin at startup", () =>
+    Effect.gen(function* () {
+      const rootDir = yield* writeInstalledPlugin(
+        "dormant",
+        `require("node:fs").writeFileSync(__dirname + "/loaded", "");
+module.exports = { activate() {} };`,
+      );
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const states = yield* waitForStatuses(host, { dormant: "disabled" });
+        assert.include(stateOf(states, "dormant"), { enabled: false, hasServer: true });
+        const fs = yield* FileSystem.FileSystem;
+        assert.isFalse(yield* fs.exists(`${rootDir}/loaded`));
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect(
+    "finishes starting before a slow plugin finishes activating, and a rescan meanwhile keeps it",
+    () =>
+      Effect.gen(function* () {
+        const gate = Promise.withResolvers<void>();
+        const cleanupStarted = Promise.withResolvers<void>();
+        const cleanupGate = Promise.withResolvers<void>();
+        Reflect.set(globalThis, "__t3PluginHostTestGate", gate.promise);
+        Reflect.set(globalThis, "__t3PluginHostCleanupStarted", cleanupStarted.resolve);
+        Reflect.set(globalThis, "__t3PluginHostCleanupGate", cleanupGate.promise);
+        yield* writeInstalledPlugin(
+          "slow",
+          `module.exports = { activate(api) {
+  api.rpc.register("ping", () => "pong", { access: "read" });
+  return globalThis.__t3PluginHostTestGate;
+} };`,
+        );
+        const goes = yield* writeInstalledPlugin(
+          "goes",
+          `module.exports = { activate(api) {
+  api.onDeactivate(() => { globalThis.__t3PluginHostCleanupStarted(); return globalThis.__t3PluginHostCleanupGate; });
+} };`,
+        );
+        yield* writePluginsConfig({ enabled: { slow: true, goes: true } });
+        yield* Effect.gen(function* () {
+          const host = yield* PluginHost.PluginHost;
+          const fs = yield* FileSystem.FileSystem;
+          yield* waitForStatuses(host, { slow: "loading", goes: "active" });
+
+          // The rescan stops the removed plugin while the slow one finishes starting.
+          yield* fs.remove(goes, { recursive: true });
+          const rescanning = yield* host.rescan.pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Effect.promise(() => cleanupStarted.promise);
+          gate.resolve();
+          yield* waitForStatuses(host, { slow: "active" });
+          cleanupGate.resolve();
+          yield* Fiber.join(rescanning);
+
+          assert.strictEqual(stateOf(yield* host.list, "slow")?.status, "active");
+          assert.strictEqual(
+            yield* host.invoke({
+              pluginId: PluginId.make("slow"),
+              method: "ping",
+              input: undefined,
+              scopes: operate,
+            }),
+            "pong",
+          );
+        }).pipe(Effect.provide(layerHost()));
+        Reflect.deleteProperty(globalThis, "__t3PluginHostTestGate");
+        Reflect.deleteProperty(globalThis, "__t3PluginHostCleanupStarted");
+        Reflect.deleteProperty(globalThis, "__t3PluginHostCleanupGate");
+      }).pipe(Effect.provide(layerConfig())),
   );
 });

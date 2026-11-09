@@ -68,7 +68,7 @@ describe("RPC authorization scopes", () => {
     }
   });
 
-  it("keeps enabling and reloading plugins behind settings write", () => {
+  it("keeps enabling and reloading plugins, which runs their code, behind settings write", () => {
     for (const method of [WS_METHODS.pluginsSetEnabled, WS_METHODS.pluginsReload]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthSettingsWriteScope);
     }

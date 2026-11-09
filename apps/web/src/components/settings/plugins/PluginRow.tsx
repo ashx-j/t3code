@@ -16,6 +16,9 @@ const FAILURE_STAGES = {
   duplicate: "Duplicate id",
   manifest: "Invalid manifest",
   compatibility: "Incompatible",
+  load: "Failed to load",
+  activate: "Failed to start",
+  crash: "Stopped the server",
 } as const;
 
 export function PluginRow({
@@ -39,9 +42,18 @@ export function PluginRow({
   const unlink = plugin.source === "dev";
   // Other actions send only the id, which names the copy in use.
   const duplicate = plugin.failure?.stage === "duplicate";
-  const { failure, folder } = plugin;
+  const { failure, serverFailure, folder } = plugin;
   const problems = [
     ...(failure === undefined ? [] : [`${FAILURE_STAGES[failure.stage]}: ${failure.message}`]),
+    ...(serverFailure === undefined
+      ? []
+      : [
+          `Failed while running: ${serverFailure}`,
+          // Turning a plugin off clears its failures on the server, so this one came after.
+          ...(plugin.enabled
+            ? []
+            : ["Some of its code is still running. Restarting T3 Code stops it."]),
+        ]),
     ...(webFailure === undefined ? [] : [`Styles failed: ${webFailure}`]),
   ];
   return (

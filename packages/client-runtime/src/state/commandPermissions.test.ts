@@ -98,8 +98,7 @@ describe("command permissions", () => {
 
   it.effect.each([
     WS_METHODS.serverRunStorageCleanup,
-    // Installing, removing, enabling, reloading or rescanning plugins changes what every client
-    // shows.
+    // Installing, enabling or reloading a plugin runs its code in the server.
     WS_METHODS.pluginsSetEnabled,
     WS_METHODS.pluginsReload,
     WS_METHODS.pluginsCreateUploadUrl,

@@ -51,8 +51,8 @@ export function InstallProblems({ problems }: { readonly problems: ReadonlyArray
 }
 
 /**
- * Installs plugins on `environment`. Plugins only change the app, so one does nothing there unless
- * the app loads plugin UI from it, which `loadsUi` says.
+ * Installs plugins on `environment`. A plugin without server code only changes the app, so it does
+ * nothing there unless the app loads plugin UI from it, which `loadsUi` says.
  */
 export function usePluginInstaller(
   environment: Pick<EnvironmentPresentation, "environmentId" | "label">,
@@ -103,7 +103,7 @@ export function usePluginInstaller(
               description: "Turn it on to run it.",
             });
           }
-          if (!loadsUi) {
+          if (!plugin.hasServer && !loadsUi) {
             report(
               `${plugin.name} only changes the app, and this app doesn't load plugin UI from ${environment.label}, so it does nothing there.`,
             );
@@ -134,7 +134,9 @@ export function AddPluginDialog({
       <DialogPopup className="max-w-md">
         <DialogHeader>
           <DialogTitle>Add a plugin</DialogTitle>
-          <DialogDescription>{scopeNote} Install only plugins you trust.</DialogDescription>
+          <DialogDescription>
+            {scopeNote} Plugins run with the same access as T3 Code, so install only code you trust.
+          </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <div

@@ -16,7 +16,9 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import * as EnvironmentTheme from "../environmentTheme.ts";
+import type { PluginActivation } from "./PluginApi.ts";
 import type { DiscoveredPlugin } from "./pluginDiscovery.ts";
+import type { PluginFailures } from "./pluginFailures.ts";
 import type { PluginsConfigFile } from "./pluginsConfig.ts";
 import type { PluginWebFolders } from "./pluginWebFiles.ts";
 
@@ -25,6 +27,8 @@ export interface PluginRecord {
   readonly plugin: DiscoveredPlugin;
   readonly status: PluginStatus;
   readonly failure?: PluginFailure;
+  readonly activation?: PluginActivation;
+  readonly revision?: number;
   readonly styles?: PluginState["styles"];
   readonly webFiles?: PluginWebFolders;
 }
@@ -58,7 +62,11 @@ const statesEvent = (
     : { _tag: "changed", length: next.plugins.length, rows };
 };
 
-const toState = (record: PluginRecord, config: PluginsConfigFile): PluginState => {
+const toState = (
+  record: PluginRecord,
+  config: PluginsConfigFile,
+  serverFailure: string | undefined,
+): PluginState => {
   const manifest = manifestOf(record.plugin);
   const { id } = record.plugin;
   return {
@@ -76,19 +84,23 @@ const toState = (record: PluginRecord, config: PluginsConfigFile): PluginState =
     enabled: config.enabled?.[id] === true,
     status: record.status,
     ...(record.failure === undefined ? {} : { failure: record.failure }),
+    ...(record.revision === undefined ? {} : { revision: record.revision }),
     ...(record.styles === undefined || record.styles.length === 0 ? {} : { styles: record.styles }),
+    hasServer: manifest?.server !== undefined,
+    ...(serverFailure === undefined ? {} : { serverFailure }),
   };
 };
 
 /**
- * Builds the plugin list clients see from the host's records and plugins.json, and publishes it
- * after each change, with the theme folders of plugins that are on when those change.
+ * Builds the plugin list clients see from the host's records, plugins.json and the failures, and
+ * publishes it after each change, with the theme folders of plugins that are on when those change.
  */
 export const makePluginStates = Effect.fn("PluginStates.make")(function* (input: {
   readonly records: Ref.Ref<ReadonlyArray<PluginRecord>>;
   readonly config: Effect.Effect<PluginsConfigFile>;
+  readonly failures: PluginFailures;
 }) {
-  const { records } = input;
+  const { records, failures } = input;
   const environmentThemes = yield* EnvironmentTheme.EnvironmentThemeService;
   const path = yield* Path.Path;
   const changes = yield* PubSub.sliding<ReadonlyArray<PluginState>>(1);
@@ -96,7 +108,10 @@ export const makePluginStates = Effect.fn("PluginStates.make")(function* (input:
 
   const statesOf = Effect.fn("PluginHost.statesOf")(function* (all: ReadonlyArray<PluginRecord>) {
     const config = yield* input.config;
-    return all.map((record) => toState(record, config));
+    const failureOf = yield* failures.current;
+    return all.map((record) =>
+      toState(record, config, failureOf(record.plugin.id, record.revision)),
+    );
   });
   const current = Ref.get(records).pipe(Effect.flatMap(statesOf));
   // What the last publish sent, starting from the empty list clients get before any. Settings

@@ -379,6 +379,8 @@ import {
   PluginCreateUploadUrlInput,
   PluginCreateUploadUrlResult,
   PluginError,
+  PluginInvokeInput,
+  PluginInvokeResult,
   PluginUninstallInput,
   PluginUninstallResult,
   PluginListInput,
@@ -387,6 +389,8 @@ import {
   PluginMutationResult,
   PluginReloadInput,
   PluginSetEnabledInput,
+  PluginSubscribeInput,
+  PluginSubscriptionEvent,
   PluginStatesEvent,
 } from "./plugins.ts";
 import { SecretRequestAnswerInput, SecretRequestError } from "./secretRequest.ts";
@@ -569,6 +573,8 @@ export const WS_METHODS = {
   pluginsCreateUploadUrl: "plugins.createUploadUrl",
   pluginsRescan: "plugins.rescan",
   pluginsUninstall: "plugins.uninstall",
+  pluginsInvoke: "plugins.invoke",
+  pluginsSubscribe: "plugins.subscribe",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -2020,6 +2026,19 @@ const WsPluginsUninstallRpc = Rpc.make(WS_METHODS.pluginsUninstall, {
   error: PluginRpcError,
 });
 
+const WsPluginsInvokeRpc = Rpc.make(WS_METHODS.pluginsInvoke, {
+  payload: PluginInvokeInput,
+  success: PluginInvokeResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsSubscribeRpc = Rpc.make(WS_METHODS.pluginsSubscribe, {
+  payload: PluginSubscribeInput,
+  success: PluginSubscriptionEvent,
+  error: PluginRpcError,
+  stream: true,
+});
+
 const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess, {
   payload: Schema.Struct({}),
   success: AuthAccessStreamEvent,
@@ -2112,6 +2131,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsPluginsCreateUploadUrlRpc,
   WsPluginsRescanRpc,
   WsPluginsUninstallRpc,
+  WsPluginsInvokeRpc,
+  WsPluginsSubscribeRpc,
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
