@@ -53,7 +53,6 @@ export function InstallProblems({ problems }: { readonly problems: ReadonlyArray
   );
 }
 
-/** Loads a plugin folder already on the environment's server where it is, for plugin authors. */
 export function LinkPluginFolderRow({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const canLink = useAtomValue(pluginEnvironment.linkPlugin.permissionAtom(environmentId));
   const link = useAtomCommand(pluginEnvironment.linkPlugin, {

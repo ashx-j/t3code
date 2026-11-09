@@ -53,7 +53,6 @@ export const withoutCrash = (current: PluginsConfigFile, pluginId: PluginId): Pl
   return { ...current, crashed };
 };
 
-/** Builds the host's copy of `<stateDir>/plugins.json`, which it reads and writes through this. */
 export const makePluginsConfig = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
@@ -135,7 +134,6 @@ export const makePluginsConfig = Effect.gen(function* () {
         ),
       );
     },
-    /** Adds or removes the plugin's `starting` mark. */
     markStarting: (pluginId: PluginId, starting: boolean) =>
       write((last) => {
         const { starting: marked = [], ...rest } = last;
@@ -158,7 +156,6 @@ export const makePluginsConfig = Effect.gen(function* () {
             })),
       ),
     ),
-    /** Forgets that the plugin crashed the server, writing only if it had. */
     clearCrash: (pluginId: PluginId) =>
       read.pipe(
         Effect.flatMap((latest) =>

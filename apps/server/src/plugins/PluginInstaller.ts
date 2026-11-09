@@ -33,9 +33,8 @@ export class PluginInstallError extends Schema.TaggedError<PluginInstallError>()
 }
 
 /**
- * Installs and removes plugins. The host builds it and hands it the lifecycle lock, the plugin
- * list and plugins.json, so the host keeps discovery, activation and state, and a new install
- * source only changes this file.
+ * The host builds it and hands it the lifecycle lock, the plugin list and plugins.json, so the host
+ * keeps discovery, activation and state, and a new install source only changes this file.
  */
 export class PluginInstaller extends Context.Service<
   PluginInstaller,
@@ -65,7 +64,6 @@ export class PluginInstaller extends Context.Service<
   }
 >()("t3/plugins/PluginInstaller") {}
 
-/** What the installer needs from the host that builds it. */
 export interface PluginInstallerHost {
   /**
    * Runs `body` under the lifecycle lock in the host's scope, so a caller that disconnects only
@@ -89,7 +87,6 @@ export interface PluginInstallerHost {
   ) => Effect.Effect<void, PluginConfigError>;
 }
 
-/** What an install takes a plugin from: files a client sent. */
 type InstallOrigin = { readonly files: ReadonlyArray<PluginUploadFile> };
 
 const decodeManifestJson = Schema.decodeUnknownEffect(Schema.fromJsonString(PluginManifest));
@@ -102,7 +99,7 @@ const isDuplicate = (
 ): plugin is Extract<DiscoveredPlugin, { readonly failure: unknown }> =>
   "failure" in plugin && plugin.failure.stage === "duplicate";
 
-/** Builds the installer for the host. `recoverStaging` runs before the host's first discovery. */
+/** The host runs `recoverStaging` before its first discovery. */
 export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginInstallerHost) {
   const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
@@ -294,7 +291,6 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
     });
   }, Effect.scoped);
 
-  /** Copies `origin` into a new staging folder and returns the folder and what it holds. */
   const stage = Effect.fn("PluginInstaller.stage")(function* (origin: InstallOrigin) {
     const stagingDir = path.join(stagingRoot, yield* crypto.randomUUIDv4().pipe(Effect.orDie));
     const staged = path.join(stagingDir, "plugin");

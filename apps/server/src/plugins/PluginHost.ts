@@ -65,7 +65,6 @@ import { makePluginWebFiles, type PluginWebFile } from "./pluginWebFiles.ts";
 const ACTIVATE_DEADLINE = Duration.seconds(30);
 const INVOKE_DEADLINE = Duration.seconds(30);
 const CLEANUP_DEADLINE = Duration.seconds(5);
-// Values of one channel a subscriber has not taken yet; past this the oldest go.
 const CHANNEL_BUFFER = 64;
 
 export class PluginNotFoundError extends Schema.TaggedError<PluginNotFoundError>()(
@@ -145,7 +144,7 @@ export class PluginHost extends Context.Service<
     readonly streamForClient: (
       scopes: ReadonlyArray<AuthEnvironmentScope>,
     ) => Stream.Stream<PluginListResult>;
-    /** Persists the flag, then waits for activation or deactivation to finish. */
+    /** Waits until the plugin has started or stopped. */
     readonly setEnabled: (
       pluginId: PluginId,
       enabled: boolean,
@@ -163,7 +162,6 @@ export class PluginHost extends Context.Service<
       { readonly plugins: ReadonlyArray<PluginState> },
       PluginConfigError
     >;
-    /** The settings clients see, with the schema the settings form is drawn from. */
     readonly getSettings: (
       pluginId: PluginId,
     ) => Effect.Effect<
@@ -223,7 +221,6 @@ type PluginSettingsError =
 
 const isJson = Schema.is(Schema.Json);
 
-/** What plugins.json says about the plugins a discovery found. */
 interface Found {
   readonly enabled: Readonly<Record<string, boolean>>;
   readonly crashed: Readonly<Record<string, string>>;
@@ -584,7 +581,7 @@ const make = Effect.gen(function* () {
     },
   );
 
-  /** Rescans the plugin folders and lists what appeared; `restart` also restarts with new code. */
+  /** `restart` also restarts that plugin with fresh code. */
   const rediscover = Effect.fn("PluginHost.rediscover")(function* (restart: PluginId | undefined) {
     // Reloading a plugin that stopped the server clears that failure; it stays off until turned on.
     if (restart !== undefined) yield* pluginsConfig.clearCrash(restart);
@@ -872,12 +869,10 @@ const make = Effect.gen(function* () {
   );
 });
 
-/** Provides the host and the installer it builds. */
 export const layer = Layer.effectContext(make);
 
 const WEB_FILES_ROUTE_PREFIX = "/api/plugins";
 
-/** `GET /api/plugins/<pluginId>/<path>`, answered with what the active plugin serves there. */
 export const layerWebFilesRoute = HttpRouter.add(
   "GET",
   `${WEB_FILES_ROUTE_PREFIX}/*`,

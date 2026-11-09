@@ -7,7 +7,6 @@ interface FieldBase {
   readonly required: boolean;
 }
 
-/** One control on a plugin's settings form, derived from its manifest's JSON Schema. */
 export type PluginSettingsField = FieldBase &
   (
     | {
@@ -114,7 +113,6 @@ const toField = (
   }
 };
 
-/** Derives the settings form from a manifest `settingsSchema`. */
 export function pluginSettingsForm(schema: Schema.JsonObject | undefined): PluginSettingsForm {
   if (schema === undefined) return { kind: "none" };
   if (schema.type !== "object" || !isRecord(schema.properties)) return { kind: "json" };

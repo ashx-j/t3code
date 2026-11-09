@@ -85,7 +85,7 @@ export class PluginMcpToolDisabledError extends Schema.TaggedError<PluginMcpTool
   }
 }
 
-/** One tool as `/mcp` advertises it. `call` runs it; McpHttpServer checks `access` first. */
+/** `/mcp` checks `access` before it runs `call`. */
 export interface PluginMcpToolEntry {
   readonly name: string;
   readonly description: string;
@@ -115,7 +115,6 @@ export class PluginMcpTools extends Context.Service<
       /** Aborts when the plugin turns off; a call still running then answers that it is disabled. */
       readonly deactivated: AbortSignal;
     }) => Effect.Effect<void, PluginMcpToolNameError | PluginMcpToolLimitError>;
-    /** Withdraws the plugin's tools. */
     readonly unregisterPlugin: (pluginId: PluginId) => Effect.Effect<void>;
     /**
      * Whether `/mcp` lists and runs the tool, read on every list and call. Withdrawn tools stay

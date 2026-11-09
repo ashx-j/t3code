@@ -148,7 +148,6 @@ export const PluginState = Schema.Struct({
 });
 export type PluginState = typeof PluginState.Type;
 
-/** Name of a method or channel a plugin registered for `plugins.invoke` and `plugins.subscribe`. */
 export const PluginRpcName = TrimmedNonEmptyString.check(
   Schema.isMaxLength(64),
   Schema.isPattern(/^[a-zA-Z][a-zA-Z0-9._-]*$/),
@@ -176,18 +175,15 @@ export const PluginReloadInput = Schema.Struct({
 });
 export type PluginReloadInput = typeof PluginReloadInput.Type;
 
-/** Limits on a plugin folder a client uploads to the URL `plugins.createUploadUrl` returns. */
 export const PLUGIN_UPLOAD_MAX_FILES = 1_000;
 export const PLUGIN_UPLOAD_MAX_BYTES = 25 * 1024 * 1024;
 
-/** One file of a plugin folder dropped into a client, by its path inside that folder. */
 export const PluginUploadFile = Schema.Struct({
   path: TrimmedNonEmptyString.check(Schema.isMaxLength(1024), isInsidePluginDirectory),
   contents: Schema.Uint8Array,
 });
 export type PluginUploadFile = typeof PluginUploadFile.Type;
 
-/** The files of an uploaded plugin folder, which the server checks before it installs them. */
 export const PluginUploadFiles = Schema.Array(PluginUploadFile).check(
   Schema.isMaxLength(PLUGIN_UPLOAD_MAX_FILES, {
     message: `A plugin folder can have up to ${PLUGIN_UPLOAD_MAX_FILES} files.`,
@@ -230,7 +226,6 @@ export type PluginUninstallInput = typeof PluginUninstallInput.Type;
 export const PluginUninstallResult = Schema.Struct({ pluginId: PluginId });
 export type PluginUninstallResult = typeof PluginUninstallResult.Type;
 
-/** Result of `plugins.setEnabled`, `plugins.reload`, `plugins.link` and a folder upload. */
 export const PluginMutationResult = Schema.Struct({
   plugin: PluginState,
 });
@@ -254,7 +249,6 @@ export const PluginSettingsResult = Schema.Struct({
 });
 export type PluginSettingsResult = typeof PluginSettingsResult.Type;
 
-/** `plugins.settings.get`: the settings with the manifest's schema, for the settings form. */
 export const PluginSettingsGetResult = Schema.Struct({
   ...PluginSettingsResult.fields,
   settingsSchema: Schema.optionalKey(Schema.JsonObject),
