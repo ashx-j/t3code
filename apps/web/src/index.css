@@ -1587,6 +1587,12 @@ html[data-theme-id] [data-app-sidebar] {
   }
 }
 
+/* A published theme, such as a plugin's, also colors the sidebar's row metadata, like thread
+   times. Built-in themes keep the sidebar's own step below read titles. */
+html[data-theme-published] [data-app-sidebar] {
+  --secondary-label: var(--app-theme-secondary-label);
+}
+
 /* T3 Chat's panel divider is deliberately pink, and its resize affordance
    keeps that color while hovered. Do not neutralize this branded edge. */
 html[data-theme-id="t3-chat"] [data-app-sidebar] {

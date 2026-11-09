@@ -34,6 +34,7 @@ export type SettingsPath =
   | "/settings/connections"
   | "/settings/access"
   | "/settings/secrets"
+  | "/settings/plugins"
   | "/settings/maintenance"
   | "/settings/labs"
   | "/settings/about"
@@ -104,6 +105,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/connections": "Environments",
   "/settings/access": "Sharing & access",
   "/settings/secrets": "Secrets",
+  "/settings/plugins": "Plugins",
   "/settings/maintenance": "Maintenance",
   "/settings/labs": "Labs",
   "/settings/about": "About",
@@ -150,7 +152,13 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
   },
   {
     heading: null,
-    paths: ["/settings/maintenance", "/settings/labs", "/settings/about", "/settings/archived"],
+    paths: [
+      "/settings/plugins",
+      "/settings/maintenance",
+      "/settings/labs",
+      "/settings/about",
+      "/settings/archived",
+    ],
   },
 ];
 
@@ -831,6 +839,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["allow disable enable open drive preview tools sessions project override"],
   },
   {
+    id: "plugins",
+    title: "Plugins",
+    to: "/settings/plugins",
+    searchTerms: ["plugins extensions add-ons enable disable reload plugin settings"],
+  },
+  {
     id: "device-sources",
     title: "Device sources",
     to: "/settings/devices",
@@ -1197,6 +1211,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/connections": "connections",
   "/settings/access": "connections",
   "/settings/secrets": null,
+  "/settings/plugins": null,
   "/settings/scheduled-tasks": null,
   "/settings/maintenance": null,
   "/settings/labs": null,

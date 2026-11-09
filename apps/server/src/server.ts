@@ -88,6 +88,11 @@ import * as PreviewBrowser from "./preview/PreviewBrowser.ts";
 import * as ProcessRunner from "./processRunner.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
+import * as PluginHost from "./plugins/PluginHost.ts";
+import * as PluginUploads from "./plugins/pluginUploads.ts";
+import * as PluginMcpTools from "./plugins/PluginMcpTools.ts";
+import * as PluginSettingsStore from "./plugins/PluginSettingsStore.ts";
+import * as PluginStorage from "./plugins/PluginStorage.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerOwnership from "./serverOwnership.ts";
@@ -681,6 +686,8 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(Layer.mergeAll(NativeAppIconResolver.layer, layerProjectFaviconResolver)),
   Layer.provideMerge(layerRepositoryIdentityResolver),
   Layer.provideMerge(CodexManagedTokenBroker.layer),
+  // /mcp and the plugin host share one MCP tool registry and one set of upload URLs.
+  Layer.provideMerge(Layer.mergeAll(PluginMcpTools.layer, PluginUploads.layer)),
   Layer.provideMerge(layerServerEnvironment),
   Layer.provideMerge(layerAuth),
   Layer.provideMerge(ServerSecretStore.layer),
@@ -709,6 +716,12 @@ const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   Layer.provide(NetService.layer),
 );
 
+// The plugin host sits on top of the runtime for its theme service, secret store and registry.
+const layerRuntimeDependenciesWithPlugins = PluginHost.layer.pipe(
+  Layer.provide(Layer.mergeAll(PluginSettingsStore.layer, PluginStorage.layer)),
+  Layer.provideMerge(layerRuntimeDependencies),
+);
+
 const layerCommandReadiness = HttpRouter.middleware(
   (httpEffect) =>
     Effect.flatMap(ServerRuntimeStartup.ServerRuntimeStartup, (startup) =>
@@ -734,6 +747,8 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerAssetRoute,
     ServerHttp.layerAttachmentUploadRoute,
     GuestHttp.layer,
+    PluginHost.layerWebFilesRoute,
+    PluginUploads.layerRoute,
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,
     ServerHttp.layerStaticAndDevRoute,
@@ -1072,7 +1087,7 @@ const layerMakeServer = Layer.unwrap(
         ],
         { concurrency: "unbounded" },
       ).pipe(Effect.asVoid),
-    }).pipe(Layer.provideMerge(layerRuntimeDependencies), Layer.provide(layerLauncher));
+    }).pipe(Layer.provideMerge(layerRuntimeDependenciesWithPlugins), Layer.provide(layerLauncher));
 
     const layerRoutes = HttpRouter.serve(layerMakeRoutes.pipe(Layer.provide(layerLauncher)), {
       disableLogger: !config.logWebSocketEvents,
