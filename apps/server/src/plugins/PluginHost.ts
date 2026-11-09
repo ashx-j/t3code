@@ -327,8 +327,8 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  // Aborts first so handlers and iterators stop, then runs cleanups newest first. Teardown also
-  // runs where interruption is off, so the deadline gets an interruptible region to cut.
+  // Aborts first so handlers and iterators stop. Teardown also runs where interruption is off, so
+  // the deadline gets an interruptible region to cut.
   const teardown = Effect.fn("PluginHost.teardown")(function* (
     pluginId: PluginId,
     activation: PluginActivation,
@@ -459,8 +459,8 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Interrupts a pending activation, then stops an active plugin: its record stops routing calls
-   * and serving files before cleanups run. The caller sets the plugin's next status.
+   * An active plugin's record stops routing calls and serving files before cleanups run. The caller
+   * sets the plugin's next status.
    */
   const stopPlugin = Effect.fn("PluginHost.stop")(function* (pluginId: PluginId) {
     yield* FiberMap.remove(activations, pluginId);
@@ -533,7 +533,6 @@ const make = Effect.gen(function* () {
           if (record === undefined) return yield* new PluginNotFoundError({ pluginId });
           yield* pluginsConfig.writeEnabled(pluginId, enabled);
           if ("failure" in record.plugin) return yield* publishStates;
-          // Enabling a plugin that is running or starting keeps it; a failed one is retried.
           if (enabled && (record.status === "active" || record.status === "loading")) {
             return yield* publishStates;
           }
@@ -557,7 +556,6 @@ const make = Effect.gen(function* () {
     const { plugins, found } = yield* discover(false);
     if (restart !== undefined) yield* stopPlugin(restart);
     const known = yield* Ref.get(records);
-    // A record survives only while discovery still finds its copy, in the same folder and valid.
     const next = plugins.map((plugin) => ({
       plugin,
       kept:

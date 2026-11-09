@@ -90,10 +90,7 @@ export const makePluginWebFiles = Effect.gen(function* () {
     return styles.flat();
   });
 
-  /**
-   * What a starting plugin serves: the bundle at `entry` and `assets/` if it has a web half, and
-   * `styles/`. Resolves with them, the bundle's revision and the stylesheets.
-   */
+  /** What a starting plugin serves: `entry` and `assets/` if it has a web half, and `styles/`. */
   const find = Effect.fn("PluginHost.findWebFiles")(function* (
     plugin: DiscoveredPlugin,
     entry: string | undefined,

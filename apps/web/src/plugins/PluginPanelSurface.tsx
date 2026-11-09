@@ -49,8 +49,7 @@ function PluginPanelNotice(props: {
 
 /**
  * The plugin's name, or its id while the list loads or once it is uninstalled, and whether its
- * panel may still register: the list is loading, or its web part is starting in this browser and
- * has neither loaded nor failed.
+ * panel may still register.
  */
 function usePluginPanelState(environmentId: EnvironmentId, pluginId: string) {
   const result = useAtomValue(pluginEnvironment.pluginsLive({ environmentId, input: {} }));

@@ -107,10 +107,9 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
   const pluginsDir = path.join(config.stateDir, "plugins");
   const stagingRoot = path.join(config.stateDir, "plugin-staging");
 
-  // An install interrupted mid-swap (a crash) can leave the old version only in staging. Put it
-  // back if nothing replaced it, then drop every leftover staging folder.
-  // Listed while the layer builds, before the server serves requests, so recovery never touches
-  // the staging folder of an install that starts after that.
+  // An install interrupted mid-swap (a crash) can leave the old version only in staging. Listed
+  // while the layer builds, before the server serves requests, so recovery never touches the
+  // staging folder of an install that starts after that.
   const leftoverStaging = yield* fs
     .readDirectory(stagingRoot)
     .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
