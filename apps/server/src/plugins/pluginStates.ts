@@ -74,6 +74,9 @@ const toState = (
     hasWeb: manifest?.web !== undefined,
     hasSettings: manifest?.settingsSchema !== undefined,
     ...(serverFailure === undefined ? {} : { serverFailure }),
+    ...("unknownKeys" in record.plugin && record.plugin.unknownKeys !== undefined
+      ? { unknownManifestKeys: record.plugin.unknownKeys }
+      : {}),
   };
 };
 
