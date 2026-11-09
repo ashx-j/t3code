@@ -165,10 +165,18 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
   });
 
   /** Why this server cannot run `manifest`, checked before anything is stopped or moved. */
-  const engineRefusal = (manifest: PluginManifest) =>
-    satisfiesSemverRange(packageJson.version, manifest.engines.t3)
+  const refusal = (manifest: PluginManifest) => {
+    if (!satisfiesSemverRange(packageJson.version, manifest.engines.t3)) {
+      return `${manifest.name} ${manifest.version} needs T3 Code ${manifest.engines.t3}, and this server is ${packageJson.version}.`;
+    }
+    const schemaProblem =
+      manifest.settingsSchema === undefined
+        ? undefined
+        : PluginSettingsStore.settingsSchemaProblem(manifest.settingsSchema);
+    return schemaProblem === undefined
       ? undefined
-      : `${manifest.name} ${manifest.version} needs T3 Code ${manifest.engines.t3}, and this server is ${packageJson.version}.`;
+      : `${manifest.name} ${manifest.version} has a settingsSchema T3 Code cannot validate: ${schemaProblem}`;
+  };
 
   /**
    * Swaps `<stagingDir>/plugin` into the plugins folder under the lifecycle lock and starts it if it
@@ -296,10 +304,10 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
     origin: InstallOrigin,
   ) {
     const { stagingDir, manifest } = yield* stage(origin);
-    const refusal = engineRefusal(manifest);
-    if (refusal !== undefined) {
+    const reason = refusal(manifest);
+    if (reason !== undefined) {
       yield* removeStaging(stagingDir);
-      return yield* new PluginInstallError({ reason: refusal });
+      return yield* new PluginInstallError({ reason });
     }
     return yield* swapIn(manifest, stagingDir);
   });

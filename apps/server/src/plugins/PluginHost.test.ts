@@ -45,13 +45,19 @@ const operate = [AuthOrchestrationReadScope, AuthOrchestrationOperateScope] as c
 
 const manifestJson = (
   id: string,
-  options: { readonly name?: string; readonly version?: string; readonly engines?: string } = {},
+  options: {
+    readonly name?: string;
+    readonly version?: string;
+    readonly engines?: string;
+    readonly settingsSchema?: object;
+  } = {},
 ) =>
   JSON.stringify({
     id,
     name: options.name ?? id,
     version: options.version ?? "0.1.0",
     engines: { t3: options.engines ?? ">=0.1.0" },
+    settingsSchema: options.settingsSchema,
   });
 
 it.layer(NodeServices.layer)("PluginHost", (it) => {
@@ -886,13 +892,16 @@ module.exports = { activate() {} };`,
     }).pipe(Effect.provide(layerConfig())),
   );
 
-  it.effect("refuses a dropped folder that needs a newer T3 Code and keeps the old one", () =>
+  it.effect("refuses a dropped folder this server can't run and keeps the old one", () =>
     Effect.gen(function* () {
-      const upgrade = (version: string, engines?: string) => [
+      const upgrade = (
+        version: string,
+        options: { readonly engines?: string; readonly settingsSchema?: object } = {},
+      ) => [
         {
           path: "t3-plugin.json",
           contents: new TextEncoder().encode(
-            manifestJson("upgrade", { name: "Upgrade", version, ...(engines ? { engines } : {}) }),
+            manifestJson("upgrade", { name: "Upgrade", version, ...options }),
           ),
         },
       ];
@@ -903,12 +912,24 @@ module.exports = { activate() {} };`,
         yield* installer.installFiles(upgrade("1.0.0"));
         yield* host.setEnabled(PluginId.make("upgrade"), true);
         const refused = yield* installer
-          .installFiles(upgrade("2.0.0", ">=999.0.0"))
+          .installFiles(upgrade("2.0.0", { engines: ">=999.0.0" }))
           .pipe(Effect.flip);
         assert.strictEqual(
           refused.message,
           `Upgrade 2.0.0 needs T3 Code >=999.0.0, and this server is ${packageJson.version}.`,
         );
+        const unchecked = yield* installer
+          .installFiles(
+            upgrade("2.0.0", {
+              settingsSchema: { type: "object", properties: { count: { $ref: "#/$defs/no" } } },
+            }),
+          )
+          .pipe(Effect.flip);
+        assert.include(
+          unchecked.message,
+          "Upgrade 2.0.0 has a settingsSchema T3 Code cannot validate",
+        );
+        assert.include(unchecked.message, 'Missing definition "no"');
         assert.include(stateOf(yield* host.list, "upgrade"), {
           version: "1.0.0",
           status: "active",

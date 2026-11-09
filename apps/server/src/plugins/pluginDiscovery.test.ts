@@ -29,6 +29,14 @@ it.layer(NodeServices.layer)("discoverPlugins", (it) => {
         JSON.stringify({ ...JSON.parse(manifest("invalid")), version: "1" }),
       );
       yield* write(path.join(pluginsDir, "renamed"), manifest("other-name"));
+      // A schema the settings validator cannot compile would refuse every save.
+      yield* write(
+        path.join(pluginsDir, "unchecked"),
+        JSON.stringify({
+          ...JSON.parse(manifest("unchecked")),
+          settingsSchema: { type: "object", properties: { count: { $ref: "#/$defs/no" } } },
+        }),
+      );
       yield* write(path.join(pluginsDir, "My Plugin"), manifest("spaced"));
       yield* write(path.join(pluginsDir, "Not An Id"), undefined);
       // Sorts before "valid", so it is the copy used.
@@ -51,6 +59,7 @@ it.layer(NodeServices.layer)("discoverPlugins", (it) => {
         { id: "empty", source: "installed", stage: "discovery" },
         { id: "invalid", source: "installed", stage: "manifest" },
         { id: "other-name", source: "installed", stage: "ok" },
+        { id: "unchecked", source: "installed", stage: "manifest" },
         { id: "valid", source: "installed", stage: "duplicate" },
         { id: "valid", source: "dev", stage: "duplicate" },
         { id: "dev-only", source: "dev", stage: "ok" },
@@ -58,8 +67,9 @@ it.layer(NodeServices.layer)("discoverPlugins", (it) => {
       assert.strictEqual(plugins[0]?.folder, path.join(pluginsDir, "Copy of valid"));
       const failures = plugins.map((plugin) => ("failure" in plugin ? plugin.failure.message : ""));
       assert.include(failures[3], "version");
+      assert.include(failures[5], 'Missing definition "no"');
       assert.strictEqual(
-        failures[6],
+        failures[7],
         'The installed folder "Copy of valid" already has the id valid. Remove or unlink one of them.',
       );
     }).pipe(Effect.scoped),

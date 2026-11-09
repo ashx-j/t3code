@@ -208,6 +208,12 @@ const compileSettingsSchema = (settingsSchema: Schema.JsonObject) =>
 const importerReason = (cause: unknown) =>
   (cause instanceof Error ? cause.message : String(cause)).slice(0, MAX_SCHEMA_REASON_LENGTH);
 
+/** Why settings cannot be validated against `settingsSchema`, or `undefined` when they can. */
+export const settingsSchemaProblem = (settingsSchema: Schema.JsonObject) => {
+  const compiled = compileSettingsSchema(settingsSchema);
+  return Result.isFailure(compiled) ? importerReason(compiled.failure) : undefined;
+};
+
 const make = Effect.gen(function* () {
   const { stateDir } = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
