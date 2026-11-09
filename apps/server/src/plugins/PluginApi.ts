@@ -16,6 +16,14 @@ import type * as PluginStorage from "./PluginStorage.ts";
 const isJson = Schema.is(Schema.Json);
 const isPluginRpcName = Schema.is(PluginRpcName);
 const isPluginRpcAccess = Schema.is(Schema.Literals(["read", "write"]));
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Json));
+const utf8 = new TextEncoder();
+
+// A published value or a method's result reaches a client as one WebSocket message, and one large
+// message holds up every other stream on the socket.
+export const MAX_MESSAGE_KILOBYTES = 256;
+export const jsonKilobytes = (value: Schema.Json) =>
+  Math.ceil(utf8.encode(encodeJson(value)).byteLength / 1024);
 
 /** Everything one activation registered. The host routes calls through it and tears it down. */
 export interface PluginActivation {
@@ -119,6 +127,12 @@ export const makePluginApi = (input: {
           throw new TypeError(`"${channel}" is not a valid channel name.`);
         }
         if (!isJson(value)) throw new TypeError("Published values must be JSON.");
+        const size = jsonKilobytes(value);
+        if (size > MAX_MESSAGE_KILOBYTES) {
+          throw new RangeError(
+            `The value published on "${channel}" is ${size} KB as JSON, and a value can be at most ${MAX_MESSAGE_KILOBYTES} KB.`,
+          );
+        }
         // Waking a subscriber schedules T3's work, which must not run in the plugin's scope.
         pluginCodeScope.exit(() => {
           for (const queue of activation.channels.get(channel) ?? []) {

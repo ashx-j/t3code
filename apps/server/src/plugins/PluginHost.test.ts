@@ -681,6 +681,41 @@ module.exports = { activate() {} };`,
     }).pipe(Effect.provide(layerConfig())),
   );
 
+  it.effect("refuses a published value or method result over 256 KB, saying so", () =>
+    Effect.gen(function* () {
+      yield* writeInstalledPlugin(
+        "large",
+        `const big = "x".repeat(300 * 1024);
+module.exports = { activate(api) {
+  api.rpc.register("result", () => big, { access: "read" });
+  api.rpc.register("publish", () => {
+    try { api.rpc.publish("values", big); } catch (error) { return error.message; }
+  }, { access: "read" });
+} };`,
+      );
+      yield* writePluginsConfig({ enabled: { large: true } });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const call = (method: string) =>
+          host.invoke({
+            pluginId: PluginId.make("large"),
+            method,
+            input: undefined,
+            scopes: operate,
+          });
+        yield* waitForStatuses(host, { large: "active" });
+        assert.strictEqual(
+          (yield* call("result").pipe(Effect.flip)).message,
+          "Plugin large failed in result: The result is 301 KB as JSON, and a result can be at most 256 KB.",
+        );
+        assert.strictEqual(
+          yield* call("publish"),
+          'The value published on "values" is 301 KB as JSON, and a value can be at most 256 KB.',
+        );
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
   it.effect("gives up on a method that does not answer within 30 seconds, and aborts it", () =>
     Effect.gen(function* () {
       const started = Promise.withResolvers<void>();

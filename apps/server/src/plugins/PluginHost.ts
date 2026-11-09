@@ -41,6 +41,8 @@ import * as ServerConfig from "../config.ts";
 import { authenticateRawRouteWithScope } from "../http.ts";
 import { forkParked } from "../serverActivation.ts";
 import {
+  jsonKilobytes,
+  MAX_MESSAGE_KILOBYTES,
   makePluginActivation,
   makePluginApi,
   type PluginActivation,
@@ -774,6 +776,14 @@ const make = Effect.gen(function* () {
       if (output === undefined) return null;
       if (!isJson(output)) {
         return yield* handlerError(new TypeError("The method returned a value that is not JSON."));
+      }
+      const size = jsonKilobytes(output);
+      if (size > MAX_MESSAGE_KILOBYTES) {
+        return yield* handlerError(
+          new RangeError(
+            `The result is ${size} KB as JSON, and a result can be at most ${MAX_MESSAGE_KILOBYTES} KB.`,
+          ),
+        );
       }
       return output;
     }),
