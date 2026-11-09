@@ -1,4 +1,5 @@
 import type { EnvironmentId, PLUGIN_COMMAND_PATTERN } from "@t3tools/contracts";
+import type { WebPluginParts } from "@t3tools/plugin-sdk/web";
 import { Atom } from "effect/reactivity";
 import type { ComponentType } from "react";
 
@@ -186,6 +187,92 @@ export const pluginCommandsAtom = Atom.family((environmentId: string) => {
     get(versionAtom);
     return stable([...commands.values()].filter((entry) => entry.environmentId === environmentId));
   });
+});
+
+export type PluginPartName = keyof WebPluginParts;
+
+/** A replaceable part's pieces. `original` is T3's own drawing, also drawn when the plugin's throws. */
+export type PluginPartProps<Part extends PluginPartName> = WebPluginParts[Part];
+
+export interface PluginReplacementEntry<Part extends PluginPartName> {
+  readonly component: ComponentType<PluginPartProps<Part>>;
+  readonly owner: PluginOwner;
+}
+
+// Each part keeps every replacement, so unloading the newest brings back the one before it.
+const replacements: { [Part in PluginPartName]: Array<PluginReplacementEntry<Part>> } = {
+  "composer.controls": [],
+  "app.pageFrame": [],
+  "app.sidebar": [],
+};
+
+// Its own version: replaceable parts sit on hot paths, so other plugin changes must not
+// re-render them.
+const replacementsVersionAtom = Atom.make(0).pipe(Atom.keepAlive);
+
+// The plugin whose id sorts first wins, so parallel loading can't change which one draws a part;
+// within one plugin its newest replacement wins.
+const replacementAtom = <Part extends PluginPartName>(part: Part) =>
+  Atom.make((get) => {
+    get(replacementsVersionAtom);
+    return replacements[part].reduce<PluginReplacementEntry<Part> | undefined>(
+      (winner, entry) =>
+        winner === undefined || entry.owner.pluginId <= winner.owner.pluginId ? entry : winner,
+      undefined,
+    );
+  });
+
+export const pluginReplacementAtoms: {
+  readonly [Part in PluginPartName]: Atom.Atom<PluginReplacementEntry<Part> | undefined>;
+} = {
+  "composer.controls": replacementAtom("composer.controls"),
+  "app.pageFrame": replacementAtom("app.pageFrame"),
+  "app.sidebar": replacementAtom("app.sidebar"),
+};
+
+/** Whether a plugin draws each part, which app code reads before building the part's pieces. */
+export const pluginPartReplacedAtoms: { readonly [Part in PluginPartName]: Atom.Atom<boolean> } = {
+  "composer.controls": Atom.make(
+    (get) => get(pluginReplacementAtoms["composer.controls"]) !== undefined,
+  ),
+  "app.pageFrame": Atom.make((get) => get(pluginReplacementAtoms["app.pageFrame"]) !== undefined),
+  "app.sidebar": Atom.make((get) => get(pluginReplacementAtoms["app.sidebar"]) !== undefined),
+};
+
+/** Draws `part` with a plugin's component; returns the function that removes it. */
+export function registerPluginReplacement<Part extends PluginPartName>(
+  part: Part,
+  component: ComponentType<PluginPartProps<Part>>,
+  owner: PluginOwner,
+): () => void {
+  if (!Object.hasOwn(replacements, part)) {
+    throw new TypeError(`"${part}" is not a part plugins can replace.`);
+  }
+  const list = replacements[part];
+  const entry = { component, owner };
+  list.push(entry);
+  appAtomRegistry.set(replacementsVersionAtom, appAtomRegistry.get(replacementsVersionAtom) + 1);
+  return () => {
+    const index = list.indexOf(entry);
+    if (index === -1) return;
+    list.splice(index, 1);
+    appAtomRegistry.set(replacementsVersionAtom, appAtomRegistry.get(replacementsVersionAtom) + 1);
+  };
+}
+
+// The plugins, by contribution key, that asked the composer to fold on scroll.
+const collapseOnScrollRequests = new Set<string>();
+
+export function setPluginComposerCollapseOnScroll(key: string, enabled: boolean) {
+  if (collapseOnScrollRequests.has(key) === enabled) return;
+  if (enabled) collapseOnScrollRequests.add(key);
+  else collapseOnScrollRequests.delete(key);
+  bump();
+}
+
+export const pluginComposerCollapseOnScrollAtom = Atom.make((get) => {
+  get(versionAtom);
+  return collapseOnScrollRequests.size > 0;
 });
 
 /** The plugin that registered a contribution, so its failures show on that plugin's row. */

@@ -101,6 +101,13 @@ Each browser keeps its own choice of the environments it loads plugin UI from, t
 default, because that code runs with every connection's credentials. Right panels show only in their
 environment's threads. Commands have no thread, so only the first chosen environment registers them.
 
+The parts a plugin can redraw sit on hot paths: the composer's control row, the sidebar and the
+Settings and Usage frame. Each host draws its part through
+[`PluginPart`](../../apps/web/src/plugins/PluginPart.tsx), which keeps T3's own element until a
+loaded plugin replaces that part, so the tree under it never remounts while none does and the
+registry stays out of startup. The composer fold works the same way: the timeline reports leaving
+its end only while a plugin asks for the fold, so threads pay nothing otherwise.
+
 Rows carry `hasSettings` rather than the settings schema. Every client, read-only ones and the
 idle watcher included, gets a plugin's row again on each status change, and only the settings
 form needs the schema, which it fetches with `plugins.settings.get`.

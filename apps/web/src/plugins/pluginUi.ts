@@ -1,3 +1,4 @@
+import type { WebPluginParts } from "@t3tools/plugin-sdk/web";
 import { Atom } from "effect/reactivity";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -26,6 +27,17 @@ const fromPluginUi = <A>(pick: (ui: PluginUi) => Atom.Atom<A>, none: A) =>
 
 export const pluginCommandsAtom = Atom.family((environmentId: string) =>
   fromPluginUi((ui) => ui.pluginCommandsAtom(environmentId), NONE),
+);
+
+/** Whether a loaded plugin draws one of T3's parts its own way, through `PluginPart`. */
+export const pluginPartReplacedAtom = Atom.family((part: keyof WebPluginParts) =>
+  fromPluginUi((ui) => ui.pluginPartReplacedAtoms[part], false),
+);
+
+/** Whether a loaded plugin asked the composer to fold while the timeline is scrolled up. */
+export const pluginComposerCollapseOnScrollAtom = fromPluginUi(
+  (ui) => ui.pluginComposerCollapseOnScrollAtom,
+  false,
 );
 
 /** A loaded plugin command's name for people, such as in Keybindings settings. */
