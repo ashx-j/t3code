@@ -1,4 +1,4 @@
-export type Note = { readonly id: string; readonly text: string; readonly at: string };
+export type Note = { readonly id: string; readonly text: string };
 
 /** The server half's methods and channel. Both halves name it, so their calls are checked. */
 export type QuickNotesRpc = {

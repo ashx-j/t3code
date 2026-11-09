@@ -1,4 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off globalDate:off - plugin code, which doesn't use Effect.
 const { randomUUID } = require("node:crypto");
 
 /** @type {import("@t3tools/plugin-sdk/server").PluginDefinition<import("./rpc.ts").QuickNotesRpc>} */
@@ -30,7 +29,7 @@ module.exports = {
       async (input) => {
         const text = typeof input?.text === "string" ? input.text.trim().slice(0, 500) : "";
         if (text === "") return read();
-        const note = { id: randomUUID(), text, at: new Date().toISOString() };
+        const note = { id: randomUUID(), text };
         return change((notes) => [...notes, note].slice(-200));
       },
       { access: "write" },
