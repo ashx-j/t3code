@@ -11,6 +11,7 @@
 - [Project settings](./user/project-settings.md)
 - [Appearance and themes](./user/appearance.md)
 - [Keyboard shortcuts](./user/keybindings.md)
+- [Plugins](./user/plugins.md)
 - [SnapShots](./user/snap-shot.md)
 - [Visual replies](./user/html-renders.md)
 - [Import browser sessions](./user/browser-import.md)
@@ -57,6 +58,7 @@ source alone does not explain. Most code changes do not need an internal documen
 - [Terminal runtime](./internals/terminal-runtime.md)
 - [Devices](./internals/devices.md)
 - [Voice input](./internals/voice-input.md)
+- [Plugins](./internals/plugins.md)
 
 ### Runbooks
 

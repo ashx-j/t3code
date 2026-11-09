@@ -198,8 +198,8 @@
               (appearance === value.appearance || isRecord(colors)),
           );
         };
-        // Custom themes first, then the palettes the server last published, in the order the
-        // runtime looks them up.
+        // Custom themes first, then the palettes the server last published (a plugin's theme,
+        // say), in the order the runtime looks them up.
         const findCustomTheme = (themeId) => {
           if (RESERVED_THEME_IDS.includes(themeId)) return null;
           for (const storageKey of [CUSTOM_THEMES_STORAGE_KEY, ENVIRONMENT_THEMES_STORAGE_KEY]) {

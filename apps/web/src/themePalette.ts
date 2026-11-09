@@ -366,8 +366,8 @@ const publishedThemesAtom = Atom.make((get): ReadonlyArray<EnvironmentTheme> => 
 }).pipe(Atom.withLabel("web-published-environment-themes"));
 
 // The server sends its palettes as their own event after it connects. Until the first one,
-// the palettes it sent last time stand in, so a published theme paints from the first frame,
-// and the boot screen in index.html reads the same copy.
+// the palettes it sent last time stand in, so a published theme (a plugin's, say) paints from
+// the first frame, and the boot screen in index.html reads the same copy.
 const environmentThemesKnownAtom = Atom.make(false).pipe(Atom.keepAlive);
 
 function readStoredEnvironmentThemes(): ReadonlyArray<ThemeDefinition> {
@@ -440,9 +440,10 @@ export function startEnvironmentThemeCache(): () => void {
 }
 
 /**
- * An imported theme file whose id a published theme already uses, renamed to a copy. A saved theme
- * wins an id collision on purpose, so editing a published theme overrides it, but importing the
- * published theme's own file would otherwise hide it and its radius and status colors.
+ * An imported theme file whose id a published theme, such as a plugin's, already uses, renamed to a
+ * copy. A saved theme wins an id collision on purpose, so editing a published theme overrides it,
+ * but importing a plugin's own file would otherwise hide the plugin's theme and its radius and
+ * status colors.
  */
 export function asImportedThemeCopy(theme: ThemeDefinition): ThemeDefinition {
   const published = getEnvironmentThemes();
@@ -1320,7 +1321,7 @@ export function themeAllowsComposerArtwork(theme: ThemePreference): boolean {
   );
 }
 
-/** Built-in themes and published ones can allow it; custom themes can't. */
+/** Built-in themes and published ones, such as a plugin's, can allow it; custom themes can't. */
 export function themeAllowsSidebarArtwork(theme: ThemePreference): boolean {
   const themeId = themeIdFromPreference(theme);
   const definition =

@@ -1587,8 +1587,8 @@ html[data-theme-id] [data-app-sidebar] {
   }
 }
 
-/* A published theme also colors the sidebar's row metadata, like thread times. Built-in themes
-   keep the sidebar's own step below read titles. */
+/* A published theme, such as a plugin's, also colors the sidebar's row metadata, like thread
+   times. Built-in themes keep the sidebar's own step below read titles. */
 html[data-theme-published] [data-app-sidebar] {
   --secondary-label: var(--app-theme-secondary-label);
 }

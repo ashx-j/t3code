@@ -108,8 +108,8 @@ describe("environment themes", () => {
     expect(getThemeDefinition("nightfall")?.label).toBe("Nightfall");
     expect(themeAllowsSidebarArtwork("nightfall")).toBe(false);
 
-    // A published theme can keep the sidebar artwork, but not on the send button, and can set
-    // T3's corner radius and status colors.
+    // A published theme, such as a plugin's, can keep the sidebar artwork, but not on the send
+    // button, and can set T3's corner radius and status colors.
     publish(appAtomRegistry, [
       {
         ...NIGHTFALL_THEME,
@@ -206,7 +206,7 @@ describe("environment themes", () => {
         statusColors: { dark: { info: "#0969da" } },
       });
 
-      // The server no longer publishes it, so its first themes event is empty.
+      // The plugin that published it is gone: the server's first themes event is empty.
       publish(registry, []);
       expect(palette.getThemeDefinition("nightfall")).toBeNull();
       expect(store.has(ENVIRONMENT_THEMES_STORAGE_KEY)).toBe(false);

@@ -375,6 +375,16 @@ import {
   ScheduledTaskUpsertInput,
   ScheduledTaskMutationResult,
 } from "./scheduledTask.ts";
+import {
+  PluginError,
+  PluginListInput,
+  PluginListResult,
+  PluginRescanInput,
+  PluginMutationResult,
+  PluginReloadInput,
+  PluginSetEnabledInput,
+  PluginStatesEvent,
+} from "./plugins.ts";
 import { SecretRequestAnswerInput, SecretRequestError } from "./secretRequest.ts";
 import {
   ProjectCloneActionInput,
@@ -547,6 +557,12 @@ export const WS_METHODS = {
   guestShareCreate: "guestShare.create",
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
+
+  pluginsList: "plugins.list",
+  pluginsSubscribeStates: "plugins.subscribeStates",
+  pluginsSetEnabled: "plugins.setEnabled",
+  pluginsReload: "plugins.reload",
+  pluginsRescan: "plugins.rescan",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -1950,6 +1966,41 @@ const WsScheduledTasksGetWebhookDeliveryRpc = Rpc.make(
   },
 );
 
+const PluginRpcError = Schema.Union([PluginError, EnvironmentAuthorizationError]);
+
+const WsPluginsListRpc = Rpc.make(WS_METHODS.pluginsList, {
+  payload: PluginListInput,
+  success: PluginListResult,
+  error: PluginRpcError,
+});
+
+/** The current list, then the rows that change. */
+const WsPluginsSubscribeStatesRpc = Rpc.make(WS_METHODS.pluginsSubscribeStates, {
+  payload: PluginListInput,
+  success: PluginStatesEvent,
+  error: PluginRpcError,
+  stream: true,
+});
+
+const WsPluginsSetEnabledRpc = Rpc.make(WS_METHODS.pluginsSetEnabled, {
+  payload: PluginSetEnabledInput,
+  success: PluginMutationResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsReloadRpc = Rpc.make(WS_METHODS.pluginsReload, {
+  payload: PluginReloadInput,
+  success: PluginMutationResult,
+  error: PluginRpcError,
+});
+
+/** Looks at the plugins folder again, so plugin folders put there since are listed. */
+const WsPluginsRescanRpc = Rpc.make(WS_METHODS.pluginsRescan, {
+  payload: PluginRescanInput,
+  success: PluginListResult,
+  error: PluginRpcError,
+});
+
 const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess, {
   payload: Schema.Struct({}),
   success: AuthAccessStreamEvent,
@@ -2035,6 +2086,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsSecretsAnswerRequestRpc,
   WsScheduledTasksListWebhookDeliveriesRpc,
   WsScheduledTasksGetWebhookDeliveryRpc,
+  WsPluginsListRpc,
+  WsPluginsSubscribeStatesRpc,
+  WsPluginsSetEnabledRpc,
+  WsPluginsReloadRpc,
+  WsPluginsRescanRpc,
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,

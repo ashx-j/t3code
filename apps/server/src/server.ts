@@ -88,6 +88,7 @@ import * as PreviewBrowser from "./preview/PreviewBrowser.ts";
 import * as ProcessRunner from "./processRunner.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
+import * as PluginHost from "./plugins/PluginHost.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerOwnership from "./serverOwnership.ts";
@@ -709,6 +710,11 @@ const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   Layer.provide(NetService.layer),
 );
 
+// The plugin host sits on top of the runtime for its theme service.
+const layerRuntimeDependenciesWithPlugins = PluginHost.layer.pipe(
+  Layer.provideMerge(layerRuntimeDependencies),
+);
+
 const layerCommandReadiness = HttpRouter.middleware(
   (httpEffect) =>
     Effect.flatMap(ServerRuntimeStartup.ServerRuntimeStartup, (startup) =>
@@ -1072,7 +1078,7 @@ const layerMakeServer = Layer.unwrap(
         ],
         { concurrency: "unbounded" },
       ).pipe(Effect.asVoid),
-    }).pipe(Layer.provideMerge(layerRuntimeDependencies), Layer.provide(layerLauncher));
+    }).pipe(Layer.provideMerge(layerRuntimeDependenciesWithPlugins), Layer.provide(layerLauncher));
 
     const layerRoutes = HttpRouter.serve(layerMakeRoutes.pipe(Layer.provide(layerLauncher)), {
       disableLogger: !config.logWebSocketEvents,
