@@ -50,7 +50,7 @@ const failed = (location: PluginLocation, failure: PluginFailure): DiscoveredPlu
 
 /**
  * Lists installed plugins (`<pluginsDir>/<any folder>/t3-plugin.json`), then dev plugins
- * (`devPaths`). An id is used once: a later folder with an id already listed is reported as failed.
+ * (`devPaths`). An id more than one folder has is listed once, as failed.
  */
 export const discoverPlugins = Effect.fn("PluginDiscovery.discover")(function* (input: {
   readonly pluginsDir: string;
@@ -121,23 +121,31 @@ export const discoverPlugins = Effect.fn("PluginDiscovery.discover")(function* (
     );
   });
 
-  const plugins: Array<DiscoveredPlugin> = [];
-  const firstWithId = new Map<PluginId, DiscoveredPlugin>();
-  // Settings, storage and the switch belong to the id, so two folders with one id cannot both run.
+  interface Copies {
+    readonly first: DiscoveredPlugin;
+    readonly others: Array<DiscoveredPlugin>;
+  }
+  const copiesById = new Map<PluginId, Copies>();
   const add = (plugin: DiscoveredPlugin) => {
-    const first = firstWithId.get(plugin.id);
-    if (first === undefined) {
-      firstWithId.set(plugin.id, plugin);
-      plugins.push(plugin);
-      return;
-    }
-    // The folder's name only: clients that cannot manage plugins see failures but not paths.
-    const kind = first.source === "dev" ? "linked" : "installed";
-    plugins.push(
-      failed(plugin, {
+    const copies = copiesById.get(plugin.id);
+    if (copies === undefined) copiesById.set(plugin.id, { first: plugin, others: [] });
+    else copies.others.push(plugin);
+  };
+  // Settings, storage and the switch belong to the id, so no copy runs until one is left. Folder
+  // names only: clients that cannot manage plugins see failures but not paths.
+  const listOnce = ({ first, others }: Copies): DiscoveredPlugin => {
+    if (others.length === 0) return first;
+    const names = [first, ...others].map(
+      (copy) =>
+        `"${path.basename(copy.folder)}" (${copy.source === "dev" ? "linked" : "installed"})`,
+    );
+    const { id, rootDir, folder, source } = first;
+    return failed(
+      { id, rootDir, folder, source },
+      {
         stage: "duplicate",
-        message: `The ${kind} folder "${path.basename(first.folder)}" already has the id ${plugin.id}. Remove or unlink one of them.`,
-      }),
+        message: `The folders ${names.slice(0, -1).join(", ")} and ${names.at(-1)} ${others.length === 1 ? "both" : "all"} have the id ${id}. Delete ${others.length === 1 ? "one" : "all but one"} of them, then reload.`,
+      },
     );
   };
   let examined = 0;
@@ -183,5 +191,5 @@ export const discoverPlugins = Effect.fn("PluginDiscovery.discover")(function* (
     add(plugin);
   }
 
-  return plugins;
+  return [...copiesById.values()].map(listOnce);
 });

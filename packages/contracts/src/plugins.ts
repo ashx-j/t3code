@@ -82,7 +82,7 @@ export type PluginStatus = typeof PluginStatus.Type;
 
 /**
  * `crash` is a plugin that stopped the server, turned off until the user turns it on again.
- * `duplicate` is a folder whose id an earlier folder already has.
+ * `duplicate` is an id more than one folder has; none of them runs until one is left.
  */
 export const PluginFailureStage = Schema.Literals([
   "discovery",
@@ -211,11 +211,6 @@ export type PluginRescanInput = typeof PluginRescanInput.Type;
 
 export const PluginUninstallInput = Schema.Struct({
   pluginId: PluginId,
-  /**
-   * A row's `folder`, to remove or unlink that copy. A `duplicate` copy goes alone, and the copy
-   * in use keeps the id's data.
-   */
-  folder: Schema.optionalKey(Schema.String),
 });
 export type PluginUninstallInput = typeof PluginUninstallInput.Type;
 

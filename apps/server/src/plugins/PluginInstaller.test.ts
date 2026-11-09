@@ -39,8 +39,8 @@ const harness = Effect.fn(function* () {
             locked = false;
           }),
       ),
-    copies: Effect.succeed([linkedCopy]),
-    copyOf: (pluginId) =>
+    plugins: Effect.succeed([linkedCopy]),
+    pluginOf: (pluginId) =>
       pluginId === linked
         ? Effect.succeed(linkedCopy)
         : Effect.fail(new PluginNotFoundError({ pluginId })),

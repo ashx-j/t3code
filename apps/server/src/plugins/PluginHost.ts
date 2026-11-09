@@ -281,7 +281,6 @@ const make = Effect.gen(function* () {
           : Effect.succeed(state);
       }),
     );
-  // By id, which finds the copy in use: discovery lists it before any duplicate.
   const setRecord = (pluginId: PluginId, update: Omit<PluginRecord, "plugin">) =>
     Ref.update(records, (all) => {
       const index = all.findIndex((record) => record.plugin.id === pluginId);
@@ -640,8 +639,8 @@ const make = Effect.gen(function* () {
 
   const { installer, recoverStaging } = yield* PluginInstaller.make({
     lifecycle: runLifecycle,
-    copies: Ref.get(records).pipe(Effect.map((all) => all.map((record) => record.plugin))),
-    copyOf: (pluginId) =>
+    plugins: Ref.get(records).pipe(Effect.map((all) => all.map((record) => record.plugin))),
+    pluginOf: (pluginId) =>
       findRecord(pluginId).pipe(
         Effect.flatMap((record) =>
           record === undefined
