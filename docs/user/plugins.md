@@ -85,7 +85,7 @@ choice applies to this browser only. Each chosen environment's plugins run code 
 access to every environment this window is connected to, so choose only environments whose plugins
 you trust.
 
-A plugin's right panels show only in the threads of the plugin's own environment. Its command palette
-commands come from only one chosen environment, the main one unless you turn it off. When you choose
-more than one, **Load plugin UI from** says which. The mobile app doesn't show plugin UI, settings or
+A plugin's right panels show only in the threads of the plugin's own environment. A plugin that is on
+in more than one chosen environment adds its commands and styles once, from the main environment
+when it's on there. The mobile app doesn't show plugin UI, settings or
 themes.

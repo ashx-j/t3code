@@ -174,8 +174,9 @@ wrong method name, input or value fails to typecheck in either half.
 [`examples/quick-notes`](./examples/quick-notes) keeps its map in `rpc.ts`.
 
 The app can load web halves from several environments at once. Right panels show only in the threads
-of the environment the plugin runs on, which `api.environmentId` names. Palette and keybinding
-commands come only from the first of those environments, the main one unless it's turned off.
+of the environment the plugin runs on, which `api.environmentId` names. When your plugin is on in
+several of them, its commands and `injectStyles` take effect from only the first, the main one when
+it's on there.
 
 Register right panels inside `activate`. When the app restores a panel that was open, the panel
 shows that the plugin is loading until `activate` finishes, then "Plugin not active" until a panel

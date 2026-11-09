@@ -100,7 +100,8 @@ when Settings asks.
 
 Each browser keeps its own choice of the environments it loads plugin UI from, the main one by
 default, because that code runs with every connection's credentials. Right panels show only in their
-environment's threads. Commands have no thread, so only the first chosen environment registers them.
+environment's threads. Commands and styles have no thread, so a plugin on in several chosen
+environments adds them from the first, and the next takes over when it's turned off there.
 
 Rows carry `hasSettings` rather than the settings schema. Every client, read-only ones and the
 idle watcher included, gets a plugin's row again on each status change, and only the settings
@@ -111,7 +112,8 @@ production build, about 4.5 KB gzipped, in 5 more chunks. Most of it is the plug
 schemas and RPC definitions,
 [`PluginLoaderStarter`](../../apps/web/src/plugins/PluginLoaderStarter.tsx), `pluginFollow` and
 the [`pluginUi.ts`](../../apps/web/src/plugins/pluginUi.ts) stub that app code reads plugin parts
-through. Once the app is idle, the starter downloads a 2 KB watcher and follows
+through. Once the app is idle, or at once in a browser where plugins changed the layout last time,
+the starter downloads a 2 KB watcher and follows
 `plugins.subscribeStates` for each chosen environment, a stream of its own because the server
 config stream would resend the whole config on every plugin change. It downloads the web loader
 only when an active plugin has a web part, and a separate small styles chunk only when one has a
