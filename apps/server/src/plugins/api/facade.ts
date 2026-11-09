@@ -44,6 +44,11 @@ export const pluginCodeScope = new NodeAsyncHooks.AsyncLocalStorage<PluginId>();
 
 /** What every facade group needs from the activation it belongs to. */
 export interface FacadeContext {
+  readonly pluginId: PluginId;
+  readonly activation: PluginActivation;
+  readonly context: Context.Context<never>;
+  /** Runs the plugin's own code, such as a handler, in its scope. */
+  readonly asPlugin: <A>(run: () => A) => A;
   /**
    * Runs an effect as a Promise that rejects with an `Error` carrying the failure's `_tag` as `code`.
    * Map results inside the effect: a `.then` on the Promise is a new one that nothing handles.
@@ -80,7 +85,7 @@ export class PluginApiCallError extends Error {
 }
 
 /** Completes when `signal` aborts, at once if it already has. */
-const abortEffect = (signal: AbortSignal) =>
+export const abortEffect = (signal: AbortSignal) =>
   Effect.callback<void>((resume) => {
     const onAbort = () => resume(Effect.void);
     if (signal.aborted) return onAbort();
@@ -126,6 +131,10 @@ export const makeFacadeContext = (input: {
           }),
         );
   return {
+    pluginId,
+    activation,
+    context,
+    asPlugin: (run) => pluginCodeScope.run(pluginId, run),
     call,
     fork: (effect) => {
       pluginCodeScope.exit(() =>

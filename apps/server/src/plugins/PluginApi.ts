@@ -8,6 +8,8 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 
 import { makeFacadeContext, pluginCodeScope, refused } from "./api/facade.ts";
+import { makeMcpApi } from "./api/mcp.ts";
+import type * as PluginMcpTools from "./PluginMcpTools.ts";
 import type * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import type * as PluginStorage from "./PluginStorage.ts";
 
@@ -51,6 +53,7 @@ const assertActive = (activation: PluginActivation) => {
 export interface PluginApiServices {
   readonly settings: PluginSettingsStore.PluginSettingsStore["Service"];
   readonly storage: PluginStorage.PluginStorage["Service"];
+  readonly mcpTools: PluginMcpTools.PluginMcpTools["Service"];
 }
 
 /**
@@ -134,5 +137,6 @@ export const makePluginApi = (input: {
       }
       activation.cleanups.push(cleanup);
     },
+    mcp: makeMcpApi(facade, services),
   };
 };

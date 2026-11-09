@@ -1,9 +1,9 @@
 # Plugins
 
-Plugins add themes, styles and server code to T3 Code. A plugin belongs to one environment and runs
-inside that environment's T3 Code server, with the same access to your files, threads and
-credentials as T3 Code itself. A plugin's row lists the permissions it says it uses, but T3 Code
-doesn't enforce them. Install only plugins you trust.
+Plugins add features to T3 Code: themes, styles and tools for agents. A plugin belongs to one
+environment and runs inside that environment's T3 Code server, with the same access to your files,
+threads and credentials as T3 Code itself. A plugin's row lists the permissions it says it uses, but
+T3 Code doesn't enforce them. Install only plugins you trust.
 
 ## Add a plugin
 
@@ -61,6 +61,12 @@ show up as themes while the plugin is on. CSS files in its `styles` folder apply
 the plugin is on, on top of T3 Code's own styles and your theme. A plugin can be just a `styles`
 folder and its manifest. Themes and styles load from the same environments as plugin UI (see [Where
 plugins live](#where-plugins-live)).
+
+## Tools for agents
+
+A plugin can give agents new tools. Agents in threads started after you turn the plugin on see them.
+Turning the plugin off takes its tools away from every thread. Tools that only read work in any
+thread. Tools that change things work only in a thread set to **Full access** and not in Plan mode.
 
 ## Where plugins live
 
