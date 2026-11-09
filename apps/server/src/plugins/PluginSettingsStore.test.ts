@@ -155,16 +155,12 @@ it.layer(NodeServices.layer)("PluginSettingsStore", (it) => {
     }).pipe(Effect.provide(layerTest())),
   );
 
-  it.effect("clears secrets of fields a plugin renamed, and only its own", () =>
+  it.effect("clears every secret a plugin saved, and only its own", () =>
     Effect.gen(function* () {
       const store = yield* PluginSettingsStore.PluginSettingsStore;
       const { secretsDir, stateDir } = yield* ServerConfig.ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const renamed: Schema.JsonObject = {
-        type: "object",
-        properties: { apiKey: { type: "string", format: "t3-secret" } },
-      };
       const longerId = PluginId.make("hello-world");
       yield* store.update(hello, settingsSchema, { token: "old-secret" });
       yield* store.update(longerId, settingsSchema, { token: "other-secret" });
@@ -175,8 +171,8 @@ it.layer(NodeServices.layer)("PluginSettingsStore", (it) => {
       const secretStore = yield* ServerSecretStore.ServerSecretStore;
       const signingKey = yield* secretStore.getOrCreateRandom("plugin-upload-signing-key", 32);
 
-      yield* store.clear(hello, renamed);
-      yield* store.clear(PluginId.make("upload-signing-key"), undefined);
+      yield* store.clear(hello);
+      yield* store.clear(PluginId.make("upload-signing-key"));
 
       assert.sameMembers(yield* fileSystem.readDirectory(secretsDir), [
         `plugin.${longerId}.bin`,

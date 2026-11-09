@@ -367,7 +367,7 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
           yield* host.rescan;
           // Under the lock, or an install that starts meanwhile could lose its new settings.
           yield* settingsStore
-            .clear(pluginId, "manifest" in copy ? copy.manifest.settingsSchema : undefined)
+            .clear(pluginId)
             .pipe(
               Effect.mapError(installFailed("The plugin is removed, but its settings are not.")),
             );

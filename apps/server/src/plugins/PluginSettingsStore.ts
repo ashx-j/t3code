@@ -102,11 +102,8 @@ export class PluginSettingsStore extends Context.Service<
     >;
     /** The plugin view after each successful `update` of that plugin. */
     readonly changes: (pluginId: PluginId) => Stream.Stream<Schema.JsonObject>;
-    /** Deletes the plugin's settings file and every secret it saved, renamed fields' included. */
-    readonly clear: (
-      pluginId: PluginId,
-      settingsSchema: Schema.JsonObject | undefined,
-    ) => Effect.Effect<void, PluginSettingsPersistenceError>;
+    /** Deletes the plugin's settings file and every secret it saved. */
+    readonly clear: (pluginId: PluginId) => Effect.Effect<void, PluginSettingsPersistenceError>;
   }
 >()("t3/plugins/PluginSettingsStore") {}
 
