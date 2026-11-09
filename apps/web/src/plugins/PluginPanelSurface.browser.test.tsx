@@ -34,6 +34,7 @@ const helloWeb = (status: PluginState["status"]): PluginState => ({
   status,
   hasServer: false,
   hasWeb: true,
+  hasSettings: false,
 });
 
 const setList = (plugins: ReadonlyArray<PluginState>) =>

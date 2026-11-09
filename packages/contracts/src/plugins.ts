@@ -137,7 +137,7 @@ export const PluginState = Schema.Struct({
   /** Why its server code failed outside a call since it last started, such as in a timer. */
   serverFailure: Schema.optionalKey(Schema.String),
   /** True when its manifest has a `settingsSchema`, which `plugins.settings.get` sends. */
-  hasSettings: Schema.optionalKey(Schema.Boolean),
+  hasSettings: Schema.Boolean,
 });
 export type PluginState = typeof PluginState.Type;
 

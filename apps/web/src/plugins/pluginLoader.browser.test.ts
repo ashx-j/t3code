@@ -62,6 +62,7 @@ const webPlugin = (id: string): PluginState => ({
   status: "active",
   hasServer: false,
   hasWeb: true,
+  hasSettings: false,
 });
 
 // Every case starts with no plugins listed.

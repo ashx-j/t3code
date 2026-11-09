@@ -78,7 +78,6 @@ const toState = (
       : {
           version: manifest.version,
           ...(manifest.description === undefined ? {} : { description: manifest.description }),
-          ...(manifest.settingsSchema === undefined ? {} : { hasSettings: true }),
         }),
     permissions: manifest?.permissions ?? [],
     source: record.plugin.source,
@@ -91,6 +90,7 @@ const toState = (
     ...(record.styles === undefined || record.styles.length === 0 ? {} : { styles: record.styles }),
     hasServer: manifest?.server !== undefined,
     hasWeb: manifest?.web !== undefined,
+    hasSettings: manifest?.settingsSchema !== undefined,
     ...(serverFailure === undefined ? {} : { serverFailure }),
   };
 };

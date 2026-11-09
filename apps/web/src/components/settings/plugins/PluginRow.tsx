@@ -44,7 +44,7 @@ export function PluginRow({
     pluginSettingsPanelAtom(pluginContributionKey(environmentId, plugin.id)),
   );
   const webFailure = useAtomValue(pluginWebFailuresAtom(plugin.id)).get(environmentId);
-  const hasSettings = customSettings !== undefined || plugin.hasSettings === true;
+  const hasSettings = customSettings !== undefined || plugin.hasSettings;
   const whileBusy = async (action: () => Promise<unknown>) => {
     setBusy(true);
     await action();
