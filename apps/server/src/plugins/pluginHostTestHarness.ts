@@ -23,7 +23,7 @@ export const fixturesDir = new URL("../../../../packages/plugin-sdk/fixtures/", 
 export const layerConfig = () =>
   Layer.fresh(ServerConfig.layerTest(process.cwd(), { prefix: "t3code-plugin-host-test-" }));
 
-// Every list of theme folders the host published, for the themes case.
+// Every list of theme folders the host published, for the web files case.
 export const publishedThemeDirectories: Array<ReadonlyArray<string>> = [];
 const layerThemes = Layer.mock(EnvironmentTheme.EnvironmentThemeService)({
   setPluginThemeDirectories: (directories) =>

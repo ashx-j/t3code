@@ -8,10 +8,10 @@ A plugin is a folder with a `t3-plugin.json` manifest
 
 ## Trust and failure
 
-Plugins are trusted code the user chose to install. Server entries run in the server process, with
-no sandbox. Manifest `permissions` are shown on the plugin's row and not enforced, and
-`settings.get()` hands plugins secret values in plain text. Do not shape the API around a future
-sandbox.
+Plugins are trusted code the user chose to install. Server entries run in the server process and web
+bundles run as React code in the page with every connection's credentials, with no sandbox. Manifest
+`permissions` are shown on the plugin's row and not enforced, and `settings.get()` hands plugins
+secret values in plain text. Do not shape the API around a future sandbox.
 
 The host isolates failure instead. A plugin that throws or hangs while starting is marked failed,
 and a throw in a handler fails that call. Node exits on a rejection nobody handles, so every promise
@@ -97,22 +97,31 @@ when Settings asks.
 
 ## Clients
 
-Each browser keeps its own choice of the environments it loads plugin styles and themes from, the
-main one by default.
+Each browser keeps its own choice of the environments it loads plugin UI from, the main one by
+default, because that code runs with every connection's credentials. Right panels show only in their
+environment's threads.
 
 Rows carry `hasSettings` rather than the settings schema. Every client, read-only ones and the
 idle watcher included, gets a plugin's row again on each status change, and only the settings
 form needs the schema, which it fetches with `plugins.settings.get`.
 
-With no plugins, the plugin system adds about 5.7 KB of minified JS to the startup chunks of a
-production build, about 2.1 KB gzipped, and no new chunks. Most of it is the plugin contract
+With no plugins, the plugin system adds about 9.2 KB of minified JS to the startup chunks of a
+production build, about 3.5 KB gzipped, in 3 more chunks. Most of it is the plugin contract
 schemas and RPC definitions,
-[`PluginLoaderStarter`](../../apps/web/src/plugins/PluginLoaderStarter.tsx) and `pluginFollow`.
-Once the app is idle, the starter downloads a 1.2 KB watcher and follows `plugins.subscribeStates`
-for each chosen environment, a stream of its own because the server config stream would resend the
-whole config on every plugin change. It downloads a small styles chunk only when an active plugin
-has a `styles/` folder. The server starts plugins after it is listening. The mobile app shows no
-plugin settings, styles or themes.
+[`PluginLoaderStarter`](../../apps/web/src/plugins/PluginLoaderStarter.tsx), `pluginFollow` and
+the [`pluginUi.ts`](../../apps/web/src/plugins/pluginUi.ts) stub that app code reads plugin parts
+through. Once the app is idle, the starter downloads a 2 KB watcher and follows
+`plugins.subscribeStates` for each chosen environment, a stream of its own because the server
+config stream would resend the whole config on every plugin change. It downloads the web loader
+only when an active plugin has a web part, and a separate small styles chunk only when one has a
+`styles/` folder. The server starts plugins after it is listening.
+
+A bare `import(url)` cannot send credentials, so the loader fetches each bundle with the
+connection's credentials and imports it from a `blob:` URL, which the desktop CSP allows. Mobile
+release builds cannot load code, so the mobile app shows no plugin UI, settings or themes.
+
+Bundles get React and the UI kit from `globalThis.__t3PluginHost`, because a second React would
+not share T3's renderer.
 
 Plugin themes arrive over the server config stream after the first paint, so the client saves them
 in localStorage for the boot script in `index.html`. The server marks plugin themes, so the client

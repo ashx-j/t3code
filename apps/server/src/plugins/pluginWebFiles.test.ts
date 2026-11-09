@@ -22,6 +22,7 @@ import {
   fixturesDir,
   layerConfig,
   layerHost,
+  publishedThemeDirectories,
   stateOf,
   waitForStatuses,
   writeFile,
@@ -103,6 +104,43 @@ it.layer(NodeServices.layer)("PluginWebFiles", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("serves an active plugin's web files and themes, and stops when disabled", () =>
+    Effect.gen(function* () {
+      const helloWeb = PluginId.make("hello-web");
+      yield* writePluginsConfig({
+        enabled: { [helloWeb]: true },
+        devPaths: [`${fixturesDir}hello-web`],
+      });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        yield* waitForStatuses(host, { [helloWeb]: "active" });
+
+        const response = yield* served(host, helloWeb, "/web.js");
+        assert.strictEqual(response?.headers["content-type"], "text/javascript; charset=utf-8");
+        // The bundle's revision names its contents, so browsers keep that URL's copy for good.
+        const webRevision = stateOf(yield* host.list, helloWeb)?.webRevision ?? "";
+        assert.match(webRevision, /^[0-9a-f]{16}$/);
+        const revised = yield* served(host, helloWeb, "/web.js", webRevision);
+        assert.strictEqual(
+          revised?.headers["cache-control"],
+          "private, max-age=31536000, immutable",
+        );
+        assert.strictEqual(response?.headers["cache-control"], "no-store");
+        const themes = `${fixturesDir}hello-web/themes`;
+        assert.deepStrictEqual(publishedThemeDirectories.at(-1), [themes]);
+        // A reload hands its folder over once more, so its files are read again, without dropping
+        // it first: windows would flash T3's colors.
+        publishedThemeDirectories.length = 0;
+        yield* host.reload(helloWeb);
+        assert.deepStrictEqual(publishedThemeDirectories, [[themes]]);
+
+        yield* host.setEnabled(helloWeb, false);
+        assert.isUndefined(yield* served(host, helloWeb, "/web.js"));
+        assert.deepStrictEqual(publishedThemeDirectories.at(-1), []);
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
   it.effect.skipIf(!symlinksSupported)("reads no file a link takes out of the plugin", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -115,11 +153,14 @@ it.layer(NodeServices.layer)("PluginWebFiles", (it) => {
           name: "Linking",
           version: "0.1.0",
           engines: { t3: ">=0.1.0" },
+          web: "./web.js",
         }),
       );
       yield* writeFile(`${rootDir}/styles/base.css`, "body {}");
       yield* writeFile(`${stateDir}/outside/secret.css`, "Not the plugin's.");
+      yield* writeFile(`${stateDir}/outside/web.js`, "export default {};");
       yield* fs.symlink(`${stateDir}/outside/secret.css`, `${rootDir}/styles/secret.css`);
+      yield* fs.symlink(`${stateDir}/outside/web.js`, `${rootDir}/web.js`);
       yield* writePluginsConfig({ enabled: { linking: true } });
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
@@ -128,6 +169,7 @@ it.layer(NodeServices.layer)("PluginWebFiles", (it) => {
           state?.styles?.map(({ file }) => file),
           ["base.css"],
         );
+        assert.isUndefined(state?.webRevision);
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );

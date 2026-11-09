@@ -1,9 +1,9 @@
 # Plugins
 
-Plugins add features to T3 Code: themes, styles and tools for agents. A plugin belongs to one
-environment and runs inside that environment's T3 Code server, with the same access to your files,
-threads and credentials as T3 Code itself. A plugin's row lists the permissions it says it uses, but
-T3 Code doesn't enforce them. Install only plugins you trust.
+Plugins add features to T3 Code: right panels, themes, styles and tools for agents. A plugin belongs
+to one environment and runs inside that environment's T3 Code server, with the same access to your
+files, threads and credentials as T3 Code itself. A plugin's row lists the permissions it says it
+uses, but T3 Code doesn't enforce them. Install only plugins you trust.
 
 ## Add a plugin
 
@@ -75,11 +75,14 @@ folder per plugin. Their settings are in `plugin-data`, and `plugins.json` recor
 enabled. T3 Code reads a plugin's settings file once, so an edit you make to it by hand shows after
 T3 Code restarts.
 
-Plugin styles and themes load in the web and desktop apps. They load from the app's main
+Plugin UI, styles and themes load in the web and desktop apps. They load from the app's main
 environment, which is the desktop app's own server or the server the web app was opened from, and
 from any other environment you turn on under **Load plugin UI from** in **Settings → Plugins**. You
 can turn the main environment off there too. app.t3.codes and a desktop app with its local
-environment turned off have no main environment, so no plugin styles or themes load until you
-choose one. The choice applies to this browser only.
+environment turned off have no main environment, so no plugin UI loads until you choose one. The
+choice applies to this browser only. Each chosen environment's plugins run code in this window, with
+access to every environment this window is connected to, so choose only environments whose plugins
+you trust.
 
-The mobile app doesn't show plugin settings, styles or themes.
+A plugin's right panels show only in the threads of the plugin's own environment. The mobile app
+doesn't show plugin UI, settings or themes.

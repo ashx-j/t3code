@@ -200,8 +200,8 @@ export class PluginHost extends Context.Service<
       | PluginHandlerTimeoutError
     >;
     /**
-     * What an active plugin serves at `/api/plugins/<pluginId><path>`: a file in its `styles/`. A
-     * `revision` that names the file's contents lets it be cached.
+     * What an active plugin serves at `/api/plugins/<pluginId><path>`: its `web.js`, or a file in
+     * its `styles/`. A `revision` that names the file's contents lets it be cached.
      */
     readonly readWebFile: (input: {
       readonly pluginId: string;
@@ -395,10 +395,11 @@ const make = Effect.gen(function* () {
         },
       });
     }
-    const web = yield* webFiles.find(plugin);
+    const web = yield* webFiles.find(plugin, manifest.web);
     const started = {
       status: "active" as const,
       webFiles: web.folders,
+      ...(web.webRevision === undefined ? {} : { webRevision: web.webRevision }),
       styles: web.styles,
     };
     if (manifest.server === undefined) {
@@ -784,7 +785,12 @@ const make = Effect.gen(function* () {
     readWebFile: Effect.fn("PluginHost.readWebFile")(function* (request) {
       const record = yield* findRecord(request.pluginId);
       if (record?.status !== "active" || record.webFiles === undefined) return Option.none();
-      return yield* webFiles.read(record.webFiles, request.path, request.revision);
+      return yield* webFiles.read(
+        record.plugin.rootDir,
+        record.webFiles,
+        request.path,
+        request.revision,
+      );
     }),
     subscribe: (request) =>
       Stream.unwrap(

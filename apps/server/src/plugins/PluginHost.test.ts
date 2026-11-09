@@ -28,7 +28,6 @@ import {
   layerConfig,
   layerFileSystemWith,
   layerHost,
-  publishedThemeDirectories,
   stateOf,
   waitForStatuses,
   writeFile,
@@ -236,30 +235,6 @@ it.layer(NodeServices.layer)("PluginHost", (it) => {
           fs.readFileString(`${stateDir}/plugins.json`),
         );
         assert.deepStrictEqual(JSON.parse(saved).enabled, { [hello]: false });
-      }).pipe(Effect.provide(layerHost()));
-    }).pipe(Effect.provide(layerConfig())),
-  );
-
-  it.effect("publishes the theme folders of plugins that are on", () =>
-    Effect.gen(function* () {
-      const { stateDir } = yield* ServerConfig.ServerConfig;
-      const fs = yield* FileSystem.FileSystem;
-      const future = manifestJson("future", { engines: ">=999.0.0" });
-      yield* writeFile(`${stateDir}/plugins/future/t3-plugin.json`, future);
-      yield* writeFile(`${stateDir}/plugins/themed/t3-plugin.json`, manifestJson("themed"));
-      yield* writePluginsConfig({ enabled: { themed: true, future: true } });
-      yield* Effect.gen(function* () {
-        const host = yield* PluginHost.PluginHost;
-        const states = yield* waitForStatuses(host, { themed: "active", future: "failed" });
-        // One that needs a newer T3 fails when it starts, and offers no themes.
-        assert.strictEqual(stateOf(states, "future")?.failure?.stage, "compatibility");
-        const themes = `${yield* fs.realPath(`${stateDir}/plugins/themed`)}/themes`;
-        assert.deepStrictEqual(publishedThemeDirectories.at(-1), [themes]);
-        publishedThemeDirectories.length = 0;
-        yield* host.reload(PluginId.make("themed"));
-        assert.deepStrictEqual(publishedThemeDirectories, [[themes]]);
-        yield* host.setEnabled(PluginId.make("themed"), false);
-        assert.deepStrictEqual(publishedThemeDirectories.at(-1), []);
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );

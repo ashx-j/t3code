@@ -74,6 +74,8 @@ function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrationInpu
     "'self'",
     "'unsafe-inline'",
     "'wasm-unsafe-eval'",
+    // Only the page holds each environment's credentials, so plugin bundles it fetches run from blob URLs.
+    "blob:",
     ...(clerkOrigin ? [clerkOrigin] : []),
     "https://challenges.cloudflare.com",
   ];

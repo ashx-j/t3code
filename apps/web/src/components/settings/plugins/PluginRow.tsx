@@ -57,7 +57,7 @@ export function PluginRow({
             ? []
             : ["Some of its code is still running. Restarting T3 Code stops it."]),
         ]),
-    ...(webFailure === undefined ? [] : [`Styles failed: ${webFailure}`]),
+    ...(webFailure === undefined ? [] : [`Web part failed: ${webFailure}`]),
   ];
   const row = (
     <SettingsRow

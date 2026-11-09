@@ -44,7 +44,7 @@ export function PluginUiEnvironmentRow() {
   return (
     <SettingsRow
       title="Load plugin UI from"
-      description="The chosen servers' plugins can restyle this window."
+      description="The chosen servers' plugins run code in this window."
       control={
         <Menu>
           <MenuTrigger

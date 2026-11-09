@@ -35,7 +35,10 @@ const readChoices = (): PluginUiChoices => {
   }
 };
 
-/** Which environments this browser loads plugin UI from, kept in this browser alone. */
+/**
+ * Which environments this browser loads plugin UI from, kept in this browser alone because their
+ * plugin code runs in this window with every connection's credentials.
+ */
 export const pluginUiChoicesAtom = Atom.writable(readChoices, (ctx, choices: PluginUiChoices) => {
   try {
     if (choices.size === 0) choicesStorage()?.removeItem(CHOICES_KEY);
@@ -82,7 +85,7 @@ export const chosenPluginUiEnvironments = (
 
 /**
  * The chosen environments that run plugins, in `chosenPluginUiEnvironments` order. Each loads its
- * plugins' styles and themes.
+ * plugins' web halves and styles.
  */
 export const pluginUiEnvironmentsAtom = Atom.make((get): ReadonlyArray<EnvironmentId> => {
   const next = chosenPluginUiEnvironments(
