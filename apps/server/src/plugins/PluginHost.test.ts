@@ -411,6 +411,45 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
     }).pipe(Effect.provide(layerConfig())),
   );
 
+  it.effect("links a plugin folder by its server path, turned off like an install", () =>
+    Effect.gen(function* () {
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const folder = `${stateDir}/checkout/linked`;
+      yield* writeFile(`${folder}/t3-plugin.json`, manifestJson("linked"));
+      yield* writeFile(`${stateDir}/checkout/empty/README.md`, "not a plugin");
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const installer = yield* PluginInstaller.PluginInstaller;
+        yield* waitForStatuses(host, {});
+        const refusal = (target: string) =>
+          installer.link(target).pipe(
+            Effect.flip,
+            Effect.map((error) => error.message),
+          );
+
+        assert.strictEqual(
+          yield* refusal("checkout/linked"),
+          "Give the folder's absolute path on the server.",
+        );
+        assert.strictEqual(
+          yield* refusal(`${stateDir}/checkout/empty`),
+          "The folder has no t3-plugin.json.",
+        );
+        assert.include(yield* installer.link(`${folder}/`), {
+          id: PluginId.make("linked"),
+          source: "dev",
+          folder,
+          enabled: false,
+          status: "disabled",
+        });
+        assert.strictEqual(
+          yield* refusal(folder),
+          `linked is already linked from ${folder}. Unlink it first.`,
+        );
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
   it.effect("refuses a dropped folder that would replace a linked plugin", () =>
     Effect.gen(function* () {
       const { stateDir } = yield* ServerConfig.ServerConfig;

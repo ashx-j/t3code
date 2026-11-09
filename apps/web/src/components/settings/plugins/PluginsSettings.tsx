@@ -15,6 +15,7 @@ import {
   AddPluginButton,
   AddPluginDialog,
   InstallProblems,
+  LinkPluginFolderRow,
   usePluginInstaller,
 } from "./PluginInstallControls";
 import { PluginList } from "./PluginList";
@@ -130,6 +131,7 @@ function PluginsPage({ environment }: { readonly environment: EnvironmentPresent
             >
               <InstallProblems problems={installer.problems} />
             </SettingsRow>
+            <LinkPluginFolderRow environmentId={environment.environmentId} />
             <PluginUiEnvironmentRow />
           </PluginList>
         ) : (

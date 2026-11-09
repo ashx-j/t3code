@@ -68,8 +68,9 @@ describe("RPC authorization scopes", () => {
     }
   });
 
-  it("keeps enabling, reloading and configuring plugins, which runs their code, behind settings write", () => {
+  it("keeps linking, enabling, reloading and configuring plugins, which runs their code, behind settings write", () => {
     for (const method of [
+      WS_METHODS.pluginsLink,
       WS_METHODS.pluginsSetEnabled,
       WS_METHODS.pluginsReload,
       WS_METHODS.pluginsSettingsUpdate,

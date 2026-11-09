@@ -4,6 +4,7 @@ import {
   type PluginCreateUploadUrlInput,
   type PluginId,
   type PluginInvokeInput,
+  type PluginLinkInput,
   type PluginListInput,
   type PluginReloadInput,
   type PluginRescanInput,
@@ -50,6 +51,11 @@ export const makePluginRpcHandlers = (
     uploads.issueUrl.pipe(Effect.mapError((error) => new PluginError({ message: error.message }))),
   [WS_METHODS.pluginsRescan]: (_input: PluginRescanInput) =>
     pluginHost.rescan.pipe(Effect.mapError((error) => new PluginError({ message: error.message }))),
+  [WS_METHODS.pluginsLink]: (input: PluginLinkInput) =>
+    installer.link(input.folder).pipe(
+      Effect.map((plugin) => ({ plugin })),
+      Effect.mapError((error) => new PluginError({ message: error.message })),
+    ),
   [WS_METHODS.pluginsUninstall]: (input: PluginUninstallInput) =>
     installer
       .uninstall(input.pluginId)

@@ -49,6 +49,13 @@ export class PluginInstaller extends Context.Service<
       files: ReadonlyArray<PluginUploadFile>,
     ) => Effect.Effect<PluginState, PluginInstallError | PluginNotFoundError | PluginConfigError>;
     /**
+     * Loads the plugin in `folder`, an absolute path on the server, where it is, turned off like an
+     * install. Refuses a folder without a manifest this server can run, and an id already listed.
+     */
+    readonly link: (
+      folder: string,
+    ) => Effect.Effect<PluginState, PluginInstallError | PluginNotFoundError | PluginConfigError>;
+    /**
      * Stops a plugin and deletes its folder, settings, secrets and storage; a linked folder is
      * only forgotten. Refuses an id more than one folder has, whose data the other folders use.
      */
@@ -140,10 +147,10 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
 
   const readSourceManifest = (folder: string) =>
     fs.readFileString(path.join(folder, "t3-plugin.json")).pipe(
-      Effect.mapError(installFailed("The source has no t3-plugin.json.")),
+      Effect.mapError(installFailed("The folder has no t3-plugin.json.")),
       Effect.flatMap((raw) =>
         decodeManifestJson(raw).pipe(
-          Effect.mapError(installFailed("The source's t3-plugin.json is not a valid manifest.")),
+          Effect.mapError(installFailed("The folder's t3-plugin.json is not a valid manifest.")),
         ),
       ),
     );
@@ -320,6 +327,40 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
     "PluginInstaller.installFiles",
   )((files) => inHostScope(installOrigin({ files })));
 
+  const link: PluginInstaller["Service"]["link"] = Effect.fn("PluginInstaller.link")(
+    function* (input) {
+      // A relative path would resolve against wherever the server happened to start.
+      if (!path.isAbsolute(input)) {
+        return yield* new PluginInstallError({
+          reason: "Give the folder's absolute path on the server.",
+        });
+      }
+      const folder = path.resolve(input);
+      const manifest = yield* readSourceManifest(folder);
+      const reason = refusal(manifest);
+      if (reason !== undefined) return yield* new PluginInstallError({ reason });
+      yield* host.lifecycle(
+        Effect.gen(function* () {
+          const existing = (yield* host.plugins).find((plugin) => plugin.id === manifest.id);
+          if (existing !== undefined) {
+            return yield* new PluginInstallError({
+              reason:
+                existing.source === "dev"
+                  ? `${manifest.id} is already linked from ${existing.folder}. Unlink it first.`
+                  : `${manifest.id} is already installed. Remove it first.`,
+            });
+          }
+          yield* host.writeConfig((current) => ({
+            ...current,
+            devPaths: [...(current.devPaths ?? []), folder],
+            enabled: { ...current.enabled, [manifest.id]: false },
+          }));
+        }),
+      );
+      return yield* host.reload(manifest.id);
+    },
+  );
+
   const removeFromConfig = (pluginId: PluginId) =>
     host.writeConfig((current) => {
       const { [pluginId]: _removed, ...enabled } = current.enabled ?? {};
@@ -368,7 +409,7 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
   );
 
   return {
-    installer: PluginInstaller.of({ installFiles, uninstall }),
+    installer: PluginInstaller.of({ installFiles, link, uninstall }),
     recoverStaging,
   };
 });

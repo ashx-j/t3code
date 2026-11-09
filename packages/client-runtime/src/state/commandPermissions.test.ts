@@ -103,6 +103,7 @@ describe("command permissions", () => {
     WS_METHODS.pluginsReload,
     WS_METHODS.pluginsCreateUploadUrl,
     WS_METHODS.pluginsRescan,
+    WS_METHODS.pluginsLink,
     WS_METHODS.pluginsUninstall,
     WS_METHODS.pluginsSettingsUpdate,
   ])("requires the destination settings grant for %s", (method) =>
