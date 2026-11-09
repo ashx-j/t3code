@@ -22,6 +22,7 @@ import {
   fixturesDir,
   layerConfig,
   layerHost,
+  listStates,
   publishedThemeDirectories,
   stateOf,
   waitForStatuses,
@@ -118,7 +119,7 @@ it.layer(NodeServices.layer)("PluginWebFiles", (it) => {
         const response = yield* served(host, helloWeb, "/web.js");
         assert.strictEqual(response?.headers["content-type"], "text/javascript; charset=utf-8");
         // The bundle's revision names its contents, so browsers keep that URL's copy for good.
-        const webRevision = stateOf(yield* host.list, helloWeb)?.webRevision ?? "";
+        const webRevision = stateOf(yield* listStates(host), helloWeb)?.webRevision ?? "";
         assert.match(webRevision, /^[0-9a-f]{16}$/);
         const revised = yield* served(host, helloWeb, "/web.js", webRevision);
         assert.strictEqual(
@@ -195,7 +196,7 @@ it.layer(NodeServices.layer)("PluginWebFiles", (it) => {
           .pipe(Effect.flip);
         assert.strictEqual(call._tag, "PluginNoServerError");
         // In name order, which is the order clients apply them in.
-        const styles = stateOf(yield* host.list, stylesPlugin)?.styles ?? [];
+        const styles = stateOf(yield* listStates(host), stylesPlugin)?.styles ?? [];
         assert.deepStrictEqual(
           styles.map(({ file }) => file),
           ["base.css", "compact.css"],
@@ -210,7 +211,7 @@ it.layer(NodeServices.layer)("PluginWebFiles", (it) => {
         assert.isUndefined(yield* served(host, stylesPlugin, "/styles/..%2Ft3-plugin.json"));
 
         yield* host.setEnabled(stylesPlugin, false);
-        assert.isUndefined(stateOf(yield* host.list, stylesPlugin)?.styles);
+        assert.isUndefined(stateOf(yield* listStates(host), stylesPlugin)?.styles);
         assert.isUndefined(yield* base());
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),

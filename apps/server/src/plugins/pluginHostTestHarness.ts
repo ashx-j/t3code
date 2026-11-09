@@ -1,7 +1,11 @@
 // @effect-diagnostics preferSchemaOverJson:off - like the tests, it writes manifests as plain JSON.
 // The plugin host with its real stores and MCP tool registry, for its tests and the tests of the
 // modules it builds.
-import type { PluginState } from "@t3tools/contracts";
+import {
+  AuthOrchestrationReadScope,
+  AuthSettingsWriteScope,
+  type PluginState,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -88,12 +92,21 @@ export const writeInstalledPlugin = Effect.fn(function* (id: string, serverSourc
 export const stateOf = (states: ReadonlyArray<PluginState>, id: string) =>
   states.find((state) => state.id === id);
 
+/** The plugin lists a client that manages plugins gets, the current one first. */
+export const streamStates = (host: PluginHost.PluginHost["Service"]) =>
+  host
+    .streamForClient([AuthOrchestrationReadScope, AuthSettingsWriteScope])
+    .pipe(Stream.map(({ plugins }) => plugins));
+
+export const listStates = (host: PluginHost.PluginHost["Service"]) =>
+  streamStates(host).pipe(Stream.runHead, Effect.map(Option.getOrThrow));
+
 /** Resolves with the first list where every listed plugin has its expected status. */
 export const waitForStatuses = (
   host: PluginHost.PluginHost["Service"],
   expected: Readonly<Record<string, PluginState["status"]>>,
 ) =>
-  host.streamStates.pipe(
+  streamStates(host).pipe(
     Stream.filter((states) =>
       Object.entries(expected).every(([id, status]) => stateOf(states, id)?.status === status),
     ),

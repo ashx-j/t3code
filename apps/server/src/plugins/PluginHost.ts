@@ -136,14 +136,10 @@ export class PluginHandlerTimeoutError extends Schema.TaggedError<PluginHandlerT
 export class PluginHost extends Context.Service<
   PluginHost,
   {
-    readonly list: Effect.Effect<ReadonlyArray<PluginState>>;
-    /** The current list, then the whole list after every change. */
-    readonly streamStates: Stream.Stream<ReadonlyArray<PluginState>>;
-    /** `list` as a client with `scopes` sees it: server folder paths only if it manages plugins. */
-    readonly listForClient: (
-      scopes: ReadonlyArray<AuthEnvironmentScope>,
-    ) => Effect.Effect<PluginListResult>;
-    /** `listForClient` now, then again after every change. */
+    /**
+     * The plugins now, then again after every change, as a client with `scopes` sees them: server
+     * folder paths only if it manages plugins.
+     */
     readonly streamForClient: (
       scopes: ReadonlyArray<AuthEnvironmentScope>,
     ) => Stream.Stream<PluginListResult>;
@@ -695,9 +691,6 @@ const make = Effect.gen(function* () {
   );
 
   const service = PluginHost.of({
-    list: currentStates,
-    streamStates: pluginStates.stream,
-    listForClient: pluginStates.listForClient,
     streamForClient: pluginStates.streamForClient,
     setEnabled,
     reload,

@@ -26,7 +26,9 @@ import {
   layerConfig,
   layerFileSystemWith,
   layerHost,
+  listStates,
   stateOf,
+  streamStates,
   waitForStatuses,
   writeFile,
   writeInstalledPlugin,
@@ -95,7 +97,7 @@ const leakyServer = `module.exports = { activate(api) {
 
 /** The next failure outside a call that the plugin's row shows. */
 const nextServerFailure = (host: PluginHost.PluginHost["Service"], pluginId: PluginId) =>
-  host.streamStates.pipe(
+  streamStates(host).pipe(
     Stream.map((states) => stateOf(states, pluginId)?.serverFailure),
     Stream.filter((failure) => failure !== undefined),
     Stream.runHead,
@@ -324,14 +326,17 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         yield* host.reload(PluginId.make("stays"));
 
         assert.isTrue(yield* fs.exists(`${stays}/../../goes-cleaned`));
-        assert.isUndefined(stateOf(yield* host.list, "goes"));
+        assert.isUndefined(stateOf(yield* listStates(host), "goes"));
 
         // A folder copied in later with its id is a plugin the user hasn't seen, so it starts off,
         // and reloading the gone plugin still lists it.
         yield* writeInstalledPlugin("goes", `module.exports = { activate() {} };`);
         const missing = yield* host.reload(PluginId.make("arrives")).pipe(Effect.flip);
         assert.strictEqual(missing._tag, "PluginNotFoundError");
-        assert.include(stateOf(yield* host.list, "goes"), { status: "disabled", enabled: false });
+        assert.include(stateOf(yield* listStates(host), "goes"), {
+          status: "disabled",
+          enabled: false,
+        });
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
@@ -443,7 +448,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         const storage = yield* PluginStorage.PluginStorage;
         yield* waitForStatuses(host, { [id]: "active" });
         yield* storage.set(id, "kept", true);
-        const copies = host.list.pipe(
+        const copies = listStates(host).pipe(
           Effect.map((states) =>
             states
               .filter((state) => state.id === id)
@@ -485,7 +490,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         yield* waitForStatuses(host, { [id]: "active" });
 
         yield* installer.uninstall(id);
-        const left = (yield* host.list).filter((state) => state.id === id);
+        const left = (yield* listStates(host)).filter((state) => state.id === id);
         assert.deepStrictEqual(
           left.map((state) => [state.folder, state.status, state.enabled, state.failure]),
           [[`${stateDir}/plugins/twice-copy`, "disabled", false, undefined]],
@@ -508,7 +513,7 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
           scopes: operate,
         });
         assert.strictEqual(yield* nextServerFailure(host, leaky), "rejected in a timer");
-        assert.include(stateOf(yield* host.list, leaky), { status: "active" });
+        assert.include(stateOf(yield* listStates(host), leaky), { status: "active" });
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
@@ -546,7 +551,10 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
         yield* waitForStatuses(host, { [id]: "active" });
         yield* host.setEnabled(id, false);
         assert.strictEqual(yield* nextServerFailure(host, id), "left running");
-        assert.include(stateOf(yield* host.list, id), { enabled: false, status: "disabled" });
+        assert.include(stateOf(yield* listStates(host), id), {
+          enabled: false,
+          status: "disabled",
+        });
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
@@ -682,7 +690,7 @@ module.exports = { activate() {} };`,
           "Plugin hangs did not answer wait within 30 seconds.",
         );
         yield* Effect.promise(() => aborted.promise);
-        assert.include(stateOf(yield* host.list, id), { status: "active" });
+        assert.include(stateOf(yield* listStates(host), id), { status: "active" });
       }).pipe(Effect.provide(layerHost()));
       Reflect.deleteProperty(globalThis, "__t3PluginHostInvokeStarted");
       Reflect.deleteProperty(globalThis, "__t3PluginHostInvokeAborted");
@@ -824,7 +832,10 @@ module.exports = { activate() {} };`,
           yield* installer.installFiles([
             { path: "t3-plugin.json", contents: new TextEncoder().encode(notesManifest("1.1.0")) },
           ]);
-          assert.include(stateOf(yield* host.list, "notes"), { version: "1.1.0", enabled: false });
+          assert.include(stateOf(yield* listStates(host), "notes"), {
+            version: "1.1.0",
+            enabled: false,
+          });
           assert.deepStrictEqual(yield* fs.readDirectory(`${stateDir}/plugins`), ["My Notes"]);
           yield* installer.uninstall(PluginId.make("notes"));
           assert.isFalse(yield* fs.exists(`${stateDir}/plugins/My Notes`));
@@ -868,7 +879,7 @@ module.exports = { activate() {} };`,
           failed.message,
           "Upgrade 2.0.0 failed to start, so 1.0.0 is back. It failed with: 2.0.0 refuses to start",
         );
-        assert.include(stateOf(yield* host.list, "upgrade"), {
+        assert.include(stateOf(yield* listStates(host), "upgrade"), {
           version: "1.0.0",
           status: "active",
         });
@@ -897,13 +908,10 @@ module.exports = { activate() {} };`,
             claim: () => Effect.die("unused"),
           });
           const handlers = makePluginRpcHandlers(host, installer, uploads, scopes);
-          return Effect.all([
-            handlers[WS_METHODS.pluginsList]({}),
-            handlers[WS_METHODS.pluginsSubscribeStates]({}).pipe(
-              Stream.runHead,
-              Effect.map(Option.getOrThrow),
-            ),
-          ]).pipe(Effect.map((results) => results.flatMap((result) => result.plugins)));
+          return handlers[WS_METHODS.pluginsSubscribeStates]({}).pipe(
+            Stream.runHead,
+            Effect.map((first) => Option.getOrThrow(first).plugins),
+          );
         };
 
         for (const plugin of yield* listed([AuthOrchestrationReadScope])) {
@@ -953,7 +961,7 @@ module.exports = { activate() {} };`,
           "Upgrade 2.0.0 has a settingsSchema T3 Code cannot validate",
         );
         assert.include(unchecked.message, 'Missing definition "no"');
-        assert.include(stateOf(yield* host.list, "upgrade"), {
+        assert.include(stateOf(yield* listStates(host), "upgrade"), {
           version: "1.0.0",
           status: "active",
         });
@@ -1002,7 +1010,7 @@ module.exports = { activate() {} };`,
       yield* Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;
         yield* Deferred.await(reached);
-        const lists = yield* host.streamStates.pipe(
+        const lists = yield* streamStates(host).pipe(
           Stream.map((states) => states.map((state) => state.id)),
           Stream.take(2),
           Stream.runCollect,
@@ -1073,7 +1081,7 @@ module.exports = { activate() {} };`,
           cleanupGate.resolve();
           yield* Fiber.join(rescanning);
 
-          assert.strictEqual(stateOf(yield* host.list, "slow")?.status, "active");
+          assert.strictEqual(stateOf(yield* listStates(host), "slow")?.status, "active");
           assert.strictEqual(
             yield* host.invoke({
               pluginId: PluginId.make("slow"),

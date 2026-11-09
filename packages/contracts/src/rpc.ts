@@ -569,7 +569,6 @@ export const WS_METHODS = {
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
 
-  pluginsList: "plugins.list",
   pluginsSubscribeStates: "plugins.subscribeStates",
   pluginsSetEnabled: "plugins.setEnabled",
   pluginsReload: "plugins.reload",
@@ -1985,12 +1984,6 @@ const WsScheduledTasksGetWebhookDeliveryRpc = Rpc.make(
 
 const PluginRpcError = Schema.Union([PluginError, EnvironmentAuthorizationError]);
 
-const WsPluginsListRpc = Rpc.make(WS_METHODS.pluginsList, {
-  payload: PluginListInput,
-  success: PluginListResult,
-  error: PluginRpcError,
-});
-
 /** The current list, then the whole list again after every change. */
 const WsPluginsSubscribeStatesRpc = Rpc.make(WS_METHODS.pluginsSubscribeStates, {
   payload: PluginListInput,
@@ -2141,7 +2134,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsSecretsAnswerRequestRpc,
   WsScheduledTasksListWebhookDeliveriesRpc,
   WsScheduledTasksGetWebhookDeliveryRpc,
-  WsPluginsListRpc,
   WsPluginsSubscribeStatesRpc,
   WsPluginsSetEnabledRpc,
   WsPluginsReloadRpc,

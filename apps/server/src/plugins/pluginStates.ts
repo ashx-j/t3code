@@ -150,13 +150,6 @@ export const makePluginStates = Effect.fn("PluginStates.make")(function* (input:
      * leave it unsent.
      */
     publish: Effect.uninterruptible(publishUnderLock),
-    /** The current list, then the whole list after every change. */
-    stream,
-    listForClient: Effect.fn("PluginHost.listForClient")(function* (
-      scopes: ReadonlyArray<AuthEnvironmentScope>,
-    ) {
-      return forClient(scopes)(yield* current);
-    }),
     streamForClient: (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
       stream.pipe(Stream.map(forClient(scopes))),
   };

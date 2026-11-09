@@ -34,7 +34,6 @@ export const makePluginRpcHandlers = (
   uploads: PluginUploads.PluginUploads["Service"],
   scopes: ReadonlyArray<AuthEnvironmentScope>,
 ) => ({
-  [WS_METHODS.pluginsList]: (_input: PluginListInput) => pluginHost.listForClient(scopes),
   [WS_METHODS.pluginsSubscribeStates]: (_input: PluginListInput) =>
     pluginHost.streamForClient(scopes),
   [WS_METHODS.pluginsSetEnabled]: (input: PluginSetEnabledInput) =>
