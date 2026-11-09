@@ -179,7 +179,6 @@ const UPLOAD_LIMITS = Multipart.limitsServices({
 const NOT_AN_UPLOAD = "The request is not a plugin folder.";
 const text = (body: string, status: number) => HttpServerResponse.text(body, { status });
 
-// Why the route refused an upload's body, with the status it answers.
 class PluginUploadBodyError extends Schema.TaggedError<PluginUploadBodyError>()(
   "PluginUploadBodyError",
   { status: Schema.Literals([400, 413]), reason: Schema.String },
@@ -198,7 +197,6 @@ const decodePath = (name: string) => {
   }
 };
 
-/** `POST <PLUGIN_UPLOAD_ROUTE_PREFIX>/<token>`: installs the folder like `PluginInstaller.installFiles`. */
 export const layerRoute = HttpRouter.add(
   "POST",
   `${PLUGIN_UPLOAD_ROUTE_PREFIX}/*`,

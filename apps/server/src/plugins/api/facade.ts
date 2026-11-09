@@ -14,7 +14,6 @@ import type { PluginActivation } from "../PluginApi.ts";
 
 const MAX_ERROR_CHARS = 500;
 
-/** A plugin error's text for logs, states and replies, bounded. */
 export const errorText = (cause: unknown) => {
   let text = "Unknown error";
   try {
@@ -26,7 +25,6 @@ export const errorText = (cause: unknown) => {
   return text.slice(0, MAX_ERROR_CHARS);
 };
 
-/** Plugin code threw or rejected. Its message is the plugin's own. */
 export class PluginCodeError extends Schema.TaggedError<PluginCodeError>()("PluginCodeError", {
   cause: Schema.Defect(),
 }) {
@@ -42,12 +40,10 @@ export class PluginCodeError extends Schema.TaggedError<PluginCodeError>()("Plug
  */
 export const pluginCodeScope = new NodeAsyncHooks.AsyncLocalStorage<PluginId>();
 
-/** What every facade group needs from the activation it belongs to. */
 export interface FacadeContext {
   readonly pluginId: PluginId;
   readonly activation: PluginActivation;
   readonly context: Context.Context<never>;
-  /** Runs the plugin's own code, such as a handler, in its scope. */
   readonly asPlugin: <A>(run: () => A) => A;
   /**
    * Runs an effect as a Promise that rejects with an `Error` carrying the failure's `_tag` as `code`.
@@ -69,7 +65,6 @@ const forPlugin = <A>(promise: Promise<A>): Promise<A> => {
   return promise;
 };
 
-/** A plugin API call refused before it ran, such as one with a bad argument. */
 export const refused = (error: Error): Promise<never> => forPlugin(Promise.reject(error));
 
 /** Carries its plugin, so a failure no plugin code handles is still the plugin's. */
@@ -84,7 +79,6 @@ export class PluginApiCallError extends Error {
   }
 }
 
-/** Completes when `signal` aborts, at once if it already has. */
 export const abortEffect = (signal: AbortSignal) =>
   Effect.callback<void>((resume) => {
     const onAbort = () => resume(Effect.void);

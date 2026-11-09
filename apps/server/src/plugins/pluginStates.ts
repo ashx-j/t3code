@@ -22,7 +22,6 @@ import type { PluginFailures } from "./pluginFailures.ts";
 import type { PluginsConfigFile } from "./pluginsConfig.ts";
 import type { PluginWebFolders } from "./pluginWebFiles.ts";
 
-/** What the host knows about one listed copy of a plugin. */
 export interface PluginRecord {
   readonly plugin: DiscoveredPlugin;
   readonly status: PluginStatus;

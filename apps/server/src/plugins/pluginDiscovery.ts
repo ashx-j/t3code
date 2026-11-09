@@ -57,7 +57,6 @@ interface PluginLocation {
   readonly source: PluginSource;
 }
 
-/** A plugin directory, with its manifest when it could be read and decoded. */
 export type DiscoveredPlugin = PluginLocation &
   (
     | { readonly manifest: PluginManifest; readonly unknownKeys?: ReadonlyArray<string> }

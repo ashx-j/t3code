@@ -28,7 +28,6 @@ export const makePluginFailures = Effect.gen(function* () {
   const waiting = new Set<PluginId>();
 
   return {
-    /** Looks up a plugin's server failure for the start `revision`. */
     current: Effect.gen(function* () {
       const server = yield* Ref.get(serverFailures);
       return (pluginId: PluginId, revision: number | undefined) => {
@@ -69,7 +68,6 @@ export const makePluginFailures = Effect.gen(function* () {
       });
       return true;
     }),
-    /** Forgets the plugin's server failures, as a stop does. */
     clearServer: (pluginId: PluginId) =>
       Ref.update(serverFailures, (all) => {
         const next = new Map(all);

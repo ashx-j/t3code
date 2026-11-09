@@ -39,7 +39,6 @@ export interface PluginWebFile {
   readonly body: Uint8Array;
 }
 
-/** Finds what a starting plugin serves to its web half, and reads those files for the host. */
 export const makePluginWebFiles = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -156,7 +155,8 @@ export const makePluginWebFiles = Effect.gen(function* () {
     return Option.some<PluginWebFile>({
       headers: {
         "content-type": WEB_CONTENT_TYPES[extension] ?? "application/octet-stream",
-        // Sandboxed like T3's own SVG assets, so one opened as a page can't run script on T3's origin.
+        // Sandboxed like T3's own SVG assets, so one opened as a page runs no script on T3's
+        // origin.
         ...(extension === ".svg" ? { "content-security-policy": SVG_CONTENT_SECURITY_POLICY } : {}),
         "cache-control":
           located.revisioned && revision !== undefined && revision === contentRevision(body)

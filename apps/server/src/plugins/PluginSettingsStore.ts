@@ -102,7 +102,6 @@ export class PluginSettingsStore extends Context.Service<
     >;
     /** The plugin view after each successful `update` of that plugin. */
     readonly changes: (pluginId: PluginId) => Stream.Stream<Schema.JsonObject>;
-    /** Deletes the plugin's settings file and every secret it saved. */
     readonly clear: (pluginId: PluginId) => Effect.Effect<void, PluginSettingsPersistenceError>;
   }
 >()("t3/plugins/PluginSettingsStore") {}
@@ -209,7 +208,6 @@ const compileSettingsSchema = (settingsSchema: Schema.JsonObject) =>
 const importerReason = (cause: unknown) =>
   (cause instanceof Error ? cause.message : String(cause)).slice(0, MAX_SCHEMA_REASON_LENGTH);
 
-/** Why settings cannot be validated against `settingsSchema`, or `undefined` when they can. */
 export const settingsSchemaProblem = (settingsSchema: Schema.JsonObject) => {
   const compiled = compileSettingsSchema(settingsSchema);
   return Result.isFailure(compiled) ? importerReason(compiled.failure) : undefined;

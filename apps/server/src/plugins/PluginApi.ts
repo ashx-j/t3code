@@ -25,7 +25,6 @@ export const MAX_MESSAGE_KILOBYTES = 256;
 export const jsonKilobytes = (value: Schema.Json) =>
   Math.ceil(utf8.encode(encodeJson(value)).byteLength / 1024);
 
-/** Everything one activation registered. The host routes calls through it and tears it down. */
 export interface PluginActivation {
   readonly methods: Map<
     string,
@@ -57,7 +56,6 @@ const assertActive = (activation: PluginActivation) => {
   }
 };
 
-/** The host services the facade reaches. The host builds this once and shares it. */
 export interface PluginApiServices {
   readonly settings: PluginSettingsStore.PluginSettingsStore["Service"];
   readonly storage: PluginStorage.PluginStorage["Service"];

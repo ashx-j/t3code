@@ -27,7 +27,6 @@ export function PluginSettingsRows({
   return <PluginCustomSettings entry={customSettings} />;
 }
 
-/** A settings panel the plugin's web bundle drew instead of the generated form. */
 function PluginCustomSettings(props: { readonly entry: PluginSettingsPanelEntry }) {
   const Panel = props.entry.component;
   return (

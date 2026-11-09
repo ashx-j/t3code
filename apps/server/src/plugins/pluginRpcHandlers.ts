@@ -28,7 +28,6 @@ const toRpcError = (pluginId: PluginId) => (error: { readonly message: string })
     ? rpcAuthorizationError(error.requiredScope)
     : new PluginError({ message: error.message, pluginId });
 
-/** The `plugins.*` WebSocket handlers. `scopes` are the connected session's. */
 export const makePluginRpcHandlers = (
   pluginHost: PluginHost.PluginHost["Service"],
   installer: PluginInstaller.PluginInstaller["Service"],
