@@ -17,6 +17,7 @@ import { HttpClient, HttpClientRequest, HttpRouter } from "effect/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
+import { assetResponseHeaders } from "../http.ts";
 import * as PluginHost from "./PluginHost.ts";
 import {
   fixturesDir,
@@ -177,6 +178,42 @@ it.layer(NodeServices.layer)("PluginWebFiles", (it) => {
           ["base.css"],
         );
         assert.isUndefined(state?.webRevision);
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
+  it.effect("serves a plugin's SVG under the sandbox policy T3's own SVG assets get", () =>
+    Effect.gen(function* () {
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const rootDir = `${stateDir}/plugins/drawing`;
+      yield* writeFile(
+        `${rootDir}/t3-plugin.json`,
+        JSON.stringify({
+          id: "drawing",
+          name: "Drawing",
+          version: "0.1.0",
+          engines: { t3: ">=0.1.0" },
+          web: "./web.js",
+        }),
+      );
+      yield* writeFile(`${rootDir}/web.js`, "export default {};");
+      yield* writeFile(
+        `${rootDir}/assets/icon.svg`,
+        '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
+      );
+      yield* writePluginsConfig({ enabled: { drawing: true } });
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        yield* waitForStatuses(host, { drawing: "active" });
+        const icon = yield* served(host, "drawing", "/assets/icon.svg");
+        assert.strictEqual(
+          icon?.headers["content-security-policy"],
+          assetResponseHeaders("icon.svg")["Content-Security-Policy"],
+        );
+        assert.notProperty(
+          (yield* served(host, "drawing", "/web.js"))?.headers,
+          "content-security-policy",
+        );
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );

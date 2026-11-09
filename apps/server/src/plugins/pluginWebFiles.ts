@@ -7,6 +7,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
+import { SVG_CONTENT_SECURITY_POLICY } from "../http.ts";
 import type { DiscoveredPlugin } from "./pluginDiscovery.ts";
 
 const WEB_CONTENT_TYPES: Readonly<Record<string, string>> = {
@@ -151,10 +152,12 @@ export const makePluginWebFiles = Effect.gen(function* () {
     const found = yield* readWithin(located.within, located.file);
     if (Option.isNone(found)) return Option.none<PluginWebFile>();
     const { real, body } = found.value;
+    const extension = path.extname(real).toLowerCase();
     return Option.some<PluginWebFile>({
       headers: {
-        "content-type":
-          WEB_CONTENT_TYPES[path.extname(real).toLowerCase()] ?? "application/octet-stream",
+        "content-type": WEB_CONTENT_TYPES[extension] ?? "application/octet-stream",
+        // Sandboxed like T3's own SVG assets, so one opened as a page can't run script on T3's origin.
+        ...(extension === ".svg" ? { "content-security-policy": SVG_CONTENT_SECURITY_POLICY } : {}),
         "cache-control":
           located.revisioned && revision !== undefined && revision === contentRevision(body)
             ? "private, max-age=31536000, immutable"
