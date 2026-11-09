@@ -70,7 +70,12 @@ export interface PluginLogger {
  * `Rpc` types the methods and channels the web half calls.
  */
 export interface PluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
-  readonly version: 1;
+  /**
+   * This API's version, 1 so far. T3 raises it when the API gains a member, whose doc then names
+   * the version that added it, so a plugin can check it before using a member an older T3 lacks.
+   * To refuse older T3 releases outright, set `engines.t3` in the manifest.
+   */
+  readonly version: number;
   readonly id: string;
   readonly rootDir: string;
   readonly log: PluginLogger;

@@ -41,7 +41,12 @@ export interface WebPluginCommand {
  * types the calls into the plugin's server half.
  */
 export interface WebPluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
-  readonly version: 1;
+  /**
+   * This API's version, 1 so far. T3 raises it when the API gains a member, whose doc then names
+   * the version that added it, so a plugin can check it before using a member an older T3 lacks.
+   * To refuse older T3 releases outright, set `engines.t3` in the manifest.
+   */
+  readonly version: number;
   readonly id: string;
   /** The environment whose server this plugin was loaded from. */
   readonly environmentId: string;
