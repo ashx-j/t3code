@@ -36,7 +36,9 @@ export interface WebPluginCommand {
 
 /**
  * T3's own parts a plugin can draw its own way with `ui.replace`. Each piece is a React element T3
- * has already wired up: place it, wrap it or leave it out. `original` is T3's own drawing.
+ * has already wired up: place it, wrap it or leave it out. `original` is T3's own drawing. T3 may
+ * add pieces to a part, but never removes or merges one. A change that has to gives the part a new
+ * name, and T3 then skips replacements of the old name and draws its own part.
  */
 export interface WebPluginParts {
   /**
@@ -158,8 +160,9 @@ export interface WebPluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
   readonly ui: {
     /**
      * Draws one of T3's parts until the plugin unloads. When several plugins replace the same
-     * part, the one whose id sorts first wins. If the component throws, T3 draws its own part.
-     * Added in version 2.
+     * part, the one whose id sorts first wins, and the others' rows in Settings say so. A part this
+     * T3 doesn't have is skipped with a note on the row. If the component throws, T3 draws its own
+     * part. A plugin on in several environments draws from the first. Added in version 2.
      */
     readonly replace: <Part extends keyof WebPluginParts>(
       part: Part,

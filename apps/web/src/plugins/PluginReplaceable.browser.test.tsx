@@ -6,6 +6,8 @@ import { render } from "../../test/render";
 import { AppAtomRegistryProvider, appAtomRegistry } from "../rpc/atomRegistry";
 import { PluginReplaceable } from "./PluginReplaceable";
 import {
+  type PluginPartName,
+  pluginPartNotesAtom,
   pluginReplacementAtoms,
   pluginWebFailuresAtom,
   registerPluginReplacement,
@@ -70,6 +72,20 @@ describe("PluginReplaceable", () => {
     expect(appAtomRegistry.get(pluginReplacementAtoms["composer.controls"])?.owner.pluginId).toBe(
       "restyle",
     );
+    expect(appAtomRegistry.get(pluginPartNotesAtom("zz-later")).get(owner.environmentId)).toEqual([
+      "Restyle draws the composer's control row instead.",
+    ]);
+    // A part this T3 doesn't have, such as one a newer T3 renamed, is skipped without failing.
+    using _renamed = {
+      [Symbol.dispose]: registerPluginReplacement(
+        "composer.footer" as PluginPartName,
+        () => <p>Renamed</p>,
+        owner,
+      ),
+    };
+    expect(appAtomRegistry.get(pluginPartNotesAtom("restyle")).get(owner.environmentId)).toEqual([
+      'This version of T3 Code has no "composer.footer" part to draw.',
+    ]);
   });
 
   it("draws T3's own part when the replacement throws, and says so on the plugin's row", async () => {

@@ -229,26 +229,70 @@ export const pluginPartReplacedAtoms: { readonly [Part in PluginPartName]: Atom.
   "app.sidebar": Atom.make((get) => get(pluginReplacementAtoms["app.sidebar"]) !== undefined),
 };
 
-/** Draws `part` with a plugin's component; returns the function that removes it. */
+const PART_LABELS: { readonly [Part in PluginPartName]: string } = {
+  "composer.controls": "the composer's control row",
+  "app.pageFrame": "the Settings frame",
+  "app.sidebar": "the sidebar",
+};
+
+// Parts a plugin asked to draw that this T3 doesn't have, as `PluginOwner`s.
+const unknownParts = new Map<PluginOwner, string>();
+
+const bumpReplacements = () =>
+  appAtomRegistry.set(replacementsVersionAtom, appAtomRegistry.get(replacementsVersionAtom) + 1);
+
+/**
+ * Draws `part` with a plugin's component; returns the function that removes it. A part this T3
+ * doesn't have is skipped with a note, because T3 renames a part instead of removing its pieces.
+ */
 export function registerPluginReplacement<Part extends PluginPartName>(
   part: Part,
   component: ComponentType<PluginPartProps<Part>>,
   owner: PluginOwner,
 ): () => void {
   if (!Object.hasOwn(replacements, part)) {
-    throw new TypeError(`"${part}" is not a part plugins can replace.`);
+    const note = { ...owner };
+    unknownParts.set(note, part);
+    bumpReplacements();
+    return () => {
+      if (unknownParts.delete(note)) bumpReplacements();
+    };
   }
   const list = replacements[part];
   const entry = { component, owner };
   list.push(entry);
-  appAtomRegistry.set(replacementsVersionAtom, appAtomRegistry.get(replacementsVersionAtom) + 1);
+  bumpReplacements();
   return () => {
     const index = list.indexOf(entry);
     if (index === -1) return;
     list.splice(index, 1);
-    appAtomRegistry.set(replacementsVersionAtom, appAtomRegistry.get(replacementsVersionAtom) + 1);
+    bumpReplacements();
   };
 }
+
+/** Why parts a plugin asked to draw show T3's or another plugin's drawing, by environment. */
+export const pluginPartNotesAtom = Atom.family((pluginId: string) =>
+  Atom.make((get): ReadonlyMap<string, ReadonlyArray<string>> => {
+    get(replacementsVersionAtom);
+    const notes = new Map<string, Set<string>>();
+    const add = (environmentId: string, note: string) =>
+      notes.set(environmentId, (notes.get(environmentId) ?? new Set()).add(note));
+    for (const part of Object.keys(replacements) as Array<PluginPartName>) {
+      const winner = get(pluginReplacementAtoms[part])?.owner;
+      for (const { owner } of replacements[part]) {
+        if (owner.pluginId !== pluginId || winner === undefined || winner.pluginId === pluginId) {
+          continue;
+        }
+        add(owner.environmentId, `${winner.pluginName} draws ${PART_LABELS[part]} instead.`);
+      }
+    }
+    for (const [owner, part] of unknownParts) {
+      if (owner.pluginId !== pluginId) continue;
+      add(owner.environmentId, `This version of T3 Code has no "${part}" part to draw.`);
+    }
+    return new Map([...notes].map(([environmentId, set]) => [environmentId, [...set]]));
+  }),
+);
 
 // The plugins, by contribution key, that asked the composer to fold on scroll.
 const collapseOnScrollRequests = new Set<string>();

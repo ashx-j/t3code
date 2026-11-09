@@ -279,12 +279,13 @@ function makeWebPluginApi({
     },
     ui: {
       replace: (part, component) => {
+        if (!appWide) return;
         track(registerPluginReplacement(part, component, owner));
       },
     },
     composer: {
       setCollapseOnScroll: (enabled) => {
-        if (!active()) return;
+        if (!active() || !appWide) return;
         const key = pluginContributionKey(environmentId, pluginId);
         setPluginComposerCollapseOnScroll(key, enabled === true);
         if (!collapseCleanupTracked) {

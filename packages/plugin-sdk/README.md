@@ -179,8 +179,8 @@ wrong method name, input or value fails to typecheck in either half.
 
 The app can load web halves from several environments at once. Right panels show only in the threads
 of the environment the plugin runs on, which `api.environmentId` names. When your plugin is on in
-several of them, its commands and `injectStyles` take effect from only the first, the main one when
-it's on there.
+several of them, its commands, `injectStyles`, `ui.replace` and `composer.setCollapseOnScroll` take
+effect from only the first, the main one when it's on there.
 
 Register right panels inside `activate`. When the app restores a panel that was open, the panel
 shows that the plugin is loading until `activate` finishes, then "Plugin not active" until a panel
@@ -190,13 +190,14 @@ with its name is registered.
 (`composer.controls`), the frame Settings and Usage open in (`app.pageFrame`) and the sidebar
 (`app.sidebar`). The component receives T3's own controls as ready-made pieces to arrange, plus
 `original`, T3's own drawing of the part; `WebPluginParts` lists them. If your component throws, T3
-draws its own part. `api.composer.setCollapseOnScroll(true)` folds the composer to one line on wide
-screens while the timeline is scrolled up, as it does on phones. Both arrived in API version 2.
-[`examples/classic-composer`](./examples/classic-composer) moves the composer's controls back to
-their layout from before T3's redesign and folds the composer on scroll.
-[`examples/settings-pages`](./examples/settings-pages) shows Settings in place of the thread
-(`app.pageFrame`'s `page`) and lists its sections in the sidebar, with Back at the bottom
-(`app.sidebar`'s `nav` and `back`).
+draws its own part. Only 1 plugin draws a part: the one whose id sorts first, and the others' rows
+in Settings → Plugins say so. T3 may add pieces to a part but never removes or merges one. A change
+that has to renames the part, and T3 then skips replacements of the old name, with a note on your
+plugin's row, and draws its own part. `api.composer.setCollapseOnScroll(true)` folds the composer
+to one line on wide screens while the timeline is scrolled up, as it does on phones. Both arrived
+in API version 2. [`examples/settings-pages`](./examples/settings-pages) shows Settings in place of
+the thread (`app.pageFrame`'s `page`) and lists its sections in the sidebar, with Back at the
+bottom (`app.sidebar`'s `nav` and `back`).
 
 Build it with the Vite preset, which makes the bundle use T3 Code's own React, atoms, atom hooks and
 UI components instead of shipping copies:
