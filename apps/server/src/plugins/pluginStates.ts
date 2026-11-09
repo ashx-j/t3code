@@ -3,8 +3,8 @@ import {
   AuthSettingsWriteScope,
   type PluginFailure,
   type PluginManifest,
+  type PluginListResult,
   type PluginState,
-  type PluginStatesEvent,
   type PluginStatus,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -44,24 +44,6 @@ const withoutServerPaths = (state: PluginState): PluginState => {
 };
 const managesPlugins = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
   scopes.includes(AuthSettingsWriteScope);
-
-interface ClientList {
-  readonly plugins: ReadonlyArray<PluginState>;
-}
-
-// Compared per subscriber, since each one sees its own view of the list.
-const statesEvent = (
-  previous: ClientList | undefined,
-  next: ClientList,
-): PluginStatesEvent | undefined => {
-  if (previous === undefined) return { _tag: "snapshot", ...next };
-  const rows = next.plugins.flatMap((plugin, index) =>
-    Equal.equals(plugin, previous.plugins[index]) ? [] : [{ index, plugin }],
-  );
-  return rows.length === 0 && next.plugins.length === previous.plugins.length
-    ? undefined
-    : { _tag: "changed", length: next.plugins.length, rows };
-};
 
 const toState = (
   record: PluginRecord,
@@ -157,7 +139,7 @@ export const makePluginStates = Effect.fn("PluginStates.make")(function* (input:
   );
   const forClient =
     (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
-    (plugins: ReadonlyArray<PluginState>): ClientList => ({
+    (plugins: ReadonlyArray<PluginState>): PluginListResult => ({
       plugins: managesPlugins(scopes) ? plugins : plugins.map(withoutServerPaths),
     });
 
@@ -176,15 +158,6 @@ export const makePluginStates = Effect.fn("PluginStates.make")(function* (input:
       return forClient(scopes)(yield* current);
     }),
     streamForClient: (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
-      stream.pipe(
-        Stream.map(forClient(scopes)),
-        Stream.mapAccum(
-          (): ClientList | undefined => undefined,
-          (previous, next) => {
-            const event = statesEvent(previous, next);
-            return [next, event === undefined ? [] : [event]];
-          },
-        ),
-      ),
+      stream.pipe(Stream.map(forClient(scopes))),
   };
 });
