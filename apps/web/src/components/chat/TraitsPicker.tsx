@@ -39,7 +39,7 @@ import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerControl, ComposerControlIcon, type ComposerControlSize } from "./ComposerControl";
-import { useComposerMenuProps } from "./composerEventScope";
+import type { useComposerMenuProps } from "./composerEventScope";
 import { useComposerMenuState } from "./useComposerMenuState";
 
 type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
@@ -487,6 +487,7 @@ export const TraitsPicker = memo(function TraitsPicker({
   hidden = false,
   disabled = false,
   triggerShortcuts,
+  menuProps,
   ...props
 }: TraitsSelectionInput & {
   size?: ComposerControlSize;
@@ -494,10 +495,10 @@ export const TraitsPicker = memo(function TraitsPicker({
   disabled?: boolean;
   /** Composer shortcuts that open this picker, as `data-composer-shortcut` names them. */
   triggerShortcuts?: string;
+  /** The composer's menu props, which return focus to the prompt after a pick. */
+  menuProps?: ReturnType<typeof useComposerMenuProps>;
 }) {
   const [isMenuOpen, setIsMenuOpen] = useComposerMenuState(hidden || disabled);
-  // Returns focus to the prompt after a pick, as the model and access pickers do.
-  const composerFloatingLayerProps = useComposerMenuProps();
   const traits = useTraitsSelection(props);
   if (!traits.hasAnyControls) {
     return null;
@@ -564,7 +565,7 @@ export const TraitsPicker = memo(function TraitsPicker({
         </TooltipTrigger>
         <TooltipPopup side="top">{triggerLabel}</TooltipPopup>
       </Tooltip>
-      <MenuPopup align="start" {...composerFloatingLayerProps}>
+      <MenuPopup align="start" {...menuProps}>
         <TraitsMenuContent {...props} />
       </MenuPopup>
     </Menu>

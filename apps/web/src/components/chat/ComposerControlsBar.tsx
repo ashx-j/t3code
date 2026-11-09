@@ -5,6 +5,7 @@ import { type AppModelOption } from "../../modelSelection";
 import { CircleAlertIcon } from "lucide-react";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { ComposerControl } from "./ComposerControl";
+import { useComposerMenuProps } from "./composerEventScope";
 import { TraitsPicker } from "./TraitsPicker";
 import {
   ComposerFooterModeControls,
@@ -141,6 +142,7 @@ export function ComposerControlsBar(props: {
     getModelDisabledReason,
     piece,
   } = props;
+  const effortMenuProps = useComposerMenuProps();
   const accessMatchesDefault = compatibleRuntimeMode === defaultRuntimeMode;
   const {
     accessDisplay,
@@ -288,6 +290,7 @@ export function ComposerControlsBar(props: {
             hidden={composerControlsHidden}
             disabled={providerCatalogPending || isSendBusy}
             triggerShortcuts="composer.effort"
+            menuProps={effortMenuProps}
           />
         ) : null;
       case "access":
