@@ -35,8 +35,8 @@ import { pluginUiEnvironmentsAtom } from "./plugins/pluginFollow";
 import { appAtomRegistry, subscribeAtomChanges } from "./rpc/atomRegistry";
 import {
   primaryServerConfigEventAtom,
-  primaryServerEnvironmentThemesAtom,
   serverEnvironment,
+  themeServerEnvironmentThemesAtom,
 } from "./state/server";
 
 export { EMBER_THEME, GROVE_THEME, IRIS_THEME, OCEAN_THEME, T3_CHAT_THEME, THEME_COLOR_ROLES };
@@ -366,7 +366,7 @@ export function publishedThemeDefinitions(
 // loads from, as plugin styles do. Every reconnect snapshot delivers a fresh but usually identical
 // array; keeping the previous one skips regenerating palettes and repainting the document for it.
 const publishedThemesAtom = Atom.make((get): ReadonlyArray<EnvironmentTheme> => {
-  const next = get(primaryServerEnvironmentThemesAtom).filter((theme) => theme.fromPlugin !== true);
+  const next = get(themeServerEnvironmentThemesAtom).filter((theme) => theme.fromPlugin !== true);
   const ids = new Set(next.map((theme) => theme.id));
   for (const environmentId of get(pluginUiEnvironmentsAtom)) {
     const themes = get(serverEnvironment.configValueAtom(environmentId))?.environmentThemes ?? [];
@@ -1372,13 +1372,20 @@ export function getThemePreferenceMode(theme: ThemePreference): ThemeAppearance 
 }
 
 export function themeIdFromName(name: string): string {
-  const normalized = name
-    .trim()
-    .toLowerCase()
+  const label = name.trim().toLowerCase();
+  const normalized = label
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 48);
-  return normalized || "custom-theme";
+  if (normalized || !label) return normalized || "custom-theme";
+
+  // Names without ASCII letters or digits still need independent, stable ids.
+  let hash = 2_166_136_261;
+  for (let index = 0; index < label.length; index += 1) {
+    hash ^= label.charCodeAt(index);
+    hash = Math.imul(hash, 16_777_619);
+  }
+  return `theme-${(hash >>> 0).toString(36)}`;
 }
 
 export class ThemeLibraryStorageError extends Schema.TaggedError<ThemeLibraryStorageError>()(

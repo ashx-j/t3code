@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -104,7 +105,7 @@ const nextServerFailure = (host: PluginHost.PluginHost["Service"], pluginId: Plu
     Effect.map(Option.getOrThrow),
   );
 
-it.layer(NodeServices.layer)("PluginHost", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PluginHost", (it) => {
   it.effect("activates an enabled plugin and serves its methods with the caller's access", () =>
     Effect.gen(function* () {
       yield* enableHello;

@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { PluginId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -13,6 +14,7 @@ import * as Stream from "effect/Stream";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { SECRET_REDACTED } from "../settingsSecrets.ts";
 import * as PluginSettingsStore from "./PluginSettingsStore.ts";
@@ -38,7 +40,10 @@ const layerSecretStoreWithoutFolder = Layer.effect(
 );
 
 const layerTest = () =>
-  Layer.mergeAll(PluginSettingsStore.layer, ServerSettings.layer).pipe(
+  Layer.mergeAll(
+    PluginSettingsStore.layer,
+    ServerSettings.layer.pipe(Layer.provide(ManagedPolicy.layerTest())),
+  ).pipe(
     Layer.provideMerge(layerSecretStoreWithoutFolder),
     Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
     Layer.provideMerge(
@@ -57,7 +62,7 @@ const readSettingsFile = Effect.gen(function* () {
   );
 });
 
-it.layer(NodeServices.layer)("PluginSettingsStore", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PluginSettingsStore", (it) => {
   it.effect("rejects values outside the schema without writing them", () =>
     Effect.gen(function* () {
       const store = yield* PluginSettingsStore.PluginSettingsStore;

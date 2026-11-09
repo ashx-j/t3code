@@ -6,7 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -99,7 +99,7 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
   const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const settingsStore = yield* PluginSettingsStore.PluginSettingsStore;
   const storage = yield* PluginStorage.PluginStorage;
   const scope = yield* Effect.scope;
@@ -285,7 +285,7 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
 
   /** Copies `origin` into a new staging folder and returns the folder and what it holds. */
   const stage = Effect.fn("PluginInstaller.stage")(function* (origin: InstallOrigin) {
-    const stagingDir = path.join(stagingRoot, yield* crypto.randomUUIDv4().pipe(Effect.orDie));
+    const stagingDir = path.join(stagingRoot, yield* random.uuidV4().pipe(Effect.orDie));
     const staged = path.join(stagingDir, "plugin");
     yield* fs
       .makeDirectory(stagingDir, { recursive: true })

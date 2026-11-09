@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { PLUGIN_UPLOAD_MAX_BYTES } from "@t3tools/contracts";
@@ -59,7 +60,7 @@ const withHost = <A, E, R>(body: Effect.Effect<A, E, R>) =>
     ),
   );
 
-it.layer(NodeServices.layer)("PluginUploads", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PluginUploads", (it) => {
   it.effect("installs an uploaded folder under the paths it was sent with", () =>
     withHost(
       Effect.gen(function* () {

@@ -30,19 +30,19 @@ async function pluginFileRequestInit(
   return { headers: { ...headers.value } };
 }
 
-class PluginFileRequestError extends Error {
-  constructor(
-    readonly status: number,
-    filePath: string,
-  ) {
-    super(`The request for ${filePath} failed with ${status}.`);
+class PluginFileRequestError extends Schema.TaggedError<PluginFileRequestError>()(
+  "PluginFileRequestError",
+  { status: Schema.Number, filePath: Schema.String },
+) {
+  override get message(): string {
+    return `The request for ${this.filePath} failed with ${this.status}.`;
   }
 }
 
 // A dropped connection or a gateway error, such as one bad gateway over T3 Connect, can pass.
 const isPassingDownloadFailure = (error: unknown) =>
   error instanceof TypeError ||
-  (error instanceof PluginFileRequestError && [502, 503, 504].includes(error.status));
+  (Schema.is(PluginFileRequestError)(error) && [502, 503, 504].includes(error.status));
 const DOWNLOAD_RETRY_DELAYS_MS = [1_000, 5_000, 30_000];
 
 /**
@@ -64,7 +64,7 @@ export async function fetchPluginFile(
   );
   url.searchParams.set("v", revision);
   const response = await fetch(url, await pluginFileRequestInit(authorization, url));
-  if (!response.ok) throw new PluginFileRequestError(response.status, filePath);
+  if (!response.ok) throw new PluginFileRequestError({ status: response.status, filePath });
   return response;
 }
 

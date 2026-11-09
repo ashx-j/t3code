@@ -64,6 +64,7 @@ export const writePluginsConfig = Effect.fn(function* (config: {
   readonly devPaths?: ReadonlyArray<string>;
 }) {
   const { stateDir } = yield* ServerConfig.ServerConfig;
+  // @effect-diagnostics-next-line globalJsonInEffect:off -- test input, always serializable.
   yield* writeFile(`${stateDir}/plugins.json`, JSON.stringify(config));
 });
 
@@ -73,6 +74,7 @@ export const writeInstalledPlugin = Effect.fn(function* (id: string, serverSourc
   const rootDir = `${stateDir}/plugins/${id}`;
   yield* writeFile(
     `${rootDir}/t3-plugin.json`,
+    // @effect-diagnostics-next-line globalJsonInEffect:off -- test input, always serializable.
     JSON.stringify({
       id,
       name: id,

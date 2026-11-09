@@ -43,7 +43,7 @@
   "scripts": {
     "build": "node scripts/build.ts",
     "build:examples": "node scripts/build-examples.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "effect-tsgo tsrs --noEmit"
   },
   "devDependencies": {
     "@types/node": "catalog:",

@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -15,13 +15,8 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpRouter, HttpServerRequest, HttpServerResponse, Multipart } from "effect/http";
 
-import {
-  base64UrlDecodeUtf8,
-  base64UrlEncode,
-  signPayload,
-  timingSafeEqualBase64Url,
-} from "../auth/utils.ts";
-import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import { base64UrlDecodeUtf8, base64UrlEncode } from "../auth/utils.ts";
+import * as PayloadSigner from "../auth/PayloadSigner.ts";
 import * as PluginInstaller from "./PluginInstaller.ts";
 
 /**
@@ -79,28 +74,27 @@ export class PluginUploads extends Context.Service<
 >()("t3/plugins/pluginUploads") {}
 
 const make = Effect.gen(function* () {
-  const secretStore = yield* ServerSecretStore.ServerSecretStore;
-  const crypto = yield* Crypto.Crypto;
-  const loadSigningSecret = secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32);
+  const signer = yield* PayloadSigner.make(SIGNING_SECRET_NAME);
+  const random = yield* SecureRandom.SecureRandom;
   // Unused URLs by nonce, with when each expires. A restart forgets them, which only refuses more.
   const unused = new Map<string, number>();
 
   const issueUrl = Effect.fn("PluginUploads.issueUrl")(function* () {
-    const secret = yield* loadSigningSecret.pipe(
-      Effect.mapError((cause) => new PluginUploadUrlError({ cause })),
-    );
     const now = yield* Clock.currentTimeMillis;
     for (const [nonce, expiresAt] of unused) if (expiresAt <= now) unused.delete(nonce);
     const expiresAt = now + UPLOAD_URL_TTL_MS;
-    const nonce = yield* crypto
-      .randomUUIDv4()
+    const nonce = yield* random
+      .uuidV4()
       .pipe(Effect.mapError((cause) => new PluginUploadUrlError({ cause })));
     const payload = base64UrlEncode(
       encodeUploadClaims({ version: 1, kind: "plugin-upload", expiresAt, nonce }),
     );
+    const signature = yield* signer
+      .sign(payload)
+      .pipe(Effect.mapError((cause) => new PluginUploadUrlError({ cause })));
     unused.set(nonce, expiresAt);
     const result: PluginCreateUploadUrlResult = {
-      relativeUrl: `${PLUGIN_UPLOAD_ROUTE_PREFIX}/${payload}.${signPayload(payload, secret)}`,
+      relativeUrl: `${PLUGIN_UPLOAD_ROUTE_PREFIX}/${payload}.${signature}`,
       expiresAt,
     };
     return result;
@@ -109,18 +103,13 @@ const make = Effect.gen(function* () {
   const claim = Effect.fn("PluginUploads.claim")(function* (token: string) {
     const [payload, signature, unexpected] = token.split(".");
     if (!payload || !signature || unexpected !== undefined) return false;
-    const secret = yield* loadSigningSecret.pipe(
+    const verified = yield* signer.verify(payload, signature).pipe(
       Effect.tapError((cause) =>
         Effect.logError("Failed to load the plugin upload signing key.", { cause }),
       ),
-      Effect.option,
+      Effect.orElseSucceed(() => false),
     );
-    if (
-      Option.isNone(secret) ||
-      !timingSafeEqualBase64Url(signature, signPayload(payload, secret.value))
-    ) {
-      return false;
-    }
+    if (!verified) return false;
     const claims = claimsOf(payload);
     if (Option.isNone(claims) || claims.value.expiresAt <= (yield* Clock.currentTimeMillis)) {
       return false;

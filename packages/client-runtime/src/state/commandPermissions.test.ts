@@ -9,9 +9,11 @@ import { vi } from "vite-plus/test";
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
+  AuthEnvironmentMaintainScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
+  AuthProvidersManageScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
   ThreadId,
@@ -31,7 +33,7 @@ import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
 import { createEnvironmentRpcCommand } from "./runtime.ts";
-import { AVAILABLE_CONNECTION_STATE } from "../connection/model.ts";
+import { AVAILABLE_CONNECTION_STATE, BearerConnectionTarget } from "../connection/model.ts";
 import { createPeerLinkEnvironmentAtoms } from "./peerLinks.ts";
 
 vi.mock("./session.ts", () => ({
@@ -67,6 +69,40 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect("requires the destination read grant to refresh providers", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const refresh = createCommandPermissions(runtime, WS_METHODS.serverRefreshProviders);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(refresh.permissionAtom(env))).toBe(false);
+        expect((yield* refresh.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(false),
+            scopes: [AuthOrchestrationReadScope],
+            permissions: [AuthOrchestrationReadScope],
+          }),
+        );
+        expect(registry.get(refresh.permissionAtom(env))).toBe(true);
+        yield* refresh.authorize(registry, env);
+        registry.set(sessions(other), AsyncResult.success(grant(false)));
+        expect(registry.get(refresh.permissionAtom(other))).toBe(false);
+        expect((yield* refresh.authorize(registry, other).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect(registry.get(refresh.permissionAtom(env))).toBe(false);
+        expect((yield* refresh.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+      }),
+    ),
+  );
+
   it.effect("requires the destination preview grant to close a browser tab", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -96,37 +132,60 @@ describe("command permissions", () => {
     ),
   );
 
-  it.effect.each([
-    WS_METHODS.serverRunStorageCleanup,
-    // Installing, enabling, reloading or configuring a plugin runs its code in the server.
-    WS_METHODS.pluginsSetEnabled,
-    WS_METHODS.pluginsReload,
-    WS_METHODS.pluginsCreateUploadUrl,
-    WS_METHODS.pluginsRescan,
-    WS_METHODS.pluginsUninstall,
-    WS_METHODS.pluginsSettingsUpdate,
-  ])("requires the destination settings grant for %s", (method) =>
+  it.effect("requires the destination provider grant to remove an incomplete connection", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* setup;
-        const cleanup = createCommandPermissions(runtime, method);
+        const remove = createCommandPermissions(runtime, WS_METHODS.providerAuthRemoveMethod);
         registry.set(sessions(env), AsyncResult.success(grant(true)));
-        expect(registry.get(cleanup.permissionAtom(env))).toBe(false);
-        expect((yield* cleanup.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+        expect(registry.get(remove.permissionAtom(env))).toBe(false);
+        expect((yield* remove.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
           "EnvironmentAuthorizationError",
         );
         registry.set(
           sessions(env),
           AsyncResult.success({
-            ...grant(true),
-            scopes: [AuthSettingsWriteScope],
-            permissions: [AuthSettingsWriteScope],
+            ...grant(false),
+            scopes: [AuthProvidersManageScope],
+            permissions: [AuthProvidersManageScope],
           }),
         );
-        expect(registry.get(cleanup.permissionAtom(env))).toBe(true);
-        yield* cleanup.authorize(registry, env);
+        expect(registry.get(remove.permissionAtom(env))).toBe(true);
+        yield* remove.authorize(registry, env);
         registry.set(sessions(other), AsyncResult.success(grant(false)));
-        expect(registry.get(cleanup.permissionAtom(other))).toBe(false);
+        expect(registry.get(remove.permissionAtom(other))).toBe(false);
+      }),
+    ),
+  );
+
+  it.effect.each([
+    { method: WS_METHODS.serverRunStorageCleanup, scope: AuthSettingsWriteScope },
+    { method: WS_METHODS.serverReclaimDatabaseSpace, scope: AuthEnvironmentMaintainScope },
+    // Installing, enabling, reloading or configuring a plugin runs its code in the server.
+    { method: WS_METHODS.pluginsSetEnabled, scope: AuthSettingsWriteScope },
+    { method: WS_METHODS.pluginsReload, scope: AuthSettingsWriteScope },
+    { method: WS_METHODS.pluginsCreateUploadUrl, scope: AuthSettingsWriteScope },
+    { method: WS_METHODS.pluginsRescan, scope: AuthSettingsWriteScope },
+    { method: WS_METHODS.pluginsUninstall, scope: AuthSettingsWriteScope },
+    { method: WS_METHODS.pluginsSettingsUpdate, scope: AuthSettingsWriteScope },
+  ])("requires the destination $scope grant for $method", ({ method, scope }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const command = createCommandPermissions(runtime, method);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(command.permissionAtom(env))).toBe(false);
+        expect((yield* command.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+        registry.set(
+          sessions(env),
+          AsyncResult.success({ ...grant(true), scopes: [scope], permissions: [scope] }),
+        );
+        expect(registry.get(command.permissionAtom(env))).toBe(true);
+        yield* command.authorize(registry, env);
+        registry.set(sessions(other), AsyncResult.success(grant(false)));
+        expect(registry.get(command.permissionAtom(other))).toBe(false);
       }),
     ),
   );
@@ -365,7 +424,11 @@ it.effect(
           ),
         };
         const supervisor = {
-          target: { environmentId: env },
+          target: new BearerConnectionTarget({
+            environmentId: env,
+            label: "Test",
+            connectionId: "test",
+          }),
           session: yield* SubscriptionRef.make(Option.some({ client } as unknown as RpcSession)),
           state: yield* SubscriptionRef.make({
             ...AVAILABLE_CONNECTION_STATE,

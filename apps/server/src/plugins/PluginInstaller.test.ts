@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { PluginId } from "@t3tools/contracts";
@@ -66,7 +67,7 @@ const harness = Effect.fn(function* () {
   return { installer, cleared };
 });
 
-it.layer(NodeServices.layer)("PluginInstaller", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PluginInstaller", (it) => {
   it.effect("deletes a removed plugin's data before another plugin change can start", () =>
     Effect.gen(function* () {
       const { installer, cleared } = yield* harness();

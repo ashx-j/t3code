@@ -13,7 +13,7 @@ vi.mock(import("../state/server"), async () => {
   const { Atom } = await import("effect/reactivity");
   server.state = Atom.make<ServerState>({ themes: [], event: null });
   return {
-    primaryServerEnvironmentThemesAtom: Atom.make((get) => get(server.state).themes),
+    themeServerEnvironmentThemesAtom: Atom.make((get) => get(server.state).themes),
     primaryServerConfigEventAtom: Atom.make((get) => get(server.state).event),
   } as never;
 });

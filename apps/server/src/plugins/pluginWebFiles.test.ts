@@ -1,4 +1,5 @@
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -55,7 +56,7 @@ const layerAuth = Layer.mock(EnvironmentAuth.EnvironmentAuth)({
   },
 });
 
-it.layer(NodeServices.layer)("PluginWebFiles", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PluginWebFiles", (it) => {
   it.effect("signs in like reads on the rest of /api and answers 404 for what is not served", () =>
     Effect.gen(function* () {
       const layerHostAnswering = Layer.mock(PluginHost.PluginHost)({

@@ -73,6 +73,7 @@ const forPlugin = <A>(promise: Promise<A>): Promise<A> => {
 export const refused = (error: Error): Promise<never> => forPlugin(Promise.reject(error));
 
 /** Carries its plugin, so a failure no plugin code handles is still the plugin's. */
+// @effect-diagnostics-next-line extendsNativeError:off -- plugin code catches it as a plain Error with a `code`.
 export class PluginApiCallError extends Error {
   readonly code: string;
   readonly pluginId: PluginId;
