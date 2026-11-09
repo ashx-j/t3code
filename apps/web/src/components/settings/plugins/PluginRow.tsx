@@ -78,6 +78,12 @@ export function PluginRow({
               Says it uses: {plugin.permissions.join(", ")}. T3 Code doesn't enforce this.
             </span>
           ) : null}
+          {plugin.unknownManifestKeys === undefined ? null : (
+            <span className="block">
+              T3 Code ignores these keys in its t3-plugin.json:{" "}
+              {plugin.unknownManifestKeys.join(", ")}. Check them for typos.
+            </span>
+          )}
         </>
       }
       status={

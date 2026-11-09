@@ -411,6 +411,21 @@ module.exports = { activate(api) { api.onDeactivate(() => require("node:fs").wri
     }).pipe(Effect.provide(layerConfig())),
   );
 
+  it.effect("names manifest keys it doesn't read on the plugin's row and still lists it", () =>
+    Effect.gen(function* () {
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      yield* writeFile(
+        `${stateDir}/plugins/typo/t3-plugin.json`,
+        JSON.stringify({ ...JSON.parse(manifestJson("typo")), setingsSchema: {} }),
+      );
+      yield* Effect.gen(function* () {
+        const host = yield* PluginHost.PluginHost;
+        const states = yield* waitForStatuses(host, { typo: "disabled" });
+        assert.deepStrictEqual(stateOf(states, "typo")?.unknownManifestKeys, ["setingsSchema"]);
+      }).pipe(Effect.provide(layerHost()));
+    }).pipe(Effect.provide(layerConfig())),
+  );
+
   it.effect("links a plugin folder by its server path, turned off like an install", () =>
     Effect.gen(function* () {
       const { stateDir } = yield* ServerConfig.ServerConfig;

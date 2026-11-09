@@ -138,6 +138,11 @@ export const PluginState = Schema.Struct({
   serverFailure: Schema.optionalKey(Schema.String),
   /** True when its manifest has a `settingsSchema`, which `plugins.settings.get` sends. */
   hasSettings: Schema.Boolean,
+  /**
+   * Top-level manifest keys this server doesn't read, such as a typo or a key a newer T3 reads. The
+   * manifest still loads without them.
+   */
+  unknownManifestKeys: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 export type PluginState = typeof PluginState.Type;
 

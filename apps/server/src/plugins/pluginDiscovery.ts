@@ -19,12 +19,29 @@ const PLUGIN_MANIFEST_FILE = "t3-plugin.json";
 const MAX_PLUGIN_DIRECTORIES = 64;
 const MAX_MANIFEST_BYTES = 64 * 1024;
 const MAX_FAILURE_MESSAGE_CHARS = 500;
+const MAX_UNKNOWN_KEYS = 16;
+const MAX_UNKNOWN_KEY_CHARS = 64;
 
 const decodeManifest = Schema.decodeUnknownExit(Schema.fromJsonString(PluginManifest));
 const decodeLooseId = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Struct({ id: PluginId })),
 );
 const isPluginId = Schema.is(PluginId);
+const decodeManifestKeys = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json)),
+);
+const KNOWN_MANIFEST_KEYS: ReadonlySet<string> = new Set(Object.keys(PluginManifest.fields));
+
+// Decoding drops keys it doesn't know, so a newer manifest still loads; the row names them instead.
+const unknownKeysOf = (raw: string) => {
+  const keys = decodeManifestKeys(raw);
+  return keys._tag === "None"
+    ? []
+    : Object.keys(keys.value)
+        .filter((key) => !KNOWN_MANIFEST_KEYS.has(key))
+        .slice(0, MAX_UNKNOWN_KEYS)
+        .map((key) => key.slice(0, MAX_UNKNOWN_KEY_CHARS));
+};
 
 const causeMessage = (cause: Cause.Cause<unknown>) => {
   const error = Cause.squash(cause);
@@ -41,7 +58,10 @@ interface PluginLocation {
 
 /** A plugin directory, with its manifest when it could be read and decoded. */
 export type DiscoveredPlugin = PluginLocation &
-  ({ readonly manifest: PluginManifest } | { readonly failure: PluginFailure });
+  (
+    | { readonly manifest: PluginManifest; readonly unknownKeys?: ReadonlyArray<string> }
+    | { readonly failure: PluginFailure }
+  );
 
 const failed = (location: PluginLocation, failure: PluginFailure): DiscoveredPlugin => ({
   ...location,
@@ -102,8 +122,9 @@ export const discoverPlugins = Effect.fn("PluginDiscovery.discover")(function* (
       const { settingsSchema } = decoded.value;
       const schemaProblem =
         settingsSchema === undefined ? undefined : settingsSchemaProblem(settingsSchema);
+      const unknownKeys = unknownKeysOf(manifest.raw);
       return schemaProblem === undefined
-        ? { ...copy, manifest: decoded.value }
+        ? { ...copy, manifest: decoded.value, ...(unknownKeys.length === 0 ? {} : { unknownKeys }) }
         : failed(copy, {
             stage: "manifest",
             message: `T3 Code cannot validate its settingsSchema: ${schemaProblem}`,
