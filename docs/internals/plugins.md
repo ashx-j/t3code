@@ -47,12 +47,18 @@ T3's contracts, which change between releases.
 `plugins.invoke` and `plugins.subscribe` need only the read scope, so the host checks a method's
 `access` itself: a `write` method needs the caller's operate scope, as T3's own changes do. A call
 fails after 30 seconds and aborts the handler's signal, so a handler that never answers can't hold
-a client's call open. Each subscriber gets its own sliding buffer per channel, so a busy channel or
-a slow subscriber drops only that channel's oldest values.
+a client's call open. An agent's tool call gets 5 minutes, because a tool may do real work, then
+fails the same way with an error the agent reads, so a hung tool can't hold the turn. Each
+subscriber gets its own sliding buffer per channel, so a busy channel or a slow subscriber drops
+only that channel's oldest values.
 
 Manifests ignore keys they don't know, so a newer manifest key is lost silently on an older T3.
-`engines.t3` is how a plugin asks for a newer T3: the server refuses to install or start a version
-outside it.
+`engines.t3` is how a plugin requires a newer T3: the server refuses to install or start a version
+outside it. `api.version` is how a plugin detects newer API members and still runs on older
+releases, so a change that adds a member raises it and names that version in the member's doc.
+
+Discovery and install compile the manifest's `settingsSchema`, so a schema T3 can't validate fails
+the plugin with the reason instead of refusing every save later.
 
 ## State lives beside T3's
 
@@ -62,6 +68,11 @@ Settings go in `plugin-data/<id>/` and storage in `plugins.sqlite`. They stay ou
 numbered migrations refuse to start when a fork's id collides with an upstream one. Settings stay
 out of `plugins/<id>/`, so replacing a plugin's files keeps them. Removing a plugin deletes its
 settings, secrets and storage, so nothing is left that no plugin can reach.
+
+All of a plugin's secrets share one secret store entry, because a keychain can't list names and
+removal must also find the secrets of fields a plugin has since renamed. The settings store keeps
+each plugin's files in memory after the first read and changes them only through its own writes,
+so a hand edit to `settings.json` shows after a restart.
 
 ## Installing
 
@@ -76,8 +87,13 @@ the signature is the credential, so the upload works the same on every kind of c
 installs once. The server keeps its unused URLs in memory, so a restart refuses those it signed
 before.
 
-Discovery takes the id from the manifest, because people copy plugin folders in by hand. Nothing
-watches `plugins/`: the server reads it at startup, on reload and when Settings asks.
+Discovery takes the id from the manifest, because people copy plugin folders in by hand. Settings,
+storage and the enabled flag belong to the id, so a later folder with an id already listed fails as
+a duplicate. Installed folders come first, in name order, then dev paths. Removing or unlinking a
+duplicate deletes only its folder or link, and the copy in use keeps the data. Discovery also
+forgets the enabled flag and crash record of every id no folder has, so a folder copied in later
+with that id starts off. Nothing watches `plugins/`: the server reads it at startup, on reload and
+when Settings asks.
 
 ## Clients
 
@@ -85,10 +101,15 @@ Each browser keeps its own choice of the environments it loads plugin UI from, t
 default, because that code runs with every connection's credentials. Right panels show only in their
 environment's threads. Commands have no thread, so only the first chosen environment registers them.
 
-With no plugins, the plugin code in the startup chunks of a production build is about 9 KB of
-minified JS, under 4 KB gzipped. Most of it is the plugin contract schemas and RPC definitions,
-[`PluginLoaderStarter`](../../apps/web/src/plugins/PluginLoaderStarter.tsx), `pluginFollow` and the
-[`pluginUi.ts`](../../apps/web/src/plugins/pluginUi.ts) stub that app code reads plugin parts
+Rows carry `hasSettings` rather than the settings schema. Every client, read-only ones and the
+idle watcher included, gets a plugin's row again on each status change, and only the settings
+form needs the schema, which it fetches with `plugins.settings.get`.
+
+With no plugins, the plugin system adds about 11 KB of minified JS to the startup chunks of a
+production build, about 4.5 KB gzipped, in 5 more chunks. Most of it is the plugin contract
+schemas and RPC definitions,
+[`PluginLoaderStarter`](../../apps/web/src/plugins/PluginLoaderStarter.tsx), `pluginFollow` and
+the [`pluginUi.ts`](../../apps/web/src/plugins/pluginUi.ts) stub that app code reads plugin parts
 through. Once the app is idle, the starter downloads a 2 KB watcher and follows
 `plugins.subscribeStates` for each chosen environment, a stream of its own because the server
 config stream would resend the whole config on every plugin change. It downloads the web loader

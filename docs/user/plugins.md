@@ -15,11 +15,12 @@ copy do not affect the installed plugin. To update it, add the new version's fol
 A new plugin is installed turned off, so none of it runs until you have read its row and turned it
 on. A new version of a plugin stays on or off as the old one was. If a new version fails to install
 or start, you keep the version you had, and T3 Code says why. A plugin that needs a newer version
-of T3 Code isn't installed, and T3 Code says why.
+of T3 Code, or whose settings T3 Code can't check, isn't installed, and T3 Code says why.
 
 Plugin folders you copy into the `plugins` folder yourself show up, turned off, the next time you
 open **Settings → Plugins**. That folder is `~/.t3/userdata/plugins` on the environment's machine
-by default.
+by default. A folder with the same plugin id as one you already have doesn't run, and its row names
+the folder that has that id. Remove one of them.
 
 **Settings → Plugins** shows one environment at a time, the main one until you pick another at the
 top of the page. To use a plugin on several environments, add it to each of them.
@@ -50,6 +51,9 @@ settings, secrets and stored data, and this can't be undone. Reinstalling it lat
 A plugin loaded from its own folder shows **Unlink** instead. Unlinking stops loading it and deletes
 its settings, secrets and stored data the same way, but leaves the folder where it is.
 
+On a duplicate's row, **Remove** deletes only that folder and **Unlink** only stops loading it. The
+plugin in use keeps running with its settings, secrets and stored data.
+
 ## Themes and styles
 
 A plugin can change how T3 Code looks without running any code. Theme files in its `themes` folder
@@ -68,7 +72,8 @@ thread. Tools that change things work only in a thread set to **Full access** an
 
 Installed plugins are in the `plugins` folder of the environment's T3 Code data directory, one
 folder per plugin. Their settings are in `plugin-data`, and `plugins.json` records which ones are
-enabled.
+enabled. T3 Code reads a plugin's settings file once, so an edit you make to it by hand shows after
+T3 Code restarts.
 
 Plugin UI, styles and themes load in the web and desktop apps. They load from the app's main
 environment, which is the desktop app's own server or the server the web app was opened from, and

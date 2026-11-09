@@ -58,7 +58,8 @@ The SDK has no dependencies of its own. What else a plugin needs depends on its 
   numbers, integers, booleans, `enum`s of strings or numbers, and arrays of strings. One property
   of any other shape, such as an object or a nullable type, turns the whole form into a JSON box.
   Every save is checked against the schema with the top-level `default`s filled in, so a default
-  its own field rejects refuses every save.
+  its own field rejects refuses every save. A schema T3 Code can't validate against fails the
+  plugin when T3 Code finds or installs it, and says why.
 - A `themes/` folder of theme JSON files is published while the plugin is active, and an `assets/`
   folder is served to the web half when the plugin has one. T3 Code remembers the published
   themes, so the boot screen and the desktop window start in the active theme's colors. A theme
@@ -86,7 +87,8 @@ module.exports = {
 ```
 
 `activate` receives the [`PluginApi`](./src/server.ts): settings, storage, RPC methods and channels
-for the web half, and MCP tools for agents.
+for the web half, and MCP tools for agents. `api.settings.get()` reads from memory after its first
+call, so a handler can call it on every request.
 
 Everything a plugin registers is released when it is disabled, reloaded or uninstalled; add your
 own cleanup with `api.onDeactivate`.
@@ -107,9 +109,9 @@ keeps the latest 64 values of each channel and loses older ones.
 A promise rejection in plugin code that nothing handles, such as in a timer, doesn't stop T3 Code.
 It shows on the plugin's row in Settings → Plugins, and the plugin keeps running. An exception
 nothing catches does stop the server. When T3 Code can tell it was your plugin's, the plugin stays
-off after the restart until the user turns it on again. That includes a throw in a timer callback and an
-`'error'` event with no listener, so catch errors in callbacks and give every child process, socket
-and stream you create an `'error'` listener.
+off after the restart until the user turns it on again. That includes a throw in a timer callback
+and an `'error'` event with no listener, so catch errors in callbacks and give every child process,
+socket and stream you create an `'error'` listener.
 
 ## Tools for agents
 
@@ -127,7 +129,8 @@ and stream you create an `'error'` listener.
   JSON object, so check the input before acting on it.
 - The handler's second argument has a `signal`, which aborts when the agent cancels the call or the
   plugin stops, and the `threadId` of the calling agent's thread, or `null` for an MCP client
-  outside a thread. It returns JSON, and a throw becomes an error the agent reads.
+  outside a thread. It returns JSON, and a throw becomes an error the agent reads. A call that
+  hasn't answered within 5 minutes fails the same way, and its `signal` aborts.
 - Every agent in every thread of the environment sees the tools of every plugin that is on, so
   each tool takes up room in every agent's context. A plugin registers at most 32 tools, each with
   a description of up to 1,000 characters and an input schema of up to 4,000 characters as JSON.
@@ -172,6 +175,10 @@ The app can load web halves from several environments at once. Right panels show
 of the environment the plugin runs on, which `api.environmentId` names. Palette and keybinding
 commands come only from the first of those environments, the main one unless it's turned off.
 
+Register right panels inside `activate`. When the app restores a panel that was open, the panel
+shows that the plugin is loading until `activate` finishes, then "Plugin not active" until a panel
+with its name is registered.
+
 Build it with the Vite preset, which makes the bundle use T3 Code's own React, atoms, atom hooks and
 UI components instead of shipping copies:
 
@@ -197,9 +204,10 @@ atom.
 T3 changes its markup, class names, labels and layout in most releases. You don't need to drop
 parts of your design to survive that. Build each part on the most stable thing T3 offers for it:
 
-- **Style with theme tokens.** Colors, radii and fonts come from the theme. Set them in a theme
-  file in `themes/`, and use `var(--border)`, `var(--radius)` and the other tokens in your own
-  components instead of hex or rgb values.
+- **Style with theme tokens.** A theme file in `themes/` sets T3's colors and corner radius. In your
+  own components, use the CSS variables that `THEME_TOKENS` from `@t3tools/plugin-sdk/web` lists,
+  such as `var(--border)` and `var(--radius)`, instead of hex or rgb values. T3 defines each of
+  them under every theme and keeps them across releases.
 - **Scope CSS to a region.** T3 keeps the `data-t3-region` names of the window's main areas
   across releases: `sidebar`, `main` (everything beside the sidebar), `timeline`, `composer`,
   `thread-details`, `right-panel`, `terminal`, `home`, `pull-requests`, `settings`,
@@ -216,6 +224,9 @@ parts of your design to survive that. Build each part on the most stable thing T
   changes, and list it in the plugin's README with the seam that would replace it.
 - **Leave T3's frame to T3.** The title bar row, the room for the window buttons on Windows and
   Linux, drag areas, phone safe areas and breakpoints are T3's, so don't resize or pad them.
+- **Check `api.version` before using a newer API member.** A member added after version 1 names
+  the version that added it in its doc, so a plugin can skip that feature on an older T3 and keep
+  running. To require a T3 release instead, set `engines.t3`.
 - **Ship what the plugin runs.** Installing a folder leaves out `.git` and `node_modules`, so
   build everything into the files the manifest names.
 - **Ask for a seam.** When T3 doesn't hand over what you need, ask for a region or token on the
@@ -225,7 +236,8 @@ parts of your design to survive that. Build each part on the most stable thing T
 
 Add the plugin's folder to `devPaths` in `plugins.json` in the T3 Code data directory, turn the
 plugin on in Settings → Plugins, and use **Reload** after each change. **Unlink** on its row removes
-it from `devPaths` and leaves the folder alone.
+it from `devPaths` and leaves the folder alone. A linked folder whose id an installed plugin already
+has fails as a duplicate, so remove the installed copy first.
 
 To install a finished plugin, drag its folder onto Settings → Plugins, or use **Add plugin** to
-choose it. It installs turned off, so turn it on on its row.
+choose it. Unlink a linked copy first. It installs turned off, so turn it on on its row.
