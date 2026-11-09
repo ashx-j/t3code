@@ -180,12 +180,11 @@ export function pluginCommandLabel(command: string): string | undefined {
   return undefined;
 }
 
-export const pluginCommandsAtom = Atom.family((environmentId: string) => {
-  const stable = stableList<PluginCommandEntry>();
-  return Atom.make((get) => {
-    get(versionAtom);
-    return stable([...commands.values()].filter((entry) => entry.environmentId === environmentId));
-  });
+const stableCommands = stableList<PluginCommandEntry>();
+
+export const pluginCommandsAtom = Atom.make((get) => {
+  get(versionAtom);
+  return stableCommands([...commands.values()]);
 });
 
 /** The plugin that registered a contribution, so its failures show on that plugin's row. */

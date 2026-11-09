@@ -1,9 +1,9 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 import { useEffect } from "react";
 
-import { followedPluginEnvironmentAtom, pluginUiEnvironmentsAtom } from "./pluginFollow";
+import { pluginUiEnvironmentsAtom } from "./pluginFollow";
 
 // Module level: React Compiler cannot compile a component that calls import() itself.
 const loadPluginWatch = () => import("./pluginWatch");
@@ -21,16 +21,12 @@ const whenIdle = (run: () => void) => {
 
 /**
  * Follows the plugins of each environment this browser loads plugin UI from, the main one unless
- * the user turned it off. The first one also supplies palette and keybinding commands.
+ * the user turned it off.
  */
 export function PluginLoaderStarter() {
   const environmentIds = useAtomValue(pluginUiEnvironmentsAtom);
-  return environmentIds.map((environmentId, index) => (
-    <PluginEnvironmentLoader
-      key={environmentId}
-      environmentId={environmentId}
-      appWide={index === 0}
-    />
+  return environmentIds.map((environmentId) => (
+    <PluginEnvironmentLoader key={environmentId} environmentId={environmentId} />
   ));
 }
 
@@ -38,21 +34,13 @@ export function PluginLoaderStarter() {
  * Once the app is idle, downloads the web plugin runtime only when an active plugin of the
  * environment has a web part, and the small stylesheet runtime only when one has a `styles` folder.
  */
-function PluginEnvironmentLoader({
-  environmentId,
-  appWide,
-}: {
-  readonly environmentId: EnvironmentId;
-  readonly appWide: boolean;
-}) {
+function PluginEnvironmentLoader({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const router = useRouter();
-  const setFollowed = useAtomSet(followedPluginEnvironmentAtom);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts and stops a runtime that lives outside React
   useEffect(() => {
     let cancelled = false;
     const stops: Array<() => void> = [];
     const cancelIdle = whenIdle(() => {
-      if (appWide) setFollowed(environmentId);
       void loadPluginWatch().then(({ watchForPlugins, isLoadableWebPlugin, hasLoadableStyles }) => {
         if (cancelled) return;
         stops.push(
@@ -60,11 +48,7 @@ function PluginEnvironmentLoader({
             void loadPluginLoader().then((module) => {
               if (cancelled) return;
               stops.push(
-                module.startPluginLoader(
-                  environmentId,
-                  (path) => router.history.push(path),
-                  appWide,
-                ),
+                module.startPluginLoader(environmentId, (path) => router.history.push(path)),
               );
             });
           }),
@@ -80,9 +64,8 @@ function PluginEnvironmentLoader({
     return () => {
       cancelled = true;
       cancelIdle();
-      if (appWide) setFollowed(null);
       for (const stop of stops) stop();
     };
-  }, [environmentId, appWide, router, setFollowed]);
+  }, [environmentId, router]);
   return null;
 }

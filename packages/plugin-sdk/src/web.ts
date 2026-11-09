@@ -78,8 +78,8 @@ export interface WebPluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
   };
   readonly commands: {
     /**
-     * Adds a command to the command palette that users can also bind to a key. Only the first
-     * environment the app loads plugin UI from adds its plugins' commands.
+     * Adds a command to the command palette that users can also bind to a key. When the app loads
+     * plugin UI from several environments with this plugin on, only the first of them adds them.
      */
     readonly register: (command: WebPluginCommand) => void;
   };
@@ -90,7 +90,8 @@ export interface WebPluginApi<Rpc extends PluginRpcMap = PluginRpcMap> {
   readonly assetUrl: (name: string) => Promise<string>;
   /**
    * Adds a stylesheet until the plugin unloads. Rules that reach T3's own elements restyle the app
-   * and can stop matching when T3 changes its markup.
+   * and can stop matching when T3 changes its markup. Like commands, it applies from one
+   * environment only.
    */
   readonly injectStyles: (css: string) => void;
   /** Opens a path in the app, such as `/settings/plugins`. */

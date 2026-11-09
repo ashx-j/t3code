@@ -1286,7 +1286,7 @@ function keybindingAnchorIds(rows: ReturnType<typeof buildKeybindingRows>) {
 // Cache rows in a separate hook so the compiler does not rebuild them per search keystroke.
 function useKeybindingCatalog() {
   const { environment } = useSettingsScope();
-  const pluginCommands = useAtomValue(pluginCommandsAtom(environment?.environmentId ?? ""));
+  const pluginCommands = useAtomValue(pluginCommandsAtom);
   const merged = mergeWithDefaultKeybindings(environment?.serverConfig?.keybindings ?? []);
   return {
     commandOptions: buildKeybindingCommandOptions(

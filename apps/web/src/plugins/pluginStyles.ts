@@ -1,11 +1,8 @@
 import type { EnvironmentId, PluginState } from "@t3tools/contracts";
-import { AsyncResult } from "effect/reactivity";
 
-import { appAtomRegistry } from "../rpc/atomRegistry";
-import { pluginEnvironment } from "../state/plugins";
 import { fetchPluginFile, withDownloadRetries } from "./pluginFiles";
 import { setPluginWebFailure } from "./pluginRegistry";
-import { hasLoadableStyles } from "./pluginWatch";
+import { followPlugins, hasLoadableStyles } from "./pluginWatch";
 
 // Names every file and its contents, so a restart with the same files downloads nothing.
 const stylesKey = (plugin: PluginState) =>
@@ -14,7 +11,8 @@ const stylesKey = (plugin: PluginState) =>
 /**
  * Adds the stylesheets of the environment's active plugins to the end of the page's head, after
  * T3's own CSS and the theme, and follows plugin state until stopped. Changed files replace a
- * plugin's old ones once all of them have downloaded.
+ * plugin's old ones once all of them have downloaded. A plugin on in several environments adds
+ * them from one, as `followPlugins` decides.
  */
 export function startPluginStyles(environmentId: EnvironmentId): () => void {
   const applied = new Map<
@@ -79,9 +77,14 @@ export function startPluginStyles(environmentId: EnvironmentId): () => void {
     }
   };
 
-  const reconcile = (plugins: ReadonlyArray<PluginState>) => {
+  const reconcile = (
+    plugins: ReadonlyArray<PluginState>,
+    appWide: (pluginId: PluginState["id"]) => boolean,
+  ) => {
     const wanted = new Map(
-      plugins.filter(hasLoadableStyles).map((plugin) => [plugin.id, plugin] as const),
+      plugins
+        .filter((plugin) => hasLoadableStyles(plugin) && appWide(plugin.id))
+        .map((plugin) => [plugin.id, plugin] as const),
     );
     for (const pluginId of new Set([...applied.keys(), ...pending.keys(), ...failed])) {
       if (wanted.has(pluginId)) continue;
@@ -97,13 +100,9 @@ export function startPluginStyles(environmentId: EnvironmentId): () => void {
     }
   };
 
-  const stopFollowing = appAtomRegistry.subscribe(
-    pluginEnvironment.pluginsLive({ environmentId, input: {} }),
-    (result) => {
-      if (!stopped && AsyncResult.isSuccess(result)) reconcile(result.value.plugins);
-    },
-    { immediate: true },
-  );
+  const stopFollowing = followPlugins(environmentId, (plugins, appWide) => {
+    if (!stopped) reconcile(plugins, appWide);
+  });
 
   return () => {
     stopped = true;

@@ -18,17 +18,27 @@ vi.mock(import("../state/session"), async (original) => ({
 }));
 const state = await vi.hoisted(async () => {
   const { Atom, AsyncResult } = await import("effect/reactivity");
-  return {
-    live: Atom.make<AsyncResult.AsyncResult<{ readonly plugins: ReadonlyArray<PluginState> }>>(
+  const makeLive = () =>
+    Atom.make<AsyncResult.AsyncResult<{ readonly plugins: ReadonlyArray<PluginState> }>>(
       AsyncResult.initial(),
-    ),
+    ).pipe(Atom.keepAlive);
+  const lives = new Map<string, ReturnType<typeof makeLive>>();
+  return {
+    lives,
+    live: (environmentId: string) => {
+      const atom = lives.get(environmentId) ?? makeLive();
+      lives.set(environmentId, atom);
+      return atom;
+    },
+    environments: Atom.make<ReadonlyArray<EnvironmentId>>([]).pipe(Atom.keepAlive),
     // Computed only when something reads it, like the real subscription stream.
     channel: Atom.make(() => AsyncResult.success({ value: "first value" })),
   };
 });
 vi.mock(import("../state/plugins"), () => ({
   pluginEnvironment: {
-    pluginsLive: () => state.live,
+    pluginsLive: ({ environmentId }: { readonly environmentId: string }) =>
+      state.live(environmentId),
     pluginChannel: () => state.channel,
     pluginFileHeaders: {
       label: "plugin-file-headers",
@@ -36,6 +46,11 @@ vi.mock(import("../state/plugins"), () => ({
         AsyncResult.success({ authorization: "DPoP relay-token", dpop: `proof for ${input.url}` }),
     },
   } as never,
+}));
+
+vi.mock(import("./pluginFollow"), async (original) => ({
+  ...(await original()),
+  pluginUiEnvironmentsAtom: state.environments,
 }));
 
 import { AppAtomRegistryProvider, appAtomRegistry } from "../rpc/atomRegistry";
@@ -65,14 +80,16 @@ const webPlugin = (id: string): PluginState => ({
   hasSettings: false,
 });
 
-// Every case starts with no plugins listed.
-function setup() {
-  appAtomRegistry.set(state.live, AsyncResult.initial());
+// Every case starts with no plugins listed, loading plugin UI from `environments` in order.
+function setup(environments: ReadonlyArray<EnvironmentId>) {
+  state.lives.clear();
+  appAtomRegistry.set(state.environments, environments);
 }
 
 describe("startPluginLoader", () => {
   it("loads active web plugins, runs their commands, records one that fails, and unloads everything when stopped", async () => {
-    setup();
+    const environmentId = EnvironmentId.make("environment:plugin-loader");
+    setup([environmentId]);
     const navigate = vi.fn();
     // A bundle that never arrives must not hold back the plugins after it.
     let releaseHungBundle: (response: Response) => void = () => {};
@@ -90,15 +107,14 @@ describe("startPluginLoader", () => {
               ? new Response("export default {};")
               : new Response("missing", { status: 500 }),
       );
-    const environmentId = EnvironmentId.make("environment:plugin-loader");
     const helloPanel = pluginRightPanelAtom(
       pluginRightPanelKey(environmentId, "hello-web", "hello"),
     );
-    const stop = startPluginLoader(environmentId, navigate, true);
+    const stop = startPluginLoader(environmentId, navigate);
     using _loader = { [Symbol.dispose]: stop };
 
     appAtomRegistry.set(
-      state.live,
+      state.live(environmentId),
       AsyncResult.success({
         plugins: [
           webPlugin("hung-web"),
@@ -145,7 +161,7 @@ describe("startPluginLoader", () => {
       await expect.element(screen.getByText("Hellos: 1")).toBeVisible();
     }
 
-    const [command] = appAtomRegistry.get(pluginCommandsAtom(environmentId));
+    const [command] = appAtomRegistry.get(pluginCommandsAtom);
     expect(command?.command).toBe("plugin.hello-web.open-settings");
     command?.run();
     await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith("/settings/plugins"));
@@ -159,7 +175,7 @@ describe("startPluginLoader", () => {
     expect(fetches("broken-web")).toBe(1);
     expect(fetches("no-activate-web")).toBe(1);
     appAtomRegistry.set(
-      state.live,
+      state.live(environmentId),
       AsyncResult.success({
         plugins: [
           webPlugin("hung-web"),
@@ -176,11 +192,12 @@ describe("startPluginLoader", () => {
     releaseHungBundle(new Response("missing", { status: 500 }));
     expect(document.querySelectorAll('style[data-plugin="hello-web"]')).toHaveLength(0);
     expect(appAtomRegistry.get(helloPanel)).toBeUndefined();
-    expect(appAtomRegistry.get(pluginCommandsAtom(environmentId))).toEqual([]);
+    expect(appAtomRegistry.get(pluginCommandsAtom)).toEqual([]);
   });
 
   it("tries a download again after a bad gateway", async () => {
-    setup();
+    const environmentId = EnvironmentId.make("environment:plugin-loader-retry");
+    setup([environmentId]);
     let badGateways = 1;
     using _fetch = vi
       .spyOn(globalThis, "fetch")
@@ -190,21 +207,22 @@ describe("startPluginLoader", () => {
           : new Response(helloWebSource),
       );
     using _timers = fakeTimers();
-    const environmentId = EnvironmentId.make("environment:plugin-loader-retry");
-    appAtomRegistry.set(state.live, AsyncResult.success({ plugins: [webPlugin("hello-web")] }));
-    using _loader = { [Symbol.dispose]: startPluginLoader(environmentId, vi.fn(), true) };
+    appAtomRegistry.set(
+      state.live(environmentId),
+      AsyncResult.success({ plugins: [webPlugin("hello-web")] }),
+    );
+    using _loader = { [Symbol.dispose]: startPluginLoader(environmentId, vi.fn()) };
 
     await vi.advanceTimersByTimeAsync(1_000);
-    await vi.waitFor(() =>
-      expect(appAtomRegistry.get(pluginCommandsAtom(environmentId))).toHaveLength(1),
-    );
+    await vi.waitFor(() => expect(appAtomRegistry.get(pluginCommandsAtom)).toHaveLength(1));
     expect(
       appAtomRegistry.get(pluginWebFailuresAtom("hello-web")).get(environmentId),
     ).toBeUndefined();
   });
 
   it("reloads a restarted plugin and undoes what it registers after unloading", async () => {
-    setup();
+    const environmentId = EnvironmentId.make("environment:plugin-loader-reload");
+    setup([environmentId]);
     // The first start registers only when the test releases it, after a restart replaced it.
     const slowSource = `export default { activate(api) {
       const settings = () => api.settings.registerPanel(() => null);
@@ -223,26 +241,29 @@ describe("startPluginLoader", () => {
       );
     const bundleRequests = (pluginId: string) =>
       fetchSpy.mock.calls.filter(([input]) => String(input).includes(`/${pluginId}/`)).length;
-    const environmentId = EnvironmentId.make("environment:plugin-loader-reload");
-    const stop = startPluginLoader(environmentId, vi.fn(), true);
+    const stop = startPluginLoader(environmentId, vi.fn());
     using _loader = { [Symbol.dispose]: stop };
 
-    appAtomRegistry.set(state.live, AsyncResult.success({ plugins: [webPlugin("hello-web")] }));
-    await vi.waitFor(() =>
-      expect(appAtomRegistry.get(pluginCommandsAtom(environmentId))).toHaveLength(1),
-    );
     appAtomRegistry.set(
-      state.live,
+      state.live(environmentId),
+      AsyncResult.success({ plugins: [webPlugin("hello-web")] }),
+    );
+    await vi.waitFor(() => expect(appAtomRegistry.get(pluginCommandsAtom)).toHaveLength(1));
+    appAtomRegistry.set(
+      state.live(environmentId),
       AsyncResult.success({ plugins: [{ ...webPlugin("hello-web"), revision: 2 }] }),
     );
     await vi.waitFor(() => expect(bundleRequests("hello-web")).toBe(2));
 
-    appAtomRegistry.set(state.live, AsyncResult.success({ plugins: [webPlugin("slow-web")] }));
+    appAtomRegistry.set(
+      state.live(environmentId),
+      AsyncResult.success({ plugins: [webPlugin("slow-web")] }),
+    );
     await vi.waitFor(() =>
       expect(Reflect.get(globalThis, "__releaseSlowPlugin")).toBeTypeOf("function"),
     );
     appAtomRegistry.set(
-      state.live,
+      state.live(environmentId),
       AsyncResult.success({ plugins: [{ ...webPlugin("slow-web"), revision: 2 }] }),
     );
     const settingsPanel = pluginSettingsPanelAtom(pluginContributionKey(environmentId, "slow-web"));
@@ -261,43 +282,74 @@ describe("startPluginLoader", () => {
     expect(appAtomRegistry.get(settingsPanel)).toBeUndefined();
   });
 
-  it("keeps each environment's right panels to its own threads and takes commands from the first", async () => {
-    setup();
-    // Right panels only from environment B, commands from both.
+  it("keeps each environment's right panels to its own threads and takes a plugin's commands and styles from the first environment that has it on", async () => {
+    const environmentA = EnvironmentId.make("environment:plugin-loader-scope:a");
+    const environmentB = EnvironmentId.make("environment:plugin-loader-scope:b");
+    setup([environmentA, environmentB]);
+    // Right panels only from environment B, commands and styles from both.
     const source = `export default { activate(api) {
       api.commands.register({ id: "open", title: "Open", run() {} });
+      api.injectStyles("/* " + api.id + " */");
       if (!api.environmentId.endsWith(":b")) return;
       api.rightPanel.register({ name: "notes", title: "Notes", component: () => null });
     } };`;
     using _fetch = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation(async () => new Response(source));
-    const environmentA = EnvironmentId.make("environment:plugin-loader-scope:a");
-    const environmentB = EnvironmentId.make("environment:plugin-loader-scope:b");
-    appAtomRegistry.set(state.live, AsyncResult.success({ plugins: [webPlugin("notes-web")] }));
-    using _a = { [Symbol.dispose]: startPluginLoader(environmentA, vi.fn(), true) };
-    using _b = { [Symbol.dispose]: startPluginLoader(environmentB, vi.fn(), false) };
+    appAtomRegistry.set(
+      state.live(environmentA),
+      AsyncResult.success({ plugins: [webPlugin("notes-web")] }),
+    );
+    appAtomRegistry.set(
+      state.live(environmentB),
+      AsyncResult.success({ plugins: [webPlugin("notes-web"), webPlugin("solo-web")] }),
+    );
+    using _a = { [Symbol.dispose]: startPluginLoader(environmentA, vi.fn()) };
+    using _b = { [Symbol.dispose]: startPluginLoader(environmentB, vi.fn()) };
+    const commandSources = () =>
+      appAtomRegistry
+        .get(pluginCommandsAtom)
+        .map((entry) => `${entry.pluginId} from ${entry.environmentId}`)
+        .toSorted();
+    const styleCount = (pluginId: string) =>
+      document.querySelectorAll(`style[data-plugin="${pluginId}"]`).length;
 
     await vi.waitFor(() => {
-      expect(appAtomRegistry.get(pluginCommandsAtom(environmentA))).toHaveLength(1);
-      expect(appAtomRegistry.get(pluginRightPanelsAtom(environmentB))).toHaveLength(1);
+      expect(commandSources()).toContain(`notes-web from ${environmentA}`);
+      expect(appAtomRegistry.get(pluginRightPanelsAtom(environmentB))).toHaveLength(2);
     });
     expect(appAtomRegistry.get(pluginRightPanelsAtom(environmentA))).toEqual([]);
-    // A command has no thread to say which environment it belongs to.
-    expect(appAtomRegistry.get(pluginCommandsAtom(environmentB))).toEqual([]);
+    expect(commandSources()).toEqual([
+      `notes-web from ${environmentA}`,
+      `solo-web from ${environmentB}`,
+    ]);
+    expect(styleCount("notes-web")).toBe(1);
+    expect(styleCount("solo-web")).toBe(1);
+
+    appAtomRegistry.set(state.live(environmentA), AsyncResult.success({ plugins: [] }));
+    await vi.waitFor(() =>
+      expect(commandSources()).toEqual([
+        `notes-web from ${environmentB}`,
+        `solo-web from ${environmentB}`,
+      ]),
+    );
+    expect(styleCount("notes-web")).toBe(1);
   });
 
   it("ends a restored panel's wait once its plugin loads without that panel", async () => {
-    setup();
+    const environmentId = EnvironmentId.make("environment:plugin-loader-no-panel");
+    setup([environmentId]);
     using _fetch = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation(async () => new Response("export default { activate() {} };"));
-    const environmentId = EnvironmentId.make("environment:plugin-loader-no-panel");
     appAtomRegistry.set(pluginUiChoicesAtom, new Map([[environmentId, true]]));
     using _choices = {
       [Symbol.dispose]: () => appAtomRegistry.set(pluginUiChoicesAtom, new Map()),
     };
-    appAtomRegistry.set(state.live, AsyncResult.success({ plugins: [webPlugin("quiet-web")] }));
+    appAtomRegistry.set(
+      state.live(environmentId),
+      AsyncResult.success({ plugins: [webPlugin("quiet-web")] }),
+    );
     await using screen = await render(
       createElement(
         AppAtomRegistryProvider,
@@ -313,23 +365,26 @@ describe("startPluginLoader", () => {
     );
     await expect.element(screen.getByText("Loading plugin")).toBeVisible();
 
-    using _loader = { [Symbol.dispose]: startPluginLoader(environmentId, vi.fn(), true) };
+    using _loader = { [Symbol.dispose]: startPluginLoader(environmentId, vi.fn()) };
     await expect.element(screen.getByText("Plugin not active")).toBeVisible();
   });
 
   it("starts a channel the plugin subscribes to and hands it the values", async () => {
-    setup();
+    const environmentId = EnvironmentId.make("environment:plugin-loader-channel");
+    setup([environmentId]);
     const channelSource = `export default { activate(api) {
       api.rpc.subscribe("notes", (value) => api.injectStyles("/* " + String(value) + " */"));
     } };`;
     using _fetch = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation(async () => new Response(channelSource));
-    const environmentId = EnvironmentId.make("environment:plugin-loader-channel");
-    const stop = startPluginLoader(environmentId, vi.fn(), true);
+    const stop = startPluginLoader(environmentId, vi.fn());
     using _loader = { [Symbol.dispose]: stop };
 
-    appAtomRegistry.set(state.live, AsyncResult.success({ plugins: [webPlugin("channel-web")] }));
+    appAtomRegistry.set(
+      state.live(environmentId),
+      AsyncResult.success({ plugins: [webPlugin("channel-web")] }),
+    );
 
     await vi.waitFor(() =>
       expect(document.querySelector('style[data-plugin="channel-web"]')?.textContent).toBe(
@@ -339,13 +394,16 @@ describe("startPluginLoader", () => {
   });
 
   it("signs bundle requests with a DPoP proof over a T3 Connect link", async () => {
-    setup();
+    const environmentId = EnvironmentId.make("environment:plugin-loader:relay");
+    setup([environmentId]);
     using fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation(async () => new Response("export default { activate() {} };"));
-    const environmentId = EnvironmentId.make("environment:plugin-loader:relay");
-    appAtomRegistry.set(state.live, AsyncResult.success({ plugins: [webPlugin("relay-web")] }));
-    const stop = startPluginLoader(environmentId, vi.fn(), true);
+    appAtomRegistry.set(
+      state.live(environmentId),
+      AsyncResult.success({ plugins: [webPlugin("relay-web")] }),
+    );
+    const stop = startPluginLoader(environmentId, vi.fn());
     using _loader = { [Symbol.dispose]: stop };
 
     await vi.waitFor(() =>

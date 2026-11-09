@@ -24,9 +24,7 @@ const fromPluginUi = <A>(pick: (ui: PluginUi) => Atom.Atom<A>, none: A) =>
     return ui === null ? none : get(pick(ui));
   });
 
-export const pluginCommandsAtom = Atom.family((environmentId: string) =>
-  fromPluginUi((ui) => ui.pluginCommandsAtom(environmentId), NONE),
-);
+export const pluginCommandsAtom = fromPluginUi((ui) => ui.pluginCommandsAtom, NONE);
 
 /** A loaded plugin command's name for people, such as in Keybindings settings. */
 export const pluginCommandLabel = (command: string) =>

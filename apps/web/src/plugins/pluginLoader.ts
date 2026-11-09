@@ -49,7 +49,7 @@ import {
 import { fetchPluginFile, withDownloadRetries } from "./pluginFiles";
 import { pluginUiAtom } from "./pluginUi";
 import { pluginUi } from "./pluginUiParts";
-import { isLoadableWebPlugin } from "./pluginWatch";
+import { followPlugins, isLoadableWebPlugin } from "./pluginWatch";
 
 const PANEL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
 const COMMAND_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
@@ -144,7 +144,7 @@ const runReportingFailure = (label: string, run: () => void | Promise<void>) => 
 
 interface WebPluginApiContext {
   readonly environmentId: EnvironmentId;
-  /** Whether this environment supplies commands; see `startPluginLoader`. */
+  /** Whether this plugin's app-wide contributions come from this environment; see `followPlugins`. */
   readonly appWide: boolean;
   readonly plugin: PluginState;
   /**
@@ -302,6 +302,7 @@ function makeWebPluginApi({
       return url;
     },
     injectStyles: (css) => {
+      if (!appWide) return;
       const style = document.createElement("style");
       style.dataset.plugin = pluginId;
       style.textContent = css;
@@ -334,7 +335,7 @@ function makeWebPluginApi({
 }
 
 interface LoadedPlugin {
-  /** Version and start revision: a change of either loads the bundle again. */
+  /** Version, start revision and whether it is app-wide here: a change of any loads it again. */
   readonly key: string;
   readonly cleanups: Set<() => void>;
   disposed: boolean;
@@ -359,7 +360,8 @@ const withDeadline = async <A>(work: Promise<A>, what: string) => {
   }
 };
 
-const loadKey = (plugin: PluginState) => `${plugin.version ?? ""}:${plugin.revision ?? ""}`;
+const loadKey = (plugin: PluginState, appWide: boolean) =>
+  `${plugin.version ?? ""}:${plugin.revision ?? ""}:${appWide}`;
 
 const runCleanups = (cleanups: Iterable<() => void>) => {
   for (const cleanup of [...cleanups].toReversed()) {
@@ -374,13 +376,12 @@ const runCleanups = (cleanups: Iterable<() => void>) => {
 /**
  * Loads the environment's active web plugins and follows plugin state until stopped. Each plugin
  * fails alone: a failed fetch, import or activate is recorded for the Plugins page. Several
- * environments load at once, and only the `appWide` one registers commands, which have no thread
- * to tie them to an environment.
+ * environments load at once, and a plugin on in more than one adds its commands and injected
+ * styles from one of them, as `followPlugins` decides.
  */
 export function startPluginLoader(
   environmentId: EnvironmentId,
   navigate: (path: string) => void,
-  appWide: boolean,
 ): () => void {
   installHostModules();
   // Stays once set: the registries empty out as plugins unload, so their readers draw nothing.
@@ -404,8 +405,12 @@ export function startPluginLoader(
     runCleanups(plugin.cleanups);
   };
 
-  const load = async (plugin: PluginState) => {
-    const entry: LoadedPlugin = { key: loadKey(plugin), cleanups: new Set(), disposed: false };
+  const load = async (plugin: PluginState, appWide: boolean) => {
+    const entry: LoadedPlugin = {
+      key: loadKey(plugin, appWide),
+      cleanups: new Set(),
+      disposed: false,
+    };
     loaded.set(plugin.id, entry);
     // Cleared here rather than once `activate` resolves, so a part that throws while it awaits
     // keeps its note.
@@ -467,13 +472,16 @@ export function startPluginLoader(
     }
   };
 
-  const reconcile = (plugins: ReadonlyArray<PluginState>) => {
+  const reconcile = (
+    plugins: ReadonlyArray<PluginState>,
+    appWide: (pluginId: PluginState["id"]) => boolean,
+  ) => {
     const wanted = new Map(
       plugins.filter(isLoadableWebPlugin).map((plugin) => [plugin.id, plugin] as const),
     );
     for (const [pluginId, plugin] of loaded) {
       const want = wanted.get(pluginId);
-      if (want === undefined || loadKey(want) !== plugin.key) unload(pluginId);
+      if (want === undefined || loadKey(want, appWide(pluginId)) !== plugin.key) unload(pluginId);
     }
     for (const plugin of plugins) {
       if (!wanted.has(plugin.id)) setPluginWebFailure(environmentId, plugin.id, undefined);
@@ -481,17 +489,13 @@ export function startPluginLoader(
     // Not awaited, so a plugin that hangs until its deadline holds back neither the others nor
     // the next change, such as turning another plugin off.
     for (const plugin of wanted.values()) {
-      if (!loaded.has(plugin.id)) void load(plugin);
+      if (!loaded.has(plugin.id)) void load(plugin, appWide(plugin.id));
     }
   };
 
-  const stopFollowing = appAtomRegistry.subscribe(
-    pluginEnvironment.pluginsLive({ environmentId, input: {} }),
-    (result) => {
-      if (!stopped && AsyncResult.isSuccess(result)) reconcile(result.value.plugins);
-    },
-    { immediate: true },
-  );
+  const stopFollowing = followPlugins(environmentId, (plugins, appWide) => {
+    if (!stopped) reconcile(plugins, appWide);
+  });
 
   return () => {
     stopped = true;

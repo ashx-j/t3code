@@ -11,14 +11,29 @@ vi.mock(import("../state/session"), async (original) => ({
 }));
 const state = await vi.hoisted(async () => {
   const { Atom, AsyncResult } = await import("effect/reactivity");
-  return {
-    live: Atom.make<AsyncResult.AsyncResult<{ readonly plugins: ReadonlyArray<PluginState> }>>(
+  const makeLive = () =>
+    Atom.make<AsyncResult.AsyncResult<{ readonly plugins: ReadonlyArray<PluginState> }>>(
       AsyncResult.initial(),
-    ),
+    ).pipe(Atom.keepAlive);
+  const lives = new Map<string, ReturnType<typeof makeLive>>();
+  return {
+    live: (environmentId: string) => {
+      const atom = lives.get(environmentId) ?? makeLive();
+      lives.set(environmentId, atom);
+      return atom;
+    },
+    environments: Atom.make<ReadonlyArray<EnvironmentId>>([]).pipe(Atom.keepAlive),
   };
 });
 vi.mock(import("../state/plugins"), () => ({
-  pluginEnvironment: { pluginsLive: () => state.live } as never,
+  pluginEnvironment: {
+    pluginsLive: ({ environmentId }: { readonly environmentId: string }) =>
+      state.live(environmentId),
+  } as never,
+}));
+vi.mock(import("./pluginFollow"), async (original) => ({
+  ...(await original()),
+  pluginUiEnvironmentsAtom: state.environments,
 }));
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -38,13 +53,15 @@ const stylesPluginState: PluginState = {
 };
 
 describe("startPluginStyles", () => {
-  it("adds an active plugin's stylesheets in order, swaps changed ones and removes them when it is off", async () => {
+  it("adds the stylesheets of a plugin that is on in order, from the first environment that has it on, swaps changed ones and removes them when it is off", async () => {
     // Each sheet names the file and revision it was fetched as.
     using fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = new URL(String(input));
       return new Response(`/* ${url.pathname.split("/").pop()} ${url.searchParams.get("v")} */`);
     });
     const environmentId = EnvironmentId.make("environment:plugin-styles");
+    const otherEnvironmentId = EnvironmentId.make("environment:plugin-styles-other");
+    appAtomRegistry.set(state.environments, [environmentId, otherEnvironmentId]);
     const stylesPlugin: PluginState = {
       ...stylesPluginState,
       styles: [
@@ -56,7 +73,16 @@ describe("startPluginStyles", () => {
       Array.from(document.querySelectorAll('style[data-plugin="styles-plugin"]'), (sheet) =>
         sheet.textContent?.trim(),
       );
-    appAtomRegistry.set(state.live, AsyncResult.success({ plugins: [stylesPlugin] }));
+    // The other environment has the plugin too, and starts first.
+    appAtomRegistry.set(
+      state.live(otherEnvironmentId),
+      AsyncResult.success({ plugins: [stylesPlugin] }),
+    );
+    using _otherStyles = { [Symbol.dispose]: startPluginStyles(otherEnvironmentId) };
+    appAtomRegistry.set(
+      state.live(environmentId),
+      AsyncResult.success({ plugins: [stylesPlugin] }),
+    );
     const stop = startPluginStyles(environmentId);
     using _styles = { [Symbol.dispose]: stop };
 
@@ -69,7 +95,7 @@ describe("startPluginStyles", () => {
     expect(fetchSpy.mock.calls[0]?.[1]).toEqual({ headers: { authorization: "Bearer token" } });
 
     appAtomRegistry.set(
-      state.live,
+      state.live(environmentId),
       AsyncResult.success({
         plugins: [
           {
@@ -84,16 +110,22 @@ describe("startPluginStyles", () => {
     );
     await vi.waitFor(() => expect(sheets()).toEqual(["/* base.css r1 */", "/* compact.css r3 */"]));
 
+    const otherFetches = fetchSpy.mock.calls.length;
     appAtomRegistry.set(
-      state.live,
+      state.live(environmentId),
       AsyncResult.success({
         plugins: [{ ...stylesPluginState, enabled: false, status: "disabled" }],
       }),
     );
-    await vi.waitFor(() => expect(sheets()).toEqual([]));
+    // Off in the first environment, the plugin's styles come from the other one.
+    await vi.waitFor(() => expect(sheets()).toEqual(["/* base.css r1 */", "/* compact.css r2 */"]));
+    expect(fetchSpy.mock.calls.length).toBe(otherFetches + 2);
 
-    appAtomRegistry.set(state.live, AsyncResult.success({ plugins: [stylesPlugin] }));
-    await vi.waitFor(() => expect(sheets()).toHaveLength(2));
+    appAtomRegistry.set(
+      state.live(environmentId),
+      AsyncResult.success({ plugins: [stylesPlugin] }),
+    );
+    await vi.waitFor(() => expect(sheets()).toEqual(["/* base.css r1 */", "/* compact.css r2 */"]));
     stop();
     expect(sheets()).toEqual([]);
   });

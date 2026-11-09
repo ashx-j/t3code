@@ -6,16 +6,6 @@ import { Atom } from "effect/reactivity";
 import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { serverEnvironment } from "../state/server";
 
-/**
- * The environment app-wide plugin contributions come from: palette and keybinding commands.
- * `PluginLoaderStarter` sets it once the app is idle, so readers of its plugins open no stream
- * during startup.
- */
-export const followedPluginEnvironmentAtom = Atom.make<EnvironmentId | null>(null).pipe(
-  Atom.keepAlive,
-  Atom.withLabel("web-followed-plugin-environment"),
-);
-
 /** Choices the user made in Settings; an environment left out keeps its default. */
 type PluginUiChoices = ReadonlyMap<EnvironmentId, boolean>;
 
@@ -95,7 +85,8 @@ export const chosenPluginUiEnvironments = (
 
 /**
  * The chosen environments that run plugins, in `chosenPluginUiEnvironments` order. Each loads its
- * plugins' web halves and styles; the first also supplies the app-wide contributions.
+ * plugins' web halves and styles; a plugin on in several adds its app-wide contributions from the
+ * first of them.
  */
 export const pluginUiEnvironmentsAtom = Atom.make((get): ReadonlyArray<EnvironmentId> => {
   const next = chosenPluginUiEnvironments(
