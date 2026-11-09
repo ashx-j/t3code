@@ -2,6 +2,13 @@
   "name": "@t3tools/plugin-sdk",
   "version": "0.1.0",
   "private": true,
+  "description": "Types and build helpers for T3 Code plugins.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pingdotgg/t3code",
+    "directory": "packages/plugin-sdk"
+  },
   "type": "module",
   "exports": {
     "./server": {
@@ -34,6 +41,7 @@
     }
   },
   "scripts": {
+    "build": "node scripts/build.ts",
     "build:examples": "node scripts/build-examples.ts",
     "typecheck": "tsc --noEmit"
   },

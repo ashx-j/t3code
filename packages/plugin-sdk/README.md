@@ -10,6 +10,20 @@ T3 Code, which builds it to `dist/web.js` with the Vite preset below. The plugin
 [`fixtures/`](./fixtures) back the tests and are small and working too. They are written by hand
 and need no build. `hello-web` uses most of the web API.
 
+## Install
+
+The SDK isn't on npm yet. Build it from a T3 Code checkout: run `vp run build` in
+`packages/plugin-sdk`, then `npm pack` in its `dist` folder. Install the `.tgz` file it writes in
+your plugin with `npm install --save-dev <path to the .tgz>`. `dist` holds the whole package as it
+will be published.
+
+The SDK has no dependencies of its own. What else a plugin needs depends on its parts:
+
+- A web half needs `react` and `@types/react` as dev dependencies, plus `react-dom` if it imports
+  it, and Vite 8 or later to build it. The bundle uses T3's own React at runtime, but the build
+  reads React's exports.
+- Typechecking a server half needs `@types/node`.
+
 ## Manifest
 
 ```json
