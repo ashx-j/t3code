@@ -143,6 +143,42 @@ export const HOST_UI_EXPORTS = [
 ] as const;
 
 /**
+ * CSS variables T3 defines under every theme and keeps across releases. Themes set them, so a
+ * plugin's own styles that use them, such as `var(--border)`, follow the user's theme.
+ */
+export const THEME_TOKENS = [
+  "--background",
+  "--foreground",
+  "--card",
+  "--card-foreground",
+  "--popover",
+  "--popover-foreground",
+  "--primary",
+  "--primary-foreground",
+  "--secondary",
+  "--secondary-foreground",
+  "--muted",
+  "--muted-foreground",
+  "--accent",
+  "--accent-foreground",
+  "--border",
+  "--input",
+  "--ring",
+  "--destructive",
+  "--destructive-foreground",
+  "--warning",
+  "--warning-foreground",
+  "--success",
+  "--success-foreground",
+  "--info",
+  "--info-foreground",
+  "--radius",
+  "--terminal-background",
+] as const;
+
+export type ThemeToken = (typeof THEME_TOKENS)[number];
+
+/**
  * Types a web plugin. The ESM bundle's default export is the result. Pass the plugin's
  * `PluginRpcMap`, as in `defineWebPlugin<NotesRpc>({ ... })`, to type `api.rpc`.
  */
