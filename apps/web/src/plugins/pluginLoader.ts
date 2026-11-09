@@ -15,6 +15,7 @@ import {
   type WebPluginApi,
   type WebPluginDefinition,
 } from "@t3tools/plugin-sdk/web";
+import type * as SdkUi from "@t3tools/plugin-sdk/ui";
 import { AsyncResult, Atom } from "effect/reactivity";
 import * as React from "react";
 import * as ReactDOM from "react-dom";
@@ -97,7 +98,7 @@ const installHostModules = () =>
       Label,
       Switch,
       Textarea,
-    } satisfies Record<(typeof HOST_UI_EXPORTS)[number], unknown>,
+    } satisfies typeof SdkUi & Record<(typeof HOST_UI_EXPORTS)[number], unknown>,
   });
 
 const isWebPluginDefinition = (value: unknown): value is WebPluginDefinition =>
