@@ -5,6 +5,7 @@ import { BlocksIcon } from "lucide-react";
 
 import { PluginRenderBoundary } from "./PluginRenderBoundary";
 import { pluginEnvironment } from "../state/plugins";
+import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { Button } from "../components/ui/button";
 import {
   Empty,
@@ -14,7 +15,13 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "../components/ui/empty";
-import { pluginRightPanelAtom, pluginRightPanelKey } from "./pluginRegistry";
+import { loadsPluginUi, pluginUiChoicesAtom } from "./pluginFollow";
+import {
+  pluginRightPanelAtom,
+  pluginRightPanelKey,
+  pluginRightPanelsAtom,
+  pluginWebFailuresAtom,
+} from "./pluginRegistry";
 
 function PluginPanelNotice(props: {
   readonly title: string;
@@ -39,13 +46,32 @@ function PluginPanelNotice(props: {
   );
 }
 
-/** The installed plugin's name, or its id while the list loads or once it is uninstalled. */
-function usePluginName(environmentId: EnvironmentId, pluginId: string) {
+/**
+ * The plugin's name, or its id while the list loads or once it is uninstalled, and whether its
+ * panel may still register: the list is loading, or its web part is starting in this browser.
+ */
+function usePluginPanelState(environmentId: EnvironmentId, pluginId: string) {
   const result = useAtomValue(pluginEnvironment.pluginsLive({ environmentId, input: {} }));
+  const loadsUi = loadsPluginUi(
+    useAtomValue(pluginUiChoicesAtom),
+    environmentId,
+    useAtomValue(primaryEnvironmentIdAtom),
+  );
+  const webFailed = useAtomValue(pluginWebFailuresAtom(pluginId)).has(environmentId);
+  // A plugin that registered another panel has loaded, so this one is not coming.
+  const loaded = useAtomValue(pluginRightPanelsAtom(environmentId)).some(
+    (entry) => entry.pluginId === pluginId,
+  );
   const plugin = AsyncResult.isSuccess(result)
     ? result.value.plugins.find((candidate) => candidate.id === pluginId)
     : undefined;
-  return plugin?.name ?? pluginId;
+  const starting =
+    AsyncResult.isInitial(result) ||
+    (plugin?.hasWeb === true && (plugin.status === "active" || plugin.status === "loading"));
+  return {
+    name: plugin?.name ?? pluginId,
+    loading: loadsUi && !webFailed && !loaded && starting,
+  };
 }
 
 function PluginNotLoadedNotice(props: {
@@ -54,8 +80,14 @@ function PluginNotLoadedNotice(props: {
   readonly panel: string;
   readonly onClose: () => void;
 }) {
-  const name = usePluginName(props.environmentId, props.pluginId);
-  return (
+  const { name, loading } = usePluginPanelState(props.environmentId, props.pluginId);
+  return loading ? (
+    <PluginPanelNotice
+      title="Loading plugin"
+      description={`${name} is loading its "${props.panel}" panel.`}
+      onClose={props.onClose}
+    />
+  ) : (
     <PluginPanelNotice
       title="Plugin not active"
       description={`${name} is disabled or not loaded, so its "${props.panel}" panel is unavailable.`}
@@ -64,7 +96,7 @@ function PluginNotLoadedNotice(props: {
   );
 }
 
-/** A right panel registered by a web plugin, or a notice when that plugin is not loaded. */
+/** A right panel a web plugin registered, or a notice while it loads or when it is not loaded. */
 export function PluginPanelSurface(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: string;
