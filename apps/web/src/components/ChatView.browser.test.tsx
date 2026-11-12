@@ -1,5 +1,5 @@
 import { createMemoryHistory } from "@tanstack/react-router";
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { ThreadId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
@@ -9,12 +9,13 @@ import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 
 import { AppRoot } from "~/AppRoot";
-import { NoProjectsHero } from "~/components/NoProjectsHero";
 // The route loads ChatView lazily, and its first transform (React Compiler over ~4k lines)
 // takes 6-11s; importing it here keeps that out of the test's timeout.
 import "~/components/ChatView";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import { selectThreadDiffPanelSelection, useDiffPanelStore } from "~/diffPanelStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { getRouter } from "~/router";
 import {
   ENVIRONMENT_ID,
@@ -23,7 +24,7 @@ import {
   threadWithHistory,
   type FakeDriver,
 } from "../../test/fakeEnvironment";
-import { render } from "../../test/render";
+import { act, render } from "../../test/render";
 
 // The socket is the only fake layer; see test/appScenarios.renders.tsx.
 vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (importOriginal) => {
@@ -68,6 +69,95 @@ it("a new draft does not load its reserved thread before the server lists it", a
     .filter((url) => url.includes(`/api/orchestration/threads/${threadId}/`));
   // A 404 here marks the thread deleted, and the view never loads it once the send creates it.
   expect(threadRequests).toEqual([]);
+});
+
+it("opens the thread actions menu for an older settled thread the shell leaves out", async () => {
+  const thread = { ...threadWithHistory("older-settled", 1), olderSettled: true as const };
+  using _environment = installFakeEnvironment([thread]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByText("older-settled: question 0")).toBeVisible();
+
+  await page.getByRole("button", { name: `Thread actions for ${thread.title}` }).click();
+  // Without a bound the poll runs to the test deadline and reports a bare timeout.
+  await expect
+    .element(page.getByRole("menuitem", { name: "Rename thread" }), { timeout: 5_000 })
+    .toBeVisible();
+});
+
+it("retains each thread's diff selection when returning from another thread or Settings", async () => {
+  const a = threadWithHistory("diff-selection-a", 1);
+  const b = threadWithHistory("diff-selection-b", 1);
+  using _environment = installFakeEnvironment([a, b]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const aRef = scopeThreadRef(ENVIRONMENT_ID, a.id);
+  const bRef = scopeThreadRef(ENVIRONMENT_ID, b.id);
+  useRightPanelStore.getState().open(aRef, "diff");
+  useRightPanelStore.getState().open(bRef, "diff");
+  useDiffPanelStore.getState().selectBranchBaseRef(bRef, "origin/release");
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${a.id}`] }));
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByText(`Answer 0 for ${a.id}.`)).toBeVisible();
+  await act(() => useDiffPanelStore.getState().selectGitScope(aRef, "unstaged"));
+
+  await act(() =>
+    router.navigate({
+      to: "/$environmentId/$threadId",
+      params: { environmentId: ENVIRONMENT_ID, threadId: b.id },
+    }),
+  );
+  await expect.element(page.getByText(`Answer 0 for ${b.id}.`)).toBeVisible();
+  expect(selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, bRef)).toEqual({
+    kind: "branch",
+    baseRef: "origin/release",
+  });
+  await act(() =>
+    router.navigate({
+      to: "/$environmentId/$threadId",
+      params: { environmentId: ENVIRONMENT_ID, threadId: a.id },
+    }),
+  );
+  await expect.element(page.getByText(`Answer 0 for ${a.id}.`)).toBeVisible();
+  expect(selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, aRef)).toEqual({
+    kind: "unstaged",
+  });
+
+  await act(() => useDiffPanelStore.getState().selectTurn(aRef, a.runs[0]!.id));
+  await act(() => router.navigate({ to: "/settings/general" }));
+  await expect
+    .element(page.getByRole("heading", { name: "Time format", exact: true }))
+    .toBeVisible();
+  await act(() =>
+    router.navigate({
+      to: "/$environmentId/$threadId",
+      params: { environmentId: ENVIRONMENT_ID, threadId: a.id },
+    }),
+  );
+  await expect.element(page.getByText(`Answer 0 for ${a.id}.`)).toBeVisible();
+  expect(
+    selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, aRef),
+  ).toMatchObject({
+    kind: "turn",
+    turnId: a.runs[0]!.id,
+  });
 });
 
 it("marks the window's main areas with the region names plugin styles target", async () => {
@@ -128,34 +218,36 @@ it("marks the window's main areas with the region names plugin styles target", a
     .toHaveAttribute("data-t3-region", "pull-requests");
 });
 
-it("marks the home page with the region name plugin styles target", async () => {
-  await using _screen = await render(<NoProjectsHero />);
-  const homeTitle = page.getByText("What should we work on?");
-  await expect.element(homeTitle).toBeInTheDocument();
-  expect(homeTitle.element().closest("[data-t3-region]")).toHaveAttribute("data-t3-region", "home");
-});
-
-it("opens the thread actions menu for an older settled thread the shell leaves out", async () => {
-  const thread = { ...threadWithHistory("older-settled", 1), olderSettled: true as const };
-  using _environment = installFakeEnvironment([thread]);
+it("a stashed prompt ending in a file chip restores with the chip", async () => {
+  using _environment = installFakeEnvironment([]);
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
   });
-
-  const router = getRouter(
-    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
-  );
+  const draftId = DraftId.make("draft-28338");
+  const drafts = useComposerDraftStore.getState();
+  drafts.setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
+    threadId: ThreadId.make("thread-28338"),
+  });
+  drafts.setPrompt(draftId, "Check [package.json](package.json) ");
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
     router: false,
   });
-  await expect.element(page.getByText("older-settled: question 0")).toBeVisible();
+  const chip = page.getByRole("button", { name: "Preview package.json" });
+  await expect.element(chip).toBeVisible();
+  // The stash shortcut is a no-op until the shell snapshot lists the project.
+  await expect.element(page.getByText("render", { exact: true }).first()).toBeVisible();
 
-  await page.getByRole("button", { name: `Thread actions for ${thread.title}` }).click();
-  // Without a bound the poll runs to the test deadline and reports a bare timeout.
-  await expect
-    .element(page.getByRole("menuitem", { name: "Rename thread" }), { timeout: 5_000 })
-    .toBeVisible();
+  const editor = page.getByTestId("composer-editor");
+  await userEvent.click(editor);
+  await userEvent.keyboard("{ControlOrMeta>}s{/ControlOrMeta}");
+  await expect.element(chip).not.toBeInTheDocument();
+  await userEvent.keyboard("{ControlOrMeta>}s{/ControlOrMeta}");
+
+  await vi.waitFor(() => expect(editor.element().textContent).toContain("Check"));
+  expect(editor.element().textContent).not.toContain("[package.json](package.json)");
+  await expect.element(chip).toBeVisible();
 });

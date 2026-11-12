@@ -1,4 +1,10 @@
-import { PluginRpcName, type PluginId } from "@t3tools/contracts";
+import {
+  PluginRpcName,
+  ProjectListEntriesInput,
+  ProjectReadFileInput,
+  ThreadId,
+  type PluginId,
+} from "@t3tools/contracts";
 import type { PluginApi, PluginRpcAccess, PluginRpcHandler } from "@t3tools/plugin-sdk/server";
 import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -12,18 +18,29 @@ import { makeMcpApi } from "./api/mcp.ts";
 import type * as PluginMcpTools from "./PluginMcpTools.ts";
 import type * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import type * as PluginStorage from "./PluginStorage.ts";
+import type * as PluginWorkspace from "./PluginWorkspace.ts";
 
 const isJson = Schema.is(Schema.Json);
 const isPluginRpcName = Schema.is(PluginRpcName);
 const isPluginRpcAccess = Schema.is(Schema.Literals(["read", "write"]));
+const isListEntriesInput = Schema.is(
+  Schema.Struct({
+    threadId: ThreadId,
+    directoryPath: ProjectListEntriesInput.fields.directoryPath,
+  }),
+);
+const isReadFileInput = Schema.is(
+  Schema.Struct({ threadId: ThreadId, relativePath: ProjectReadFileInput.fields.relativePath }),
+);
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Json));
+const decodeJson = Schema.decodeSync(Schema.fromJsonString(Schema.Json));
 const utf8 = new TextEncoder();
 
 // A published value or a method's result reaches a client as one WebSocket message, and one large
 // message holds up every other stream on the socket.
 export const MAX_MESSAGE_KILOBYTES = 256;
-export const jsonKilobytes = (value: Schema.Json) =>
-  Math.ceil(utf8.encode(encodeJson(value)).byteLength / 1024);
+const kilobytesOf = (json: string) => Math.ceil(utf8.encode(json).byteLength / 1024);
+export const jsonKilobytes = (value: Schema.Json) => kilobytesOf(encodeJson(value));
 
 export interface PluginActivation {
   readonly methods: Map<
@@ -60,6 +77,7 @@ export interface PluginApiServices {
   readonly settings: PluginSettingsStore.PluginSettingsStore["Service"];
   readonly storage: PluginStorage.PluginStorage["Service"];
   readonly mcpTools: PluginMcpTools.PluginMcpTools["Service"];
+  readonly workspace: PluginWorkspace.PluginWorkspace["Service"];
 }
 
 /**
@@ -95,8 +113,27 @@ export const makePluginApi = (input: {
     list: (prefix) => call(services.storage.list(id, prefix)),
   };
 
+  const workspace: PluginApi["workspace"] = {
+    listEntries: (input) => {
+      if (!isListEntriesInput(input)) {
+        return refused(
+          new TypeError("listEntries needs a threadId and an optional trimmed directoryPath."),
+        );
+      }
+      return call(
+        services.workspace.listEntries(input).pipe(Effect.map(({ entries }) => ({ entries }))),
+      );
+    },
+    readFile: (input) => {
+      if (!isReadFileInput(input)) {
+        return refused(new TypeError("readFile needs a threadId and a trimmed relativePath."));
+      }
+      return call(services.workspace.readFile(input));
+    },
+  };
+
   return {
-    version: 1,
+    version: 2,
     id,
     rootDir: input.rootDir,
     log: { debug: log("Debug"), info: log("Info"), warn: log("Warn"), error: log("Error") },
@@ -125,17 +162,20 @@ export const makePluginApi = (input: {
           throw new TypeError(`"${channel}" is not a valid channel name.`);
         }
         if (!isJson(value)) throw new TypeError("Published values must be JSON.");
-        const size = jsonKilobytes(value);
+        const json = encodeJson(value);
+        const size = kilobytesOf(json);
         if (size > MAX_MESSAGE_KILOBYTES) {
           throw new RangeError(
             `The value published on "${channel}" is ${size} KB as JSON, and a value can be at most ${MAX_MESSAGE_KILOBYTES} KB.`,
           );
         }
+        const queues = activation.channels.get(channel);
+        if (queues === undefined || queues.size === 0) return;
+        // A copy of what was measured: the plugin may change its object before subscribers send it.
+        const snapshot = decodeJson(json);
         // Waking a subscriber schedules T3's work, which must not run in the plugin's scope.
         pluginCodeScope.exit(() => {
-          for (const queue of activation.channels.get(channel) ?? []) {
-            Queue.offerUnsafe(queue, value);
-          }
+          for (const queue of queues) Queue.offerUnsafe(queue, snapshot);
         });
       },
     },
@@ -150,5 +190,6 @@ export const makePluginApi = (input: {
       activation.cleanups.push(cleanup);
     },
     mcp: makeMcpApi(facade, services),
+    workspace,
   };
 };

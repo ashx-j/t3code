@@ -1,6 +1,9 @@
 // @effect-diagnostics preferSchemaOverJson:off - like the tests, it writes manifests as plain JSON.
+// @effect-diagnostics nodeBuiltinImport:off - the fixtures' path comes from this module's file URL.
 // The plugin host with its real stores and MCP tool registry, for its tests and the tests of the
 // modules it builds.
+import * as NodeURL from "node:url";
+
 import {
   AuthOrchestrationReadScope,
   AuthSettingsWriteScope,
@@ -20,9 +23,11 @@ import * as PluginHost from "./PluginHost.ts";
 import * as PluginMcpTools from "./PluginMcpTools.ts";
 import * as PluginSettingsStore from "./PluginSettingsStore.ts";
 import * as PluginStorage from "./PluginStorage.ts";
+import * as PluginWorkspace from "./PluginWorkspace.ts";
 
-export const fixturesDir = new URL("../../../../packages/plugin-sdk/fixtures/", import.meta.url)
-  .pathname;
+export const fixturesDir = NodeURL.fileURLToPath(
+  new URL("../../../../packages/plugin-sdk/fixtures/", import.meta.url),
+);
 
 export const layerConfig = () =>
   Layer.fresh(ServerConfig.layerTest(process.cwd(), { prefix: "t3code-plugin-host-test-" }));
@@ -57,6 +62,8 @@ export const layerHost = (
             ),
           ).pipe(Layer.provide(PluginSettingsStore.layer)),
           PluginStorage.layer,
+          // PluginWorkspace.test.ts covers it with real stores and files.
+          Layer.mock(PluginWorkspace.PluginWorkspace)({}),
         ),
       ),
       Layer.provide(ServerSecretStore.layer),
