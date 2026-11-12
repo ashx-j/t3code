@@ -2,7 +2,7 @@
 // must follow plugin code through Node's own callbacks.
 import * as NodeAsyncHooks from "node:async_hooks";
 
-import type { PluginId } from "@t3tools/contracts";
+import { PluginId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -26,12 +26,15 @@ export const errorText = (cause: unknown) => {
 };
 
 export class PluginCodeError extends Schema.TaggedError<PluginCodeError>()("PluginCodeError", {
+  pluginId: PluginId,
+  stage: Schema.Literals(["load", "activate", "cleanup"]),
   cause: Schema.Defect(),
 }) {
   override get message(): string {
-    return errorText(this.cause);
+    return `Plugin ${this.pluginId} code failed during ${this.stage}.`;
   }
 }
+export const isPluginCodeError = Schema.is(PluginCodeError);
 
 /**
  * The plugin whose code is running, carried through every timer, promise and Node callback that
@@ -136,10 +139,7 @@ export const makeFacadeContext = (input: {
         Effect.runForkWith(context)(
           effect.pipe(
             Effect.catchCause((cause) =>
-              Effect.logWarning("plugin background work failed", {
-                pluginId,
-                cause: Cause.pretty(cause).slice(0, 500),
-              }),
+              Effect.logWarning("plugin background work failed", { pluginId }, cause),
             ),
           ),
         ),
