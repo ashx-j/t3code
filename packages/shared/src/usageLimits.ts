@@ -451,6 +451,8 @@ export interface LimitPoolWindow {
     readonly at: number;
     readonly restoresPercent: number;
   }>;
+  /** The earliest refill, summed across accounts that reset within the same minute. */
+  readonly nextRefill: LimitPoolWindow["resets"][number] | null;
 }
 
 export interface LimitPool {
@@ -516,22 +518,10 @@ export function collectLimitPools(
     if (list) list.push(account);
     else byDriver.set(account.driver, [account]);
   }
+  // Order by name only: reset clocks shift on every refresh and would swap accounts.
   return [...byDriver].map(([driver, members]) => {
-    const orderWindow = members
-      .flatMap((account) => account.limits.windows)
-      .sort((left, right) => WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind])[0];
-    const orderReset = (account: LimitAccount) => {
-      const window = account.limits.windows.find(
-        (window) => orderWindow && poolKey(driver, window) === poolKey(driver, orderWindow),
-      );
-      return (
-        (window ? resetMillis(poolMember(account, window, now).window) : null) ??
-        Number.POSITIVE_INFINITY
-      );
-    };
     const sorted = [...members].sort(
       (left, right) =>
-        orderReset(left) - orderReset(right) ||
         accountSortName(left).localeCompare(accountSortName(right)) ||
         left.key.localeCompare(right.key),
     );
@@ -668,6 +658,16 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
             ];
       })
       .sort((left, right) => left.at - right.at);
+    const refills = resets.filter((reset) => reset.restoresPercent > 0);
+    const soonest = refills[0];
+    const nextRefill = soonest
+      ? {
+          ...soonest,
+          restoresPercent: refills
+            .filter((reset) => reset.at - soonest.at < MINUTE)
+            .reduce((sum, reset) => sum + reset.restoresPercent, 0),
+        }
+      : null;
     return {
       id,
       kind: first.kind,
@@ -680,6 +680,7 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
       remainingPercent: Math.round(100 - usedPercent),
       pace: meanElapsed === null ? null : paceOfShares(timedUsed, meanElapsed),
       resets,
+      nextRefill,
     };
   });
   return pools.sort((left, right) => WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind]);
