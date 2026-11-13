@@ -3,39 +3,41 @@ import {
   type FileDiffContentsLoader,
   type FileDiffMetadata,
 } from "@pierre/diffs";
-import { FileDiff } from "@pierre/diffs/react";
-
-import { useRenderedAppearance } from "~/hooks/useTheme";
-import { resolveDiffThemeName } from "~/lib/diffRendering";
-import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
+import { useState } from "react";
 
 import { DIFF_VIEW_UNSAFE_CSS } from "../../diffs/StyledDiffCodeView";
+import { GuideDiff, type ExcerptCommenting, type ExcerptDraft } from "./GuideExcerpt";
 
 export function GuideFileDiff({
+  path,
   file,
+  commenting,
   loadDiffFiles,
 }: {
+  path: string;
   file: FileDiffMetadata;
+  commenting: ExcerptCommenting | null;
   loadDiffFiles: FileDiffContentsLoader;
 }) {
-  const resolvedTheme = useRenderedAppearance();
+  const [draft, setDraft] = useState<ExcerptDraft | null>(null);
   // Loading the unchanged lines rewrites the diff it is given; the excerpts read the same file
   // as a patch, so this view expands a copy of its own.
   const expandable = cloneFileDiffMetadata(file);
-  const options = {
-    diffStyle: "unified" as const,
-    lineDiffType: "none" as const,
-    overflow: "scroll" as const,
-    disableFileHeader: true,
-    theme: resolveDiffThemeName(resolvedTheme),
-    themeType: resolvedTheme,
-    preferredHighlighter: PREFERRED_HIGHLIGHTER,
-    unsafeCSS: DIFF_VIEW_UNSAFE_CSS,
-    loadDiffFiles,
-  };
   return (
     <div className="border-t border-border/60">
-      <FileDiff fileDiff={expandable} options={options} />
+      <GuideDiff
+        path={path}
+        file={file}
+        fileDiff={expandable}
+        drawn={null}
+        notes={[]}
+        draft={draft}
+        setDraft={setDraft}
+        commenting={commenting}
+        unsafeCSS={DIFF_VIEW_UNSAFE_CSS}
+        disableFileHeader
+        loadDiffFiles={loadDiffFiles}
+      />
     </div>
   );
 }
