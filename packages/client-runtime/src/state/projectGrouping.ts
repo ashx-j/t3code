@@ -68,6 +68,13 @@ function deriveRepositoryRelativeProjectPath(
   return normalizedProjectPath.slice(rootPrefix.length).replaceAll("\\", "/");
 }
 
+/** Whether a project's folder is its repository's root rather than a sub-folder of it. */
+export function isRepositoryRootProject(
+  project: Pick<EnvironmentProject, "workspaceRoot" | "repositoryIdentity">,
+): boolean {
+  return deriveRepositoryRelativeProjectPath(project) === "";
+}
+
 export function derivePhysicalProjectKeyFromPath(environmentId: string, cwd: string): string {
   return `${environmentId}:${normalizeProjectPathForComparison(cwd)}`;
 }
@@ -358,10 +365,13 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
 
   const preferredEnvironmentId = input.preferredEnvironmentId ?? null;
   return Array.from(groupedMembers, ([key, members]) => {
-    const representative =
-      (preferredEnvironmentId
-        ? members.find((member) => member.project.environmentId === preferredEnvironmentId)?.project
-        : null) ?? members[0]!.project;
+    const preferredMembers = members.filter(
+      (member) => member.project.environmentId === preferredEnvironmentId,
+    );
+    const candidates = preferredMembers.length > 0 ? preferredMembers : members;
+    const representative = (
+      candidates.find((member) => isRepositoryRootProject(member.project)) ?? candidates[0]!
+    ).project;
     return {
       key,
       label:

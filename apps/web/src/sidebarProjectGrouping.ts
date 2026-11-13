@@ -6,6 +6,7 @@ import type {
 import {
   buildProjectGroups,
   derivePhysicalProjectKey,
+  isRepositoryRootProject,
   resolveScratchProjectScopeKey,
   type ProjectGroupingSettings,
 } from "@t3tools/client-runtime/state/project-grouping";
@@ -219,16 +220,17 @@ export function buildSidebarProjectPickerEntries(input: {
             projectRef.projectId === preferredProjectRef.projectId,
         )
       : false;
-    const preferredProject = preferredProjectRef
-      ? (group.memberProjects.find(
-          (project) =>
-            project.environmentId === preferredProjectRef.environmentId &&
-            project.id === preferredProjectRef.projectId,
-        ) ??
-        group.memberProjects.find(
+    const preferredEnvironmentMembers = preferredProjectRef
+      ? group.memberProjects.filter(
           (project) => project.environmentId === preferredProjectRef.environmentId,
-        ))
-      : null;
+        )
+      : [];
+    const preferredProject =
+      preferredEnvironmentMembers.find(
+        (project) => project.id === preferredProjectRef?.projectId,
+      ) ??
+      preferredEnvironmentMembers.find(isRepositoryRootProject) ??
+      preferredEnvironmentMembers[0];
     const targetProject =
       preferredProject ??
       group.memberProjects.find(

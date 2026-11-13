@@ -279,6 +279,42 @@ describe("environment grouping", () => {
     });
   });
 
+  it("targets the repository root over older sub-folders on the current environment", () => {
+    const current = makeProject({ repositoryIdentity });
+    const workspaceIdentity = {
+      ...repositoryIdentity,
+      canonicalKey: "github.com/example/workspace",
+      rootPath: "/tmp/workspace",
+    };
+    const oldTool = makeProject({
+      id: ProjectId.make("old-tool"),
+      workspaceRoot: "/tmp/workspace/_archive/old-tool",
+      repositoryIdentity: workspaceIdentity,
+    });
+    const root = makeProject({
+      id: ProjectId.make("workspace-root"),
+      workspaceRoot: "/tmp/workspace",
+      repositoryIdentity: workspaceIdentity,
+    });
+    const groups = buildSidebarProjectSnapshots({
+      projects: [current, oldTool, root],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+    const workspace = groups.find((group) => group.projectKey === workspaceIdentity.canonicalKey);
+    expect(workspace?.id).toBe(root.id);
+
+    const entries = buildSidebarProjectPickerEntries({
+      groups,
+      preferredProjectRef: { environmentId: primaryEnvironmentId, projectId: current.id },
+    });
+    expect(
+      entries.find((entry) => entry.group.projectKey === workspaceIdentity.canonicalKey)
+        ?.targetProject.id,
+    ).toBe(root.id);
+  });
+
   it("puts the preferred project before pinned projects", () => {
     const project = (title: string, pinnedAt: string | null = null) =>
       makeProject({

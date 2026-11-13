@@ -77,6 +77,29 @@ describe("getProjectScopeSelectionTarget", () => {
     expect(target([], "server")).toBe(server);
     expect(target([])).toBe(mac);
   });
+
+  it("starts in the repository root over older sub-folders on the same machine", () => {
+    const inRepository = (project: EnvironmentProject): EnvironmentProject => ({
+      ...project,
+      repositoryIdentity: {
+        ...project.repositoryIdentity!,
+        rootPath: `/${project.environmentId}/workspace`,
+      },
+    });
+    const options = { repositoryKey: "github.com/owner/workspace" };
+    const oldTool = inRepository(
+      makeProject("old-tool", "mac", { ...options, workspaceRoot: "/mac/workspace/old-tool" }),
+    );
+    const root = inRepository(
+      makeProject("root", "mac", { ...options, workspaceRoot: "/mac/workspace" }),
+    );
+    const serverRoot = inRepository(
+      makeProject("root", "server", { ...options, workspaceRoot: "/server/workspace" }),
+    );
+    const scope = { ...makeScope([oldTool, root, serverRoot]), representative: serverRoot };
+    const connected = new Set([root.environmentId, serverRoot.environmentId]);
+    expect(getProjectScopeSelectionTarget(scope, EnvironmentId.make("mac"), connected)).toBe(root);
+  });
 });
 
 describe("newTaskFilteredProject", () => {

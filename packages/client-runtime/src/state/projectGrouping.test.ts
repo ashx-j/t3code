@@ -265,6 +265,27 @@ describe("buildProjectGroups", () => {
     }
   });
 
+  it("represents a repository group by its root checkout over older sub-folders", () => {
+    const identity = { ...repositoryIdentity, rootPath: "/work/workspace" };
+    const projects = [
+      makeProject("old-tool", "/work/workspace/_archive/old-tool", {
+        repositoryIdentity: identity,
+      }),
+      makeProject("app-a", "/work/workspace/app-a", { repositoryIdentity: identity }),
+      makeProject("root", "/work/workspace", { repositoryIdentity: identity }),
+      makeProject("remote-root", "/remote/workspace", {
+        environmentId: EnvironmentId.make("remote"),
+        repositoryIdentity: { ...repositoryIdentity, rootPath: "/remote/workspace" },
+      }),
+    ];
+    const representativeId = (preferredEnvironmentId: EnvironmentId | null = null) =>
+      buildProjectGroups({ projects, settings: settings("repository"), preferredEnvironmentId })[0]
+        ?.representative.id;
+    expect(representativeId()).toBe("root");
+    expect(representativeId(environmentId)).toBe("root");
+    expect(representativeId(EnvironmentId.make("remote"))).toBe("remote-root");
+  });
+
   it("keeps a fork apart from its upstream checkout and labels it by its own remote", () => {
     const fork = makeProject("fork", "/work/t3code-fork", {
       repositoryIdentity: {
